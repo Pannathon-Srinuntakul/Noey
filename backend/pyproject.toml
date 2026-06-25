@@ -18,6 +18,7 @@ dependencies = [
     # db
     "sqlalchemy[asyncio]>=2.0",
     "asyncpg>=0.30",
+    "psycopg[binary]>=3.2",
     "alembic>=1.14",
     "greenlet>=3.1",
     # scheduling
