@@ -85,6 +85,11 @@ async def _redirect_presigned_output(project_uid: str, filename: str) -> Redirec
     return RedirectResponse(url)
 
 
+def _stored_output_name(stored_path: str) -> str:
+    """Basename under video_outputs/{uid}/ — e.g. final.mp4 vs final_silent.mp4."""
+    return pathlib.Path(stored_path).name
+
+
 async def _enqueue(job_id: str, fn: str, **kwargs) -> None:  # type: ignore[type-arg]
     import asyncio
 
@@ -417,7 +422,7 @@ async def get_playback_url(
     if file_path.exists():
         return PlaybackUrlOut(mode="authenticated")
     if s3_enabled():
-        url = await output_presigned_url(uid, "final.mp4")
+        url = await output_presigned_url(uid, _stored_output_name(p.final_path))
         if url:
             return PlaybackUrlOut(mode="direct", url=url)
     raise HTTPException(404, "File not found")
@@ -437,7 +442,7 @@ async def get_capcut_url(
     if file_path.exists():
         return PlaybackUrlOut(mode="authenticated")
     if s3_enabled():
-        url = await output_presigned_url(uid, "capcut_bundle.zip")
+        url = await output_presigned_url(uid, _stored_output_name(p.zip_path))
         if url:
             return PlaybackUrlOut(mode="direct", url=url)
     raise HTTPException(404, "File not found")
@@ -457,7 +462,7 @@ async def download_final(
     if file_path.exists():
         return FileResponse(str(file_path), media_type="video/mp4", filename=f"noey_edit_{uid[:8]}.mp4")
     if s3_enabled():
-        return await _redirect_presigned_output(uid, "final.mp4")
+        return await _redirect_presigned_output(uid, _stored_output_name(p.final_path))
     raise HTTPException(404, "File not found")
 
 
@@ -475,7 +480,7 @@ async def export_capcut(
     if file_path.exists():
         return FileResponse(str(file_path), media_type="application/zip", filename=f"capcut_bundle_{uid[:8]}.zip")
     if s3_enabled():
-        return await _redirect_presigned_output(uid, "capcut_bundle.zip")
+        return await _redirect_presigned_output(uid, _stored_output_name(p.zip_path))
     raise HTTPException(404, "File not found")
 
 
