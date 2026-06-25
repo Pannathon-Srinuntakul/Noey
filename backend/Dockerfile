@@ -14,6 +14,7 @@ RUN mkdir -p data/video_uploads data/video_outputs data/models
 COPY pyproject.toml alembic.ini ./
 COPY packages ./packages
 COPY services ./services
+COPY scripts ./scripts
 RUN pip install --upgrade pip && pip install -e .
 
 EXPOSE 8000
