@@ -230,7 +230,7 @@ export const api = {
       send<CustomTableOut>(`/tables/${uid}/summary-config`, 'PUT', { config }),
     exportCsv: async (uid: string, ids?: string[]) => {
       const qs = ids?.length ? `?ids=${ids.join(',')}` : ''
-      const r = await authFetch(`/api/tables/${uid}/export.csv${qs}`)
+      const r = await authFetch(`${BASE}/tables/${uid}/export.csv${qs}`)
       if (!r.ok) throw new Error(`${r.status} ${r.statusText}`)
       const blob = await r.blob()
       const url = URL.createObjectURL(blob)
@@ -241,7 +241,7 @@ export const api = {
       URL.revokeObjectURL(url)
     },
     sampleCsv: async (uid: string) => {
-      const r = await authFetch(`/api/tables/${uid}/sample.csv`)
+      const r = await authFetch(`${BASE}/tables/${uid}/sample.csv`)
       if (!r.ok) throw new Error(`${r.status} ${r.statusText}`)
       const blob = await r.blob()
       const url = URL.createObjectURL(blob)
@@ -254,7 +254,7 @@ export const api = {
     importCsv: (uid: string, file: File): Promise<{ rows_inserted: number; rows_updated: number; rows_skipped: number; errors: string[] }> => {
       const form = new FormData()
       form.append('file', file)
-      return authFetch(`/api/tables/${uid}/import`, { method: 'POST', body: form }).then(async (r) => {
+      return authFetch(`${BASE}/tables/${uid}/import`, { method: 'POST', body: form }).then(async (r) => {
         if (!r.ok) {
           const detail = await r.json().then((d: Record<string, unknown>) => d.detail as string).catch(() => r.statusText)
           throw new Error(detail)

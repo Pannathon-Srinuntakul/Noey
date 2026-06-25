@@ -268,6 +268,20 @@ async def _abort_if_cancelled(session: AsyncSession, project_uid: str, job_id: s
     return True
 
 
+async def _pull_project_files(project_uid: str) -> None:
+    """Ensure local disk has latest uploads + outputs (multi-worker / S3)."""
+    from packages.video.s3 import pull_project_files
+
+    await pull_project_files(project_uid)
+
+
+async def _push_project_files(project_uid: str) -> None:
+    """Publish uploads + outputs for the next worker replica (multi-worker / S3)."""
+    from packages.video.s3 import push_project_files
+
+    await push_project_files(project_uid)
+
+
 # ── task: AI processing ───────────────────────────────────────────────────────
 
 
@@ -299,7 +313,7 @@ async def ingest_video(ctx: dict[str, Any], *, job_id: str, project_uid: str, te
         if await _abort_if_cancelled(session, project_uid, job_id):
             return {"cancelled": True}
 
-        from packages.video.s3 import pull_uploads
+        await _pull_project_files(project_uid)
 
         root = data_root()
         output_dir = root / "video_outputs" / project_uid
@@ -314,9 +328,7 @@ async def ingest_video(ctx: dict[str, Any], *, job_id: str, project_uid: str, te
         if not source_files:
             raise ValueError("No source files found in project")
 
-        # Pull uploads from S3 if enabled (no-op on local)
         upload_dir_path = root / "video_uploads" / project_uid
-        await pull_uploads(project_uid, upload_dir_path)
 
         (output_dir / "upload_sources.json").write_text(
             json.dumps(source_files, ensure_ascii=False),
@@ -385,6 +397,7 @@ async def ingest_video(ctx: dict[str, Any], *, job_id: str, project_uid: str, te
         settings = get_settings()
         pool = await create_pool(RedisSettings.from_dsn(settings.redis_url))
         if mode == "dub_first":
+            await _push_project_files(project_uid)
             await _video_progress(job_id, 50, "ingest", "เตรียมวิดีโอเสร็จแล้ว กำลังวิเคราะห์ซีน…")
             await pool.enqueue_job("analyze_dub_first", job_id=job_id, project_uid=project_uid, tenant_slug=tenant_slug)
             await pool.close()
@@ -578,6 +591,8 @@ async def transcribe_video(ctx: dict[str, Any], *, job_id: str, project_uid: str
         if await _abort_if_cancelled(session, project_uid, job_id):
             return {"cancelled": True}
 
+        await _pull_project_files(project_uid)
+
         root = data_root()
         output_dir = root / "video_outputs" / project_uid
         audio_dir = output_dir / "audio"
@@ -751,6 +766,7 @@ async def transcribe_video(ctx: dict[str, Any], *, job_id: str, project_uid: str
         from packages.core.settings import get_settings
         settings = get_settings()
         pool = await create_pool(RedisSettings.from_dsn(settings.redis_url))
+        await _push_project_files(project_uid)
         await pool.enqueue_job("plan_edit", job_id=job_id, project_uid=project_uid, tenant_slug=tenant_slug)
         await pool.close()
 
@@ -823,6 +839,8 @@ async def plan_edit(ctx: dict[str, Any], *, job_id: str, project_uid: str, tenan
     try:
         if await _abort_if_cancelled(session, project_uid, job_id):
             return {"cancelled": True}
+
+        await _pull_project_files(project_uid)
 
         root = data_root()
         output_dir = root / "video_outputs" / project_uid
@@ -963,6 +981,7 @@ async def plan_edit(ctx: dict[str, Any], *, job_id: str, project_uid: str, tenan
         from packages.core.settings import get_settings
         settings = get_settings()
         pool = await create_pool(RedisSettings.from_dsn(settings.redis_url))
+        await _push_project_files(project_uid)
         await pool.enqueue_job("render_video", job_id=job_id, project_uid=project_uid, tenant_slug=tenant_slug)
         await pool.close()
 
@@ -1139,6 +1158,8 @@ async def render_video(ctx: dict[str, Any], *, job_id: str, project_uid: str, te
 
         if await _abort_if_cancelled(session, project_uid, job_id):
             return {"cancelled": True}
+
+        await _pull_project_files(project_uid)
 
         root = data_root()
         output_dir = root / "video_outputs" / project_uid
@@ -1498,9 +1519,7 @@ async def render_video(ctx: dict[str, Any], *, job_id: str, project_uid: str, te
         if await _abort_if_cancelled(session, project_uid, job_id):
             return {"cancelled": True}
 
-        # Push rendered outputs to S3 if enabled (no-op on local)
-        from packages.video.s3 import push_outputs
-        await push_outputs(project_uid, output_dir)
+        await _push_project_files(project_uid)
 
         await _update_video(session, project_uid,
                             status="done",
@@ -1803,6 +1822,8 @@ async def analyze_dub_first(ctx: dict[str, Any], *, job_id: str, project_uid: st
         if await _abort_if_cancelled(session, project_uid, job_id):
             return {"cancelled": True}
 
+        await _pull_project_files(project_uid)
+
         root = data_root()
         output_dir = root / "video_outputs" / project_uid
         frames_dir = output_dir / "frames"
@@ -1916,6 +1937,7 @@ async def analyze_dub_first(ctx: dict[str, Any], *, job_id: str, project_uid: st
         from packages.core.settings import get_settings
         settings = get_settings()
         pool = await create_pool(RedisSettings.from_dsn(settings.redis_url))
+        await _push_project_files(project_uid)
         await pool.enqueue_job("render_dub_silent", job_id=job_id, project_uid=project_uid, tenant_slug=tenant_slug)
         await pool.close()
 
@@ -1953,6 +1975,8 @@ async def render_dub_silent(ctx: dict[str, Any], *, job_id: str, project_uid: st
 
         if await _abort_if_cancelled(session, project_uid, job_id):
             return {"cancelled": True}
+
+        await _pull_project_files(project_uid)
 
         root = data_root()
         output_dir = root / "video_outputs" / project_uid
@@ -2071,6 +2095,8 @@ async def render_dub_silent(ctx: dict[str, Any], *, job_id: str, project_uid: st
         final_rel = str(final_path.relative_to(root))
         zip_rel = str(zip_path.relative_to(root))
 
+        await _push_project_files(project_uid)
+
         await _update_video(session, project_uid, status="done", final_path=final_rel, zip_path=zip_rel)
         await _update_job(
             job_id, "ok", 100,
@@ -2111,6 +2137,8 @@ async def plan_dub_timeline(ctx: dict[str, Any], *, job_id: str, project_uid: st
     try:
         if await _abort_if_cancelled(session, project_uid, job_id):
             return {"cancelled": True}
+
+        await _pull_project_files(project_uid)
 
         root = data_root()
         output_dir = root / "video_outputs" / project_uid
@@ -2201,6 +2229,7 @@ async def plan_dub_timeline(ctx: dict[str, Any], *, job_id: str, project_uid: st
         from packages.core.settings import get_settings
         settings = get_settings()
         pool = await create_pool(RedisSettings.from_dsn(settings.redis_url))
+        await _push_project_files(project_uid)
         await pool.enqueue_job("render_video", job_id=job_id, project_uid=project_uid, tenant_slug=tenant_slug)
         await pool.close()
 
@@ -2233,6 +2262,8 @@ async def analyze_reference(ctx: dict[str, Any], *, job_id: str, project_uid: st
     try:
         from packages.video.style_profile import extract_style_profile
 
+        await _pull_project_files(project_uid)
+
         root = data_root()
         proj = await _get_video_project(session, project_uid)
         if not proj.reference_clip_path:
@@ -2252,6 +2283,7 @@ async def analyze_reference(ctx: dict[str, Any], *, job_id: str, project_uid: st
 
         rel = str(profile_path.relative_to(root))
         await _update_video(session, project_uid, style_profile_path=rel)
+        await _push_project_files(project_uid)
         await _update_job(job_id, "ok", 100, result={"step": "done", "message": "วิเคราะห์ style เสร็จแล้ว", "profile": profile})
         return profile
     except Exception as exc:

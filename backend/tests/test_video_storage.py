@@ -44,3 +44,12 @@ def test_rmtree_resilient_clears_readonly(tmp_path: Path) -> None:
     storage._rmtree_resilient(target)
 
     assert not target.exists()
+
+
+@pytest.mark.asyncio
+async def test_s3_project_sync_noop_when_disabled() -> None:
+    """pull/push_project_files must not raise when S3_BUCKET is unset."""
+    from packages.video.s3 import pull_project_files, push_project_files
+
+    await pull_project_files("proj-no-s3")
+    await push_project_files("proj-no-s3")

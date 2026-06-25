@@ -439,6 +439,8 @@ async def upload_voiceover(
     p.status = "processing"
     await session.commit()
 
+    await push_uploads(uid, vo_dir)
+
     # Reuse the same job_id so the frontend can keep polling
     job_id = p.job_id or f"video_{uid[:8]}"
     from packages.db.models.core_auth import Job
@@ -482,6 +484,8 @@ async def upload_reference(
     rel_ref = str(ref_path.relative_to(data_root()))
     p.reference_clip_path = rel_ref
     await session.commit()
+
+    await push_uploads(uid, ref_dir)
 
     ref_job_id = f"ref_{uid[:8]}"
     from packages.db.models.core_auth import Job as _Job

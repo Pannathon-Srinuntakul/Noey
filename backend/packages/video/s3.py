@@ -157,3 +157,23 @@ async def output_presigned_url(project_uid: str, filename: str, expires: int = 3
         return None
     key = f"videos/{project_uid}/outputs/{filename}"
     return await asyncio.to_thread(_sync_presigned_url, key, expires)
+
+
+async def pull_project_files(project_uid: str) -> None:
+    """Download uploads + outputs for a project. No-op when S3 disabled."""
+    from packages.video.storage import output_dir, upload_dir
+
+    await pull_uploads(project_uid, upload_dir(project_uid))
+    await pull_outputs(project_uid, output_dir(project_uid))
+
+
+async def push_project_files(project_uid: str) -> None:
+    """Upload uploads + outputs for a project. No-op when S3 disabled."""
+    from packages.video.storage import output_dir, upload_dir
+
+    up = upload_dir(project_uid)
+    if up.is_dir():
+        await push_uploads(project_uid, up)
+    out = output_dir(project_uid)
+    if out.is_dir():
+        await push_outputs(project_uid, out)
