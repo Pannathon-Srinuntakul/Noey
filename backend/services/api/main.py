@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from packages.core.logging import configure_logging, get_logger
+from packages.core.settings import get_settings
 from services.api.routers import (
     analytics,
     auth,
@@ -52,11 +53,12 @@ def create_app() -> FastAPI:
     configure_logging()
     _alembic_upgrade()
 
+    settings = get_settings()
     app = FastAPI(title="Noey Tiktok API", version="0.1.0", lifespan=lifespan)
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:5173"],
+        allow_origins=[settings.frontend_url],
         allow_methods=["*"],
         allow_headers=["*"],
     )

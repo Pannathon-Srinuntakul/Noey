@@ -10,6 +10,7 @@ export default defineConfig({
     dedupe: ['react', 'react-dom', 'react-router-dom'],
   },
   server: {
+    port: 3000,
     proxy: {
       // Dev: forward API calls to the FastAPI backend.
       '/api': { target: 'http://localhost:8000', changeOrigin: true, rewrite: (p) => p.replace(/^\/api/, '') },

@@ -49,6 +49,9 @@ class Settings(BaseSettings):
     jwt_refresh_ttl: int = 60 * 60 * 24 * 14  # 14 days
     allow_registration: bool = False  # Register endpoint gated off per requirements.
 
+    # --- CORS (frontend origin) ---
+    frontend_url: str = "http://localhost:3000"
+
     # --- Encryption (Fernet) for AI keys stored in DB ---
     # urlsafe base64 32-byte key. Set via env in production.
     encryption_key: str | None = None

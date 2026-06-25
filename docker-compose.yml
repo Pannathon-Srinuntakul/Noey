@@ -34,10 +34,14 @@ services:
     build: ./backend
     container_name: noey_api
     restart: unless-stopped
-    env_file: .env
+    env_file:
+      - .env
+      - ./backend/.env
     environment:
       POSTGRES_HOST: postgres
       REDIS_URL: redis://redis:6379/0
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+      PORT: "8000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -77,13 +81,18 @@ services:
         condition: service_healthy
 
   web:
-    build: ./frontend
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: http://localhost:8000
     container_name: noey_web
     restart: unless-stopped
     depends_on:
       - api
+    environment:
+      PORT: "3000"
     ports:
-      - "8080:80"
+      - "3000:3000"
 
 volumes:
   noey_pgdata:
