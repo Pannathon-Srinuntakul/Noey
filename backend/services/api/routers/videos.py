@@ -20,15 +20,17 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.core.settings import get_settings
+from packages.core.logging import get_logger
 from packages.db.models.core_auth import Job
 from packages.db.models.video_project import VideoProject
 from packages.db.session import bind_tenant_search_path
-from packages.video.s3 import delete_project as s3_delete_project, output_presigned_url, push_uploads
+from packages.video.s3 import delete_project as s3_delete_project, output_presigned_url, push_uploads, s3_enabled
 from packages.video.storage import data_root, delete_project_files
 from packages.video.timeline import normalize_dub_edit_script
 from services.api.deps import CurrentUser, db_session
 
 router = APIRouter(prefix="/videos", tags=["videos"])
+log = get_logger(__name__)
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -69,12 +71,27 @@ async def _get_project(session: AsyncSession, uid: str, user_id: int) -> VideoPr
 
 
 async def _enqueue(job_id: str, fn: str, **kwargs) -> None:  # type: ignore[type-arg]
+    import asyncio
+
     from arq import create_pool
     from arq.connections import RedisSettings
+
     settings = get_settings()
-    pool = await create_pool(RedisSettings.from_dsn(settings.redis_url))
-    await pool.enqueue_job(fn, job_id=job_id, **kwargs)
-    await pool.close()
+    redis = RedisSettings.from_dsn(settings.redis_url)
+    redis.conn_timeout = 5
+    redis.conn_retries = 3
+    log.info("video_enqueue_start", job_id=job_id, fn=fn, redis_host=redis.host)
+    try:
+        pool = await asyncio.wait_for(create_pool(redis), timeout=15.0)
+        await pool.enqueue_job(fn, job_id=job_id, **kwargs)
+        await pool.close()
+    except TimeoutError as exc:
+        log.error("video_enqueue_redis_timeout", job_id=job_id, redis_url=settings.redis_url)
+        raise HTTPException(503, "Redis unavailable — check REDIS_URL on api service") from exc
+    except Exception as exc:
+        log.error("video_enqueue_failed", job_id=job_id, error=str(exc))
+        raise HTTPException(503, f"Failed to enqueue job: {exc}") from exc
+    log.info("video_enqueue_done", job_id=job_id, fn=fn)
 
 
 async def _mark_job_cancelled(job_id: str) -> None:
@@ -220,6 +237,13 @@ async def upload_video(
     session: AsyncSession = Depends(db_session),
 ) -> UploadResponse:
     """Upload one or more video clips; start the AI editing pipeline."""
+    log.info(
+        "video_upload_start",
+        user_id=auth.user_id,
+        file_count=len(files),
+        mode=mode,
+        upload_mode=upload_mode,
+    )
     if mode not in ("talking_head", "dub_first"):
         raise HTTPException(400, f"Unsupported mode '{mode}'. Use 'talking_head' or 'dub_first'.")
     if upload_mode not in UPLOAD_MODES:
@@ -277,11 +301,13 @@ async def upload_video(
         )
 
     await session.commit()
+    log.info("video_upload_saved", projects=[c.project_uid for c in created])
 
-    # Push uploaded files to S3 (no-op on local when S3 not configured)
+    # Push uploaded files to S3 (no-op when S3 not fully configured)
     for item in created:
         up_dir = data_root() / "video_uploads" / item.project_uid
         await push_uploads(item.project_uid, up_dir)
+    log.info("video_upload_s3_done", s3_enabled=s3_enabled())
 
     for item in created:
         await _enqueue(
@@ -290,6 +316,7 @@ async def upload_video(
             project_uid=item.project_uid,
             tenant_slug=auth.tenant_slug,
         )
+    log.info("video_upload_enqueued", job_ids=[c.job_id for c in created])
 
     return UploadResponse(projects=created)
 

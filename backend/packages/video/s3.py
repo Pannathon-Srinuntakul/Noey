@@ -29,20 +29,34 @@ def _prefix(project_uid: str, folder: str) -> str:
 @lru_cache(maxsize=1)
 def _client():
     import boto3
+    from botocore.config import Config
     from packages.core.settings import get_settings
     s = get_settings()
+    # Railway Buckets require virtual-hosted-style URLs (not path-style).
     return boto3.client(
         "s3",
         endpoint_url=s.s3_endpoint_url,
         aws_access_key_id=s.s3_access_key_id,
         aws_secret_access_key=s.s3_secret_access_key,
         region_name=s.s3_region,
+        config=Config(
+            s3={"addressing_style": "virtual"},
+            connect_timeout=10,
+            read_timeout=300,
+            retries={"max_attempts": 3, "mode": "standard"},
+        ),
     )
 
 
 def _s3_enabled() -> bool:
     from packages.core.settings import get_settings
-    return bool(get_settings().s3_bucket)
+    s = get_settings()
+    return bool(s.s3_bucket and s.s3_access_key_id and s.s3_secret_access_key and s.s3_endpoint_url)
+
+
+def s3_enabled() -> bool:
+    """Public check — S3 only when fully configured (avoids partial-env hangs)."""
+    return _s3_enabled()
 
 
 def _bucket() -> str:
@@ -110,7 +124,11 @@ async def push_uploads(project_uid: str, local_dir: pathlib.Path) -> None:
     if not _s3_enabled():
         return
     prefix = _prefix(project_uid, "uploads")
-    count = await asyncio.to_thread(_sync_upload_dir, local_dir, prefix)
+    try:
+        count = await asyncio.to_thread(_sync_upload_dir, local_dir, prefix)
+    except Exception as exc:
+        log.error("s3_push_uploads_failed", project_uid=project_uid, error=str(exc))
+        raise
     log.info("s3_push_uploads", project_uid=project_uid, files=count)
 
 
