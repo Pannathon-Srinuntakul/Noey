@@ -9,7 +9,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState } f
 import type { ReactNode } from 'react'
 import { setTokenGetter, setUnauthorizedHandler } from '../api'
 
-const BASE = '/api'
+const BASE = import.meta.env.VITE_API_URL ?? '/api'
 
 interface AuthState {
   accessToken: string | null
