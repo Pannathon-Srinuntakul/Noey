@@ -15,10 +15,10 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column("video_projects", sa.Column("reference_clip_path", sa.Text(), nullable=True))
-    op.add_column("video_projects", sa.Column("style_profile_path", sa.Text(), nullable=True))
+    op.add_column("video_projects", sa.Column("reference_clip_path", sa.Text(), nullable=True), schema="tenant_default")
+    op.add_column("video_projects", sa.Column("style_profile_path", sa.Text(), nullable=True), schema="tenant_default")
 
 
 def downgrade() -> None:
-    op.drop_column("video_projects", "style_profile_path")
-    op.drop_column("video_projects", "reference_clip_path")
+    op.drop_column("video_projects", "style_profile_path", schema="tenant_default")
+    op.drop_column("video_projects", "reference_clip_path", schema="tenant_default")

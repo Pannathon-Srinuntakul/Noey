@@ -15,12 +15,12 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column("video_projects", sa.Column("brief", sa.Text(), nullable=True))
-    op.add_column("video_projects", sa.Column("edit_script_path", sa.Text(), nullable=True))
-    op.add_column("video_projects", sa.Column("voiceover_path", sa.Text(), nullable=True))
+    op.add_column("video_projects", sa.Column("brief", sa.Text(), nullable=True), schema="tenant_default")
+    op.add_column("video_projects", sa.Column("edit_script_path", sa.Text(), nullable=True), schema="tenant_default")
+    op.add_column("video_projects", sa.Column("voiceover_path", sa.Text(), nullable=True), schema="tenant_default")
 
 
 def downgrade() -> None:
-    op.drop_column("video_projects", "voiceover_path")
-    op.drop_column("video_projects", "edit_script_path")
-    op.drop_column("video_projects", "brief")
+    op.drop_column("video_projects", "voiceover_path", schema="tenant_default")
+    op.drop_column("video_projects", "edit_script_path", schema="tenant_default")
+    op.drop_column("video_projects", "brief", schema="tenant_default")

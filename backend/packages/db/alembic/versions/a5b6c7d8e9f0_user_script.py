@@ -18,8 +18,9 @@ def upgrade() -> None:
     op.add_column(
         "video_projects",
         sa.Column("user_script", sa.Text(), nullable=True),
+        schema="tenant_default",
     )
 
 
 def downgrade() -> None:
-    op.drop_column("video_projects", "user_script")
+    op.drop_column("video_projects", "user_script", schema="tenant_default")

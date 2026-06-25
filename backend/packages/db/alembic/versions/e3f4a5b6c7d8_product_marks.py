@@ -16,8 +16,8 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column("video_projects", sa.Column("product_marks", JSONB(), nullable=True))
+    op.add_column("video_projects", sa.Column("product_marks", JSONB(), nullable=True), schema="tenant_default")
 
 
 def downgrade() -> None:
-    op.drop_column("video_projects", "product_marks")
+    op.drop_column("video_projects", "product_marks", schema="tenant_default")
