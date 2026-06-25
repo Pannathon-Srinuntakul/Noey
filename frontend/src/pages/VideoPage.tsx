@@ -33,7 +33,7 @@ import {
   XCircle,
 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { api, type DubEditScript, type VideoProjectOut } from '../api'
+import { api, storedPathBasename, type DubEditScript, type VideoProjectOut } from '../api'
 import { useAuth } from '../auth/AuthContext'
 import { ConfirmModal } from '../hud/ConfirmModal'
 import { useNavigateWithDoor } from '../navigation/NavigationContext'
@@ -1110,8 +1110,8 @@ function ProjectCard({
 }: {
   project: VideoProjectOut
   job: JobStatus | null
-  onDownloadFinal: (uid: string) => void
-  onDownloadCapcut: (uid: string) => void
+  onDownloadFinal: (project: VideoProjectOut) => void
+  onDownloadCapcut: (project: VideoProjectOut) => void
   onCancel: (uid: string) => void
   onDelete: (uid: string) => void
   onVoUploaded: (updated: VideoProjectOut) => void
@@ -1287,7 +1287,7 @@ function ProjectCard({
           </p>
           <div className="mt-3 flex gap-2">
             <button
-              onClick={() => onDownloadFinal(project.uid)}
+              onClick={() => onDownloadFinal(project)}
               disabled={downloading === project.uid}
               className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-[#5b3a1a] px-3 py-2 text-xs font-medium text-amber-50 shadow hover:bg-[#4a2e0c] disabled:opacity-50"
             >
@@ -1299,7 +1299,7 @@ function ProjectCard({
               {project.mode === 'dub_first' ? 'ดาวน์โหลด Silent MP4' : 'ดาวน์โหลดคลิปเต็ม'}
             </button>
             <button
-              onClick={() => onDownloadCapcut(project.uid)}
+              onClick={() => onDownloadCapcut(project)}
               disabled={downloading === project.uid}
               className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-[#5b3a1a]/40 bg-amber-50 px-3 py-2 text-xs font-medium text-[#5b3a1a] hover:bg-amber-100 disabled:opacity-50"
             >
@@ -1511,15 +1511,17 @@ export default function VideoPage() {
     }
   }
 
-  async function handleDownloadFinal(uid: string) {
-    setDownloading(uid)
-    try { await api.videos.downloadFinal(uid) } catch (e) { alert((e as Error).message) }
+  async function handleDownloadFinal(project: VideoProjectOut) {
+    setDownloading(project.uid)
+    const filename = storedPathBasename(project.final_path) ?? 'final.mp4'
+    try { await api.videos.downloadFinal(project.uid, filename) } catch (e) { alert((e as Error).message) }
     finally { setDownloading(null) }
   }
 
-  async function handleDownloadCapcut(uid: string) {
-    setDownloading(uid)
-    try { await api.videos.exportCapcut(uid) } catch (e) { alert((e as Error).message) }
+  async function handleDownloadCapcut(project: VideoProjectOut) {
+    setDownloading(project.uid)
+    const filename = storedPathBasename(project.zip_path) ?? `capcut_bundle_${project.uid.slice(0, 8)}.zip`
+    try { await api.videos.exportCapcut(project.uid, filename) } catch (e) { alert((e as Error).message) }
     finally { setDownloading(null) }
   }
 

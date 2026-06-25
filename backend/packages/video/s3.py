@@ -173,16 +173,38 @@ def _output_key(project_uid: str, filename: str) -> str:
     return f"videos/{project_uid}/outputs/{filename}"
 
 
+def output_basename(stored_path: str) -> str:
+    """Basename for S3 outputs/ — e.g. final.mp4, final_silent.mp4, dub_bundle.zip."""
+    return pathlib.Path(stored_path.replace("\\", "/")).name
+
+
+def _sync_output_exists(key: str) -> bool:
+    from botocore.exceptions import ClientError
+
+    try:
+        _client().head_object(Bucket=_bucket(), Key=key)
+        return True
+    except ClientError as exc:
+        code = exc.response.get("Error", {}).get("Code", "")
+        if code in ("404", "NoSuchKey", "NotFound"):
+            return False
+        raise
+
+
 async def output_presigned_url(project_uid: str, filename: str, expires: int = 3600) -> str | None:
-    """Return a presigned URL for an output file, or None when S3 disabled."""
+    """Return a presigned URL for an output file, or None when S3 disabled or object missing."""
     if not _s3_enabled():
         return None
     key = _output_key(project_uid, filename)
+    if not await asyncio.to_thread(_sync_output_exists, key):
+        log.warning("s3_output_missing", project_uid=project_uid, key=key)
+        return None
     return await asyncio.to_thread(_sync_presigned_url, key, expires)
 
 
 async def ensure_local_output(project_uid: str, filename: str) -> pathlib.Path:
     """Return local path to an output file, downloading from S3 when missing on disk."""
+    from botocore.exceptions import ClientError
     from packages.video.storage import output_dir
 
     local = output_dir(project_uid) / filename
@@ -191,13 +213,31 @@ async def ensure_local_output(project_uid: str, filename: str) -> pathlib.Path:
     if not _s3_enabled():
         raise FileNotFoundError(filename)
 
+    key = _output_key(project_uid, filename)
+
     def _download() -> None:
         local.parent.mkdir(parents=True, exist_ok=True)
-        _client().download_file(_bucket(), _output_key(project_uid, filename), str(local))
+        try:
+            _client().download_file(_bucket(), key, str(local))
+        except ClientError as exc:
+            code = exc.response.get("Error", {}).get("Code", "")
+            if code in ("404", "NoSuchKey", "NotFound"):
+                raise FileNotFoundError(filename) from exc
+            raise
 
     await asyncio.to_thread(_download)
     log.info("s3_download_output", project_uid=project_uid, filename=filename)
     return local
+
+
+async def resolve_stored_output(project_uid: str, stored_rel_path: str) -> pathlib.Path:
+    """Resolve a DB path (relative to data_root) to a readable local file."""
+    from packages.video.storage import data_root
+
+    local = data_root() / stored_rel_path
+    if local.is_file():
+        return local
+    return await ensure_local_output(project_uid, output_basename(stored_rel_path))
 
 
 async def pull_project_files(project_uid: str) -> None:

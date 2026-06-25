@@ -28,9 +28,10 @@ from packages.db.models.video_project import VideoProject
 from packages.db.session import bind_tenant_search_path
 from packages.video.s3 import (
     delete_project as s3_delete_project,
-    ensure_local_output,
+    output_basename,
     output_presigned_url,
     push_uploads,
+    resolve_stored_output,
     s3_enabled,
 )
 from packages.video.storage import data_root, delete_project_files
@@ -83,11 +84,6 @@ async def _redirect_presigned_output(project_uid: str, filename: str) -> Redirec
     if not url:
         raise HTTPException(404, "File not found")
     return RedirectResponse(url)
-
-
-def _stored_output_name(stored_path: str) -> str:
-    """Basename under video_outputs/{uid}/ — e.g. final.mp4 vs final_silent.mp4."""
-    return pathlib.Path(stored_path).name
 
 
 async def _enqueue(job_id: str, fn: str, **kwargs) -> None:  # type: ignore[type-arg]
@@ -418,13 +414,13 @@ async def get_playback_url(
     p = await _get_project(session, uid, auth.user_id)
     if p.status != "done" or not p.final_path:
         raise HTTPException(404, "Video not ready yet")
-    file_path = data_root() / p.final_path
-    if file_path.exists():
-        return PlaybackUrlOut(mode="authenticated")
     if s3_enabled():
-        url = await output_presigned_url(uid, _stored_output_name(p.final_path))
+        url = await output_presigned_url(uid, output_basename(p.final_path))
         if url:
             return PlaybackUrlOut(mode="direct", url=url)
+    file_path = data_root() / p.final_path
+    if file_path.is_file():
+        return PlaybackUrlOut(mode="authenticated")
     raise HTTPException(404, "File not found")
 
 
@@ -438,13 +434,13 @@ async def get_capcut_url(
     p = await _get_project(session, uid, auth.user_id)
     if p.status != "done" or not p.zip_path:
         raise HTTPException(404, "CapCut bundle not ready yet")
-    file_path = data_root() / p.zip_path
-    if file_path.exists():
-        return PlaybackUrlOut(mode="authenticated")
     if s3_enabled():
-        url = await output_presigned_url(uid, _stored_output_name(p.zip_path))
+        url = await output_presigned_url(uid, output_basename(p.zip_path))
         if url:
             return PlaybackUrlOut(mode="direct", url=url)
+    file_path = data_root() / p.zip_path
+    if file_path.is_file():
+        return PlaybackUrlOut(mode="authenticated")
     raise HTTPException(404, "File not found")
 
 
@@ -458,11 +454,12 @@ async def download_final(
     p = await _get_project(session, uid, auth.user_id)
     if p.status != "done" or not p.final_path:
         raise HTTPException(404, "Video not ready yet")
+    out_name = output_basename(p.final_path)
     file_path = data_root() / p.final_path
-    if file_path.exists():
-        return FileResponse(str(file_path), media_type="video/mp4", filename=f"noey_edit_{uid[:8]}.mp4")
+    if file_path.is_file():
+        return FileResponse(str(file_path), media_type="video/mp4", filename=out_name)
     if s3_enabled():
-        return await _redirect_presigned_output(uid, _stored_output_name(p.final_path))
+        return await _redirect_presigned_output(uid, out_name)
     raise HTTPException(404, "File not found")
 
 
@@ -476,11 +473,12 @@ async def export_capcut(
     p = await _get_project(session, uid, auth.user_id)
     if p.status != "done" or not p.zip_path:
         raise HTTPException(404, "CapCut bundle not ready yet")
+    zip_name = output_basename(p.zip_path)
     file_path = data_root() / p.zip_path
-    if file_path.exists():
-        return FileResponse(str(file_path), media_type="application/zip", filename=f"capcut_bundle_{uid[:8]}.zip")
+    if file_path.is_file():
+        return FileResponse(str(file_path), media_type="application/zip", filename=zip_name)
     if s3_enabled():
-        return await _redirect_presigned_output(uid, _stored_output_name(p.zip_path))
+        return await _redirect_presigned_output(uid, zip_name)
     raise HTTPException(404, "File not found")
 
 
@@ -495,12 +493,10 @@ async def get_edit_script(
     p = await _get_project(session, uid, auth.user_id)
     if not p.edit_script_path:
         raise HTTPException(404, "Edit script not available yet")
-    script_file = data_root() / p.edit_script_path
-    if not script_file.exists():
-        try:
-            script_file = await ensure_local_output(uid, script_file.name)
-        except FileNotFoundError as exc:
-            raise HTTPException(404, "Edit script file not found") from exc
+    try:
+        script_file = await resolve_stored_output(uid, p.edit_script_path)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, "Edit script file not found") from exc
     return normalize_dub_edit_script(_json.loads(script_file.read_text(encoding="utf-8")))
 
 

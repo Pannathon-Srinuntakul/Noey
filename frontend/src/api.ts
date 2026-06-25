@@ -346,12 +346,13 @@ export const api = {
       if (!r.ok) throw new Error(`${r.status} ${r.statusText}`)
       return r.blob()
     },
-    exportCapcut: async (uid: string) => {
+    exportCapcut: async (uid: string, filename?: string) => {
       const playback = await api.videos.getCapcutUrl(uid)
+      const zipName = filename ?? `capcut_bundle_${uid.slice(0, 8)}.zip`
       if (playback.mode === 'direct' && playback.url) {
         const a = document.createElement('a')
         a.href = playback.url
-        a.download = `capcut_bundle_${uid.slice(0, 8)}.zip`
+        a.download = zipName
         a.rel = 'noopener'
         a.click()
         return
@@ -360,7 +361,7 @@ export const api = {
       if (!r.ok) throw new Error(`${r.status} ${r.statusText}`)
       const blob = await r.blob()
       const url = URL.createObjectURL(blob)
-      const a = document.createElement('a'); a.href = url; a.download = `capcut_bundle_${uid.slice(0, 8)}.zip`; a.click()
+      const a = document.createElement('a'); a.href = url; a.download = zipName; a.click()
       URL.revokeObjectURL(url)
     },
     cancel: (uid: string) => send<VideoProjectOut>(`/videos/${uid}/cancel`, 'POST'),
@@ -368,6 +369,13 @@ export const api = {
     getEditScript: (uid: string) => get<DubEditScript>(`/videos/${uid}/edit-script`),
   },
 
+}
+
+export function storedPathBasename(storedPath: string | null | undefined): string | undefined {
+  if (!storedPath) return undefined
+  const normalized = storedPath.replace(/\\/g, '/')
+  const i = normalized.lastIndexOf('/')
+  return i >= 0 ? normalized.slice(i + 1) : normalized
 }
 
 export interface VideoPlaybackUrl {

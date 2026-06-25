@@ -46,6 +46,15 @@ def test_rmtree_resilient_clears_readonly(tmp_path: Path) -> None:
     assert not target.exists()
 
 
+def test_output_basename() -> None:
+    from packages.video.s3 import output_basename
+
+    assert output_basename("video_outputs/u1/final.mp4") == "final.mp4"
+    assert output_basename("video_outputs/u1/final_silent.mp4") == "final_silent.mp4"
+    assert output_basename("video_outputs/u1/dub_bundle.zip") == "dub_bundle.zip"
+    assert output_basename(r"video_outputs\u1\capcut_bundle.zip") == "capcut_bundle.zip"
+
+
 @pytest.mark.asyncio
 async def test_s3_project_sync_noop_when_disabled() -> None:
     """pull/push_project_files must not raise when S3_BUCKET is unset."""
