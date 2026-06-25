@@ -84,6 +84,10 @@ AVG_LOGPROB_MIN = -2.0        # Thai fine-tuned baseline is lower than English m
 COMPRESSION_RATIO_MAX = 2.4   # above this → repetition loop (hallucination)
 # A single word should not span longer than this (DTW timestamp glitch otherwise).
 MAX_WORD_SPAN = 1.2
+# Silence between two consecutive words inside ONE segment longer than this means
+# the segment is not continuous speech (Whisper merged speech across a long pause /
+# hallucinated a word over silence). Split the segment at that gap.
+MAX_INTRA_SEGMENT_WORD_GAP = 2.0
 # Keep VAD tail up to this beyond last word end (Thai tone decay lives here).
 VAD_TAIL_PRESERVE_SEC = 0.45
 # Segment end further than this past last word → glitch trim, not real speech.
@@ -246,3 +250,49 @@ def tighten_segment_bounds(seg: dict[str, Any]) -> dict[str, Any]:
         "end": round(new_end, 3),
         "words": fixed_words,
     }
+
+
+def split_segment_on_word_gaps(
+    seg: dict[str, Any],
+    *,
+    max_gap_sec: float = MAX_INTRA_SEGMENT_WORD_GAP,
+) -> list[dict[str, Any]]:
+    """Split a Whisper segment when consecutive words are >max_gap_sec apart.
+
+    Whisper (especially on long clips / via Modal) sometimes emits a single
+    segment whose words straddle a long silence — e.g. word "มัน" at 80.3s and
+    "เกิด" at 140.85s in the same segment. Downstream `build_speech_cuts` works
+    at segment level and would keep all 60s of silence. Splitting here yields
+    coherent sub-segments so silence-cut and repeat-dedupe behave correctly.
+
+    Returns one or more segments. A segment with <2 words is returned unchanged.
+    """
+    words = list(seg.get("words") or [])
+    if len(words) < 2:
+        return [seg]
+
+    groups: list[list[dict[str, Any]]] = [[words[0]]]
+    for w in words[1:]:
+        prev_end = float(groups[-1][-1]["end"])
+        gap = float(w["start"]) - prev_end
+        if gap > max_gap_sec:
+            groups.append([w])
+        else:
+            groups[-1].append(w)
+
+    if len(groups) < 2:
+        return [seg]
+
+    out: list[dict[str, Any]] = []
+    for grp in groups:
+        g_start = float(grp[0]["start"])
+        g_end = float(grp[-1]["end"])
+        text = "".join(str(w.get("word", "")) for w in grp).strip()
+        out.append({
+            **seg,
+            "start": round(g_start, 3),
+            "end": round(g_end, 3),
+            "text": text,
+            "words": grp,
+        })
+    return out

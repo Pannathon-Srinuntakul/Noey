@@ -428,10 +428,10 @@ async def ingest_video(ctx: dict[str, Any], *, job_id: str, project_uid: str, te
 
 # ── task: transcribe_video ────────────────────────────────────────────────────
 
-# Modal web endpoints async-poll via 303 on long jobs; chunk very long WAVs.
-MODAL_CHUNK_SEC = 900.0       # 15 min per request
-MODAL_CHUNK_WHEN_SEC = 900.0    # chunk when source audio longer than this
-MODAL_CHUNK_WHEN_MB = 80.0      # or when WAV exceeds this size
+# Modal default function timeout ≈300s. GPU ~0.55s per 1s audio → 3-min chunks finish ~100s.
+MODAL_CHUNK_SEC = 180.0         # max audio seconds per Modal request
+MODAL_CHUNK_WHEN_SEC = 240.0    # chunk when WAV longer than 4 min (5-min uploads → 2 chunks)
+MODAL_CHUNK_WHEN_MB = 28.0      # chunk when WAV exceeds ~28 MB (16 kHz mono ≈ 4 min)
 
 
 async def _transcribe_modal_request(
@@ -440,6 +440,7 @@ async def _transcribe_modal_request(
     language: str,
     *,
     clip_sec: float,
+    vad_filter: bool = True,
 ) -> dict[str, Any]:
     """POST audio to Modal; poll async 303 redirect until transcript JSON is ready."""
     import asyncio
@@ -450,7 +451,11 @@ async def _transcribe_modal_request(
     read_timeout = max(600.0, clip_sec * 2.5 + 300.0)
     write_timeout = max(300.0, size_mb * 4.0)
     timeout = httpx.Timeout(connect=120.0, read=read_timeout, write=write_timeout, pool=60.0)
-    payload = {"audio_b64": base64.b64encode(audio_bytes).decode(), "language": language}
+    payload = {
+        "audio_b64": base64.b64encode(audio_bytes).decode(),
+        "language": language,
+        "vad_filter": vad_filter,
+    }
 
     async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
         resp = await client.post(modal_url, json=payload)
@@ -507,6 +512,8 @@ async def _transcribe_via_modal(
     wav_path: pathlib.Path,
     modal_url: str,
     language: str,
+    *,
+    vad_filter: bool = True,
 ) -> list[dict[str, Any]]:
     """Send WAV to Modal GPU endpoint; chunk long audio to avoid huge payloads + 303 timeouts."""
     import ffmpeg as ffmpeg_lib
@@ -518,12 +525,13 @@ async def _transcribe_via_modal(
         wav=wav_path.name,
         size_mb=round(size_mb, 2),
         duration_sec=round(duration, 1),
+        vad_filter=vad_filter,
     )
 
     need_chunk = duration > MODAL_CHUNK_WHEN_SEC or size_mb > MODAL_CHUNK_WHEN_MB
     if not need_chunk:
         data = await _transcribe_modal_request(
-            wav_path.read_bytes(), modal_url, language, clip_sec=duration,
+            wav_path.read_bytes(), modal_url, language, clip_sec=duration, vad_filter=vad_filter,
         )
         segments = data.get("segments", [])
         log.info("modal_transcribe_done", wav=wav_path.name, segments=len(segments), dropped=data.get("dropped", 0))
@@ -554,7 +562,7 @@ async def _transcribe_via_modal(
                 size_mb=round(len(chunk_bytes) / 1024 / 1024, 2),
             )
             data = await _transcribe_modal_request(
-                chunk_bytes, modal_url, language, clip_sec=chunk_dur,
+                chunk_bytes, modal_url, language, clip_sec=chunk_dur, vad_filter=vad_filter,
             )
             dropped_total += int(data.get("dropped", 0))
             all_segments.extend(_offset_modal_segments(data.get("segments", []), offset))
@@ -584,6 +592,7 @@ async def transcribe_video(ctx: dict[str, Any], *, job_id: str, project_uid: str
             build_transcribe_options,
             is_hallucinated_segment,
             should_retry_transcription_without_vad,
+            split_segment_on_word_gaps,
             tighten_segment_bounds,
             transcript_coverage_stats,
         )
@@ -612,7 +621,7 @@ async def transcribe_video(ctx: dict[str, Any], *, job_id: str, project_uid: str
             log.info("whisper_config", backend="local", model=_s.whisper_model, device=_s.whisper_device,
                      language=_s.whisper_language or "auto")
 
-        async def _collect_segments_modal() -> tuple[list[dict[str, Any]], int, float]:
+        async def _collect_segments_modal(*, vad_filter: bool = True) -> tuple[list[dict[str, Any]], int, float]:
             """Collect segments via Modal GPU endpoint."""
             collected: list[dict[str, Any]] = []
             offset = 0.0
@@ -625,7 +634,9 @@ async def transcribe_video(ctx: dict[str, Any], *, job_id: str, project_uid: str
                     "transcribe",
                     f"กำลังถอดเสียงคลิป {idx + 1}/{len(audio_files)}…",
                 )
-                segs = await _transcribe_via_modal(wav, _s.modal_whisper_url, _s.whisper_language)
+                segs = await _transcribe_via_modal(
+                    wav, _s.modal_whisper_url, _s.whisper_language, vad_filter=vad_filter,
+                )
                 clip_dur = media_duration(wav)
                 for seg in segs:
                     tight = tighten_segment_bounds({
@@ -723,16 +734,20 @@ async def transcribe_video(ctx: dict[str, Any], *, job_id: str, project_uid: str
         if use_modal:
             all_segments, dropped, total_source = await _collect_segments_modal()
         else:
+            options = build_transcribe_options(language=_s.whisper_language)
             all_segments, dropped, total_source = await _collect_segments(options, pass_label="vad")
 
         coverage = transcript_coverage_stats(all_segments, total_source)
         log.info("transcribe_coverage", **coverage, total_source=round(total_source, 1), dropped=dropped)
 
-        if not use_modal and should_retry_transcription_without_vad(all_segments, total_source):
-            log.warning("transcribe_retry_no_vad", **coverage)
+        if should_retry_transcription_without_vad(all_segments, total_source):
+            log.warning("transcribe_retry_no_vad", backend="modal" if use_modal else "local", **coverage)
             await _video_progress(job_id, 65, "transcribe", "Whisper พลาดช่วงเงียบ — ถอดเสียงรอบ 2…")
-            retry_options = build_transcribe_options(language=_s.whisper_language, vad_filter=False)
-            retry_segments, retry_dropped, _ = await _collect_segments(retry_options, pass_label="no_vad")
+            if use_modal:
+                retry_segments, retry_dropped, _ = await _collect_segments_modal(vad_filter=False)
+            else:
+                retry_options = build_transcribe_options(language=_s.whisper_language, vad_filter=False)
+                retry_segments, retry_dropped, _ = await _collect_segments(retry_options, pass_label="no_vad")
             retry_cov = transcript_coverage_stats(retry_segments, total_source)
             log.info("transcribe_retry_coverage", **retry_cov, dropped=retry_dropped)
             if (
@@ -744,6 +759,15 @@ async def transcribe_video(ctx: dict[str, Any], *, job_id: str, project_uid: str
                 log.info("transcribe_retry_adopted", **retry_cov)
 
         log.info("transcribe_filtered", kept=len(all_segments), dropped=dropped)
+
+        # Split segments whose words straddle long internal silence (Whisper
+        # sometimes merges speech across a 60s pause into one segment).
+        before_split = len(all_segments)
+        all_segments = [
+            part for seg in all_segments for part in split_segment_on_word_gaps(seg)
+        ]
+        if len(all_segments) != before_split:
+            log.info("transcribe_word_gap_split", before=before_split, after=len(all_segments))
 
         transcript = {"segments": all_segments}
         transcript_path = output_dir / "transcript.json"
@@ -1624,22 +1648,37 @@ You receive: a script plan (voiceover lines + visual hints) and sample frames fr
 </voiceover_lines>
 <matching>Match visual_hint from the script plan to the most fitting video moment(s).</matching>
 <priorities>Prioritize: strong product reveal, clear demonstrations, reactions, strong conclusion.</priorities>
+<readiness>
+Only use moments where the creator looks READY on camera — pose settled, facing camera, action started.
+If a frame shows prep, skip it and pick another timestamp.
+</readiness>
 <avoid>
 - Speaker looks off-camera, down, or to the side
-- Speaker mid-preparation: adjusting hair, clothing, phone, or camera
+- Hands touching hair, brushing hair, fixing bangs, or adjusting headwear
+- Pulling at clothing, fixing straps, or straightening outfit before presenting
+- Adjusting phone, tripod, ring light, or reframing the camera
+- Speaker mid-preparation: settling into pose, waiting for cue, not yet facing camera
 - Speaker looks uncertain, hesitant, or mid-sentence restart
 - Repeated segments showing the same action twice
 - Any moment where the speaker has not yet started their shot
+- Trims that start BEFORE the ready moment visible in the matched frame
 </avoid>
 <prefer>
 - Speaker looks directly at camera with confidence
+- Pose already settled — no grooming or setup visible
 - Clear product interaction: holding, showing, applying, demonstrating
 - Strong emotional moments: reactions, excitement, clear delivery
 </prefer>
+<anchor>
+- Every segment MUST include matchedFrameTime: the exact timestamp (seconds) of the sample frame you chose.
+- sourceIn must be within ±0.35s of matchedFrameTime — do NOT start the trim earlier to include prep.
+- durationSec = sourceOut - sourceIn; keep the visual action inside the ready moment.
+</anchor>
 <fields>
 - cutStyle options: "jump_cut" | "standard" | "zoom_in" | "zoom_out" — default to "jump_cut"
 - voiceoverLineId: integer grouping id (required on every segment)
 - voiceoverScript: copy exactly from the script plan on the first cut of each line
+- matchedFrameTime: float seconds of the chosen sample frame (required on every segment)
 - totalEstimatedSec: sum of all segment durationSec (all visual cuts, including montage)
 </fields>
 </rules>
@@ -1662,6 +1701,7 @@ Return ONLY a valid JSON object matching this schema exactly:
       "sourceIn": 5.2,
       "sourceOut": 8.2,
       "durationSec": 3.0,
+      "matchedFrameTime": 5.2,
       "visualDescription": "ถือสินค้าใกล้กล้อง หมุนให้เห็นฉลาก",
       "cutStyle": "jump_cut",
       "voiceoverScript": "วันนี้มารีวิวครีมตัวนี้ที่ใช้มา 2 สัปดาห์แล้ว"
@@ -1673,6 +1713,7 @@ Return ONLY a valid JSON object matching this schema exactly:
       "sourceIn": 12.0,
       "sourceOut": 14.0,
       "durationSec": 2.0,
+      "matchedFrameTime": 12.0,
       "visualDescription": "close-up ฝาครีม",
       "cutStyle": "jump_cut",
       "voiceoverScript": "เนื้อครีมบางเบา ซึมไว ไม่เหนียว"
@@ -1684,6 +1725,7 @@ Return ONLY a valid JSON object matching this schema exactly:
       "sourceIn": 28.5,
       "sourceOut": 30.0,
       "durationSec": 1.5,
+      "matchedFrameTime": 28.5,
       "visualDescription": "texture squeeze บนหลังมือ",
       "cutStyle": "jump_cut"
     },
@@ -1694,6 +1736,7 @@ Return ONLY a valid JSON object matching this schema exactly:
       "sourceIn": 45.0,
       "sourceOut": 47.5,
       "durationSec": 2.5,
+      "matchedFrameTime": 45.0,
       "visualDescription": "ทา demo",
       "cutStyle": "jump_cut"
     },
@@ -1704,6 +1747,7 @@ Return ONLY a valid JSON object matching this schema exactly:
       "sourceIn": 62.0,
       "sourceOut": 63.5,
       "durationSec": 1.5,
+      "matchedFrameTime": 62.0,
       "visualDescription": "ผิวหลังทา โทนสว่าง",
       "cutStyle": "zoom_in"
     }
@@ -1771,7 +1815,7 @@ async def _plan_script_outline(
         if len(key_frames) >= 5:
             break
         dur = media_duration(nf)
-        for j, pct in enumerate([0.15, 0.50, 0.85]):
+        for j, pct in enumerate([0.35, 0.55, 0.80]):
             if len(key_frames) >= 5:
                 break
             t = dur * pct
@@ -1867,7 +1911,7 @@ async def analyze_dub_first(ctx: dict[str, Any], *, job_id: str, project_uid: st
             )
             try:
                 scenes = detect_scenes(norm_file)
-                from packages.video.scene import DUB_MAX_FRAMES
+                from packages.video.scene import DUB_LEAD_SKIP_PCT, DUB_MAX_FRAMES
                 frames = extract_sample_frames(
                     norm_file,
                     scenes,
@@ -1875,6 +1919,7 @@ async def analyze_dub_first(ctx: dict[str, Any], *, job_id: str, project_uid: st
                     clip_id=clip_id,
                     max_frames=DUB_MAX_FRAMES,
                     samples_per_scene=2,
+                    lead_skip_pct=DUB_LEAD_SKIP_PCT,
                 )
                 all_frames.extend(frames)
             except Exception as exc:
@@ -1899,7 +1944,10 @@ async def analyze_dub_first(ctx: dict[str, Any], *, job_id: str, project_uid: st
         user_msg_content: list[dict[str, Any]] = [{"type": "text", "text": (
             f"{script_plan_xml}\n\n"
             f"<frame_timestamps>\n{frame_descs}\n</frame_timestamps>\n\n"
-            "<instruction>Sample frames follow in order. Match voiceover lines to video moments. "
+            "<instruction>Sample frames follow in order. Each frame is from the READY portion of its scene "
+            "(early prep/hair-adjust moments are excluded from sampling). "
+            "Match voiceover lines to ready-on-camera moments only. "
+            "Set matchedFrameTime to the frame timestamp you chose; keep sourceIn within ±0.35s of it. "
             "For product/OOTD/demo lines: use 3–6 angle changes per line (1.5–3.5s each) from DISTINCT timestamps — "
             "avoid one long 5s+ hold on a single angle when other frames are available.</instruction>"
         )}]
@@ -1918,7 +1966,7 @@ async def analyze_dub_first(ctx: dict[str, Any], *, job_id: str, project_uid: st
         resp = await acompletion(messages, system=_EDIT_SCRIPT_SYSTEM, **vx)
         raw = resp.choices[0].message.content or ""
         edit_script = parse_llm_json(raw)
-        edit_script = normalize_dub_edit_script(edit_script)
+        edit_script = normalize_dub_edit_script(edit_script, sample_frames=all_frames)
 
         edit_script_path = output_dir / "edit_script.json"
         edit_script_path.write_text(

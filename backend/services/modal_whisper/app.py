@@ -32,11 +32,14 @@ image = (
 
 MODEL_ID = "large-v3-turbo"
 LANGUAGE = "th"
+# Per-chunk ceiling; worker sends ≤3 min WAV per request (see MODAL_CHUNK_SEC in tasks.py).
+MODAL_TIMEOUT_SEC = 600
 
 
 @app.cls(
-    gpu="T4",
+    gpu="L4",   # was T4 — ~1.5-2x faster, 24 GiB VRAM, cost-efficient inference
     image=image,
+    timeout=MODAL_TIMEOUT_SEC,
     scaledown_window=300,   # keep warm 5 min after last request
 )
 class WhisperService:
@@ -46,7 +49,7 @@ class WhisperService:
         self.model = WhisperModel(MODEL_ID, device="cuda", compute_type="float16")
 
     @modal.method()
-    def transcribe(self, audio_bytes: bytes, language: str = LANGUAGE) -> dict:
+    def transcribe(self, audio_bytes: bytes, language: str = LANGUAGE, vad_filter: bool = True) -> dict:
         import tempfile, os, time
 
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
@@ -64,17 +67,18 @@ class WhisperService:
                     "ส่วนลด คูปอง ออเดอร์ แบรนด์ คอนเทนต์ ครีเอเตอร์ ไลฟ์สด ยอดขาย "
                     "ตะกร้า เพิ่มในตะกร้า ชำระเงิน TikTok Shop"
                 ),
-                "vad_filter": True,
-                "vad_parameters": {
-                    "min_silence_duration_ms": 500,
-                    "speech_pad_ms": 350,
-                    "threshold": 0.30,
-                },
+                "vad_filter": vad_filter,
                 "no_speech_threshold": 0.80,
                 "log_prob_threshold": -2.0,
                 "compression_ratio_threshold": 2.4,
                 "temperature": [0.0, 0.2, 0.4, 0.6, 0.8, 1.0],
             }
+            if vad_filter:
+                opts["vad_parameters"] = {
+                    "min_silence_duration_ms": 500,
+                    "speech_pad_ms": 350,
+                    "threshold": 0.30,
+                }
 
             segs, info = self.model.transcribe(wav_path, **opts)
             segments = []
@@ -131,14 +135,15 @@ from pydantic import BaseModel
 class TranscribePayload(BaseModel):
     audio_b64: str
     language: str = LANGUAGE
+    vad_filter: bool = True
 
 
-@app.function(image=image)
+@app.function(image=image, timeout=MODAL_TIMEOUT_SEC)
 @modal.fastapi_endpoint(method="POST")
 def transcribe_endpoint(payload: TranscribePayload) -> dict:
     """HTTP POST endpoint — receives base64 WAV, returns transcript JSON."""
     import base64
     audio_bytes = base64.b64decode(payload.audio_b64)
     svc = WhisperService()
-    result = svc.transcribe.remote(audio_bytes, payload.language)
+    result = svc.transcribe.remote(audio_bytes, payload.language, payload.vad_filter)
     return result

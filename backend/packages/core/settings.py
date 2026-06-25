@@ -50,7 +50,7 @@ class Settings(BaseSettings):
     allow_registration: bool = False  # Register endpoint gated off per requirements.
 
     # --- CORS (frontend origin) ---
-    frontend_url: str = "http://localhost:3000"
+    frontend_url: str = "http://localhost:5173"
 
     # --- Encryption (Fernet) for AI keys stored in DB ---
     # urlsafe base64 32-byte key. Set via env in production.

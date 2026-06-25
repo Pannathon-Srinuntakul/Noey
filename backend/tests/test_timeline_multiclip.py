@@ -5,6 +5,7 @@ from packages.video.timeline import (
     _snap_to_words,
     apply_semantic_dedupe_plan,
     annotate_dub_script_output_times,
+    anchor_dub_segments_to_frames,
     normalize_dub_edit_script,
     build_clip_boundaries,
     build_speech_blocks,
@@ -459,6 +460,25 @@ def test_split_cuts_on_internal_silence() -> None:
     assert out[1]["in"] >= 19.0
 
 
+def test_split_cuts_on_internal_word_gap_single_segment() -> None:
+    # One Whisper segment whose words straddle a long internal pause: the cut
+    # spans the whole segment but the gap (12s) inside must still split it.
+    segments = [
+        {
+            "start": 80.0, "end": 141.0, "text": "มันเกิด",
+            "words": [
+                {"word": "มัน", "start": 80.0, "end": 81.5},
+                {"word": "เกิด", "start": 140.0, "end": 141.0},
+            ],
+        },
+    ]
+    cuts = [{"type": "cut", "source": "clip0", "in": 79.5, "out": 141.5, "label": "speech"}]
+    out = split_cuts_on_internal_silence(cuts, segments, max_gap_sec=2.0)
+    assert len(out) == 2
+    assert out[0]["out"] <= 82.5
+    assert out[1]["in"] >= 139.5
+
+
 
 
 def test_trim_speech_cuts_to_budget_slices_oversized_blocks() -> None:
@@ -612,3 +632,58 @@ def test_normalize_dub_backward_compat_single_cut() -> None:
     assert segs[1]["voiceoverLineId"] == 2
     assert segs[0]["voiceoverLineOutputIn"] == 0.0
     assert segs[1]["voiceoverLineOutputIn"] == 3.0
+
+
+def test_anchor_dub_segments_snaps_loose_trim() -> None:
+    frames = [
+        {"clip_id": "clip0", "time": 12.0, "scene_start": 10.0, "scene_end": 20.0},
+        {"clip_id": "clip0", "time": 28.0, "scene_start": 25.0, "scene_end": 35.0},
+    ]
+    script = {
+        "segments": [
+            {
+                "order": 1,
+                "sourceClip": "clip0",
+                "sourceIn": 10.2,
+                "sourceOut": 13.2,
+                "durationSec": 3.0,
+                "voiceoverScript": "hook",
+            },
+            {
+                "order": 2,
+                "sourceClip": "clip0",
+                "sourceIn": 28.0,
+                "sourceOut": 30.0,
+                "durationSec": 2.0,
+            },
+        ],
+    }
+    out = anchor_dub_segments_to_frames(script, frames)
+    assert out["segments"][0]["sourceIn"] == 12.0
+    assert out["segments"][0]["sourceOut"] == 15.0
+    assert out["segments"][1]["sourceIn"] == 28.0
+
+
+def test_normalize_dub_with_sample_frames_anchors() -> None:
+    frames = [{"clip_id": "clip0", "time": 18.0, "scene_start": 15.0, "scene_end": 25.0}]
+    script = {
+        "segments": [
+            {
+                "order": 1,
+                "sourceClip": "clip0",
+                "sourceIn": 15.5,
+                "sourceOut": 18.5,
+                "durationSec": 3.0,
+            },
+        ],
+    }
+    out = normalize_dub_edit_script(script, sample_frames=frames)
+    assert out["segments"][0]["sourceIn"] == 18.0
+
+
+def test_dub_sample_time_skips_scene_lead_in() -> None:
+    from packages.video.scene import _sample_time_in_scene
+
+    scene = {"start": 10.0, "duration": 20.0}
+    t = _sample_time_in_scene(scene, 0.5, lead_skip_pct=0.25)
+    assert t == 22.5  # 10 + 5 (skip) + 7.5 (half of remaining)

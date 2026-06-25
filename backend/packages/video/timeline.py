@@ -764,6 +764,28 @@ def apply_semantic_dedupe_plan(
     return kept
 
 
+def _word_gap_subspans(
+    words: list[tuple[float, float]],
+    span_in: float,
+    span_out: float,
+    max_gap_sec: float,
+) -> list[tuple[float, float]]:
+    """Split a [span_in, span_out] range at word gaps longer than max_gap_sec."""
+    sub = [(ws, we) for ws, we in words if we > span_in and ws < span_out]
+    if not sub:
+        return [(span_in, span_out)]
+    groups: list[list[tuple[float, float]]] = [[sub[0]]]
+    for ws, we in sub[1:]:
+        if ws - groups[-1][-1][1] <= max_gap_sec:
+            groups[-1].append((ws, we))
+        else:
+            groups.append([(ws, we)])
+    return [
+        (max(g[0][0], span_in), min(g[-1][1], span_out))
+        for g in groups
+    ]
+
+
 def split_cuts_on_internal_silence(
     cuts: list[dict[str, Any]],
     segments: list[dict[str, Any]],
@@ -816,18 +838,25 @@ def split_cuts_on_internal_silence(
             else:
                 groups.append([seg])
 
-        if len(groups) == 1:
+        # Expand each segment-group into word-gap subspans so a large pause
+        # *inside* a single Whisper segment also splits (defensive backstop for
+        # segments that slipped past transcribe-time word-gap splitting).
+        spans: list[tuple[float, float]] = []
+        for group in groups:
+            g_in = max(float(group[0]["start"]), cut_in)
+            g_out = min(float(group[-1]["end"]), cut_out)
+            spans.extend(_word_gap_subspans(words, g_in, g_out, max_gap_sec))
+
+        if len(spans) <= 1:
             out.append(cut)
             continue
 
-        for gi, group in enumerate(groups):
-            g_in = max(float(group[0]["start"]), cut_in)
-            g_out = min(float(group[-1]["end"]), cut_out)
-            is_first = gi == 0
-            is_last = gi == len(groups) - 1
+        for si, (s_in, s_out) in enumerate(spans):
+            is_first = si == 0
+            is_last = si == len(spans) - 1
             snap_in, snap_out = _snap_to_words(
-                g_in,
-                g_out,
+                s_in,
+                s_out,
                 words,
                 is_opening=is_first and cut.get("label") == "opening",
                 is_conclusion=is_last and cut.get("label") == "conclusion",
@@ -1415,6 +1444,8 @@ def trim_speech_cuts_to_budget(
 DUB_MIN_CUT_SEC = 0.35
 # Soft cap: one angle should not linger longer than this when more cuts are possible.
 DUB_MAX_HOLD_SEC = 3.5
+# When model picks sourceIn far from a sampled frame, snap trim to that frame.
+DUB_ANCHOR_TOLERANCE_SEC = 0.35
 
 
 def _dub_segment_duration(seg: dict[str, Any]) -> float:
@@ -1427,8 +1458,81 @@ def _dub_segment_duration(seg: dict[str, Any]) -> float:
     return dur
 
 
-def normalize_dub_edit_script(edit_script: dict[str, Any]) -> dict[str, Any]:
+def _nearest_sample_frame(
+    frames: list[dict[str, Any]],
+    clip_id: str,
+    target_t: float,
+) -> dict[str, Any] | None:
+    clip_frames = [f for f in frames if str(f.get("clip_id") or "clip0") == clip_id]
+    if not clip_frames:
+        return None
+    return min(clip_frames, key=lambda f: abs(float(f["time"]) - target_t))
+
+
+def anchor_dub_segments_to_frames(
+    edit_script: dict[str, Any],
+    frames: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Snap segment trims to sampled frame timestamps when the model picks a loose window."""
+    if not frames:
+        return edit_script
+
+    for seg in edit_script.get("segments") or []:
+        if not isinstance(seg, dict):
+            continue
+        clip_id = str(seg.get("sourceClip") or "clip0")
+        dur = max(_dub_segment_duration(seg), DUB_MIN_CUT_SEC)
+
+        target_t: float | None = None
+        raw_match = seg.get("matchedFrameTime")
+        if raw_match is not None:
+            try:
+                target_t = float(raw_match)
+            except (TypeError, ValueError):
+                target_t = None
+        if target_t is None:
+            try:
+                target_t = float(seg.get("sourceIn", 0))
+            except (TypeError, ValueError):
+                continue
+
+        nearest = _nearest_sample_frame(frames, clip_id, target_t)
+        if nearest is None:
+            continue
+
+        anchor = float(nearest["time"])
+        try:
+            src_in = float(seg.get("sourceIn", anchor))
+        except (TypeError, ValueError):
+            src_in = anchor
+
+        if abs(src_in - anchor) <= DUB_ANCHOR_TOLERANCE_SEC and src_in >= anchor - 0.05:
+            continue
+
+        scene_start = float(nearest.get("scene_start", 0))
+        scene_end = float(nearest.get("scene_end", anchor + dur))
+        new_in = max(scene_start, min(anchor, scene_end - dur))
+        new_out = min(scene_end, new_in + dur)
+        if new_out - new_in < DUB_MIN_CUT_SEC:
+            continue
+
+        seg["sourceIn"] = round(new_in, 2)
+        seg["sourceOut"] = round(new_out, 2)
+        seg["durationSec"] = round(new_out - new_in, 2)
+        seg["matchedFrameTime"] = round(anchor, 2)
+
+    return edit_script
+
+
+def normalize_dub_edit_script(
+    edit_script: dict[str, Any],
+    *,
+    sample_frames: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     """Normalize dub edit script: durations, voiceoverLineId groups, montage script fill."""
+    if sample_frames:
+        edit_script = anchor_dub_segments_to_frames(edit_script, sample_frames)
+
     segs = [s for s in (edit_script.get("segments") or []) if isinstance(s, dict)]
     if not segs:
         return edit_script

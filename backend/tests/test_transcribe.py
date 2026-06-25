@@ -4,6 +4,7 @@ from packages.video.transcribe import (
     build_transcribe_options,
     is_hallucinated_segment,
     should_retry_transcription_without_vad,
+    split_segment_on_word_gaps,
     tighten_segment_bounds,
     transcript_coverage_stats,
 )
@@ -157,3 +158,77 @@ def test_does_not_mutate_input():
            "words": [{"word": "hi", "start": 0.0, "end": 1.0}]}
     tighten_segment_bounds(seg)
     assert seg["end"] == 9.0  # original untouched
+
+
+# ── split_segment_on_word_gaps ──────────────────────────────────────────────────
+
+def test_split_on_large_word_gap():
+    # "มัน" @80.3-81.5 then "เกิด" @140.85 — 59s silence between → must split
+    seg = {
+        "start": 80.3, "end": 141.27, "text": "มันเกิด",
+        "words": [
+            {"word": "มัน", "start": 80.3, "end": 81.5},
+            {"word": "เกิด", "start": 140.85, "end": 141.27},
+        ],
+    }
+    out = split_segment_on_word_gaps(seg)
+    assert len(out) == 2
+    assert out[0]["start"] == 80.3 and out[0]["end"] == 81.5
+    assert out[0]["text"] == "มัน"
+    assert out[1]["start"] == 140.85 and out[1]["end"] == 141.27
+    assert out[1]["text"] == "เกิด"
+
+
+def test_repeated_word_takes_split_into_singletons():
+    # "ถิ้ง" x3 with ~2.8s gaps → 3 separate segments (downstream dedupe handles them)
+    seg = {
+        "start": 643.8, "end": 653.05, "text": "ถิ้งถิ้งถิ้ง",
+        "words": [
+            {"word": "ถิ้ง", "start": 643.807, "end": 645.006},
+            {"word": "ถิ้ง", "start": 647.837, "end": 649.036},
+            {"word": "ถิ้ง", "start": 651.846, "end": 653.047},
+        ],
+    }
+    out = split_segment_on_word_gaps(seg)
+    assert len(out) == 3
+    assert all(p["text"] == "ถิ้ง" for p in out)
+
+
+def test_no_split_when_gaps_small():
+    seg = {
+        "start": 0.0, "end": 2.0, "text": "ดีมากเลย",
+        "words": [
+            {"word": "ดี", "start": 0.0, "end": 0.5},
+            {"word": "มาก", "start": 0.6, "end": 1.1},
+            {"word": "เลย", "start": 1.2, "end": 2.0},
+        ],
+    }
+    out = split_segment_on_word_gaps(seg)
+    assert len(out) == 1
+    assert out[0] is seg
+
+
+def test_single_word_segment_passes_through():
+    seg = {"start": 0.0, "end": 1.0, "text": "ครับ",
+           "words": [{"word": "ครับ", "start": 0.0, "end": 1.0}]}
+    out = split_segment_on_word_gaps(seg)
+    assert out == [seg]
+
+
+def test_no_words_passes_through_split():
+    seg = {"start": 0.0, "end": 4.0, "text": "x", "words": []}
+    out = split_segment_on_word_gaps(seg)
+    assert out == [seg]
+
+
+def test_custom_gap_threshold():
+    seg = {
+        "start": 0.0, "end": 5.0, "text": "ab",
+        "words": [
+            {"word": "a", "start": 0.0, "end": 0.5},
+            {"word": "b", "start": 2.0, "end": 2.5},
+        ],
+    }
+    # gap = 1.5s: split when threshold 1.0, keep when threshold 2.0
+    assert len(split_segment_on_word_gaps(seg, max_gap_sec=1.0)) == 2
+    assert len(split_segment_on_word_gaps(seg, max_gap_sec=2.0)) == 1

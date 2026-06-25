@@ -13,6 +13,9 @@ log = get_logger(__name__)
 
 MAX_FRAMES = 15  # cap Claude Vision payload (talking_head)
 DUB_MAX_FRAMES = 30  # dub_first: more angles → denser montage options
+# Skip early part of each scene — prep/hair-adjust usually happens at scene start.
+DUB_LEAD_SKIP_PCT = 0.25
+DUB_SAMPLE_PCTS = (0.5, 0.75)  # sample within the post-skip portion of each scene
 
 
 def detect_scenes(video_path: pathlib.Path, threshold: float = 27.0) -> list[dict[str, Any]]:
@@ -42,6 +45,16 @@ def detect_scenes(video_path: pathlib.Path, threshold: float = 27.0) -> list[dic
     return result
 
 
+def _sample_time_in_scene(scene: dict[str, Any], pct: float, *, lead_skip_pct: float) -> float:
+    """Map pct (0–1) to a timestamp; optionally skip the opening lead-in of the scene."""
+    start = float(scene["start"])
+    dur = float(scene["duration"])
+    if lead_skip_pct > 0:
+        usable = dur * (1.0 - lead_skip_pct)
+        return start + dur * lead_skip_pct + usable * pct
+    return start + dur * pct
+
+
 def extract_sample_frames(
     video_path: pathlib.Path,
     scenes: list[dict[str, Any]],
@@ -50,6 +63,7 @@ def extract_sample_frames(
     *,
     max_frames: int = MAX_FRAMES,
     samples_per_scene: int = 1,
+    lead_skip_pct: float = 0.0,
 ) -> list[dict[str, Any]]:
     """Extract representative JPEG(s) per scene for Vision matching."""
     import ffmpeg as ffmpeg_lib
@@ -60,7 +74,13 @@ def extract_sample_frames(
     per_scene = max(1, samples_per_scene)
     scene_cap = max(1, max_frames // per_scene)
     indices = _sample_indices(len(scenes), scene_cap)
-    pcts = [0.3] if per_scene == 1 else [0.2, 0.55, 0.8][:per_scene]
+    if lead_skip_pct > 0:
+        base = list(DUB_SAMPLE_PCTS)
+        pcts = base[:per_scene] if per_scene <= len(base) else base + [base[-1]] * (per_scene - len(base))
+    elif per_scene == 1:
+        pcts = [0.3]
+    else:
+        pcts = [0.2, 0.55, 0.8][:per_scene]
 
     for i in indices:
         if len(frames) >= max_frames:
@@ -69,7 +89,7 @@ def extract_sample_frames(
         for j, pct in enumerate(pcts):
             if len(frames) >= max_frames:
                 break
-            t = scene["start"] + scene["duration"] * pct
+            t = _sample_time_in_scene(scene, pct, lead_skip_pct=lead_skip_pct)
             frame_path = output_dir / f"{clip_id}_scene_{i:03d}_{j}.jpg"
             try:
                 run_ffmpeg(
