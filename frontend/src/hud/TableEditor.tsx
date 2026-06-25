@@ -219,7 +219,7 @@ export function TableEditor({ table, onColumnsChanged }: Props) {
       const to = Math.max(lastSelectedIdx.current, rowIdx)
       setSelected((prev) => {
         const s = new Set(prev)
-        for (let i = from; i <= to; i++) s.add(rows[i].id)
+        for (let i = from; i <= to; i++) s.add(rows[i].uid)
         return s
       })
     } else {
@@ -729,12 +729,16 @@ function MultiSelectCell({ column, value, onCommit }: {
         <>
           <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
           <div className="absolute left-0 top-full z-40 mt-1 w-44 rounded-lg border border-zinc-200 bg-white p-1 shadow-xl">
-            {(column.options ?? []).map((o) => (
-              <label key={o} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-sm hover:bg-zinc-50">
-                <input type="checkbox" checked={selected.includes(o)} onChange={() => toggle(o)} className="accent-amber-600" />
-                {o}
+            {(column.options ?? []).map((o) => {
+              const label = typeof o === 'string' ? o : o.label
+              const key = typeof o === 'string' ? o : o.uid
+              return (
+              <label key={key} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-sm hover:bg-zinc-50">
+                <input type="checkbox" checked={selected.includes(label)} onChange={() => toggle(label)} className="accent-amber-600" />
+                {label}
               </label>
-            ))}
+              )
+            })}
           </div>
         </>
       )}
@@ -773,7 +777,9 @@ function fmtValue(v: unknown, ui_type?: string): string {
 import type { SummaryColConfig } from '../types'
 import { SUMMARY_AGG_LABELS } from '../types'
 
-const ALL_AGGS = Object.keys(SUMMARY_AGG_LABELS) as (keyof typeof SUMMARY_AGG_LABELS)[]
+type SummaryAgg = SummaryColConfig['aggs'][number]
+
+const ALL_AGGS: SummaryAgg[] = ['count', 'sum', 'avg', 'min', 'max', 'pct']
 
 function SummaryTab({ table, selectCols, onTableChanged }: {
   table: CustomTableOut
@@ -796,7 +802,7 @@ function SummaryTab({ table, selectCols, onTableChanged }: {
       .catch((e) => setErr((e as Error).message))
   }, [table.uid, groupBy])
 
-  function toggleAgg(colKey: string, agg: string) {
+  function toggleAgg(colKey: string, agg: SummaryAgg) {
     setConfig((prev) => {
       const existing = prev.find((c) => c.col_key === colKey)
       if (!existing) return [...prev, { col_key: colKey, aggs: [agg] }]

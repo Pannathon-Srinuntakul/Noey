@@ -271,9 +271,9 @@ function LocalFieldEdit({
   const [options, setOptions] = useState<OptionDef[]>(() =>
     (col.options ?? []).map((o, i) =>
       typeof o === 'string'
-        ? { id: `opt_${i}`, label: o, color: OPTION_COLORS[i % 10].hex, order: i }
-        : (o as OptionDef)
-    )
+        ? { uid: `opt_${i}`, label: o, color: OPTION_COLORS[i % 10].hex, order: i }
+        : o,
+    ),
   )
   const [optDraft, setOptDraft] = useState('')
   const hasOpts = col.ui_type === 'select' || col.ui_type === 'multi_select'
@@ -281,7 +281,7 @@ function LocalFieldEdit({
   function addOpt() {
     const v = optDraft.trim()
     if (!v) return
-    setOptions([...options, { id: newId(), label: v, color: OPTION_COLORS[options.length % 10].hex, order: options.length }])
+    setOptions([...options, { uid: newId(), label: v, color: OPTION_COLORS[options.length % 10].hex, order: options.length }])
     setOptDraft('')
   }
 
@@ -308,13 +308,13 @@ function LocalFieldEdit({
           <div className="space-y-1.5">
             {options.map((o) => (
               <div key={o.uid} className="flex items-center gap-2">
-                <ColorSwatch color={o.color} onChange={(c) => setOptions(options.map((x) => (x.id === o.id ? { ...x, color: c } : x)))} />
+                <ColorSwatch color={o.color} onChange={(c) => setOptions(options.map((x) => (x.uid === o.uid ? { ...x, color: c } : x)))} />
                 <input
                   value={o.label}
-                  onChange={(e) => setOptions(options.map((x) => (x.id === o.id ? { ...x, label: e.target.value } : x)))}
+                  onChange={(e) => setOptions(options.map((x) => (x.uid === o.uid ? { ...x, label: e.target.value } : x)))}
                   className="flex-1 rounded border border-zinc-200 bg-white px-2 py-1 text-sm text-zinc-800 outline-none focus:border-amber-500"
                 />
-                <button onClick={() => setOptions(options.filter((x) => x.id !== o.id))} className="text-zinc-400 hover:text-red-500">
+                <button onClick={() => setOptions(options.filter((x) => x.uid !== o.uid))} className="text-zinc-400 hover:text-red-500">
                   <X size={13} />
                 </button>
               </div>

@@ -241,9 +241,9 @@ function FieldEditPanel({ col, tableId, onSaved, onCancel }: {
   const [options, setOptions] = useState<OptionDef[]>(() =>
     (col.options ?? []).map((o, i) =>
       typeof o === 'string'
-        ? { id: `opt_${i}`, label: o, color: OPTION_COLORS[i % 10].hex, order: i }
-        : (o as OptionDef)
-    )
+        ? { uid: `opt_${i}`, label: o, color: OPTION_COLORS[i % 10].hex, order: i }
+        : o,
+    ),
   )
   const [optDraft, setOptDraft] = useState('')
   const [saving, setSaving] = useState(false)
@@ -255,7 +255,7 @@ function FieldEditPanel({ col, tableId, onSaved, onCancel }: {
     const v = optDraft.trim()
     if (!v) return
     const color = OPTION_COLORS[options.length % OPTION_COLORS.length].hex
-    setOptions([...options, { id: newId(), label: v, color, order: options.length }])
+    setOptions([...options, { uid: newId(), label: v, color, order: options.length }])
     setOptDraft('')
   }
 

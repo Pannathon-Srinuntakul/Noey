@@ -13,10 +13,8 @@ export function TableView({ entities, onSelect }: { entities: Entity[]; onSelect
         <thead className="sticky top-0 bg-[#07080d] text-left text-xs text-zinc-400">
           <tr>
             <th className="py-2">Name</th>
-            <th className="py-2 text-right">GMV</th>
-            <th className="py-2 text-right">Commission</th>
-            <th className="py-2 text-right">Units</th>
-            <th className="py-2 text-right">Rate</th>
+            <th className="py-2 text-right">Views</th>
+            <th className="py-2 text-right">Engagement</th>
           </tr>
         </thead>
         <tbody>
@@ -27,11 +25,9 @@ export function TableView({ entities, onSelect }: { entities: Entity[]; onSelect
               className="cursor-pointer border-t border-white/5 hover:bg-white/5"
             >
               <td className="py-1.5">{e.label}</td>
-              <td className="py-1.5 text-right tabular-nums">฿{fmt(e.gmv)}</td>
-              <td className="py-1.5 text-right tabular-nums">฿{fmt(e.commission)}</td>
-              <td className="py-1.5 text-right tabular-nums">{fmt(e.units)}</td>
+              <td className="py-1.5 text-right tabular-nums">{fmt(e.views)}</td>
               <td className="py-1.5 text-right tabular-nums">
-                {e.commissionRate == null ? '—' : `${(e.commissionRate / 100).toFixed(2)}%`}
+                {e.engagementRate == null ? '—' : `${(e.engagementRate * 100).toFixed(2)}%`}
               </td>
             </tr>
           ))}

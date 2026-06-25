@@ -5,7 +5,7 @@ import { api } from '../api'
 import type { ColumnMeta } from '../types'
 
 interface Props {
-  tableId: number
+  tableId: string
   columns: ColumnMeta[]   // table's columns for header validation
   open: boolean
   onClose: () => void

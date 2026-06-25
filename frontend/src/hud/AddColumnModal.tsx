@@ -25,7 +25,7 @@ export function AddColumnModal({ existing, onCancel, onSubmit }: Props) {
   const isFormula = type === 'formula'
 
   const currentOps = FORMULA_OPS[formulaKind] ?? []
-  const currentOpDef = currentOps.find((o) => o.op === formulaOp) ?? currentOps[0]
+  const currentOpDef = currentOps.find((o) => o.id === formulaOp) ?? currentOps[0]
   const maxOps = currentOpDef?.maxOps ?? 2
 
   // column sources for operand dropdowns
@@ -52,7 +52,7 @@ export function AddColumnModal({ existing, onCancel, onSubmit }: Props) {
     const v = optDraft.trim()
     if (!v || options.some((o) => o.label === v)) return
     const color = OPTION_COLORS[options.length % OPTION_COLORS.length].hex
-    setOptions([...options, { id: Math.random().toString(36).slice(2, 10), label: v, color, order: options.length }])
+    setOptions([...options, { uid: Math.random().toString(36).slice(2, 10), label: v, color, order: options.length }])
     setOptDraft('')
   }
 
@@ -92,7 +92,11 @@ export function AddColumnModal({ existing, onCancel, onSubmit }: Props) {
     const body: ColumnMetaIn = { label: label.trim(), ui_type: type }
     if (needsOptions) body.options = options
     if (isFormula) {
-      const formula: FormulaDef = { kind: formulaKind, op: formulaOp, operands }
+      const formula: FormulaDef = {
+        kind: formulaKind as NonNullable<FormulaDef['kind']>,
+        op: formulaOp,
+        operands,
+      }
       body.formula = formula
     }
     onSubmit(body)
@@ -170,7 +174,7 @@ export function AddColumnModal({ existing, onCancel, onSubmit }: Props) {
                             className="h-5 w-5 rounded-full border-2 border-white/30 hover:scale-110"
                             style={{ background: c.hex }}
                             onClick={() => {
-                              setOptionColor(o.id, c.hex)
+                              setOptionColor(o.uid, c.hex)
                               document.getElementById(`cp-${o.uid}`)?.classList.add('hidden')
                             }}
                           />
@@ -218,7 +222,7 @@ export function AddColumnModal({ existing, onCancel, onSubmit }: Props) {
                       onClick={() => {
                         setFormulaKind(k.id)
                         const firstOp = FORMULA_OPS[k.id]?.[0]
-                        if (firstOp) { setFormulaOp(firstOp.op ?? firstOp.id); setOperands(['', '']) }
+                        if (firstOp) { setFormulaOp(firstOp.id); setOperands(['', '']) }
                       }}
                       className={`rounded-lg border px-3 py-1.5 text-sm ${
                         formulaKind === k.id
@@ -241,7 +245,7 @@ export function AddColumnModal({ existing, onCancel, onSubmit }: Props) {
                   className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm text-zinc-800 outline-none focus:border-amber-500"
                 >
                   {(FORMULA_OPS[formulaKind] ?? []).map((o) => (
-                    <option key={o.op ?? o.id} value={o.op ?? o.id}>{o.label}</option>
+                    <option key={o.id} value={o.id}>{o.label}</option>
                   ))}
                 </select>
               </label>
@@ -252,7 +256,7 @@ export function AddColumnModal({ existing, onCancel, onSubmit }: Props) {
                 <div className="space-y-2">
                   {operands.map((op, i) => {
                     const src = getColSource(formulaKind, formulaOp, i)
-                    const opDef = currentOps.find((o) => (o.op ?? o.id) === formulaOp)
+                    const opDef = currentOps.find((o) => o.id === formulaOp)
                     const lbl = opDef?.operandsLabel[Math.min(i, (opDef?.operandsLabel.length ?? 1) - 1)] ?? `คอลัมน์ ${i + 1}`
                     return (
                       <div key={i} className="flex items-center gap-2">

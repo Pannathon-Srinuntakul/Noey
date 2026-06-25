@@ -11,6 +11,7 @@ import type {
   FollowerHistoryRow,
   ImportRunOut,
   MarketRow,
+  OptionDef,
   Overview,
   OverviewDailyRow,
   ProductRow,
@@ -194,7 +195,7 @@ export const api = {
     updateColumn: (
       uid: string,
       key: string,
-      body: { label?: string; options?: string[]; width?: number },
+      body: { label?: string; options?: (string | OptionDef)[]; width?: number },
     ) => send<ColumnMeta>(`/tables/${uid}/columns/${key}`, 'PATCH', body),
     deleteColumn: (uid: string, key: string) =>
       send<void>(`/tables/${uid}/columns/${key}`, 'DELETE'),

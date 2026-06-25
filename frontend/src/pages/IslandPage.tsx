@@ -6,7 +6,7 @@ import { MetricBar } from '../hud/MetricBar'
 import { PromptCron } from '../hud/PromptCron'
 import { IslandWorld } from '../scene/IslandWorld'
 import { useNavigateWithDoor } from '../navigation/NavigationContext'
-import type { Entity, RoomName, TiktokOverview, VideoRow } from '../types'
+import type { RoomName, TiktokOverview } from '../types'
 
 const ROOM_ROUTES: Record<Exclude<RoomName, 'revenue'>, string> = {
   catalog: '/catalog',
@@ -20,7 +20,6 @@ export default function IslandPage() {
   const { navigateWithDoor } = useNavigateWithDoor()
 
   const [tiktokOverview, setTiktokOverview] = useState<TiktokOverview | null>(null)
-  const [entities, setEntities] = useState<Entity[]>([])
   const [activity, setActivity] = useState(0)
   const [tab, setTab] = useState<'chat' | 'cron'>('chat')
   const [error, setError] = useState<string | null>(null)
@@ -28,21 +27,12 @@ export default function IslandPage() {
   const load = useCallback(async () => {
     setError(null)
     try {
-      const [ov, videos, runs] = await Promise.all([
+      const [ov, runs] = await Promise.all([
         api.analyticsOverview(),
-        api.analyticsContent(undefined, undefined, 50),
         api.listRuns(),
       ])
       setTiktokOverview(ov)
       setActivity(runs.length)
-      setEntities(
-        videos.map((v) => ({
-          id: v.video_id,
-          label: v.video_title || v.video_id,
-          views: v.views,
-          engagementRate: v.engagement_rate,
-        })),
-      )
     } catch (e) {
       setError((e as Error).message)
     }

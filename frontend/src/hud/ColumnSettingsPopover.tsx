@@ -14,7 +14,9 @@ interface Props {
  * or delete the column. The data type cannot be changed after creation. */
 export function ColumnSettingsPopover({ column, onClose, onSave, onDelete }: Props) {
   const [label, setLabel] = useState(column.label)
-  const [options, setOptions] = useState<string[]>(column.options ?? [])
+  const [options, setOptions] = useState<string[]>(
+    (column.options ?? []).map((o) => (typeof o === 'string' ? o : o.label)),
+  )
   const [optDraft, setOptDraft] = useState('')
   const hasOptions = column.ui_type === 'select' || column.ui_type === 'multi_select'
   const info = COLUMN_TYPE_LABELS[column.ui_type]
