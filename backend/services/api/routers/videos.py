@@ -5,6 +5,8 @@ GET  /videos              — list user's projects
 GET  /videos/{uid}        — project detail + status
 POST /videos/{uid}/cancel — stop an in-progress project
 DELETE /videos/{uid}      — delete project + remove files from disk
+GET  /videos/{uid}/playback-url      — presigned URL (S3) or authenticated hint (local)
+GET  /videos/{uid}/capcut-url        — presigned URL for CapCut ZIP (S3) or authenticated (local)
 GET  /videos/{uid}/download          — stream final.mp4
 GET  /videos/{uid}/export/capcut     — stream CapCut ZIP bundle
 """
@@ -24,7 +26,12 @@ from packages.core.logging import get_logger
 from packages.db.models.core_auth import Job
 from packages.db.models.video_project import VideoProject
 from packages.db.session import bind_tenant_search_path
-from packages.video.s3 import delete_project as s3_delete_project, output_presigned_url, push_uploads, s3_enabled
+from packages.video.s3 import (
+    delete_project as s3_delete_project,
+    output_presigned_url,
+    push_uploads,
+    s3_enabled,
+)
 from packages.video.storage import data_root, delete_project_files
 from packages.video.timeline import normalize_dub_edit_script
 from services.api.deps import CurrentUser, db_session
@@ -68,6 +75,13 @@ async def _get_project(session: AsyncSession, uid: str, user_id: int) -> VideoPr
     if proj is None:
         raise HTTPException(404, "video project not found")
     return proj
+
+
+async def _redirect_presigned_output(project_uid: str, filename: str) -> RedirectResponse:
+    url = await output_presigned_url(project_uid, filename)
+    if not url:
+        raise HTTPException(404, "File not found")
+    return RedirectResponse(url)
 
 
 async def _enqueue(job_id: str, fn: str, **kwargs) -> None:  # type: ignore[type-arg]
@@ -158,6 +172,12 @@ class UploadProjectItem(BaseModel):
 
 class UploadResponse(BaseModel):
     projects: list[UploadProjectItem]
+
+
+class PlaybackUrlOut(BaseModel):
+    """How the browser should load final.mp4 — direct presigned URL (S3) or authenticated API fetch (local)."""
+    mode: str  # "direct" | "authenticated"
+    url: str | None = None
 
 
 UPLOAD_MODES = ("merge", "separate")
@@ -382,6 +402,46 @@ async def delete_project(
     return Response(status_code=204)
 
 
+@router.get("/{uid}/playback-url", response_model=PlaybackUrlOut)
+async def get_playback_url(
+    uid: str,
+    auth: CurrentUser,
+    session: AsyncSession = Depends(db_session),
+) -> PlaybackUrlOut:
+    """Return presigned S3 URL for <video src> on prod; local uses authenticated blob fetch."""
+    p = await _get_project(session, uid, auth.user_id)
+    if p.status != "done" or not p.final_path:
+        raise HTTPException(404, "Video not ready yet")
+    file_path = data_root() / p.final_path
+    if file_path.exists():
+        return PlaybackUrlOut(mode="authenticated")
+    if s3_enabled():
+        url = await output_presigned_url(uid, "final.mp4")
+        if url:
+            return PlaybackUrlOut(mode="direct", url=url)
+    raise HTTPException(404, "File not found")
+
+
+@router.get("/{uid}/capcut-url", response_model=PlaybackUrlOut)
+async def get_capcut_url(
+    uid: str,
+    auth: CurrentUser,
+    session: AsyncSession = Depends(db_session),
+) -> PlaybackUrlOut:
+    """Return presigned S3 URL for CapCut ZIP; local uses authenticated blob fetch."""
+    p = await _get_project(session, uid, auth.user_id)
+    if p.status != "done" or not p.zip_path:
+        raise HTTPException(404, "CapCut bundle not ready yet")
+    file_path = data_root() / p.zip_path
+    if file_path.exists():
+        return PlaybackUrlOut(mode="authenticated")
+    if s3_enabled():
+        url = await output_presigned_url(uid, "capcut_bundle.zip")
+        if url:
+            return PlaybackUrlOut(mode="direct", url=url)
+    raise HTTPException(404, "File not found")
+
+
 @router.get("/{uid}/download", response_model=None)
 async def download_final(
     uid: str,
@@ -395,9 +455,8 @@ async def download_final(
     file_path = data_root() / p.final_path
     if file_path.exists():
         return FileResponse(str(file_path), media_type="video/mp4", filename=f"noey_edit_{uid[:8]}.mp4")
-    url = await output_presigned_url(uid, "final.mp4")
-    if url:
-        return RedirectResponse(url)
+    if s3_enabled():
+        return await _redirect_presigned_output(uid, "final.mp4")
     raise HTTPException(404, "File not found")
 
 
@@ -414,9 +473,8 @@ async def export_capcut(
     file_path = data_root() / p.zip_path
     if file_path.exists():
         return FileResponse(str(file_path), media_type="application/zip", filename=f"capcut_bundle_{uid[:8]}.zip")
-    url = await output_presigned_url(uid, "capcut_bundle.zip")
-    if url:
-        return RedirectResponse(url)
+    if s3_enabled():
+        return await _redirect_presigned_output(uid, "capcut_bundle.zip")
     raise HTTPException(404, "File not found")
 
 

@@ -169,11 +169,15 @@ async def delete_project(project_uid: str) -> None:
     log.info("s3_delete_project", project_uid=project_uid)
 
 
+def _output_key(project_uid: str, filename: str) -> str:
+    return f"videos/{project_uid}/outputs/{filename}"
+
+
 async def output_presigned_url(project_uid: str, filename: str, expires: int = 3600) -> str | None:
     """Return a presigned URL for an output file, or None when S3 disabled."""
     if not _s3_enabled():
         return None
-    key = f"videos/{project_uid}/outputs/{filename}"
+    key = _output_key(project_uid, filename)
     return await asyncio.to_thread(_sync_presigned_url, key, expires)
 
 

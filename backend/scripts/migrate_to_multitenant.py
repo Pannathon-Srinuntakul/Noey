@@ -104,7 +104,30 @@ async def main() -> None:
             )
             log.info("membership_created", role="owner")
 
+    # Step 6: default workspace tables (custom_table_meta + udt_*) — idempotent
+    await _provision_default_workspace()
+
     log.info("seed_complete", email=ADMIN_EMAIL, schema=TARGET_SCHEMA)
+
+
+async def _provision_default_workspace() -> None:
+    """Create 5 default TikTok Affiliate tables when tenant_default has none yet."""
+    from sqlalchemy import func, select
+
+    from packages.db.models.custom_table import CustomTableMeta
+    from packages.db.session import bind_tenant_search_path, get_sessionmaker
+    from packages.tables.workspace import provision_workspace
+
+    maker = get_sessionmaker()
+    async with maker() as session:
+        await bind_tenant_search_path(session, DEFAULT_TENANT_SLUG)
+        before = (await session.execute(select(func.count()).select_from(CustomTableMeta))).scalar_one()
+        await provision_workspace(session, DEFAULT_TENANT_SLUG)
+        after = (await session.execute(select(func.count()).select_from(CustomTableMeta))).scalar_one()
+    if after > before:
+        log.info("workspace_provisioned", table_count=after)
+    else:
+        log.info("workspace_already_provisioned", table_count=after)
 
 
 if __name__ == "__main__":

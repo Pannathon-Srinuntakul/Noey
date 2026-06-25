@@ -43,6 +43,7 @@ def _alembic_upgrade() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     from scripts.migrate_to_multitenant import main as _seed
+
     log.info("seed_start")
     await _seed()
     log.info("seed_done")

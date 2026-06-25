@@ -312,7 +312,28 @@ export const api = {
     },
     list: () => get<VideoProjectOut[]>('/videos'),
     get: (uid: string) => get<VideoProjectOut>(`/videos/${uid}`),
+    getPlaybackUrl: (uid: string) => get<VideoPlaybackUrl>(`/videos/${uid}/playback-url`),
+    getCapcutUrl: (uid: string) => get<VideoPlaybackUrl>(`/videos/${uid}/capcut-url`),
+    /** Load video for preview — presigned URL on S3 prod, blob fetch on local. */
+    resolvePreviewSrc: async (uid: string): Promise<{ src: string; cleanup: () => void }> => {
+      const playback = await api.videos.getPlaybackUrl(uid)
+      if (playback.mode === 'direct' && playback.url) {
+        return { src: playback.url, cleanup: () => {} }
+      }
+      const blob = await api.videos.fetchFinalVideoBlob(uid)
+      const objectUrl = URL.createObjectURL(blob)
+      return { src: objectUrl, cleanup: () => URL.revokeObjectURL(objectUrl) }
+    },
     downloadFinal: async (uid: string, filename = 'final.mp4') => {
+      const playback = await api.videos.getPlaybackUrl(uid)
+      if (playback.mode === 'direct' && playback.url) {
+        const a = document.createElement('a')
+        a.href = playback.url
+        a.download = filename
+        a.rel = 'noopener'
+        a.click()
+        return
+      }
       const r = await authFetch(`${BASE}/videos/${uid}/download`)
       if (!r.ok) throw new Error(`${r.status} ${r.statusText}`)
       const blob = await r.blob()
@@ -326,6 +347,15 @@ export const api = {
       return r.blob()
     },
     exportCapcut: async (uid: string) => {
+      const playback = await api.videos.getCapcutUrl(uid)
+      if (playback.mode === 'direct' && playback.url) {
+        const a = document.createElement('a')
+        a.href = playback.url
+        a.download = `capcut_bundle_${uid.slice(0, 8)}.zip`
+        a.rel = 'noopener'
+        a.click()
+        return
+      }
       const r = await authFetch(`${BASE}/videos/${uid}/export/capcut`)
       if (!r.ok) throw new Error(`${r.status} ${r.statusText}`)
       const blob = await r.blob()
@@ -338,6 +368,11 @@ export const api = {
     getEditScript: (uid: string) => get<DubEditScript>(`/videos/${uid}/edit-script`),
   },
 
+}
+
+export interface VideoPlaybackUrl {
+  mode: 'direct' | 'authenticated'
+  url: string | null
 }
 
 export interface VideoProjectOut {

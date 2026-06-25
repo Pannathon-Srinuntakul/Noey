@@ -730,16 +730,19 @@ function VideoPreview({ uid }: { uid: string }) {
   useEffect(() => {
     if (!visible) return
     let cancelled = false
-    let objectUrl: string | null = null
+    let cleanup = () => {}
 
     void (async () => {
       setLoading(true)
       setError(false)
       try {
-        const blob = await api.videos.fetchFinalVideoBlob(uid)
-        if (cancelled) return
-        objectUrl = URL.createObjectURL(blob)
-        setSrc(objectUrl)
+        const resolved = await api.videos.resolvePreviewSrc(uid)
+        if (cancelled) {
+          resolved.cleanup()
+          return
+        }
+        cleanup = resolved.cleanup
+        setSrc(resolved.src)
       } catch {
         if (!cancelled) setError(true)
       } finally {
@@ -749,7 +752,7 @@ function VideoPreview({ uid }: { uid: string }) {
 
     return () => {
       cancelled = true
-      if (objectUrl) URL.revokeObjectURL(objectUrl)
+      cleanup()
     }
   }, [uid, visible])
 
@@ -878,19 +881,22 @@ function DubVideoPlayer({ uid }: { uid: string }) {
   useEffect(() => {
     if (!visible) return
     let cancelled = false
-    let objectUrl: string | null = null
+    let cleanup = () => {}
 
     void (async () => {
       setLoading(true)
       setError(false)
       try {
-        const [blob, editScript] = await Promise.all([
-          api.videos.fetchFinalVideoBlob(uid),
+        const [resolved, editScript] = await Promise.all([
+          api.videos.resolvePreviewSrc(uid),
           api.videos.getEditScript(uid),
         ])
-        if (cancelled) return
-        objectUrl = URL.createObjectURL(blob)
-        setSrc(objectUrl)
+        if (cancelled) {
+          resolved.cleanup()
+          return
+        }
+        cleanup = resolved.cleanup
+        setSrc(resolved.src)
         setScript(editScript)
       } catch {
         if (!cancelled) setError(true)
@@ -901,7 +907,7 @@ function DubVideoPlayer({ uid }: { uid: string }) {
 
     return () => {
       cancelled = true
-      if (objectUrl) URL.revokeObjectURL(objectUrl)
+      cleanup()
     }
   }, [uid, visible])
 
