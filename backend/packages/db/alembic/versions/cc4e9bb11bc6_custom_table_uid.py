@@ -18,9 +18,44 @@ down_revision: Union[str, Sequence[str], None] = '91ff965c44aa'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
+# Tables that lived in public before multitenant; move before uid migration.
+_BUSINESS_TABLES = (
+    "ai_prompts", "ai_runs", "app_settings", "creators", "csv_import_runs",
+    "custom_table_meta", "follower_activity", "follower_gender", "follower_history",
+    "follower_territory", "market_trends", "overview_daily", "products",
+    "sales_daily", "scrape_runs", "video_content", "viewers_daily",
+)
+
+
+def _ensure_tenant_default() -> None:
+    """Fresh DB: create tenant_default and move business tables from public (idempotent)."""
+    op.execute("CREATE SCHEMA IF NOT EXISTS tenant_default")
+    tables_sql = ", ".join(f"'{t}'" for t in _BUSINESS_TABLES)
+    op.execute(_text(f"""
+DO $$
+DECLARE t text;
+BEGIN
+  FOR t IN SELECT unnest(ARRAY[{tables_sql}]::text[])
+  LOOP
+    IF EXISTS (
+      SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = t
+    ) AND NOT EXISTS (
+      SELECT 1 FROM pg_tables WHERE schemaname = 'tenant_default' AND tablename = t
+    ) THEN
+      EXECUTE format('ALTER TABLE public.%I SET SCHEMA tenant_default', t);
+    END IF;
+  END LOOP;
+  FOR t IN SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename LIKE 'udt_%'
+  LOOP
+    EXECUTE format('ALTER TABLE public.%I SET SCHEMA tenant_default', t);
+  END LOOP;
+END $$;
+"""))
+
 
 def upgrade() -> None:
     """Add uid UUID to custom_table_meta; migrate udt_* row PKs from BIGSERIAL id → UUID uid."""
+    _ensure_tenant_default()
     # ── 1. custom_table_meta.uid ─────────────────────────────────────────
     op.add_column('custom_table_meta', sa.Column('uid', sa.Text(), nullable=True), schema='tenant_default')
     op.execute("UPDATE tenant_default.custom_table_meta SET uid = gen_random_uuid()::text WHERE uid IS NULL")
