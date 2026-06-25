@@ -24,7 +24,7 @@ import {
 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { api } from '../api'
+import { api, formatUserError } from '../api'
 import { ConfirmModal } from '../hud/ConfirmModal'
 import { AddColumnModal } from '../hud/AddColumnModal'
 import { COLUMN_TYPE_LABELS } from '../lib/columnTypes'
@@ -47,7 +47,7 @@ export default function ManageFieldsPage() {
   )
 
   const load = useCallback(() => {
-    api.tables.get(tableId).then(setTable).catch((e) => setError((e as Error).message))
+    api.tables.get(tableId).then(setTable).catch((e) => setError(formatUserError(e)))
   }, [tableId])
 
   useEffect(() => { load() }, [load])
@@ -58,7 +58,7 @@ export default function ManageFieldsPage() {
       setAdding(false)
       load()
     } catch (e) {
-      setError((e as Error).message)
+      setError(formatUserError(e))
     }
   }
 
@@ -68,7 +68,7 @@ export default function ManageFieldsPage() {
       await api.tables.deleteColumn(tableId, key)
       load()
     } catch (e) {
-      setError((e as Error).message)
+      setError(formatUserError(e))
     }
   }
 
@@ -88,7 +88,7 @@ export default function ManageFieldsPage() {
       await api.tables.reorderColumns(tableId, reordered.map((c) => c.key))
     } catch (e) {
       load()
-      setError((e as Error).message)
+      setError(formatUserError(e))
     }
   }
 
@@ -281,7 +281,7 @@ function FieldEditPanel({ col, tableId, onSaved, onCancel }: {
       })
       onSaved()
     } catch (e) {
-      setErr((e as Error).message)
+      setErr(formatUserError(e))
     } finally {
       setSaving(false)
     }

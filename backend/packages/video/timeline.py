@@ -1446,6 +1446,109 @@ DUB_MIN_CUT_SEC = 0.35
 DUB_MAX_HOLD_SEC = 3.5
 # When model picks sourceIn far from a sampled frame, snap trim to that frame.
 DUB_ANCHOR_TOLERANCE_SEC = 0.35
+# Treat sample anchors within this window as the same scene (no reuse).
+DUB_FRAME_DEDUPE_TOLERANCE_SEC = 0.5
+
+
+def _segment_anchor_time(seg: dict[str, Any]) -> float:
+    for key in ("matchedFrameTime", "sourceIn"):
+        raw = seg.get(key)
+        if raw is not None:
+            try:
+                return float(raw)
+            except (TypeError, ValueError):
+                pass
+    return 0.0
+
+
+def _resolve_frame_anchor(
+    seg: dict[str, Any],
+    frames: list[dict[str, Any]],
+) -> tuple[str, float, dict[str, Any] | None]:
+    clip_id = str(seg.get("sourceClip") or "clip0")
+    target_t = _segment_anchor_time(seg)
+    nearest = _nearest_sample_frame(frames, clip_id, target_t) if frames else None
+    if nearest is not None:
+        return clip_id, float(nearest["time"]), nearest
+    return clip_id, round(target_t, 1), None
+
+
+def _frame_dedupe_key(clip_id: str, anchor_t: float) -> tuple[str, float]:
+    bucket = round(anchor_t / DUB_FRAME_DEDUPE_TOLERANCE_SEC) * DUB_FRAME_DEDUPE_TOLERANCE_SEC
+    return clip_id, round(bucket, 1)
+
+
+def _apply_frame_to_segment(
+    seg: dict[str, Any],
+    frame: dict[str, Any],
+    *,
+    duration_sec: float | None = None,
+) -> None:
+    dur = duration_sec if duration_sec is not None else _dub_segment_duration(seg)
+    if dur <= 0:
+        dur = 1.75
+    dur = max(dur, DUB_MIN_CUT_SEC)
+    anchor = float(frame["time"])
+    scene_start = float(frame.get("scene_start", 0))
+    scene_end = float(frame.get("scene_end", anchor + dur))
+    new_in = max(scene_start, min(anchor, scene_end - dur))
+    new_out = min(scene_end, new_in + dur)
+    seg["sourceClip"] = str(frame.get("clip_id") or seg.get("sourceClip") or "clip0")
+    seg["sourceIn"] = round(new_in, 2)
+    seg["sourceOut"] = round(new_out, 2)
+    seg["durationSec"] = round(new_out - new_in, 2)
+    seg["matchedFrameTime"] = round(anchor, 2)
+
+
+def enforce_unique_chronological_dub_cuts(
+    edit_script: dict[str, Any],
+    sample_frames: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Drop duplicate scene anchors; keep only AI-selected cuts in source-time order."""
+    from packages.core.logging import get_logger
+
+    log = get_logger(__name__)
+
+    segs = [dict(s) for s in (edit_script.get("segments") or []) if isinstance(s, dict)]
+    if not segs or not sample_frames:
+        return edit_script
+
+    for seg in segs:
+        _, _, frame = _resolve_frame_anchor(seg, sample_frames)
+        if frame is not None:
+            _apply_frame_to_segment(seg, frame)
+
+    segs.sort(key=lambda s: _segment_anchor_time(s))
+
+    used_keys: set[tuple[str, float]] = set()
+    kept: list[dict[str, Any]] = []
+    dropped = 0
+
+    for seg in segs:
+        clip_id, anchor_t, _frame = _resolve_frame_anchor(seg, sample_frames)
+        key = _frame_dedupe_key(clip_id, anchor_t)
+        if key in used_keys:
+            dropped += 1
+            continue
+        used_keys.add(key)
+        kept.append(seg)
+
+    total = sum(_dub_segment_duration(s) for s in kept)
+    for i, seg in enumerate(kept, start=1):
+        seg["order"] = i
+
+    if dropped:
+        log.info(
+            "dub_unique_chrono_enforced",
+            kept=len(kept),
+            dropped=dropped,
+            total_sec=round(total, 1),
+            sample_frames=len(sample_frames),
+        )
+
+    edit_script["segments"] = kept
+    return edit_script
+
 
 
 def _dub_segment_duration(seg: dict[str, Any]) -> float:
@@ -1532,6 +1635,7 @@ def normalize_dub_edit_script(
     """Normalize dub edit script: durations, voiceoverLineId groups, montage script fill."""
     if sample_frames:
         edit_script = anchor_dub_segments_to_frames(edit_script, sample_frames)
+        edit_script = enforce_unique_chronological_dub_cuts(edit_script, sample_frames)
 
     segs = [s for s in (edit_script.get("segments") or []) if isinstance(s, dict)]
     if not segs:

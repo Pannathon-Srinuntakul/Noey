@@ -25,6 +25,7 @@ from services.api.routers import (
     runs,
     settings,
     table_io,
+    usage,
     videos,
 )
 
@@ -85,6 +86,7 @@ def create_app() -> FastAPI:
         table_io,
         videos,
         jobs,
+        usage,
     ):
         app.include_router(r.router)
 

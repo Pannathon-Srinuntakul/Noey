@@ -12,10 +12,33 @@ from packages.video.ffmpeg_bin import run_ffmpeg
 log = get_logger(__name__)
 
 MAX_FRAMES = 15  # cap Claude Vision payload (talking_head)
-DUB_MAX_FRAMES = 30  # dub_first: more angles → denser montage options
+# dub_first: sample budget scales with clip length up to DUB_MAX_CLIP_SEC.
+DUB_MAX_CLIP_SEC = 20 * 60  # upload + sampling ceiling (20 minutes)
+DUB_SCENE_INTERVAL_SEC = 15  # ~1 sampled scene every 15s of source → even coverage
+DUB_MIN_SCENE_CAP = 6
+DUB_SAMPLES_PER_SCENE = 2
 # Skip early part of each scene — prep/hair-adjust usually happens at scene start.
 DUB_LEAD_SKIP_PCT = 0.25
 DUB_SAMPLE_PCTS = (0.5, 0.75)  # sample within the post-skip portion of each scene
+# Extra clip-edge samples (added on top of scene sampling, not counted in max_frames).
+DUB_EDGE_OFFSET_SEC = 5.0  # opening at 5s; closing at duration − 5s
+
+
+def dub_scene_cap(duration_sec: float) -> int:
+    """How many time slots to sample for Vision (evenly spaced), from clip duration."""
+    dur = min(max(float(duration_sec), 0.0), float(DUB_MAX_CLIP_SEC))
+    if dur <= 0:
+        return 0
+    return max(DUB_MIN_SCENE_CAP, round(dur / DUB_SCENE_INTERVAL_SEC))
+
+
+def dub_sample_frame_budget(
+    duration_sec: float,
+    *,
+    samples_per_scene: int = DUB_SAMPLES_PER_SCENE,
+) -> int:
+    """Max scene JPEGs to extract (excludes opening/closing edge frames)."""
+    return dub_scene_cap(duration_sec) * max(1, samples_per_scene)
 
 
 def detect_scenes(video_path: pathlib.Path, threshold: float = 27.0) -> list[dict[str, Any]]:
@@ -112,18 +135,126 @@ def extract_sample_frames(
     return frames
 
 
-def frames_to_vision_content(frames: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Convert frame dicts to LiteLLM image_url content blocks (base64 JPEG)."""
+def _clip_edge_times(
+    duration: float,
+    *,
+    edge_offset_sec: float = DUB_EDGE_OFFSET_SEC,
+    min_gap_sec: float = 2.0,
+) -> list[tuple[str, float]]:
+    """Return (edge_label, timestamp) pairs for clip opening/closing samples."""
+    if duration <= 0:
+        return []
+    offset = max(0.0, float(edge_offset_sec))
+    opening = min(offset, max(0.5, duration - 0.5))
+    closing = min(max(duration - 0.5, 0.0), max(opening + min_gap_sec, duration - offset))
+    if closing <= opening + min_gap_sec:
+        if duration <= min_gap_sec + 1.0:
+            return [("opening", round(duration * 0.1, 2))]
+        opening = round(duration * 0.1, 2)
+        closing = round(duration * 0.9, 2)
+    return [("opening", round(opening, 2)), ("closing", round(closing, 2))]
+
+
+def extract_edge_frames(
+    video_path: pathlib.Path,
+    output_dir: pathlib.Path,
+    clip_id: str = "clip0",
+    *,
+    edge_offset_sec: float = DUB_EDGE_OFFSET_SEC,
+) -> list[dict[str, Any]]:
+    """Extract opening/closing JPEGs — extra samples beyond scene-based frames."""
+    import ffmpeg as ffmpeg_lib
+
+    from packages.video.ffmpeg_bin import media_duration
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    dur = media_duration(video_path)
+    frames: list[dict[str, Any]] = []
+
+    for edge, t in _clip_edge_times(dur, edge_offset_sec=edge_offset_sec):
+        frame_path = output_dir / f"{clip_id}_edge_{edge}.jpg"
+        try:
+            run_ffmpeg(
+                ffmpeg_lib.input(str(video_path), ss=t)
+                .output(str(frame_path), vframes=1, q=2)
+                .overwrite_output(),
+                label=f"extract_edge_{clip_id}_{edge}",
+            )
+            frames.append({
+                "scene_idx": -1,
+                "clip_id": clip_id,
+                "time": round(t, 2),
+                "scene_start": 0.0,
+                "scene_end": round(dur, 2),
+                "frame_path": str(frame_path),
+                "edge": edge,
+            })
+        except Exception as exc:
+            log.warning("edge_frame_extract_failed", clip_id=clip_id, edge=edge, error=str(exc))
+
+    return frames
+
+
+def format_frame_descriptor(frame: dict[str, Any]) -> str:
+    """Human-readable timestamp line for Claude (scene sample or clip edge)."""
+    clip_id = frame["clip_id"]
+    t = float(frame["time"])
+    edge = frame.get("edge")
+    if edge == "opening":
+        return f"[{clip_id} clip opening at {t:.1f}s]"
+    if edge == "closing":
+        return f"[{clip_id} clip closing at {t:.1f}s]"
+    if edge == "hard_cut":
+        return f"[{clip_id} hard cut at {t:.1f}s]"
+    return (
+        f"[{clip_id} scene {frame['scene_idx']} at {t:.1f}s "
+        f"(source {float(frame['scene_start']):.1f}–{float(frame['scene_end']):.1f}s)]"
+    )
+
+
+def build_vision_content(frames: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Build LiteLLM image_url blocks and payload stats (single disk read per frame)."""
     content: list[dict[str, Any]] = []
+    jpeg_bytes = 0
+    base64_chars = 0
+    missing = 0
+    timestamps: list[float] = []
+    jpeg_kb_per_frame: list[int] = []
+
     for frame in frames:
-        path = pathlib.Path(frame["frame_path"])
+        path = pathlib.Path(str(frame.get("frame_path") or ""))
         if not path.exists():
+            missing += 1
+            log.warning("vision_frame_missing", path=str(path), time=frame.get("time"))
             continue
-        b64 = base64.b64encode(path.read_bytes()).decode()
+        raw = path.read_bytes()
+        b64 = base64.b64encode(raw).decode()
+        jpeg_bytes += len(raw)
+        base64_chars += len(b64)
+        timestamps.append(float(frame["time"]))
+        jpeg_kb_per_frame.append(len(raw) // 1024)
         content.append({
             "type": "image_url",
             "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
         })
+
+    stats: dict[str, Any] = {
+        "requested_frames": len(frames),
+        "image_blocks": len(content),
+        "missing_files": missing,
+        "jpeg_bytes": jpeg_bytes,
+        "jpeg_kb": round(jpeg_bytes / 1024),
+        "base64_chars": base64_chars,
+        "base64_kb": round(base64_chars / 1024),
+        "timestamps": timestamps,
+        "jpeg_kb_per_frame": jpeg_kb_per_frame,
+    }
+    return content, stats
+
+
+def frames_to_vision_content(frames: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Convert frame dicts to LiteLLM image_url content blocks (base64 JPEG)."""
+    content, _stats = build_vision_content(frames)
     return content
 
 

@@ -223,7 +223,10 @@ async def chat_stream(body: ChatStreamIn, auth: CurrentUser) -> StreamingRespons
 
         # === Stream AI response ===
         full_answer = ""
-        async for event in chat_service.answer_events(body.message, history, old_summary, slug):
+        async for event in chat_service.answer_events(
+            body.message, history, old_summary, slug,
+            user_id=user_id, tenant_id=auth.tenant_id,
+        ):
             yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
             if event["type"] == "done":
                 full_answer = event.get("answer", "")

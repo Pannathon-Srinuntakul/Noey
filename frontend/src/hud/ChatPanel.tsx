@@ -13,6 +13,7 @@ import {
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { api } from '../api'
+import { formatUserError } from '../errors'
 import type { ChatSessionOut } from '../types'
 
 interface Msg {
@@ -181,7 +182,7 @@ export function ChatPanel() {
       setSessions(list)
     } catch (e) {
       if (e instanceof DOMException && e.name === 'AbortError') return
-      setMsgs((m) => [...m, { role: 'assistant', text: `Error: ${(e as Error).message}` }])
+      setMsgs((m) => [...m, { role: 'assistant', text: formatUserError(e) }])
     } finally {
       abortRef.current = null
       setBusy(false)

@@ -13,12 +13,13 @@ from typing import Any
 
 from sqlalchemy import text
 
+from packages.core.errors import format_exception_message
 from packages.core.logging import get_logger
 from packages.core.settings import get_settings
 from packages.db.config import effective_llm
 from packages.db.session import get_sessionmaker
 from packages.db.tenancy import DEFAULT_TENANT_SLUG, set_search_path_sql
-from packages.llm import chat_once, tool_schema
+from packages.llm import chat_once, tool_schema, UsageCtx, set_usage_ctx, reset_usage_ctx
 from packages.llm.config import llm_call_extra
 from services.api import queries
 
@@ -410,9 +411,19 @@ async def answer_events(
     history: list[dict[str, str]] | None = None,
     summary: str | None = None,
     tenant_slug: str = DEFAULT_TENANT_SLUG,
+    user_id: int | None = None,
+    tenant_id: int | None = None,
 ) -> AsyncIterator[dict[str, str]]:
     """Yield progress events then a final done/error event."""
     settings = get_settings()
+
+    # Set usage context so gateway can track tokens for this user
+    usage_token = None
+    if user_id is not None and tenant_id is not None:
+        usage_token = set_usage_ctx(
+            UsageCtx(user_id=user_id, tenant_id=tenant_id, feature="chat")
+        )
+
     try:
         maker = get_sessionmaker()
         async with maker() as s:
@@ -452,7 +463,7 @@ async def answer_events(
                 try:
                     result = await _run_tool(fn.name, args, tenant_slug)
                 except Exception as exc:  # noqa: BLE001
-                    result = {"error": str(exc)}
+                    result = {"error": format_exception_message(exc)}
                 messages.append(
                     {
                         "role": "tool",
@@ -472,7 +483,10 @@ async def answer_events(
         yield {"type": "done", "answer": final.content or "Sorry, I couldn't complete that."}
     except Exception as exc:  # noqa: BLE001
         log.exception("chat_failed")
-        yield {"type": "error", "message": str(exc)}
+        yield {"type": "error", "message": format_exception_message(exc)}
+    finally:
+        if usage_token is not None:
+            reset_usage_ctx(usage_token)
 
 
 async def answer(

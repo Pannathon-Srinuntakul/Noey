@@ -5,6 +5,7 @@ import types
 import pytest
 
 import packages.llm.gateway as gw
+from packages.llm.config import LLM_REQUEST_TIMEOUT_SEC
 from packages.llm.tools import tool_schema
 
 
@@ -28,6 +29,7 @@ async def test_complete_returns_text(monkeypatch):
     # model from settings is forwarded
     assert "model" in captured
     assert captured["messages"][-1] == {"role": "user", "content": "hi there"}
+    assert captured.get("timeout") == LLM_REQUEST_TIMEOUT_SEC
 
 
 @pytest.mark.asyncio

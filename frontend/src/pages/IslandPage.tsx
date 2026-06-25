@@ -1,6 +1,6 @@
 import { Film, Palmtree } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
-import { api } from '../api'
+import { api, formatUserError } from '../api'
 import { ChatPanel } from '../hud/ChatPanel'
 import { MetricBar } from '../hud/MetricBar'
 import { PromptCron } from '../hud/PromptCron'
@@ -34,7 +34,7 @@ export default function IslandPage() {
       setTiktokOverview(ov)
       setActivity(runs.length)
     } catch (e) {
-      setError((e as Error).message)
+      setError(formatUserError(e))
     }
   }, [])
 

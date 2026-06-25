@@ -314,3 +314,46 @@ class SummaryOut(BaseModel):
     group_by_label: str
     rows: list[SummaryRow]
     metric_labels: list[str]  # ordered metric column labels for table header
+
+
+# ── Usage & Plan schemas ─────────────────────────────────────────────────────
+
+class UsageFeatureRow(BaseModel):
+    feature: str
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int
+
+
+class UsageMeOut(BaseModel):
+    plan: str
+    period_start: str
+    used_tokens: int
+    input_tokens: int
+    output_tokens: int
+    limit_tokens: int
+    unlimited: bool
+    remaining_tokens: int | None
+    usage_pct: float | None
+    by_feature: list[UsageFeatureRow]
+    estimated_cost_usd: float
+    reset_at: str | None
+
+
+class AdminUsageRow(BaseModel):
+    user_id: int
+    email: str
+    plan: str
+    period_start: str
+    used_tokens: int
+    input_tokens: int
+    output_tokens: int
+    limit_tokens: int
+    unlimited: bool
+    usage_pct: float | None
+    estimated_cost_usd: float
+    reset_at: str | None
+
+
+class SetPlanIn(BaseModel):
+    plan: str

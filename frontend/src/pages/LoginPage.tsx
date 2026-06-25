@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
+import { formatUserError } from '../errors'
 
 export default function LoginPage() {
   const { login } = useAuth()
@@ -18,7 +19,7 @@ export default function LoginPage() {
       await login(email, password)
       navigate('/', { replace: true })
     } catch (err) {
-      setError((err as Error).message)
+      setError(formatUserError(err))
     } finally {
       setLoading(false)
     }

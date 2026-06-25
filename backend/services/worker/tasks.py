@@ -25,6 +25,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.core.logging import get_logger
+from packages.core.errors import format_exception_message
 from packages.db.models.core_auth import Job
 from packages.db.session import bind_tenant_search_path, get_engine, get_sessionmaker
 from packages.video.storage import data_root
@@ -70,6 +71,37 @@ async def _core_session() -> AsyncSession:
     session = maker()
     await session.execute(text("SET search_path TO core, public"))
     return session
+
+
+async def _get_tenant_id_by_slug(tenant_slug: str) -> int | None:
+    """Resolve tenant_slug → tenant.id (core schema). Returns None on miss."""
+    from packages.db.models.core_auth import Tenant
+    session = await _core_session()
+    try:
+        row = (
+            await session.execute(select(Tenant).where(Tenant.slug == tenant_slug))
+        ).scalar_one_or_none()
+        return int(row.id) if row else None
+    finally:
+        await session.close()
+
+
+def _set_video_usage_ctx(proj: Any, tenant_id: int | None, project_uid: str) -> Any:
+    """Set LLM usage context for a video task. Returns the context token to reset later."""
+    from packages.llm.usage import UsageCtx, set_usage_ctx
+    if tenant_id is None:
+        return None
+    user_id = getattr(proj, "user_id", None)
+    if user_id is None:
+        return None
+    return set_usage_ctx(
+        UsageCtx(
+            user_id=int(user_id),
+            tenant_id=tenant_id,
+            feature="video",
+            reference_id=project_uid,
+        )
+    )
 
 
 async def _tenant_session(tenant_slug: str) -> AsyncSession:
@@ -135,7 +167,7 @@ async def csv_export(ctx: dict[str, Any], *, job_id: str, tenant_slug: str, tabl
         await session.commit()
         return result
     except Exception as exc:
-        await _update_job(job_id, "error", 0, error=str(exc))
+        await _update_job(job_id, "error", 0, error=format_exception_message(exc))
         raise
     finally:
         await session.close()
@@ -210,7 +242,7 @@ async def csv_import(ctx: dict[str, Any], *, job_id: str, tenant_slug: str, tabl
         await _update_job(job_id, "ok", 100, result=result)
         return result
     except Exception as exc:
-        await _update_job(job_id, "error", 0, error=str(exc))
+        await _update_job(job_id, "error", 0, error=format_exception_message(exc))
         raise
     finally:
         await session.close()
@@ -285,18 +317,35 @@ async def _push_project_files(project_uid: str) -> None:
 # ── task: AI processing ───────────────────────────────────────────────────────
 
 
-async def ai_process(ctx: dict[str, Any], *, job_id: str, prompt: str) -> dict:
+async def ai_process(
+    ctx: dict[str, Any],
+    *,
+    job_id: str,
+    prompt: str,
+    user_id: int | None = None,
+    tenant_id: int | None = None,
+) -> dict:
     """Run an AI prompt in the background. Returns {answer: str}."""
     await _update_job(job_id, "running", 10)
+    _usage_token = None
     try:
         from packages.llm.gateway import complete
+        if user_id is not None and tenant_id is not None:
+            from packages.llm.usage import UsageCtx, set_usage_ctx
+            _usage_token = set_usage_ctx(
+                UsageCtx(user_id=user_id, tenant_id=tenant_id, feature="prompt_cron", reference_id=job_id)
+            )
         answer = await complete(prompt)
         result = {"answer": answer}
         await _update_job(job_id, "ok", 100, result=result)
         return result
     except Exception as exc:
-        await _update_job(job_id, "error", 0, error=str(exc))
+        await _update_job(job_id, "error", 0, error=format_exception_message(exc))
         raise
+    finally:
+        if _usage_token is not None:
+            from packages.llm.usage import reset_usage_ctx
+            reset_usage_ctx(_usage_token)
 
 
 # ── task: ingest_video ────────────────────────────────────────────────────────
@@ -364,6 +413,14 @@ async def ingest_video(ctx: dict[str, Any], *, job_id: str, project_uid: str, te
             shutil.copy2(src, norm_out)
             norm_paths.append(str(norm_out.relative_to(root)))
 
+            from packages.video.scene import DUB_MAX_CLIP_SEC
+            clip_dur = media_duration(norm_out)
+            if clip_dur > DUB_MAX_CLIP_SEC:
+                raise ValueError(
+                    f"คลิป {i + 1}/{total} ยาว {int(clip_dur // 60)} น.{int(clip_dur % 60):02d} วิ "
+                    f"— สูงสุด {DUB_MAX_CLIP_SEC // 60} นาที กรุณาตัดคลิปให้สั้นลง"
+                )
+
             # Extract mono 16 kHz WAV + loudnorm for faster-whisper (talking_head only)
             # loudnorm boosts quiet speech so VAD can detect it under BGM
             if not is_dub_first:
@@ -413,13 +470,13 @@ async def ingest_video(ctx: dict[str, Any], *, job_id: str, project_uid: str, te
         try:
             if await _abort_if_cancelled(ts, project_uid, job_id):
                 return {"cancelled": True}
-            await _update_video(ts, project_uid, status="error", error_msg=str(exc))
+            await _update_video(ts, project_uid, status="error", error_msg=format_exception_message(exc))
         finally:
             await ts.close()
         await _update_job(
             job_id, "error", 0,
-            result={"step": "error", "message": str(exc)},
-            error=str(exc),
+            result={"step": "error", "message": format_exception_message(exc)},
+            error=format_exception_message(exc),
         )
         raise
     finally:
@@ -800,13 +857,13 @@ async def transcribe_video(ctx: dict[str, Any], *, job_id: str, project_uid: str
         try:
             if await _abort_if_cancelled(ts, project_uid, job_id):
                 return {"cancelled": True}
-            await _update_video(ts, project_uid, status="error", error_msg=str(exc))
+            await _update_video(ts, project_uid, status="error", error_msg=format_exception_message(exc))
         finally:
             await ts.close()
         await _update_job(
             job_id, "error", 0,
-            result={"step": "error", "message": str(exc)},
-            error=str(exc),
+            result={"step": "error", "message": format_exception_message(exc)},
+            error=format_exception_message(exc),
         )
         raise
     finally:
@@ -860,6 +917,7 @@ async def plan_edit(ctx: dict[str, Any], *, job_id: str, project_uid: str, tenan
     """Build Timeline JSON — full silence-cut, or AI highlight within target duration."""
     log.info("task_start", task="plan_edit", project_uid=project_uid)
     session = await _tenant_session(tenant_slug)
+    _usage_token = None
     try:
         if await _abort_if_cancelled(session, project_uid, job_id):
             return {"cancelled": True}
@@ -870,6 +928,9 @@ async def plan_edit(ctx: dict[str, Any], *, job_id: str, project_uid: str, tenan
         output_dir = root / "video_outputs" / project_uid
 
         proj = await _get_video_project(session, project_uid)
+        tenant_id = await _get_tenant_id_by_slug(tenant_slug)
+        _usage_token = _set_video_usage_ctx(proj, tenant_id, project_uid)
+
         duration_mode = proj.duration_mode  # "full" | "auto" | "custom"
         target_sec = proj.target_duration_sec  # set only when duration_mode == "custom"
 
@@ -1015,17 +1076,20 @@ async def plan_edit(ctx: dict[str, Any], *, job_id: str, project_uid: str, tenan
         try:
             if await _abort_if_cancelled(ts, project_uid, job_id):
                 return {"cancelled": True}
-            await _update_video(ts, project_uid, status="error", error_msg=str(exc))
+            await _update_video(ts, project_uid, status="error", error_msg=format_exception_message(exc))
         finally:
             await ts.close()
         await _update_job(
             job_id, "error", 0,
-            result={"step": "error", "message": str(exc)},
-            error=str(exc),
+            result={"step": "error", "message": format_exception_message(exc)},
+            error=format_exception_message(exc),
         )
         raise
     finally:
         await session.close()
+        if _usage_token is not None:
+            from packages.llm.usage import reset_usage_ctx
+            reset_usage_ctx(_usage_token)
 
 
 def _marks_to_popups(product_marks: list[dict], render_cuts: list[dict]) -> list[dict]:
@@ -1566,13 +1630,13 @@ async def render_video(ctx: dict[str, Any], *, job_id: str, project_uid: str, te
         try:
             if await _abort_if_cancelled(ts, project_uid, job_id):
                 return {"cancelled": True}
-            await _update_video(ts, project_uid, status="error", error_msg=str(exc))
+            await _update_video(ts, project_uid, status="error", error_msg=format_exception_message(exc))
         finally:
             await ts.close()
         await _update_job(
             job_id, "error", 0,
-            result={"step": "error", "message": str(exc)},
-            error=str(exc),
+            result={"step": "error", "message": format_exception_message(exc)},
+            error=format_exception_message(exc),
         )
         raise
     finally:
@@ -1862,6 +1926,7 @@ async def analyze_dub_first(ctx: dict[str, Any], *, job_id: str, project_uid: st
     log.info("task_start", task="analyze_dub_first", project_uid=project_uid)
     await _video_progress(job_id, 52, "analyze", "กำลังวางแผน script…")
     session = await _tenant_session(tenant_slug)
+    _usage_token = None
     try:
         if await _abort_if_cancelled(session, project_uid, job_id):
             return {"cancelled": True}
@@ -1873,11 +1938,20 @@ async def analyze_dub_first(ctx: dict[str, Any], *, job_id: str, project_uid: st
         frames_dir = output_dir / "frames"
 
         proj = await _get_video_project(session, project_uid)
+        tenant_id = await _get_tenant_id_by_slug(tenant_slug)
+        _usage_token = _set_video_usage_ctx(proj, tenant_id, project_uid)
+
         norm_files = sorted((output_dir / "normalized").glob("norm_*.*"))
         brief = proj.brief or ""
         user_script = proj.user_script or ""
 
-        from packages.video.scene import detect_scenes, extract_sample_frames, frames_to_vision_content
+        from packages.video.scene import (
+            build_vision_content,
+            detect_scenes,
+            extract_sample_frames,
+            extract_edge_frames,
+            format_frame_descriptor,
+        )
         from packages.llm.gateway import acompletion
         from packages.video.timeline import parse_llm_json
 
@@ -1911,28 +1985,44 @@ async def analyze_dub_first(ctx: dict[str, Any], *, job_id: str, project_uid: st
             )
             try:
                 scenes = detect_scenes(norm_file)
-                from packages.video.scene import DUB_LEAD_SKIP_PCT, DUB_MAX_FRAMES
-                frames = extract_sample_frames(
+                from packages.video.ffmpeg_bin import media_duration
+                from packages.video.scene import DUB_LEAD_SKIP_PCT, DUB_SAMPLES_PER_SCENE, dub_scene_cap, dub_sample_frame_budget
+
+                clip_dur = media_duration(norm_file)
+                frame_budget = dub_sample_frame_budget(clip_dur, samples_per_scene=DUB_SAMPLES_PER_SCENE)
+                clip_frames_dir = frames_dir / f"clip{i}"
+                scene_frames = extract_sample_frames(
                     norm_file,
                     scenes,
-                    frames_dir / f"clip{i}",
+                    clip_frames_dir,
                     clip_id=clip_id,
-                    max_frames=DUB_MAX_FRAMES,
-                    samples_per_scene=2,
+                    max_frames=frame_budget,
+                    samples_per_scene=DUB_SAMPLES_PER_SCENE,
                     lead_skip_pct=DUB_LEAD_SKIP_PCT,
                 )
-                all_frames.extend(frames)
+                log.info(
+                    "dub_sample_budget",
+                    clip=clip_id,
+                    duration_sec=round(clip_dur, 1),
+                    scene_cap=dub_scene_cap(clip_dur),
+                    max_frames=frame_budget,
+                    extracted=len(scene_frames),
+                )
+                edge_frames = extract_edge_frames(norm_file, clip_frames_dir, clip_id=clip_id)
+                opening = [f for f in edge_frames if f.get("edge") == "opening"]
+                closing = [f for f in edge_frames if f.get("edge") == "closing"]
+                all_frames.extend(opening + scene_frames + closing)
             except Exception as exc:
                 log.warning("scene_extract_failed", clip=str(norm_file), error=str(exc))
 
-        await _video_progress(job_id, 74, "analyze", "Claude กำลัง match script กับซีนวิดีโอ…")
+        await _video_progress(job_id, 74, "analyze", "กำลัง match script กับซีนวิดีโอ…")
 
-        vision_content = frames_to_vision_content(all_frames)
-        frame_descs = "\n".join(
-            f"[{f['clip_id']} scene {f['scene_idx']} at {f['time']:.1f}s "
-            f"(source {f['scene_start']:.1f}–{f['scene_end']:.1f}s)]"
-            for f in all_frames
-        )
+        import time as _time
+
+        _t_payload = _time.monotonic()
+        vision_content, vision_stats = build_vision_content(all_frames)
+        payload_build_ms = round((_time.monotonic() - _t_payload) * 1000)
+        frame_descs = "\n".join(format_frame_descriptor(f) for f in all_frames)
 
         if script_scenes:
             script_plan_xml = (
@@ -1944,8 +2034,8 @@ async def analyze_dub_first(ctx: dict[str, Any], *, job_id: str, project_uid: st
         user_msg_content: list[dict[str, Any]] = [{"type": "text", "text": (
             f"{script_plan_xml}\n\n"
             f"<frame_timestamps>\n{frame_descs}\n</frame_timestamps>\n\n"
-            "<instruction>Sample frames follow in order. Each frame is from the READY portion of its scene "
-            "(early prep/hair-adjust moments are excluded from sampling). "
+            "<instruction>Sample frames follow in order. Scene samples skip early prep within each scene; "
+            "clip opening/closing edge samples are included as extra options (use only when they fit the script). "
             "Match voiceover lines to ready-on-camera moments only. "
             "Set matchedFrameTime to the frame timestamp you chose; keep sourceIn within ±0.35s of it. "
             "For product/OOTD/demo lines: use 3–6 angle changes per line (1.5–3.5s each) from DISTINCT timestamps — "
@@ -1957,11 +2047,22 @@ async def analyze_dub_first(ctx: dict[str, Any], *, job_id: str, project_uid: st
         messages = [{"role": "user", "content": user_msg_content}]
         from packages.llm.config import vision_call_kwargs
         vx = vision_call_kwargs()
+        text_chars = len(user_msg_content[0]["text"]) + len(user_msg_content[-1]["text"])
         log.info(
-            "analyze_dub_scene_match",
+            "analyze_dub_scene_match_payload",
+            project_uid=project_uid,
             model=vx.get("model", "default"),
             reasoning_effort=vx.get("reasoning_effort"),
-            frames=len(all_frames),
+            payload_build_ms=payload_build_ms,
+            text_chars=text_chars,
+            **vision_stats,
+        )
+        log.info(
+            "analyze_dub_scene_match_send",
+            project_uid=project_uid,
+            image_blocks=vision_stats["image_blocks"],
+            payload_approx_kb=vision_stats["base64_kb"] + round(text_chars / 1024),
+            note="payload_build_ms=local disk read; API wait logged as llm_acompletion_waiting",
         )
         resp = await acompletion(messages, system=_EDIT_SCRIPT_SYSTEM, **vx)
         raw = resp.choices[0].message.content or ""
@@ -1996,17 +2097,20 @@ async def analyze_dub_first(ctx: dict[str, Any], *, job_id: str, project_uid: st
         try:
             if await _abort_if_cancelled(ts, project_uid, job_id):
                 return {"cancelled": True}
-            await _update_video(ts, project_uid, status="error", error_msg=str(exc))
+            await _update_video(ts, project_uid, status="error", error_msg=format_exception_message(exc))
         finally:
             await ts.close()
         await _update_job(
             job_id, "error", 0,
-            result={"step": "error", "message": str(exc)},
-            error=str(exc),
+            result={"step": "error", "message": format_exception_message(exc)},
+            error=format_exception_message(exc),
         )
         raise
     finally:
         await session.close()
+        if _usage_token is not None:
+            from packages.llm.usage import reset_usage_ctx
+            reset_usage_ctx(_usage_token)
 
 
 # ── task: render_dub_silent ──────────────────────────────────────────────────
@@ -2063,9 +2167,8 @@ async def render_dub_silent(ctx: dict[str, Any], *, job_id: str, project_uid: st
             src = _norm_for_clip(seg.get("sourceClip", "clip0"))
             src_in = float(seg.get("sourceIn", 0.0))
             src_out = float(seg.get("sourceOut", src_in + 3.0))
-            dur = max(0.1, src_out - src_in)
             clip_out = clips_dir / f"clip_{i:03d}.mp4"
-            log.info("render_dub_clip", idx=i+1, total=total, src=src.name, in_=round(src_in,2), out=round(src_out,2), dur=round(dur,2))
+            log.info("render_dub_clip", idx=i+1, total=total, src=src.name, in_=round(src_in,2), out=round(src_out,2))
             # Frame-accurate trim via video filter + reset PTS (avoids keyframe-stutter from vcodec=copy).
             # Re-encode to h264/yuv420p so concat timestamps are always consistent.
             run_ffmpeg(
@@ -2162,13 +2265,13 @@ async def render_dub_silent(ctx: dict[str, Any], *, job_id: str, project_uid: st
         try:
             if await _abort_if_cancelled(ts, project_uid, job_id):
                 return {"cancelled": True}
-            await _update_video(ts, project_uid, status="error", error_msg=str(exc))
+            await _update_video(ts, project_uid, status="error", error_msg=format_exception_message(exc))
         finally:
             await ts.close()
         await _update_job(
             job_id, "error", 0,
-            result={"step": "error", "message": str(exc)},
-            error=str(exc),
+            result={"step": "error", "message": format_exception_message(exc)},
+            error=format_exception_message(exc),
         )
         raise
     finally:
@@ -2182,6 +2285,7 @@ async def plan_dub_timeline(ctx: dict[str, Any], *, job_id: str, project_uid: st
     """Load Edit Script + VO file → Claude → Timeline JSON → enqueue render_video."""
     await _video_progress(job_id, 5, "plan_dub", "กำลังวางแผน timeline ตาม voiceover…")
     session = await _tenant_session(tenant_slug)
+    _usage_token = None
     try:
         if await _abort_if_cancelled(session, project_uid, job_id):
             return {"cancelled": True}
@@ -2192,6 +2296,9 @@ async def plan_dub_timeline(ctx: dict[str, Any], *, job_id: str, project_uid: st
         output_dir = root / "video_outputs" / project_uid
 
         proj = await _get_video_project(session, project_uid)
+        tenant_id = await _get_tenant_id_by_slug(tenant_slug)
+        _usage_token = _set_video_usage_ctx(proj, tenant_id, project_uid)
+
         if not proj.edit_script_path:
             raise ValueError("edit_script_path missing — run analyze_dub_first first")
         if not proj.voiceover_path:
@@ -2287,17 +2394,20 @@ async def plan_dub_timeline(ctx: dict[str, Any], *, job_id: str, project_uid: st
         try:
             if await _abort_if_cancelled(ts, project_uid, job_id):
                 return {"cancelled": True}
-            await _update_video(ts, project_uid, status="error", error_msg=str(exc))
+            await _update_video(ts, project_uid, status="error", error_msg=format_exception_message(exc))
         finally:
             await ts.close()
         await _update_job(
             job_id, "error", 0,
-            result={"step": "error", "message": str(exc)},
-            error=str(exc),
+            result={"step": "error", "message": format_exception_message(exc)},
+            error=format_exception_message(exc),
         )
         raise
     finally:
         await session.close()
+        if _usage_token is not None:
+            from packages.llm.usage import reset_usage_ctx
+            reset_usage_ctx(_usage_token)
 
 
 # ── task: analyze_reference ──────────────────────────────────────────────────
@@ -2335,7 +2445,7 @@ async def analyze_reference(ctx: dict[str, Any], *, job_id: str, project_uid: st
         await _update_job(job_id, "ok", 100, result={"step": "done", "message": "วิเคราะห์ style เสร็จแล้ว", "profile": profile})
         return profile
     except Exception as exc:
-        await _update_job(job_id, "error", 0, result={"step": "error", "message": str(exc)}, error=str(exc))
+        await _update_job(job_id, "error", 0, result={"step": "error", "message": format_exception_message(exc)}, error=format_exception_message(exc))
         raise
     finally:
         await session.close()

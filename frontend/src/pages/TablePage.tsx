@@ -18,7 +18,7 @@ import { CSS } from '@dnd-kit/utilities'
 import { ArrowLeft, GripVertical, Settings2, Table2, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { api } from '../api'
+import { api, formatUserError } from '../api'
 import { ConfirmModal } from '../hud/ConfirmModal'
 import { useNavigateWithDoor } from '../navigation/NavigationContext'
 import { TableEditor } from '../hud/TableEditor'
@@ -50,7 +50,7 @@ export default function TablePage() {
           navigate(`/tables/${list[0].uid}`, { replace: true })
         }
       })
-      .catch((e) => setError((e as Error).message))
+      .catch((e) => setError(formatUserError(e)))
   }, [urlId, navigate])
 
   useEffect(() => { loadList() }, [loadList])
@@ -59,7 +59,7 @@ export default function TablePage() {
     api.tables
       .get(uid)
       .then(setActive)
-      .catch((e) => setError((e as Error).message))
+      .catch((e) => setError(formatUserError(e)))
   }, [])
 
   useEffect(() => {
@@ -81,7 +81,7 @@ export default function TablePage() {
       if (activeId === uid) navigate('/tables', { replace: true })
       loadList()
     } catch (e) {
-      setError((e as Error).message)
+      setError(formatUserError(e))
     }
   }
 
@@ -102,7 +102,7 @@ export default function TablePage() {
       await api.tables.reorder(reordered.map((t) => t.uid))
     } catch (e) {
       loadList()  // revert on error
-      setError((e as Error).message)
+      setError(formatUserError(e))
     }
   }
 

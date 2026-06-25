@@ -8,6 +8,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { setTokenGetter, setUnauthorizedHandler } from '../api'
+import { formatErrorDetail } from '../errors'
 
 const BASE = import.meta.env.VITE_API_URL ?? '/api'
 
@@ -100,8 +101,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       body: JSON.stringify({ email, password }),
     })
     if (!r.ok) {
-      const detail = (await r.json().catch(() => ({}))).detail ?? 'Login failed'
-      throw new Error(detail)
+      const body = (await r.json().catch(() => ({}))) as { detail?: unknown }
+      throw new Error(formatErrorDetail(body.detail ?? 'Login failed', r.status))
     }
     const { access_token, refresh_token } = await r.json()
     sessionStorage.setItem(ACCESS_KEY, access_token)

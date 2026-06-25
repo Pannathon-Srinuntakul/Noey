@@ -1,7 +1,7 @@
 import * as Dialog from '@radix-ui/react-dialog'
 import { AlertTriangle, CheckCircle2, Download, Upload, X } from 'lucide-react'
 import { useRef, useState } from 'react'
-import { api } from '../api'
+import { api, formatUserError } from '../api'
 import type { ColumnMeta } from '../types'
 
 interface Props {
@@ -76,7 +76,7 @@ export function ImportModal({ tableId, columns, open, onClose, onImported }: Pro
       setFile(f)
       setPreview({ headers, rows, matchedHeaders, unmatchedHeaders })
     } catch (e) {
-      setError(`อ่านไฟล์ไม่ได้: ${(e as Error).message}`)
+      setError(`อ่านไฟล์ไม่ได้: ${formatUserError(e)}`)
     }
   }
 
@@ -95,14 +95,14 @@ export function ImportModal({ tableId, columns, open, onClose, onImported }: Pro
       setResult(res)
       onImported()
     } catch (e) {
-      setError((e as Error).message)
+      setError(formatUserError(e))
     } finally {
       setImporting(false)
     }
   }
 
   async function downloadSample() {
-    try { await api.tables.sampleCsv(tableId) } catch (e) { setError((e as Error).message) }
+    try { await api.tables.sampleCsv(tableId) } catch (e) { setError(formatUserError(e)) }
   }
 
   function reset() {

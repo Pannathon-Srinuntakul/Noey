@@ -35,6 +35,7 @@ import {
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, storedPathBasename, type DubEditScript, type VideoProjectOut } from '../api'
 import { useAuth } from '../auth/AuthContext'
+import { formatUserError } from '../errors'
 import { ConfirmModal } from '../hud/ConfirmModal'
 import { useNavigateWithDoor } from '../navigation/NavigationContext'
 
@@ -422,9 +423,10 @@ function parseJobStatus(job: {
   result: Record<string, unknown> | null
 }): JobStatus {
   const step = (job.result?.step as VideoStep | undefined) ?? 'queued'
-  const message =
+  const rawMessage =
     (typeof job.result?.message === 'string' ? job.result.message : null) ??
     fallbackMessage(job.progress)
+  const message = step === 'error' ? formatUserError(rawMessage) : rawMessage
   return { progress: job.progress, step, message, jobStatus: job.status }
 }
 
@@ -1138,7 +1140,7 @@ function ProjectCard({
       const updated = await api.videos.uploadVoiceover(project.uid, file)
       onVoUploaded(updated)
     } catch (e) {
-      setVoError((e as Error).message)
+      setVoError(formatUserError(e))
     } finally {
       setVoUploading(false)
       if (voInputRef.current) voInputRef.current.value = ''
@@ -1255,14 +1257,14 @@ function ProjectCard({
       {project.status === 'cancelled' && (
         <p className="mt-2 flex items-start gap-1.5 rounded-lg bg-zinc-100 px-3 py-2 text-xs text-zinc-600">
           <Square size={13} className="mt-0.5 shrink-0" />
-          {project.error_msg ?? 'ยกเลิกโดยผู้ใช้'}
+          {formatUserError(project.error_msg ?? 'ยกเลิกโดยผู้ใช้')}
         </p>
       )}
 
       {project.status === 'error' && project.error_msg && (
         <p className="mt-2 flex items-start gap-1.5 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">
           <XCircle size={13} className="mt-0.5 shrink-0" />
-          {project.error_msg}
+          {formatUserError(project.error_msg)}
         </p>
       )}
 
@@ -1458,7 +1460,7 @@ export default function VideoPage() {
       await new Promise((r) => setTimeout(r, 600))
       await loadProjects()
     } catch (e) {
-      setUploadError((e as Error).message)
+      setUploadError(formatUserError(e))
     } finally {
       setUploading(false)
     }
@@ -1492,7 +1494,7 @@ export default function VideoPage() {
       await api.videos.cancel(uid)
       await loadProjects()
     } catch (e) {
-      alert((e as Error).message)
+      alert(formatUserError(e))
     } finally {
       setActionUid(null)
     }
@@ -1505,7 +1507,7 @@ export default function VideoPage() {
       await api.videos.delete(uid)
       setProjects((prev) => prev.filter((p) => p.uid !== uid))
     } catch (e) {
-      alert((e as Error).message)
+      alert(formatUserError(e))
     } finally {
       setActionUid(null)
     }
@@ -1514,14 +1516,14 @@ export default function VideoPage() {
   async function handleDownloadFinal(project: VideoProjectOut) {
     setDownloading(project.uid)
     const filename = storedPathBasename(project.final_path) ?? 'final.mp4'
-    try { await api.videos.downloadFinal(project.uid, filename) } catch (e) { alert((e as Error).message) }
+    try { await api.videos.downloadFinal(project.uid, filename) } catch (e) { alert(formatUserError(e)) }
     finally { setDownloading(null) }
   }
 
   async function handleDownloadCapcut(project: VideoProjectOut) {
     setDownloading(project.uid)
     const filename = storedPathBasename(project.zip_path) ?? `capcut_bundle_${project.uid.slice(0, 8)}.zip`
-    try { await api.videos.exportCapcut(project.uid, filename) } catch (e) { alert((e as Error).message) }
+    try { await api.videos.exportCapcut(project.uid, filename) } catch (e) { alert(formatUserError(e)) }
     finally { setDownloading(null) }
   }
 
@@ -1547,9 +1549,10 @@ export default function VideoPage() {
 
       <div className="flex min-h-0 flex-1 gap-6 overflow-hidden p-6">
         <div className="flex min-h-0 w-96 shrink-0 flex-col overflow-hidden">
-          <h2 className="mb-3 shrink-0 text-sm font-semibold text-amber-200/70 uppercase tracking-widest">
+          <h2 className="mb-1 shrink-0 text-sm font-semibold text-amber-200/70 uppercase tracking-widest">
             อัปโหลดวิดีโอ
           </h2>
+          <p className="mb-3 shrink-0 text-[11px] text-amber-200/45">คลิปต้นฉบับสูงสุด 20 นาทีต่อไฟล์</p>
 
           <div className="scroll-ghost min-h-0 flex-1 overflow-y-auto pr-1">
             <div className="flex flex-col gap-4 pb-2">

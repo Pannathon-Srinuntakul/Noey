@@ -21,6 +21,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from packages.db.base import Base
 
 CORE_SCHEMA = "core"
+PLAN_VALUES = ("free", "starter", "pro", "enterprise")
 
 
 class Tenant(Base):
@@ -46,6 +47,12 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String(255))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Subscription plan — limits monthly token usage (see packages/llm/usage.py)
+    plan: Mapped[str] = mapped_column(String(32), default="free", server_default="free")
+    # Manual reset point set by admin; NULL means auto-reset at start of calendar month
+    usage_reset_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

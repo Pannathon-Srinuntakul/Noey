@@ -1,6 +1,6 @@
 import { FolderOpen, ScrollText, Upload } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
-import { api } from '../api'
+import { api, formatUserError } from '../api'
 import { RoomPage } from '../hud/RoomPage'
 import type { PanelDef } from '../hud/RoomPage'
 import { useNavigateWithDoor } from '../navigation/NavigationContext'
@@ -107,7 +107,7 @@ export default function ImportPage() {
       window.dispatchEvent(new CustomEvent('data-imported'))
       navigateWithDoor('/')
     } catch (e) {
-      setError((e as Error).message)
+      setError(formatUserError(e))
       setUploading(false)
     }
   }

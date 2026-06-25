@@ -24,6 +24,9 @@ import type {
   VideoRow,
   ViewersDailyRow,
 } from './types'
+import { readApiError } from './errors'
+
+export { formatUserError } from './errors'
 
 // Local: Vite proxies /api → localhost:8000. Railway: set VITE_API_URL to the API service URL.
 const BASE = import.meta.env.VITE_API_URL ?? '/api'
@@ -50,7 +53,7 @@ async function authFetch(input: RequestInfo | URL, init?: RequestInit): Promise<
 
 async function get<T>(path: string): Promise<T> {
   const r = await authFetch(`${BASE}${path}`)
-  if (!r.ok) throw new Error(`${r.status} ${r.statusText}`)
+  if (!r.ok) throw new Error(await readApiError(r))
   return r.json() as Promise<T>
 }
 
@@ -60,7 +63,7 @@ async function send<T>(path: string, method: string, body?: unknown): Promise<T>
     headers: { 'content-type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
   })
-  if (!r.ok) throw new Error(`${r.status} ${r.statusText}`)
+  if (!r.ok) throw new Error(await readApiError(r))
   return (r.status === 204 ? (undefined as T) : ((await r.json()) as T))
 }
 
@@ -100,7 +103,7 @@ export const api = {
       body: JSON.stringify({ message, session_uid: sessionUid }),
       signal,
     })
-    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`)
+    if (!r.ok) throw new Error(await readApiError(r))
     if (!r.body) throw new Error('No response body')
 
     const reader = r.body.getReader()
@@ -158,8 +161,8 @@ export const api = {
     const form = new FormData()
     Array.from(files).forEach((f) => form.append('files', f))
     const url = exportDate ? `${BASE}/import?export_date=${exportDate}` : `${BASE}/import`
-    return fetch(url, { method: 'POST', body: form }).then((r) => {
-      if (!r.ok) throw new Error(`${r.status} ${r.statusText}`)
+    return fetch(url, { method: 'POST', body: form }).then(async (r) => {
+      if (!r.ok) throw new Error(await readApiError(r))
       return r.json() as Promise<ImportRunOut>
     })
   },
@@ -232,7 +235,7 @@ export const api = {
     exportCsv: async (uid: string, ids?: string[]) => {
       const qs = ids?.length ? `?ids=${ids.join(',')}` : ''
       const r = await authFetch(`${BASE}/tables/${uid}/export.csv${qs}`)
-      if (!r.ok) throw new Error(`${r.status} ${r.statusText}`)
+      if (!r.ok) throw new Error(await readApiError(r))
       const blob = await r.blob()
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
@@ -243,7 +246,7 @@ export const api = {
     },
     sampleCsv: async (uid: string) => {
       const r = await authFetch(`${BASE}/tables/${uid}/sample.csv`)
-      if (!r.ok) throw new Error(`${r.status} ${r.statusText}`)
+      if (!r.ok) throw new Error(await readApiError(r))
       const blob = await r.blob()
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
@@ -256,10 +259,7 @@ export const api = {
       const form = new FormData()
       form.append('file', file)
       return authFetch(`${BASE}/tables/${uid}/import`, { method: 'POST', body: form }).then(async (r) => {
-        if (!r.ok) {
-          const detail = await r.json().then((d: Record<string, unknown>) => d.detail as string).catch(() => r.statusText)
-          throw new Error(detail)
-        }
+        if (!r.ok) throw new Error(await readApiError(r))
         return r.json()
       })
     },
@@ -292,10 +292,7 @@ export const api = {
       if (options?.brief) form.append('brief', options.brief)
       if (options?.userScript) form.append('user_script', options.userScript)
       return authFetch(`${BASE}/videos`, { method: 'POST', body: form }).then(async (r) => {
-        if (!r.ok) {
-          const detail = await r.json().then((d: Record<string, unknown>) => d.detail as string).catch(() => r.statusText)
-          throw new Error(detail)
-        }
+        if (!r.ok) throw new Error(await readApiError(r))
         return r.json()
       })
     },
@@ -303,10 +300,7 @@ export const api = {
       const form = new FormData()
       form.append('file', file)
       return authFetch(`${BASE}/videos/${uid}/voiceover`, { method: 'POST', body: form }).then(async (r) => {
-        if (!r.ok) {
-          const detail = await r.json().then((d: Record<string, unknown>) => d.detail as string).catch(() => r.statusText)
-          throw new Error(detail)
-        }
+        if (!r.ok) throw new Error(await readApiError(r))
         return r.json()
       })
     },
@@ -335,7 +329,7 @@ export const api = {
         return
       }
       const r = await authFetch(`${BASE}/videos/${uid}/download`)
-      if (!r.ok) throw new Error(`${r.status} ${r.statusText}`)
+      if (!r.ok) throw new Error(await readApiError(r))
       const blob = await r.blob()
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a'); a.href = url; a.download = filename; a.click()
@@ -343,7 +337,7 @@ export const api = {
     },
     fetchFinalVideoBlob: async (uid: string): Promise<Blob> => {
       const r = await authFetch(`${BASE}/videos/${uid}/download`)
-      if (!r.ok) throw new Error(`${r.status} ${r.statusText}`)
+      if (!r.ok) throw new Error(await readApiError(r))
       return r.blob()
     },
     exportCapcut: async (uid: string, filename?: string) => {
@@ -358,7 +352,7 @@ export const api = {
         return
       }
       const r = await authFetch(`${BASE}/videos/${uid}/export/capcut`)
-      if (!r.ok) throw new Error(`${r.status} ${r.statusText}`)
+      if (!r.ok) throw new Error(await readApiError(r))
       const blob = await r.blob()
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a'); a.href = url; a.download = zipName; a.click()
@@ -367,6 +361,13 @@ export const api = {
     cancel: (uid: string) => send<VideoProjectOut>(`/videos/${uid}/cancel`, 'POST'),
     delete: (uid: string) => send<void>(`/videos/${uid}`, 'DELETE'),
     getEditScript: (uid: string) => get<DubEditScript>(`/videos/${uid}/edit-script`),
+  },
+
+  usage: {
+    getMe: () => get<UsageMeOut>('/usage/me'),
+    adminGetAll: () => get<AdminUsageRow[]>('/usage/admin/all'),
+    adminResetUsage: (userId: number) =>
+      send<{ user_id: number; usage_reset_at: string }>(`/usage/admin/users/${userId}/usage/reset`, 'POST'),
   },
 
 }
@@ -419,4 +420,42 @@ export interface DubEditScript {
     visualDescription?: string
     cutStyle?: string
   }[]
+}
+
+export interface UsageFeatureRow {
+  feature: string
+  input_tokens: number
+  output_tokens: number
+  total_tokens: number
+}
+
+export interface UsageMeOut {
+  user_id: number
+  plan: string
+  period_start: string
+  used_tokens: number
+  input_tokens: number
+  output_tokens: number
+  limit_tokens: number
+  unlimited: boolean
+  remaining_tokens: number | null
+  usage_pct: number | null
+  by_feature: UsageFeatureRow[]
+  estimated_cost_usd: number
+  reset_at: string | null
+}
+
+export interface AdminUsageRow {
+  user_id: number
+  email: string
+  plan: string
+  period_start: string
+  used_tokens: number
+  input_tokens: number
+  output_tokens: number
+  limit_tokens: number
+  unlimited: boolean
+  usage_pct: number | null
+  estimated_cost_usd: number
+  reset_at: string | null
 }

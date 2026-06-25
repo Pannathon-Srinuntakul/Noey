@@ -17,7 +17,7 @@ import { CSS } from '@dnd-kit/utilities'
 import { ArrowLeft, Check, GripVertical, Plus, Trash2, X } from 'lucide-react'
 import { useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { api } from '../api'
+import { api, formatUserError } from '../api'
 import { AddColumnModal } from '../hud/AddColumnModal'
 import { COLUMN_TYPE_LABELS } from '../lib/columnTypes'
 import { OPTION_COLORS } from '../lib/optionColors'
@@ -100,7 +100,7 @@ export default function CreateTablePage() {
       }
       navigate(`/tables/${table.uid}`)
     } catch (e) {
-      setError((e as Error).message)
+      setError(formatUserError(e))
       setCreating(false)
     }
   }

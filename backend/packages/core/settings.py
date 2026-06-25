@@ -80,6 +80,22 @@ class Settings(BaseSettings):
     whisper_compute: str = "int8"        # cpu: int8 | cuda: float16
     whisper_language: str = "th"         # force language; "" = auto-detect (risk of drift)
 
+    # --- LLM plan limits (tokens per month, 0 = unlimited) ---
+    plan_free_monthly_tokens: int = 50_000
+    plan_starter_monthly_tokens: int = 500_000
+    plan_pro_monthly_tokens: int = 5_000_000
+    plan_enterprise_monthly_tokens: int = 0  # 0 = unlimited
+
+    def plan_token_limit(self, plan: str) -> int:
+        """Return monthly token limit for the given plan name. 0 means unlimited."""
+        mapping = {
+            "free":       self.plan_free_monthly_tokens,
+            "starter":    self.plan_starter_monthly_tokens,
+            "pro":        self.plan_pro_monthly_tokens,
+            "enterprise": self.plan_enterprise_monthly_tokens,
+        }
+        return mapping.get(plan, self.plan_free_monthly_tokens)
+
     @property
     def database_url(self) -> str:
         return (

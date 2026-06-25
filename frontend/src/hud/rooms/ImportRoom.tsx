@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { api } from '../../api'
+import { api, formatUserError } from '../../api'
 import type { ImportRunOut } from '../../types'
 import { Room } from '../Room'
 
@@ -52,7 +52,7 @@ export function ImportRoom({ onClose, onImported }: { onClose: () => void; onImp
       if (inputRef.current) inputRef.current.value = ''
       onImported?.()
     } catch (e) {
-      setError((e as Error).message)
+      setError(formatUserError(e))
     } finally {
       setUploading(false)
     }

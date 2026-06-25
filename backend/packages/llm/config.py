@@ -9,6 +9,10 @@ from packages.core.settings import get_settings
 
 EffortLevel = Literal["low", "medium", "high", "max"]
 
+# LiteLLM defaults chat completion HTTP timeout to 600s when unset. Use ~1 year so
+# long vision/reasoning jobs (dub-first scene matching) are not cut off mid-call.
+LLM_REQUEST_TIMEOUT_SEC = 86_400 * 365
+
 
 def _normalize_key(val: str | None) -> str | None:
     if not val:
@@ -27,6 +31,8 @@ def _key(settings: object, field: str, env_var: str) -> str | None:
 
 def sync_llm_env() -> None:
     """Push Settings API keys into os.environ for LiteLLM secret resolution."""
+    import litellm
+
     s = get_settings()
     pairs = (
         ("anthropic_api_key", "ANTHROPIC_API_KEY"),
@@ -37,6 +43,9 @@ def sync_llm_env() -> None:
         key = _normalize_key(getattr(s, field, None))
         if key:
             os.environ[env_var] = key
+    # Must differ from LiteLLM DEFAULT_REQUEST_TIMEOUT_SECONDS (6000) or chat calls
+    # fall back to COMPLETION_HTTP_FALLBACK_SECONDS (600).
+    litellm.request_timeout = LLM_REQUEST_TIMEOUT_SEC
 
 
 def model_supports_effort(model: str) -> bool:
@@ -81,6 +90,7 @@ def model_params() -> dict:
     key = _api_key_for_model(model, s)
     if key:
         params["api_key"] = key
+    params["timeout"] = LLM_REQUEST_TIMEOUT_SEC
     return _with_effort(params, model, s.llm_effort)
 
 

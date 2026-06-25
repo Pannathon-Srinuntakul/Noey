@@ -15,7 +15,7 @@ import {
   X,
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { api } from '../api'
+import { api, formatUserError } from '../api'
 import type { ColumnMeta, ColumnMetaIn, CustomTableOut, OptionDef, RowsPage, SummaryOut } from '../types'
 import { resolveOptionColor, resolveOptionLabel } from '../types'
 import { AddColumnModal } from './AddColumnModal'
@@ -79,7 +79,7 @@ export function TableEditor({ table, onColumnsChanged }: Props) {
         filters: hasFilters ? JSON.stringify(activeFilters) : undefined,
       })
       .then(setPage)
-      .catch((e) => setError((e as Error).message))
+      .catch((e) => setError(formatUserError(e)))
       .finally(() => setLoading(false))
   }, [table.uid, pageNum, pageSize, sort, q, activeFilters])
 
@@ -112,7 +112,7 @@ export function TableEditor({ table, onColumnsChanged }: Props) {
       await api.tables.addRow(table.uid, {})
       loadRows()
     } catch (e) {
-      setError((e as Error).message)
+      setError(formatUserError(e))
     }
   }
 
@@ -127,7 +127,7 @@ export function TableEditor({ table, onColumnsChanged }: Props) {
       setGhostData({})
       loadRows()
     } catch (e) {
-      setError((e as Error).message)
+      setError(formatUserError(e))
     }
   }
 
@@ -136,7 +136,7 @@ export function TableEditor({ table, onColumnsChanged }: Props) {
       await api.tables.deleteRow(table.uid, rid)
       loadRows()
     } catch (e) {
-      setError((e as Error).message)
+      setError(formatUserError(e))
     }
   }
 
@@ -146,7 +146,7 @@ export function TableEditor({ table, onColumnsChanged }: Props) {
       await api.tables.bulkDelete(table.uid, Array.from(selected))
       loadRows()
     } catch (e) {
-      setError((e as Error).message)
+      setError(formatUserError(e))
     }
   }
 
@@ -157,7 +157,7 @@ export function TableEditor({ table, onColumnsChanged }: Props) {
         prev ? { ...prev, rows: prev.rows.map((r) => (r.uid === rid ? updated : r)) } : prev,
       )
     } catch (e) {
-      setError((e as Error).message)
+      setError(formatUserError(e))
     }
   }
 
@@ -182,7 +182,7 @@ export function TableEditor({ table, onColumnsChanged }: Props) {
       onColumnsChanged()
       loadRows()
     } catch (e) {
-      setError((e as Error).message)
+      setError(formatUserError(e))
       setAdding(false)
     }
   }
@@ -193,7 +193,7 @@ export function TableEditor({ table, onColumnsChanged }: Props) {
       onColumnsChanged()
       loadRows()
     } catch (e) {
-      setError((e as Error).message)
+      setError(formatUserError(e))
     }
   }
 
@@ -285,7 +285,7 @@ export function TableEditor({ table, onColumnsChanged }: Props) {
             </button>
             {/* export */}
             <button
-              onClick={() => api.tables.exportCsv(table.uid, selected.size > 0 ? Array.from(selected) : undefined).catch((e) => setError((e as Error).message))}
+              onClick={() => api.tables.exportCsv(table.uid, selected.size > 0 ? Array.from(selected) : undefined).catch((e) => setError(formatUserError(e)))}
               className="flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-sm text-zinc-600 hover:bg-zinc-100"
               title={selected.size > 0 ? `Export ${selected.size} รายการที่เลือก` : 'Export ทั้งหมด'}
             >
@@ -799,7 +799,7 @@ function SummaryTab({ table, selectCols, onTableChanged }: {
     api.tables
       .summary(table.uid, groupBy)
       .then(setData)
-      .catch((e) => setErr((e as Error).message))
+      .catch((e) => setErr(formatUserError(e)))
   }, [table.uid, groupBy])
 
   function toggleAgg(colKey: string, agg: SummaryAgg) {
@@ -825,7 +825,7 @@ function SummaryTab({ table, selectCols, onTableChanged }: {
         setData(d)
       }
     } catch (e) {
-      setErr((e as Error).message)
+      setErr(formatUserError(e))
     } finally {
       setSaving(false)
     }

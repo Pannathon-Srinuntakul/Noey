@@ -14,6 +14,7 @@ from packages.video.timeline import (
     dedupe_repeated_cuts,
     dedupe_spaced_word_repeats,
     enforce_cuts_budget,
+    enforce_unique_chronological_dub_cuts,
     filter_renderable_cuts,
     filter_short_cuts,
     is_likely_continuation,
@@ -687,3 +688,134 @@ def test_dub_sample_time_skips_scene_lead_in() -> None:
     scene = {"start": 10.0, "duration": 20.0}
     t = _sample_time_in_scene(scene, 0.5, lead_skip_pct=0.25)
     assert t == 22.5  # 10 + 5 (skip) + 7.5 (half of remaining)
+
+
+def test_clip_edge_times_long_clip() -> None:
+    from packages.video.scene import _clip_edge_times
+
+    edges = _clip_edge_times(600.0)
+    assert edges[0] == ("opening", 5.0)
+    assert edges[1] == ("closing", 595.0)
+
+
+def test_clip_edge_times_short_clip() -> None:
+    from packages.video.scene import _clip_edge_times
+
+    edges = _clip_edge_times(5.0)
+    assert len(edges) == 2
+    assert edges[0][0] == "opening"
+    assert edges[1][0] == "closing"
+    assert edges[1][1] - edges[0][1] >= 2.0
+
+
+def test_format_frame_descriptor_edge() -> None:
+    from packages.video.scene import format_frame_descriptor
+
+    assert format_frame_descriptor({
+        "clip_id": "clip0",
+        "time": 12.3,
+        "edge": "opening",
+    }) == "[clip0 clip opening at 12.3s]"
+    assert "scene 2" in format_frame_descriptor({
+        "clip_id": "clip0",
+        "scene_idx": 2,
+        "time": 45.0,
+        "scene_start": 40.0,
+        "scene_end": 50.0,
+    })
+
+
+def test_enforce_unique_chronological_dub_cuts() -> None:
+    frames = [
+        {"clip_id": "clip0", "time": 7.3, "scene_start": 0.0, "scene_end": 30.0},
+        {"clip_id": "clip0", "time": 45.0, "scene_start": 40.0, "scene_end": 55.0},
+        {"clip_id": "clip0", "time": 91.2, "scene_start": 80.0, "scene_end": 100.0},
+        {"clip_id": "clip0", "time": 118.5, "scene_start": 110.0, "scene_end": 130.0},
+        {"clip_id": "clip0", "time": 138.6, "scene_start": 130.0, "scene_end": 150.0},
+    ]
+    script = {
+        "totalEstimatedSec": 10,
+        "segments": [
+            {
+                "order": 1,
+                "voiceoverLineId": 1,
+                "sourceClip": "clip0",
+                "sourceIn": 7.3,
+                "sourceOut": 9.0,
+                "durationSec": 1.7,
+                "matchedFrameTime": 7.3,
+                "voiceoverScript": "hook",
+            },
+            {
+                "order": 2,
+                "voiceoverLineId": 2,
+                "sourceClip": "clip0",
+                "sourceIn": 91.2,
+                "sourceOut": 92.9,
+                "durationSec": 1.7,
+                "matchedFrameTime": 91.2,
+                "voiceoverScript": "demo",
+            },
+            {
+                "order": 3,
+                "voiceoverLineId": 2,
+                "sourceClip": "clip0",
+                "sourceIn": 7.29,
+                "sourceOut": 8.99,
+                "durationSec": 1.7,
+                "matchedFrameTime": 7.29,
+            },
+            {
+                "order": 4,
+                "voiceoverLineId": 2,
+                "sourceClip": "clip0",
+                "sourceIn": 118.5,
+                "sourceOut": 120.2,
+                "durationSec": 1.7,
+                "matchedFrameTime": 118.5,
+            },
+        ],
+    }
+    out = enforce_unique_chronological_dub_cuts(script, frames)
+    segs = out["segments"]
+    anchors = [s["matchedFrameTime"] for s in segs]
+    assert len(anchors) == 3
+    assert len(anchors) == len(set(round(a, 1) for a in anchors))
+    assert anchors == sorted(anchors)
+    assert 7.29 not in anchors
+
+
+def test_normalize_dub_dedupes_with_sample_frames() -> None:
+    frames = [
+        {"clip_id": "clip0", "time": 10.0, "scene_start": 8.0, "scene_end": 20.0},
+        {"clip_id": "clip0", "time": 25.0, "scene_start": 22.0, "scene_end": 35.0},
+        {"clip_id": "clip0", "time": 40.0, "scene_start": 38.0, "scene_end": 50.0},
+    ]
+    script = {
+        "totalEstimatedSec": 6,
+        "segments": [
+            {
+                "order": 1,
+                "voiceoverLineId": 1,
+                "sourceClip": "clip0",
+                "sourceIn": 10.0,
+                "sourceOut": 12.0,
+                "durationSec": 2.0,
+                "matchedFrameTime": 10.0,
+                "voiceoverScript": "a",
+            },
+            {
+                "order": 2,
+                "voiceoverLineId": 1,
+                "sourceClip": "clip0",
+                "sourceIn": 10.1,
+                "sourceOut": 12.1,
+                "durationSec": 2.0,
+                "matchedFrameTime": 10.0,
+            },
+        ],
+    }
+    out = normalize_dub_edit_script(script, sample_frames=frames)
+    anchors = [s["matchedFrameTime"] for s in out["segments"]]
+    assert len(anchors) == 1
+    assert anchors[0] == 10.0
