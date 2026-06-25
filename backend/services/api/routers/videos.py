@@ -28,6 +28,7 @@ from packages.db.models.video_project import VideoProject
 from packages.db.session import bind_tenant_search_path
 from packages.video.s3 import (
     delete_project as s3_delete_project,
+    ensure_local_output,
     output_presigned_url,
     push_uploads,
     s3_enabled,
@@ -491,7 +492,10 @@ async def get_edit_script(
         raise HTTPException(404, "Edit script not available yet")
     script_file = data_root() / p.edit_script_path
     if not script_file.exists():
-        raise HTTPException(404, "Edit script file not found")
+        try:
+            script_file = await ensure_local_output(uid, script_file.name)
+        except FileNotFoundError as exc:
+            raise HTTPException(404, "Edit script file not found") from exc
     return normalize_dub_edit_script(_json.loads(script_file.read_text(encoding="utf-8")))
 
 

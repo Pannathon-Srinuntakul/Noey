@@ -181,6 +181,25 @@ async def output_presigned_url(project_uid: str, filename: str, expires: int = 3
     return await asyncio.to_thread(_sync_presigned_url, key, expires)
 
 
+async def ensure_local_output(project_uid: str, filename: str) -> pathlib.Path:
+    """Return local path to an output file, downloading from S3 when missing on disk."""
+    from packages.video.storage import output_dir
+
+    local = output_dir(project_uid) / filename
+    if local.exists():
+        return local
+    if not _s3_enabled():
+        raise FileNotFoundError(filename)
+
+    def _download() -> None:
+        local.parent.mkdir(parents=True, exist_ok=True)
+        _client().download_file(_bucket(), _output_key(project_uid, filename), str(local))
+
+    await asyncio.to_thread(_download)
+    log.info("s3_download_output", project_uid=project_uid, filename=filename)
+    return local
+
+
 async def pull_project_files(project_uid: str) -> None:
     """Download uploads + outputs for a project. No-op when S3 disabled."""
     from packages.video.storage import output_dir, upload_dir
