@@ -1,0 +1,65 @@
+# ── Secrets & env ─────────────────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# ── Python (backend/) ─────────────────────────────────────────────────────────
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.cover
+.hypothesis/
+
+# ── Node (frontend/) ──────────────────────────────────────────────────────────
+node_modules/
+frontend/dist/
+frontend/.vite/
+*.tsbuildinfo
+
+# ── Runtime / generated data ──────────────────────────────────────────────────
+backend/data/
+
+# TikTok CSV / export dumps (local imports, not source)
+Content_noeycpnt/
+Followers_noeycpnt/
+Viewers_noeycpnt/
+Overview_*/
+iCloud Photos/
+
+# ── Playwright / browser ──────────────────────────────────────────────────────
+.playwright/
+playwright-report/
+test-results/
+.playwright-mcp/
+
+# ── IDE & OS ──────────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# ── Logs & temp ───────────────────────────────────────────────────────────────
+*.log
+logs/
+tmp/
+temp/
+*.tmp
+
+# ── Docker (local volume overrides only) ───────────────────────────────────────
+docker-compose.override.yml

@@ -1,0 +1,90 @@
+# Full stack for Noey Tiktok: postgres + redis + api + worker + scheduler + web.
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: noey_redis
+    restart: unless-stopped
+    ports:
+      - "6380:6379"   # Use 6380 on host to avoid conflict with other local Redis instances.
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: noey_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-noey}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me}
+      POSTGRES_DB: ${POSTGRES_DB:-noey_tiktok}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - noey_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-noey} -d ${POSTGRES_DB:-noey_tiktok}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build: ./backend
+    container_name: noey_api
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      POSTGRES_HOST: postgres
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+
+  worker:
+    build: ./backend
+    container_name: noey_worker
+    restart: unless-stopped
+    command: ["python", "-m", "services.worker"]
+    env_file: .env
+    environment:
+      POSTGRES_HOST: postgres
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  whisper:
+    build: ./backend
+    container_name: noey_whisper
+    restart: unless-stopped
+    command: ["python", "-m", "services.whisper"]
+    env_file: .env
+    environment:
+      POSTGRES_HOST: postgres
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  web:
+    build: ./frontend
+    container_name: noey_web
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "8080:80"
+
+volumes:
+  noey_pgdata:
+  noey_redis_data:
