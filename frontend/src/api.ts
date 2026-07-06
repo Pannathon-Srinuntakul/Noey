@@ -309,12 +309,17 @@ export const api = {
     getPlaybackUrl: (uid: string) => get<VideoPlaybackUrl>(`/videos/${uid}/playback-url`),
     getCapcutUrl: (uid: string) => get<VideoPlaybackUrl>(`/videos/${uid}/capcut-url`),
     /** Load video for preview — presigned URL on S3 prod, blob fetch on local. */
-    resolvePreviewSrc: async (uid: string): Promise<{ src: string; cleanup: () => void }> => {
+    resolvePreviewSrc: async (
+      uid: string,
+      cacheBust?: string,
+    ): Promise<{ src: string; cleanup: () => void }> => {
       const playback = await api.videos.getPlaybackUrl(uid)
       if (playback.mode === 'direct' && playback.url) {
-        return { src: playback.url, cleanup: () => {} }
+        const sep = playback.url.includes('?') ? '&' : '?'
+        const url = cacheBust ? `${playback.url}${sep}v=${encodeURIComponent(cacheBust)}` : playback.url
+        return { src: url, cleanup: () => {} }
       }
-      const blob = await api.videos.fetchFinalVideoBlob(uid)
+      const blob = await api.videos.fetchFinalVideoBlob(uid, cacheBust)
       const objectUrl = URL.createObjectURL(blob)
       return { src: objectUrl, cleanup: () => URL.revokeObjectURL(objectUrl) }
     },
@@ -335,8 +340,9 @@ export const api = {
       const a = document.createElement('a'); a.href = url; a.download = filename; a.click()
       URL.revokeObjectURL(url)
     },
-    fetchFinalVideoBlob: async (uid: string): Promise<Blob> => {
-      const r = await authFetch(`${BASE}/videos/${uid}/download`)
+    fetchFinalVideoBlob: async (uid: string, cacheBust?: string): Promise<Blob> => {
+      const qs = cacheBust ? `?v=${encodeURIComponent(cacheBust)}` : ''
+      const r = await authFetch(`${BASE}/videos/${uid}/download${qs}`)
       if (!r.ok) throw new Error(await readApiError(r))
       return r.blob()
     },
@@ -361,6 +367,25 @@ export const api = {
     cancel: (uid: string) => send<VideoProjectOut>(`/videos/${uid}/cancel`, 'POST'),
     delete: (uid: string) => send<void>(`/videos/${uid}`, 'DELETE'),
     getEditScript: (uid: string) => get<DubEditScript>(`/videos/${uid}/edit-script`),
+
+    // Edit Mode (manual timeline editor) — never re-invokes the AI.
+    getEditTimeline: (uid: string) => get<EditTimeline>(`/videos/${uid}/edit-timeline`),
+    saveEditTimeline: (uid: string, cuts: EditCut[]) =>
+      send<{ project_uid: string; job_id: string }>(`/videos/${uid}/edit-timeline`, 'PUT', { cuts }),
+    /** Resolve a normalized source clip's URL — for Edit Mode preview, not the final render. */
+    getSourceUrl: (uid: string, source: string) =>
+      get<VideoPlaybackUrl>(`/videos/${uid}/source-url?source=${encodeURIComponent(source)}`),
+    resolveSourcePreviewSrc: async (uid: string, source: string): Promise<{ src: string; cleanup: () => void }> => {
+      const playback = await api.videos.getSourceUrl(uid, source)
+      if (playback.mode === 'direct' && playback.url) {
+        return { src: playback.url, cleanup: () => {} }
+      }
+      const r = await authFetch(`${BASE}/videos/${uid}/source-file?source=${encodeURIComponent(source)}`)
+      if (!r.ok) throw new Error(await readApiError(r))
+      const blob = await r.blob()
+      const objectUrl = URL.createObjectURL(blob)
+      return { src: objectUrl, cleanup: () => URL.revokeObjectURL(objectUrl) }
+    },
   },
 
   usage: {
@@ -399,7 +424,9 @@ export interface VideoProjectOut {
   error_msg: string | null
   edit_script_path: string | null
   voiceover_path: string | null
+  origin: 'local' | null
   created_at: string
+  updated_at: string
 }
 
 export interface DubEditScript {
@@ -420,6 +447,28 @@ export interface DubEditScript {
     visualDescription?: string
     cutStyle?: string
   }[]
+}
+
+export interface EditTimelineSource {
+  id: string
+  durationSec: number
+}
+
+export interface EditCut {
+  id: string
+  source: string
+  in: number
+  out: number
+  label: string
+  voiceoverLineId?: number | null
+  voiceoverScript?: string | null
+}
+
+export interface EditTimeline {
+  mode: string
+  editTarget: 'timeline' | 'edit_script'
+  sources: EditTimelineSource[]
+  cuts: EditCut[]
 }
 
 export interface UsageFeatureRow {

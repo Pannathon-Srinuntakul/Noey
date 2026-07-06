@@ -1,0 +1,109 @@
+[
+  {
+    "cuts": [
+      {
+        "source": "clip0",
+        "in": 1.0,
+        "out": 3.5,
+        "label": "",
+        "voiceoverLineId": 1,
+        "voiceoverScript": "hi"
+      }
+    ],
+    "segments": [
+      {
+        "order": 1,
+        "sourceClip": "clip0",
+        "sourceIn": 1.0,
+        "sourceOut": 3.5,
+        "durationSec": 2.5,
+        "voiceoverLineId": 1,
+        "voiceoverScript": "hi",
+        "cutStyle": "jump_cut"
+      }
+    ]
+  },
+  {
+    "cuts": [
+      {
+        "source": "clip1",
+        "in": 0.0,
+        "out": 2.0,
+        "label": "7"
+      },
+      {
+        "source": "clip0",
+        "in": 5.0,
+        "out": 5.5,
+        "label": "abc"
+      }
+    ],
+    "segments": [
+      {
+        "order": 1,
+        "sourceClip": "clip1",
+        "sourceIn": 0.0,
+        "sourceOut": 2.0,
+        "durationSec": 2.0,
+        "voiceoverLineId": 7,
+        "voiceoverScript": "",
+        "cutStyle": "jump_cut"
+      },
+      {
+        "order": 2,
+        "sourceClip": "clip0",
+        "sourceIn": 5.0,
+        "sourceOut": 5.5,
+        "durationSec": 0.5,
+        "voiceoverLineId": 2,
+        "voiceoverScript": "",
+        "cutStyle": "jump_cut"
+      }
+    ]
+  },
+  {
+    "cuts": [
+      {
+        "source": "",
+        "in": 2.0,
+        "out": 1.0,
+        "voiceoverLineId": "x"
+      }
+    ],
+    "segments": [
+      {
+        "order": 1,
+        "sourceClip": "clip0",
+        "sourceIn": 2.0,
+        "sourceOut": 1.0,
+        "durationSec": 0.0,
+        "voiceoverLineId": 1,
+        "voiceoverScript": "",
+        "cutStyle": "jump_cut"
+      }
+    ]
+  },
+  {
+    "cuts": [
+      {
+        "source": "clip0",
+        "in": 0.333,
+        "out": 1.666,
+        "voiceoverLineId": null,
+        "label": ""
+      }
+    ],
+    "segments": [
+      {
+        "order": 1,
+        "sourceClip": "clip0",
+        "sourceIn": 0.333,
+        "sourceOut": 1.666,
+        "durationSec": 1.33,
+        "voiceoverLineId": 1,
+        "voiceoverScript": "",
+        "cutStyle": "jump_cut"
+      }
+    ]
+  }
+]

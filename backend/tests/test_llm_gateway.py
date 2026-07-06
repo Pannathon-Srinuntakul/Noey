@@ -57,6 +57,12 @@ async def test_tools_unsupported_falls_back(monkeypatch):
         return _fake_response("answered without tools")
 
     monkeypatch.setattr(gw.litellm, "acompletion", fake_acompletion)
+    monkeypatch.setattr(
+        gw.get_settings(),
+        "llm_max_retries",
+        0,
+        raising=False,
+    )
     tools = [tool_schema("q", "desc", {"type": "object", "properties": {}})]
     msg = await gw.chat_once([{"role": "user", "content": "hi"}], tools=tools)
     assert msg.content == "answered without tools"
@@ -68,10 +74,16 @@ async def test_tools_unsupported_falls_back(monkeypatch):
 @pytest.mark.asyncio
 async def test_real_error_propagates(monkeypatch):
     async def fake_acompletion(**kwargs):
-        raise RuntimeError("rate limit exceeded")
+        raise RuntimeError("invalid json from model")
 
     monkeypatch.setattr(gw.litellm, "acompletion", fake_acompletion)
-    with pytest.raises(RuntimeError, match="rate limit"):
+    monkeypatch.setattr(
+        gw.get_settings(),
+        "llm_max_retries",
+        0,
+        raising=False,
+    )
+    with pytest.raises(RuntimeError, match="invalid json"):
         await gw.complete("hi")
 
 
@@ -79,3 +91,35 @@ def test_tool_schema_shape():
     t = tool_schema("query_sales", "Query sales", {"type": "object", "properties": {}})
     assert t["type"] == "function"
     assert t["function"]["name"] == "query_sales"
+
+
+def test_payload_stats_splits_text_and_images():
+    msgs = [{
+        "role": "user",
+        "content": [
+            {"type": "text", "text": "hello"},
+            {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + ("A" * 1000)}},
+        ],
+    }]
+    stats = gw._payload_stats(msgs, "sys")
+    assert stats["text_chars"] == 5
+    assert stats["system_chars"] == 3
+    assert stats["image_blocks"] == 1
+    assert stats["image_base64_chars"] > 1000
+
+
+def test_error_phase_connection():
+    assert gw._error_phase(ConnectionError("getaddrinfo failed")) == "connection"
+
+
+def test_payload_stats_counts_file_refs():
+    msgs = [{
+        "role": "user",
+        "content": [
+            {"type": "text", "text": "hi"},
+            {"type": "file", "file": {"file_id": "file_abc123", "format": "image/jpeg"}},
+        ],
+    }]
+    stats = gw._payload_stats(msgs, None)
+    assert stats["image_blocks"] == 1
+    assert stats["approx_request_kb"] < 2

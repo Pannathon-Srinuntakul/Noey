@@ -1,0 +1,57 @@
+appId: com.noey.videoedit
+productName: Noey Video Edit
+directories:
+  buildResources: build
+files:
+  - '!**/.vscode/*'
+  - '!src/*'
+  - '!scripts/*'
+  - '!vendor/*'
+  - '!resources-staging/*'
+  - '!electron.vite.config.{js,ts,mjs,cjs}'
+  - '!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
+  - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
+  - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
+asarUnpack:
+  - resources/**
+# Native pieces staged by scripts/prepare-resources.mjs (run before packaging).
+extraResources:
+  - from: ../sidecar/dist/sidecar
+    to: sidecar
+  - from: resources-staging/backend
+    to: backend
+  - from: resources-staging/ffmpeg
+    to: ffmpeg
+win:
+  executableName: noey-video-edit
+  target:
+    - target: nsis
+      arch: [x64]
+nsis:
+  artifactName: ${name}-${version}-setup.${ext}
+  shortcutName: ${productName}
+  uninstallDisplayName: ${productName}
+  # Full wizard: license → install mode/path (default C:\Program Files) → install.
+  oneClick: false
+  perMachine: true
+  allowElevation: true
+  allowToChangeInstallationDirectory: true
+  license: build/license.txt
+  # Desktop shortcut is offered as a finish-page checkbox (build/installer.nsh),
+  # not forced. deleteAppDataOnUninstall stays false → user projects survive.
+  createDesktopShortcut: false
+  createStartMenuShortcut: true
+  runAfterFinish: true
+  include: build/installer.nsh
+mac:
+  entitlementsInherit: build/entitlements.mac.plist
+  extendInfo:
+    - NSDocumentsFolderUsageDescription: Application requests access to the user's Documents folder.
+    - NSDownloadsFolderUsageDescription: Application requests access to the user's Downloads folder.
+  notarize: false
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+dmg:
+  artifactName: ${name}-${version}.${ext}
+npmRebuild: false

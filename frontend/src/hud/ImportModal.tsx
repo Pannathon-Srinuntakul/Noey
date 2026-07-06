@@ -113,7 +113,10 @@ export function ImportModal({ tableId, columns, open, onClose, onImported }: Pro
     <Dialog.Root open={open} onOpenChange={(v) => { if (!v) { reset(); onClose() } }}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-50 bg-black/50" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 flex max-h-[85vh] w-full max-w-2xl -translate-x-1/2 -translate-y-1/2 flex-col rounded-xl bg-white shadow-2xl">
+        <Dialog.Content
+          style={{ width: 'calc(100% - 1.5rem)' }}
+          className="fixed left-1/2 top-1/2 z-50 flex max-h-[85vh] max-w-2xl -translate-x-1/2 -translate-y-1/2 flex-col rounded-xl bg-white shadow-2xl"
+        >
           <div className="flex items-center justify-between border-b border-zinc-200 px-5 py-3">
             <Dialog.Title className="font-bold text-zinc-800">นำเข้าข้อมูล (Import CSV)</Dialog.Title>
             <Dialog.Close className="rounded p-1 text-zinc-400 hover:text-zinc-700"><X size={16} /></Dialog.Close>

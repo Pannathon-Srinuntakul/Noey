@@ -302,7 +302,7 @@ export function InteractiveRoom({
   return (
     <Canvas
       shadows
-      camera={{ position: config.camera.position, fov: 58 }}
+      camera={{ position: config.camera.position, fov: 70 }}
       style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
     >
       <color attach="background" args={[config.palette.bg]} />
@@ -330,12 +330,12 @@ export function InteractiveRoom({
         enablePan={false}
         enableDamping
         dampingFactor={0.08}
-        minDistance={2.2}
-        maxDistance={3.9}
-        minPolarAngle={Math.PI * 0.3}
+        minDistance={1.9}
+        maxDistance={4.2}
+        minPolarAngle={Math.PI * 0.32}
         maxPolarAngle={Math.PI * 0.5}
-        minAzimuthAngle={-0.55}
-        maxAzimuthAngle={0.55}
+        minAzimuthAngle={-0.95}
+        maxAzimuthAngle={0.95}
       />
     </Canvas>
   )

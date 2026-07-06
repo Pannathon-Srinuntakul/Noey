@@ -15,7 +15,7 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { ArrowLeft, GripVertical, Settings2, Table2, Trash2 } from 'lucide-react'
+import { ArrowLeft, GripVertical, Menu, Settings2, Table2, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { api, formatUserError } from '../api'
@@ -34,6 +34,7 @@ export default function TablePage() {
   const [active, setActive] = useState<CustomTableOut | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
+  const [sidebarOpen, setSidebarOpen] = useState(false)  // mobile drawer
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -72,6 +73,7 @@ export default function TablePage() {
 
   function openTable(uid: string) {
     navigate(`/tables/${uid}`)
+    setSidebarOpen(false)  // close mobile drawer on selection
   }
 
   async function doDeleteTable(uid: string) {
@@ -107,9 +109,20 @@ export default function TablePage() {
   }
 
   return (
-    <div className="scroll-light flex h-full w-full bg-zinc-100">
-      {/* sidebar */}
-      <aside className="flex w-56 shrink-0 flex-col border-r border-zinc-200 bg-white">
+    <div className="scroll-light relative flex h-full w-full overflow-hidden bg-zinc-100">
+      {/* mobile backdrop */}
+      {sidebarOpen && (
+        <div
+          className="absolute inset-0 z-20 bg-black/40 md:hidden"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+      {/* sidebar — static on md+, slide-in drawer on mobile */}
+      <aside
+        className={`absolute inset-y-0 left-0 z-30 flex w-56 shrink-0 flex-col border-r border-zinc-200 bg-white transition-transform md:static md:z-auto md:translate-x-0 ${
+          sidebarOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full'
+        }`}
+      >
         <div className="flex items-center gap-2 border-b border-zinc-200 px-3 py-3">
           <button
             onClick={() => navigateWithDoor('/')}
@@ -152,7 +165,21 @@ export default function TablePage() {
       </aside>
 
       {/* main */}
-      <main className="min-w-0 flex-1">
+      <main className="flex min-w-0 flex-1 flex-col">
+        {/* mobile top bar — opens the table drawer */}
+        <div className="flex items-center gap-2 border-b border-zinc-200 bg-white px-3 py-2 md:hidden">
+          <button
+            onClick={() => setSidebarOpen(true)}
+            className="rounded-lg p-1.5 text-zinc-500 hover:bg-zinc-100"
+            title="เปิดรายการตาราง"
+          >
+            <Menu size={18} />
+          </button>
+          <span className="truncate text-sm font-medium text-zinc-700">
+            {active?.display_name ?? 'ตารางข้อมูล'}
+          </span>
+        </div>
+
         {error && (
           <div className="flex items-center justify-between bg-red-50 px-4 py-2 text-sm text-red-700">
             <span>{error}</span>
@@ -161,7 +188,7 @@ export default function TablePage() {
         )}
 
         {active ? (
-          <div className="flex h-full flex-col">
+          <div className="flex min-h-0 flex-1 flex-col">
             <div className="flex items-center gap-2 border-b border-zinc-200 bg-white px-4 py-2">
               <TableTitle
                 key={active.uid}
@@ -185,7 +212,7 @@ export default function TablePage() {
             </div>
           </div>
         ) : (
-          <div className="flex h-full items-center justify-center text-zinc-400">
+          <div className="flex flex-1 items-center justify-center px-4 text-center text-zinc-400">
             เลือกตารางจากด้านซ้าย หรือสร้างตารางใหม่
           </div>
         )}

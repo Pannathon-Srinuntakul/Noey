@@ -413,28 +413,20 @@ async def ingest_video(ctx: dict[str, Any], *, job_id: str, project_uid: str, te
             shutil.copy2(src, norm_out)
             norm_paths.append(str(norm_out.relative_to(root)))
 
-            from packages.video.scene import DUB_MAX_CLIP_SEC
+            from packages.video.scene import DUB_MAX_CLIP_SEC, dub_clip_exceeds_upload_limit
+
             clip_dur = media_duration(norm_out)
-            if clip_dur > DUB_MAX_CLIP_SEC:
+            if dub_clip_exceeds_upload_limit(clip_dur):
                 raise ValueError(
                     f"คลิป {i + 1}/{total} ยาว {int(clip_dur // 60)} น.{int(clip_dur % 60):02d} วิ "
                     f"— สูงสุด {DUB_MAX_CLIP_SEC // 60} นาที กรุณาตัดคลิปให้สั้นลง"
                 )
 
             # Extract mono 16 kHz WAV + loudnorm for faster-whisper (talking_head only)
-            # loudnorm boosts quiet speech so VAD can detect it under BGM
             if not is_dub_first:
-                run_ffmpeg(
-                    ffmpeg_lib
-                    .input(str(src))
-                    .output(
-                        str(audio_out),
-                        ac=1, ar=16000, acodec="pcm_s16le", f="wav",
-                        af="loudnorm=I=-16:TP=-1.5:LRA=11",
-                    )
-                    .overwrite_output(),
-                    label="ingest_extract_audio",
-                )
+                from packages.video.audio_extract import extract_speech_wav
+
+                extract_speech_wav(src, audio_out)
 
         await _update_video(session, project_uid,
                             status="processing",
@@ -485,157 +477,14 @@ async def ingest_video(ctx: dict[str, Any], *, job_id: str, project_uid: str, te
 
 # ── task: transcribe_video ────────────────────────────────────────────────────
 
-# Modal default function timeout ≈300s. GPU ~0.55s per 1s audio → 3-min chunks finish ~100s.
-MODAL_CHUNK_SEC = 180.0         # max audio seconds per Modal request
-MODAL_CHUNK_WHEN_SEC = 240.0    # chunk when WAV longer than 4 min (5-min uploads → 2 chunks)
-MODAL_CHUNK_WHEN_MB = 28.0      # chunk when WAV exceeds ~28 MB (16 kHz mono ≈ 4 min)
-
-
-async def _transcribe_modal_request(
-    audio_bytes: bytes,
-    modal_url: str,
-    language: str,
-    *,
-    clip_sec: float,
-    vad_filter: bool = True,
-) -> dict[str, Any]:
-    """POST audio to Modal; poll async 303 redirect until transcript JSON is ready."""
-    import asyncio
-    import base64
-    import httpx
-
-    size_mb = len(audio_bytes) / 1024 / 1024
-    read_timeout = max(600.0, clip_sec * 2.5 + 300.0)
-    write_timeout = max(300.0, size_mb * 4.0)
-    timeout = httpx.Timeout(connect=120.0, read=read_timeout, write=write_timeout, pool=60.0)
-    payload = {
-        "audio_b64": base64.b64encode(audio_bytes).decode(),
-        "language": language,
-        "vad_filter": vad_filter,
-    }
-
-    async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
-        resp = await client.post(modal_url, json=payload)
-
-        # Short jobs: 200 JSON immediately. Long jobs: 303 → poll until done.
-        if resp.status_code in {301, 302, 303, 307, 308}:
-            poll_url = resp.headers.get("location")
-            if not poll_url:
-                resp.raise_for_status()
-            if not poll_url.startswith(("http://", "https://")):
-                poll_url = str(httpx.URL(modal_url).join(poll_url))
-            deadline = time.monotonic() + read_timeout
-            while time.monotonic() < deadline:
-                poll = await client.get(poll_url)
-                if poll.status_code == 200:
-                    return poll.json()
-                if poll.status_code in {301, 302, 303, 307, 308}:
-                    nxt = poll.headers.get("location")
-                    if nxt:
-                        poll_url = str(httpx.URL(poll_url).join(nxt))
-                    await asyncio.sleep(1.5)
-                    continue
-                if poll.status_code in {202, 204}:
-                    await asyncio.sleep(2.0)
-                    continue
-                poll.raise_for_status()
-            raise TimeoutError(f"Modal transcribe poll timed out after {read_timeout:.0f}s")
-
-        resp.raise_for_status()
-        return resp.json()
-
-
-def _offset_modal_segments(segments: list[dict[str, Any]], offset_sec: float) -> list[dict[str, Any]]:
-    out: list[dict[str, Any]] = []
-    for seg in segments:
-        words = [
-            {
-                "word": w["word"],
-                "start": round(float(w["start"]) + offset_sec, 3),
-                "end": round(float(w["end"]) + offset_sec, 3),
-            }
-            for w in (seg.get("words") or [])
-        ]
-        out.append({
-            "start": round(float(seg["start"]) + offset_sec, 3),
-            "end": round(float(seg["end"]) + offset_sec, 3),
-            "text": str(seg.get("text", "")).strip(),
-            "words": words,
-        })
-    return out
-
-
-async def _transcribe_via_modal(
-    wav_path: pathlib.Path,
-    modal_url: str,
-    language: str,
-    *,
-    vad_filter: bool = True,
-) -> list[dict[str, Any]]:
-    """Send WAV to Modal GPU endpoint; chunk long audio to avoid huge payloads + 303 timeouts."""
-    import ffmpeg as ffmpeg_lib
-
-    duration = media_duration(wav_path)
-    size_mb = wav_path.stat().st_size / 1024 / 1024
-    log.info(
-        "modal_transcribe_start",
-        wav=wav_path.name,
-        size_mb=round(size_mb, 2),
-        duration_sec=round(duration, 1),
-        vad_filter=vad_filter,
-    )
-
-    need_chunk = duration > MODAL_CHUNK_WHEN_SEC or size_mb > MODAL_CHUNK_WHEN_MB
-    if not need_chunk:
-        data = await _transcribe_modal_request(
-            wav_path.read_bytes(), modal_url, language, clip_sec=duration, vad_filter=vad_filter,
-        )
-        segments = data.get("segments", [])
-        log.info("modal_transcribe_done", wav=wav_path.name, segments=len(segments), dropped=data.get("dropped", 0))
-        return segments
-
-    all_segments: list[dict[str, Any]] = []
-    dropped_total = 0
-    offset = 0.0
-    chunk_i = 0
-    while offset < duration - 0.05:
-        chunk_dur = min(MODAL_CHUNK_SEC, duration - offset)
-        chunk_path = wav_path.parent / f"_modal_chunk_{wav_path.stem}_{chunk_i:03d}.wav"
-        try:
-            run_ffmpeg(
-                ffmpeg_lib
-                .input(str(wav_path), ss=offset, t=chunk_dur)
-                .output(str(chunk_path), ac=1, ar=16000, acodec="pcm_s16le", f="wav")
-                .overwrite_output(),
-                label="modal_chunk_wav",
-            )
-            chunk_bytes = chunk_path.read_bytes()
-            log.info(
-                "modal_transcribe_chunk",
-                wav=wav_path.name,
-                chunk=chunk_i + 1,
-                offset_sec=round(offset, 1),
-                chunk_sec=round(chunk_dur, 1),
-                size_mb=round(len(chunk_bytes) / 1024 / 1024, 2),
-            )
-            data = await _transcribe_modal_request(
-                chunk_bytes, modal_url, language, clip_sec=chunk_dur, vad_filter=vad_filter,
-            )
-            dropped_total += int(data.get("dropped", 0))
-            all_segments.extend(_offset_modal_segments(data.get("segments", []), offset))
-        finally:
-            chunk_path.unlink(missing_ok=True)
-        offset += chunk_dur
-        chunk_i += 1
-
-    log.info(
-        "modal_transcribe_done",
-        wav=wav_path.name,
-        segments=len(all_segments),
-        dropped=dropped_total,
-        chunks=chunk_i,
-    )
-    return all_segments
+from packages.video.whisper_client import (  # noqa: E402  (transcription core shared with local-render API)
+    MODAL_CHUNK_SEC,
+    MODAL_CHUNK_WHEN_MB,
+    MODAL_CHUNK_WHEN_SEC,
+    run_transcription,
+    transcribe_modal_request as _transcribe_modal_request,
+    transcribe_via_modal as _transcribe_via_modal,
+)
 
 
 async def transcribe_video(ctx: dict[str, Any], *, job_id: str, project_uid: str, tenant_slug: str) -> dict:
@@ -644,16 +493,6 @@ async def transcribe_video(ctx: dict[str, Any], *, job_id: str, project_uid: str
     await _video_progress(job_id, 60, "transcribe", "กำลังโหลดโมเดล Whisper…")
     session = await _tenant_session(tenant_slug)
     try:
-        from packages.core.settings import get_settings as _get_settings
-        from packages.video.transcribe import (
-            build_transcribe_options,
-            is_hallucinated_segment,
-            should_retry_transcription_without_vad,
-            split_segment_on_word_gaps,
-            tighten_segment_bounds,
-            transcript_coverage_stats,
-        )
-
         if await _abort_if_cancelled(session, project_uid, job_id):
             return {"cancelled": True}
 
@@ -667,164 +506,27 @@ async def transcribe_video(ctx: dict[str, Any], *, job_id: str, project_uid: str
         if not audio_files:
             raise ValueError("No audio files to transcribe")
 
-        _s = _get_settings()
-        use_modal = bool(_s.modal_whisper_url)
+        async def _progress(phase: str, idx: int, total: int) -> None:
+            if phase == "retry":
+                await _video_progress(job_id, 65, "transcribe", "Whisper พลาดช่วงเงียบ — ถอดเสียงรอบ 2…")
+                return
+            span = 15 if phase == "clip_modal" else 8
+            await _video_progress(
+                job_id,
+                int(60 + span * idx / max(total, 1)),
+                "transcribe",
+                f"กำลังถอดเสียงคลิป {idx + 1}/{total}…",
+            )
 
-        if use_modal:
-            log.info("whisper_config", backend="modal", url=_s.modal_whisper_url, language=_s.whisper_language)
-        else:
-            from faster_whisper import WhisperModel  # type: ignore[import-untyped]
-            model = WhisperModel(_s.whisper_model, device=_s.whisper_device, compute_type=_s.whisper_compute)
-            log.info("whisper_config", backend="local", model=_s.whisper_model, device=_s.whisper_device,
-                     language=_s.whisper_language or "auto")
+        async def _should_abort() -> bool:
+            return await _abort_if_cancelled(session, project_uid, job_id)
 
-        async def _collect_segments_modal(*, vad_filter: bool = True) -> tuple[list[dict[str, Any]], int, float]:
-            """Collect segments via Modal GPU endpoint."""
-            collected: list[dict[str, Any]] = []
-            offset = 0.0
-            for idx, wav in enumerate(audio_files):
-                if await _abort_if_cancelled(session, project_uid, job_id):
-                    return collected, 0, offset
-                await _video_progress(
-                    job_id,
-                    int(60 + 15 * idx / max(len(audio_files), 1)),
-                    "transcribe",
-                    f"กำลังถอดเสียงคลิป {idx + 1}/{len(audio_files)}…",
-                )
-                segs = await _transcribe_via_modal(
-                    wav, _s.modal_whisper_url, _s.whisper_language, vad_filter=vad_filter,
-                )
-                clip_dur = media_duration(wav)
-                for seg in segs:
-                    tight = tighten_segment_bounds({
-                        "start": float(seg["start"]),
-                        "end": float(seg["end"]),
-                        "text": str(seg.get("text", "")).strip(),
-                        "words": seg.get("words", []),
-                    })
-                    collected.append({
-                        "start": round(tight["start"] + offset, 3),
-                        "end": round(tight["end"] + offset, 3),
-                        "text": tight["text"],
-                        "words": [
-                            {"word": w["word"],
-                             "start": round(float(w["start"]) + offset, 3),
-                             "end": round(float(w["end"]) + offset, 3)}
-                            for w in tight.get("words", [])
-                        ],
-                    })
-                offset += clip_dur
-            return collected, 0, offset
-
-        async def _collect_segments(
-            transcribe_options: dict[str, Any],
-            *,
-            pass_label: str,
-        ) -> tuple[list[dict[str, Any]], int, float]:
-            collected: list[dict[str, Any]] = []
-            dropped_count = 0
-            offset = 0.0
-            for idx, wav in enumerate(audio_files):
-                if await _abort_if_cancelled(session, project_uid, job_id):
-                    return collected, dropped_count, offset
-                await _video_progress(
-                    job_id,
-                    int(60 + 8 * idx / max(len(audio_files), 1)),
-                    "transcribe",
-                    f"กำลังถอดเสียงคลิป {idx + 1}/{len(audio_files)}…",
-                )
-                log.info(
-                    "transcribe_clip_start",
-                    wav=wav.name,
-                    clip=idx + 1,
-                    total=len(audio_files),
-                    transcribe_pass=pass_label,
-                )
-                t_wav = time.monotonic()
-                segs, info = model.transcribe(str(wav), **transcribe_options)
-                raw_count = 0
-                for seg in segs:
-                    if is_hallucinated_segment(
-                        seg.text or "",
-                        no_speech_prob=getattr(seg, "no_speech_prob", 0.0),
-                        avg_logprob=getattr(seg, "avg_logprob", 0.0),
-                        compression_ratio=getattr(seg, "compression_ratio", 0.0),
-                        log=log,
-                    ):
-                        dropped_count += 1
-                        continue
-                    tight = tighten_segment_bounds({
-                        "start": seg.start,
-                        "end": seg.end,
-                        "text": seg.text.strip(),
-                        "words": [
-                            {"word": w.word, "start": w.start, "end": w.end}
-                            for w in (seg.words or [])
-                        ],
-                    })
-                    collected.append({
-                        "start": round(tight["start"] + offset, 3),
-                        "end": round(tight["end"] + offset, 3),
-                        "text": tight["text"],
-                        "words": [
-                            {"word": w["word"], "start": round(w["start"] + offset, 3),
-                             "end": round(w["end"] + offset, 3)}
-                            for w in tight["words"]
-                        ],
-                    })
-                    raw_count += 1
-                clip_dur = media_duration(wav)
-                log.info(
-                    "transcribe_clip_done",
-                    clip=idx + 1,
-                    wav=wav.name,
-                    segments_kept=raw_count,
-                    language=getattr(info, "language", "?"),
-                    language_prob=round(getattr(info, "language_probability", 0.0), 3),
-                    clip_duration_s=round(clip_dur, 1),
-                    elapsed_ms=round((time.monotonic() - t_wav) * 1000),
-                    transcribe_pass=pass_label,
-                )
-                offset += clip_dur
-            return collected, dropped_count, offset
-
-        if use_modal:
-            all_segments, dropped, total_source = await _collect_segments_modal()
-        else:
-            options = build_transcribe_options(language=_s.whisper_language)
-            all_segments, dropped, total_source = await _collect_segments(options, pass_label="vad")
-
-        coverage = transcript_coverage_stats(all_segments, total_source)
-        log.info("transcribe_coverage", **coverage, total_source=round(total_source, 1), dropped=dropped)
-
-        if should_retry_transcription_without_vad(all_segments, total_source):
-            log.warning("transcribe_retry_no_vad", backend="modal" if use_modal else "local", **coverage)
-            await _video_progress(job_id, 65, "transcribe", "Whisper พลาดช่วงเงียบ — ถอดเสียงรอบ 2…")
-            if use_modal:
-                retry_segments, retry_dropped, _ = await _collect_segments_modal(vad_filter=False)
-            else:
-                retry_options = build_transcribe_options(language=_s.whisper_language, vad_filter=False)
-                retry_segments, retry_dropped, _ = await _collect_segments(retry_options, pass_label="no_vad")
-            retry_cov = transcript_coverage_stats(retry_segments, total_source)
-            log.info("transcribe_retry_coverage", **retry_cov, dropped=retry_dropped)
-            if (
-                retry_cov["speech_sec"] > coverage["speech_sec"] + 5.0
-                or retry_cov["first_start"] + 30.0 < coverage["first_start"]
-            ):
-                all_segments = retry_segments
-                dropped = retry_dropped
-                log.info("transcribe_retry_adopted", **retry_cov)
-
-        log.info("transcribe_filtered", kept=len(all_segments), dropped=dropped)
-
-        # Split segments whose words straddle long internal silence (Whisper
-        # sometimes merges speech across a 60s pause into one segment).
-        before_split = len(all_segments)
-        all_segments = [
-            part for seg in all_segments for part in split_segment_on_word_gaps(seg)
-        ]
-        if len(all_segments) != before_split:
-            log.info("transcribe_word_gap_split", before=before_split, after=len(all_segments))
+        transcript = await run_transcription(
+            audio_files, on_progress=_progress, should_abort=_should_abort
+        )
+        if transcript is None:
+            return {"cancelled": True}
+        all_segments = transcript["segments"]
 
         transcript = {"segments": all_segments}
         transcript_path = output_dir / "transcript.json"
@@ -870,44 +572,15 @@ async def transcribe_video(ctx: dict[str, Any], *, job_id: str, project_uid: str
         await session.close()
 
 
-async def _clean_transcript_with_llm(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Fix Thai spelling/spacing in transcript text without touching timestamps.
+from packages.video.plan_core import (  # noqa: E402  (planning cores shared with local-render API)
+    build_talking_head_timeline,
+    clean_transcript_with_llm as _clean_transcript_with_llm,
+    dedupe_semantic_cuts_with_llm as _dedupe_semantic_cuts_with_llm_imported,
+    plan_highlight_with_haiku as _plan_highlight_with_haiku_imported,
+)
 
-    Whisper fine-tuned on Thai often outputs run-together or misspelled words.
-    Haiku corrects text only; all timing data is preserved.
-    """
-    from packages.llm.gateway import complete
-
-    all_text = " ".join(s.get("text", "") for s in segments).strip()
-    if len(all_text) < 50 or not segments:
-        return segments
-
-    entries = [{"i": i, "t": s.get("text", "")} for i, s in enumerate(segments)]
-    prompt = (
-        "<transcript>\n"
-        f"{json.dumps(entries, ensure_ascii=False)}\n"
-        "</transcript>\n\n"
-        "<instruction>Fix Thai spelling and word spacing in each 't' field. "
-        "Do NOT change meaning, add words, or alter timing. "
-        "Return JSON array with same structure: [{\"i\": ..., \"t\": \"corrected text\"}, ...]"
-        "</instruction>"
-    )
-    try:
-        raw = await complete(prompt, system="You are a Thai text editor. Fix only spelling and spacing.")
-        parsed = parse_llm_json(raw)
-        if isinstance(parsed, list):
-            corrected = {entry["i"]: entry["t"] for entry in parsed if "i" in entry and "t" in entry}
-            out = []
-            for i, seg in enumerate(segments):
-                if i in corrected:
-                    out.append({**seg, "text": corrected[i]})
-                else:
-                    out.append(seg)
-            log.info("transcript_cleaned", segments=len(out))
-            return out
-    except Exception as exc:
-        log.warning("transcript_clean_failed", error=str(exc))
-    return segments
+_plan_highlight_with_haiku = _plan_highlight_with_haiku_imported
+_dedupe_semantic_cuts_with_llm = _dedupe_semantic_cuts_with_llm_imported
 
 
 # ── task: plan_edit ───────────────────────────────────────────────────────────
@@ -946,97 +619,23 @@ async def plan_edit(ctx: dict[str, Any], *, job_id: str, project_uid: str, tenan
         sources = [{"id": f"clip{i}", "file": f"normalized/{p.name}"} for i, p in enumerate(norm_files)]
         source_info = video_stream_info(norm_files[0]) if norm_files else {"width": 0, "height": 0, "fps": 30}
         clip_durations = [media_duration(p) for p in norm_files]
-        boundaries = build_clip_boundaries(clip_durations)
-        total_duration = boundaries[-1]["end"] if boundaries else 0.0
 
-        speech_cuts = build_speech_cuts(
+        async def _plan_progress(msg: str) -> None:
+            await _video_progress(job_id, 73, "plan", msg)
+
+        timeline = await build_talking_head_timeline(
             segments,
-            gap_threshold=EDITORIAL_BLOCK_GAP,
-            source_duration=total_duration,
+            duration_mode=duration_mode,
+            target_duration_sec=target_sec,
+            clip_durations=clip_durations,
+            source_info=source_info,
+            sources=sources,
+            on_progress=_plan_progress,
         )
-        if not speech_cuts:
-            raise ValueError("Transcript has no speech segments to keep")
-
-        speech_cuts = dedupe_repeated_cuts(speech_cuts, segments)
-
-        # full mode — code only, no AI
-        if duration_mode == "full" or duration_mode is None:
-            edit_mode = "full"
-            target_sec = None
-            cuts = list(speech_cuts)
-            await _video_progress(job_id, 73, "plan", "ตัดช่วงเงียบ + ลบคำพูดซ้ำ…")
-            cuts = strip_filler_cuts(cuts, segments)
-            cuts = split_cuts_on_internal_silence(cuts, segments, source_duration=total_duration)
-            cuts = strip_filler_words_from_cuts(cuts, segments)
-            cuts = dedupe_spaced_word_repeats(cuts, segments)
-            cuts = dedupe_repeated_cuts(cuts, segments)
-            cuts = resnap_selected_cuts(cuts, segments, source_duration=total_duration)
-            cuts = filter_short_cuts(cuts)
-
-        # custom mode — Haiku text-only highlight planning
-        elif duration_mode == "custom" and target_sec is not None:
-            edit_mode = "highlight"
-            await _video_progress(job_id, 73, "plan", f"Haiku กำลังเลือก highlight ให้พอดี {target_sec} วิ…")
-            cuts = await _plan_highlight_with_haiku(speech_cuts, segments, target_sec)
-            # Semantic dedupe — removes duplicate takes at block level
-            if len(cuts) >= 2:
-                cuts = await _dedupe_semantic_cuts_with_llm(cuts, segments)
-            cuts = split_cuts_on_internal_silence(cuts, segments, source_duration=total_duration)
-            cuts = strip_filler_words_from_cuts(cuts, segments)
-            cuts = dedupe_spaced_word_repeats(cuts, segments)
-            cuts = dedupe_repeated_cuts(cuts, segments)
-            before_budget = cuts_duration(cuts)
-            cuts = enforce_cuts_budget(cuts, segments, float(target_sec))
-            after_budget = cuts_duration(cuts)
-            if after_budget < before_budget - 0.5:
-                log.info(
-                    "cuts_budget_enforced",
-                    target_sec=target_sec,
-                    before_sec=round(before_budget, 1),
-                    after_sec=round(after_budget, 1),
-                )
-            cuts = resnap_selected_cuts(cuts, segments, source_duration=total_duration)
-            cuts = filter_short_cuts(cuts)
-
-        else:
-            # Fallback for unexpected mode — treat as full
-            edit_mode = "full"
-            target_sec = None
-            cuts = list(speech_cuts)
-            cuts = strip_filler_cuts(cuts, segments)
-            cuts = split_cuts_on_internal_silence(cuts, segments, source_duration=total_duration)
-            cuts = strip_filler_words_from_cuts(cuts, segments)
-            cuts = dedupe_spaced_word_repeats(cuts, segments)
-            cuts = dedupe_repeated_cuts(cuts, segments)
-            cuts = resnap_selected_cuts(cuts, segments, source_duration=total_duration)
-            cuts = filter_short_cuts(cuts)
-
-        cuts = remove_overlapping_cuts(cuts)
-        log.info("cuts_after_dedup", count=len(cuts), duration=round(cuts_duration(cuts), 1))
-        if not cuts:
-            raise ValueError("No speech segments remain after removing clips shorter than 1 second")
-
-        render_cuts = filter_short_cuts(localize_cuts(cuts, boundaries))
-        kept_sec = cuts_duration(render_cuts)
-
-        captions = build_captions_for_cuts(segments, cuts)
-
-        # talking_head = silence-cut + keep speech only. No overlays/effects here —
-        # popups, stickers, zoom and burned captions belong to richer modes (future work).
-        timeline = {
-            "mode": "talking_head",
-            "editMode": edit_mode,
-            "sources": sources,
-            "timeline": render_cuts,
-            "captions": captions,
-            "output": {
-                **source_info,
-                "targetDurationSec": target_sec,
-                "maxDurationSec": round(kept_sec, 1),
-                "sourceDurationSec": round(total_duration, 1),
-                "clipCount": len(norm_files),
-            },
-        }
+        render_cuts = timeline["timeline"]
+        kept_sec = float(timeline["output"]["maxDurationSec"])
+        target_sec = timeline["output"]["targetDurationSec"]
+        edit_mode = timeline["editMode"]
 
         timeline_path = output_dir / "timeline.json"
         timeline_path.write_text(json.dumps(timeline, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -1134,106 +733,9 @@ def _marks_to_popups(product_marks: list[dict], render_cuts: list[dict]) -> list
     return popups
 
 
-async def _plan_highlight_with_haiku(
-    speech_cuts: list[dict[str, Any]],
-    segments: list[dict[str, Any]],
-    target_sec: int,
-) -> list[dict[str, Any]]:
-    """Haiku text-only: select speech blocks to fit target_sec budget.
-
-    No vision frames, no Sonnet — purely block-id selection by transcript text.
-    Falls back to trim_speech_cuts_to_budget on any error.
-    """
-    from packages.llm.gateway import complete
-
-    blocks = build_speech_blocks(speech_cuts, segments)
-    if not blocks:
-        return trim_speech_cuts_to_budget(speech_cuts, float(target_sec))
-
-    total_natural = sum(float(b.get("duration", 0)) for b in blocks)
-    prompt = (
-        f"<budget>\n"
-        f"<targetSec>{target_sec}</targetSec>\n"
-        f"<totalIfAllKeptSec>{round(total_natural, 1)}</totalIfAllKeptSec>\n"
-        f"</budget>\n\n"
-        f"<speech_blocks>\n{json.dumps(blocks, ensure_ascii=False)}\n</speech_blocks>\n\n"
-        "<instruction>Select blocks to keep within the budget. "
-        "Return JSON: {\"keep\": [0, 2, 4], \"remove_reason\": {\"1\": \"filler\"}}</instruction>"
-    )
-    try:
-        raw = await complete(prompt, system=HIGHLIGHT_HAIKU_SYSTEM)
-        parsed = parse_llm_json(raw)
-        keep_ids: list[int] = [int(i) for i in (parsed.get("keep") or []) if 0 <= int(i) < len(blocks)]
-        if keep_ids:
-            kept = select_speech_cuts_by_ids(speech_cuts, keep_ids, blocks)
-            if kept:
-                log.info("haiku_highlight_ok", kept=len(kept), removed=len(blocks) - len(keep_ids), target_sec=target_sec)
-                return kept
-        log.warning("haiku_highlight_empty_fallback", keep_ids=keep_ids)
-    except Exception as exc:
-        log.warning("haiku_highlight_failed", error=str(exc))
-
-    return trim_speech_cuts_to_budget(speech_cuts, float(target_sec))
-
-
-async def _dedupe_semantic_cuts_with_llm(
-    cuts: list[dict[str, Any]],
-    segments: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    """Haiku pass: drop repeated takes when meaning matches but Whisper wording differs."""
-    from packages.llm.gateway import complete
-
-    entries: list[dict[str, Any]] = []
-    for i, cut in enumerate(cuts):
-        text = _text_for_cut(cut, segments).strip()
-        whisper_segs = whisper_segments_for_cut(cut, segments)
-        if not text and not whisper_segs:
-            continue
-        entries.append({
-            "cut_index": i,
-            "text": text[:400],
-            "whisper_segments": whisper_segs[:12],
-            "duration_sec": round(cut_duration(cut), 1),
-        })
-    if len(entries) < 2:
-        return cuts
-
-    prompt = (
-        "<cuts_to_review>\n"
-        f"{json.dumps(entries, ensure_ascii=False)}\n"
-        "</cuts_to_review>\n\n"
-        "<instruction>Find repeated takes (same meaning, different Whisper wording). "
-        "Return duplicate_groups JSON only.</instruction>"
-    )
-    try:
-        raw = await complete(prompt, system=AI_SEMANTIC_DEDUPE_SYSTEM)
-        parsed = parse_llm_json(raw)
-        deduped = apply_semantic_dedupe_plan(cuts, segments, parsed)
-        removed = len(cuts) - len(deduped)
-        if removed:
-            log.info("semantic_dedupe_done", removed=removed, kept=len(deduped))
-        return deduped
-    except Exception as exc:
-        log.warning("semantic_dedupe_failed", error=str(exc))
-        return cuts
-
-
 # ── task: render_video ────────────────────────────────────────────────────────
 
-def _write_srt(captions: list[dict], path: pathlib.Path) -> None:
-    """Write captions list to SRT file."""
-
-    def _ts(secs: float) -> str:
-        h = int(secs // 3600)
-        m = int((secs % 3600) // 60)
-        s = int(secs % 60)
-        ms = int((secs - int(secs)) * 1000)
-        return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
-
-    lines: list[str] = []
-    for i, cap in enumerate(captions, 1):
-        lines += [str(i), f"{_ts(cap['start'])} --> {_ts(cap['end'])}", cap["text"], ""]
-    path.write_text("\n".join(lines), encoding="utf-8")
+from packages.video.render_common import build_capcut_bundle, write_srt as _write_srt  # noqa: E402
 
 
 async def render_video(ctx: dict[str, Any], *, job_id: str, project_uid: str, tenant_slug: str) -> dict:
@@ -1255,6 +757,8 @@ async def render_video(ctx: dict[str, Any], *, job_id: str, project_uid: str, te
         captions_dir = output_dir / "captions"
         clips_dir.mkdir(exist_ok=True)
         captions_dir.mkdir(exist_ok=True)
+        for stale in clips_dir.glob("clip_*.mp4"):
+            stale.unlink(missing_ok=True)
 
         proj = await _get_video_project(session, project_uid)
         timeline = json.loads((root / proj.timeline_path).read_text(encoding="utf-8"))
@@ -1369,35 +873,11 @@ async def render_video(ctx: dict[str, Any], *, job_id: str, project_uid: str, te
         if vo_rel:
             vo_file = root / vo_rel
             if vo_file.exists():
+                from packages.video.dub_render import mux_voiceover
+
                 final_with_vo = output_dir / "final_vo.mp4"
-                vo_in = ffmpeg_lib.input(str(vo_file))
-                run_ffmpeg(
-                    ffmpeg_lib.output(
-                        ffmpeg_lib.input(str(final_path)).video,
-                        vo_in.audio,
-                        str(final_with_vo),
-                        vcodec="copy",
-                        acodec="aac",
-                        audio_bitrate="192k",
-                        shortest=None,
-                    )
-                    .global_args("-shortest")
-                    .overwrite_output(),
-                    label="render_vo_replace",
-                )
+                mux_voiceover(final_path, vo_file, final_with_vo)
                 final_with_vo.replace(final_path)
-
-        # 3a2. Loudness normalization (EBU R128, TikTok-friendly ~-16 LUFS) — non-fatal.
-        # Video stream-copied, audio re-encoded once; later overlay steps copy audio through.
-        try:
-            from packages.video.ffmpeg_bin import normalize_loudness
-
-            await _video_progress(job_id, 92, "render", "กำลังปรับระดับเสียงให้สม่ำเสมอ…")
-            _normed = output_dir / "final_loudnorm.mp4"
-            normalize_loudness(final_path, _normed)
-            _normed.replace(final_path)
-        except Exception as _lne:
-            log.warning("loudnorm_failed", error=str(_lne))
 
         # 3b. ASS karaoke caption burn-in — only when the timeline opts in (non-talking_head).
         _ass_burned = False
@@ -1547,59 +1027,19 @@ async def render_video(ctx: dict[str, Any], *, job_id: str, project_uid: str, te
         srt_path = captions_dir / "subtitles.srt"
         _write_srt(captions, srt_path)
 
-        # 5. manifest.json
-        manifest = {
-            "project_uid": project_uid,
-            "mode": timeline.get("mode", "talking_head"),
-            "output": timeline.get("output", {}),
-            "clips": [{"file": f"clips/{p.name}", "label": cuts[i].get("label", "")} for i, p in enumerate(clip_paths)],
-            "captions": "captions/subtitles.srt",
-            "captions_ass": "captions/subtitles.ass" if _ass_burned else None,
-            "graphics": [
-                {"name": g["name"], "at": g["at"], "x": g.get("x", 0), "y": g.get("y", 0)}
-                for g in _graphics
-            ],
-        }
-        manifest_path = output_dir / "manifest.json"
-        manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-
-        # 6. README.txt
-        readme_path = output_dir / "README.txt"
-        readme_path.write_text(
-            "CapCut Import Guide\n"
-            "===================\n"
-            "1. Import clips/ folder as separate video tracks\n"
-            "2. Import captions/subtitles.srt as captions\n"
-            "3. Refer to manifest.json for layer ordering\n"
-            "4. final.mp4 is the pre-rendered output (optional reference)\n",
-            encoding="utf-8",
-        )
-
-        # 7. Build ZIP bundle
+        # 5-7. manifest.json + README.txt + ZIP bundle
         await _video_progress(job_id, 96, "render", "กำลังสร้าง CapCut bundle…")
-        zip_path = output_dir / "capcut_bundle.zip"
-        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-            zf.write(final_path, "final.mp4")
-            for cp in clip_paths:
-                zf.write(cp, f"clips/{cp.name}")
-            zf.write(srt_path, f"captions/{srt_path.name}")
-            _ass_zip = captions_dir / "subtitles.ass"
-            if _ass_zip.exists():
-                zf.write(_ass_zip, "captions/subtitles.ass")
-            zf.write(manifest_path, "manifest.json")
-            zf.write(readme_path, "README.txt")
-            if _graphics:
-                try:
-                    from packages.video.stickers import sticker_path as _sp
-                    _seen_stickers: set[str] = set()
-                    for _g in _graphics:
-                        _gn = _g["name"]
-                        if _gn not in _seen_stickers:
-                            _gpath = _sp(_gn)
-                            zf.write(_gpath, f"stickers/{_gn}.png")
-                            _seen_stickers.add(_gn)
-                except Exception:
-                    pass
+        zip_path = build_capcut_bundle(
+            output_dir,
+            project_uid=project_uid,
+            timeline=timeline,
+            cuts=cuts,
+            clip_paths=clip_paths,
+            final_path=final_path,
+            srt_path=srt_path,
+            ass_burned=_ass_burned,
+            graphics=_graphics,
+        )
 
         final_rel = str(final_path.relative_to(root))
         zip_rel = str(zip_path.relative_to(root))
@@ -1645,286 +1085,21 @@ async def render_video(ctx: dict[str, Any], *, job_id: str, project_uid: str, te
 
 # ── task: analyze_dub_first ──────────────────────────────────────────────────
 
+from packages.video.dub_ai import (  # noqa: E402  (prompt + LLM cores shared with local-render API)
+    DUB_EDIT_SYSTEM as _DUB_EDIT_SYSTEM_IMPORTED,
+    DUB_TIMELINE_SYSTEM as _DUB_TIMELINE_SYSTEM_IMPORTED,
+    generate_dub_edit_script,
+    plan_dub_timeline_cuts,
+)
 
-_SCRIPT_OUTLINE_SYSTEM = """<role>
-You are a TikTok affiliate video script planner.
-</role>
-
-<task>
-Given a creator brief and/or their written script plus sample video frames,
-produce a structured scene-by-scene script plan the creator will use as voiceover.
-</task>
-
-<rules>
-<script_source>
-- If the creator provided a full script (user_script): structure it into scenes of 3–8s each. Keep their wording exactly — do not rewrite.
-- If only a brief / direction: generate a script inspired by the brief and what you see in the frames.
-- If neither: infer the script from the video content alone.
-</script_source>
-<scenes>
-- Each scene = one spoken voiceover LINE (not necessarily one camera angle) — short punchy TikTok phrasing, Thai or English
-- estimated_sec = how long the creator will speak that line (~3–8s typical)
-- visual_hint: "single shot" for hooks/CTAs OR "multi-angle" for product/OOTD/demo — means switch camera angles often while the line plays, not one long static hold
-- Aim for 5–15 lines total depending on content richness
-</scenes>
-</rules>
-
-<forbidden>
-Do NOT output prose, markdown, or any text outside the JSON object.
-</forbidden>
-
-<output_format>
-Return ONLY a valid JSON object matching this schema exactly:
-{
-  "estimated_total_sec": 45,
-  "scenes": [
-    {"order": 1, "voiceover_line": "วันนี้มารีวิวครีมตัวนี้ค่ะ", "estimated_sec": 4, "visual_hint": "product reveal"},
-    {"order": 2, "voiceover_line": "ใช้มาแล้ว 2 อาทิตย์", "estimated_sec": 4, "visual_hint": "usage demo"}
-  ]
-}
-</output_format>"""
-
-
-_EDIT_SCRIPT_SYSTEM = """<role>
-You are a TikTok affiliate video editor helping a creator plan a dub-first video.
-</role>
-
-<task>
-Match voiceover lines from the script plan to video moments.
-You receive: a script plan (voiceover lines + visual hints) and sample frames from the video clips with timestamps.
-</task>
-
-<rules>
-<timing>
-- The problem to solve: viewers should NOT stare at one angle too long — switch angles often. This is about CUT FREQUENCY, not making each cut ultra-short.
-- Single-shot (hooks, calm CTA only): one cut, 2–4 seconds max.
-- Multi-angle lines (product, OOTD, outfit, demo — default when frames show variety):
-  use 3–6 visual cuts per voiceover line sharing the same voiceoverLineId.
-  Each cut: 1.5–3.5 seconds typical (2–4s OK for a hero moment). Do NOT stretch one angle to 5–8s when other strong frames exist — that feels like dead air / waiting.
-  Distribute cuts across the line's estimated_sec — e.g. a 6s spoken line → four ~1.5s angle changes, NOT one 6s clip.
-- Pick DISTINCT source timestamps for consecutive cuts — never reuse the same moment twice in a row.
-</timing>
-<voiceover_lines>
-- voiceoverLineId (integer): all visual cuts under the same spoken line share the same id.
-- Single-cut line: one segment, unique voiceoverLineId, full voiceoverScript on that segment.
-- Multi-angle line: 3–6 segments with the SAME voiceoverLineId; voiceoverScript on the first segment only (others omit).
-- voiceoverScript wording must match the script plan exactly — do not rewrite.
-</voiceover_lines>
-<matching>Match visual_hint from the script plan to the most fitting video moment(s).</matching>
-<priorities>Prioritize: strong product reveal, clear demonstrations, reactions, strong conclusion.</priorities>
-<readiness>
-Only use moments where the creator looks READY on camera — pose settled, facing camera, action started.
-If a frame shows prep, skip it and pick another timestamp.
-</readiness>
-<avoid>
-- Speaker looks off-camera, down, or to the side
-- Hands touching hair, brushing hair, fixing bangs, or adjusting headwear
-- Pulling at clothing, fixing straps, or straightening outfit before presenting
-- Adjusting phone, tripod, ring light, or reframing the camera
-- Speaker mid-preparation: settling into pose, waiting for cue, not yet facing camera
-- Speaker looks uncertain, hesitant, or mid-sentence restart
-- Repeated segments showing the same action twice
-- Any moment where the speaker has not yet started their shot
-- Trims that start BEFORE the ready moment visible in the matched frame
-</avoid>
-<prefer>
-- Speaker looks directly at camera with confidence
-- Pose already settled — no grooming or setup visible
-- Clear product interaction: holding, showing, applying, demonstrating
-- Strong emotional moments: reactions, excitement, clear delivery
-</prefer>
-<anchor>
-- Every segment MUST include matchedFrameTime: the exact timestamp (seconds) of the sample frame you chose.
-- sourceIn must be within ±0.35s of matchedFrameTime — do NOT start the trim earlier to include prep.
-- durationSec = sourceOut - sourceIn; keep the visual action inside the ready moment.
-</anchor>
-<fields>
-- cutStyle options: "jump_cut" | "standard" | "zoom_in" | "zoom_out" — default to "jump_cut"
-- voiceoverLineId: integer grouping id (required on every segment)
-- voiceoverScript: copy exactly from the script plan on the first cut of each line
-- matchedFrameTime: float seconds of the chosen sample frame (required on every segment)
-- totalEstimatedSec: sum of all segment durationSec (all visual cuts, including montage)
-</fields>
-</rules>
-
-<forbidden>
-Do NOT output prose, markdown, or any text outside the JSON object.
-Do NOT modify the creator's voiceover script wording.
-</forbidden>
-
-<output_format>
-Return ONLY a valid JSON object matching this schema exactly:
-{
-  "mode": "dub_first",
-  "totalEstimatedSec": 42,
-  "segments": [
-    {
-      "order": 1,
-      "voiceoverLineId": 1,
-      "sourceClip": "clip0",
-      "sourceIn": 5.2,
-      "sourceOut": 8.2,
-      "durationSec": 3.0,
-      "matchedFrameTime": 5.2,
-      "visualDescription": "ถือสินค้าใกล้กล้อง หมุนให้เห็นฉลาก",
-      "cutStyle": "jump_cut",
-      "voiceoverScript": "วันนี้มารีวิวครีมตัวนี้ที่ใช้มา 2 สัปดาห์แล้ว"
-    },
-    {
-      "order": 2,
-      "voiceoverLineId": 2,
-      "sourceClip": "clip0",
-      "sourceIn": 12.0,
-      "sourceOut": 14.0,
-      "durationSec": 2.0,
-      "matchedFrameTime": 12.0,
-      "visualDescription": "close-up ฝาครีม",
-      "cutStyle": "jump_cut",
-      "voiceoverScript": "เนื้อครีมบางเบา ซึมไว ไม่เหนียว"
-    },
-    {
-      "order": 3,
-      "voiceoverLineId": 2,
-      "sourceClip": "clip0",
-      "sourceIn": 28.5,
-      "sourceOut": 30.0,
-      "durationSec": 1.5,
-      "matchedFrameTime": 28.5,
-      "visualDescription": "texture squeeze บนหลังมือ",
-      "cutStyle": "jump_cut"
-    },
-    {
-      "order": 4,
-      "voiceoverLineId": 2,
-      "sourceClip": "clip0",
-      "sourceIn": 45.0,
-      "sourceOut": 47.5,
-      "durationSec": 2.5,
-      "matchedFrameTime": 45.0,
-      "visualDescription": "ทา demo",
-      "cutStyle": "jump_cut"
-    },
-    {
-      "order": 5,
-      "voiceoverLineId": 2,
-      "sourceClip": "clip0",
-      "sourceIn": 62.0,
-      "sourceOut": 63.5,
-      "durationSec": 1.5,
-      "matchedFrameTime": 62.0,
-      "visualDescription": "ผิวหลังทา โทนสว่าง",
-      "cutStyle": "zoom_in"
-    }
-  ]
-}
-</output_format>"""
-
-
-_DUB_TIMELINE_SYSTEM = """<role>
-You are a TikTok video editor producing a Timeline JSON for ffmpeg rendering.
-</role>
-
-<task>
-Given an Edit Script and the measured duration of the creator's recorded voiceover,
-map each Edit Script segment to a position on the output timeline.
-</task>
-
-<rules>
-- Total duration of all cuts MUST NOT exceed voDurationSec
-- Map EVERY visual segment in the Edit Script to one timeline cut (including montage segments sharing a voiceoverLineId)
-- Distribute time proportionally by durationSec; segments with the same voiceoverLineId scale together as one spoken line
-- "source" must be exactly the sourceClip from the Edit Script (e.g. "clip0")
-- "in" and "out" are source file timestamps — use sourceIn/sourceOut from the Edit Script
-- "label": "opening" for the first cut, "conclusion" for the last cut, "speech" for all others
-- Preserve every visual cut from the Edit Script — do not merge multiple angles into one long hold
-</rules>
-
-<forbidden>
-Do NOT output prose, markdown, or any text outside the JSON object.
-Do NOT invent new sourceIn/sourceOut values — copy them from the Edit Script.
-</forbidden>
-
-<output_format>
-Return ONLY a valid JSON object matching this schema exactly:
-{
-  "timeline": [
-    {"type": "cut", "source": "clip0", "in": 5.2, "out": 8.2, "label": "opening"},
-    {"type": "cut", "source": "clip0", "in": 12.0, "out": 17.0, "label": "conclusion"}
-  ]
-}
-</output_format>"""
-
-
-async def _plan_script_outline(
-    *,
-    brief: str,
-    user_script: str,
-    norm_files: list[pathlib.Path],
-    frames_dir: pathlib.Path,
-) -> list[dict[str, Any]]:
-    """Step 1: Ask Claude to plan scene-by-scene script from brief/user_script + key frames.
-
-    Extracts 3 key frames per clip (15%/50%/85%) — fast, low token cost.
-    Returns list of scene dicts: [{order, voiceover_line, estimated_sec, visual_hint}].
-    """
-    import ffmpeg as ffmpeg_lib
-    from packages.video.scene import frames_to_vision_content
-    from packages.video.ffmpeg_bin import media_duration
-    from packages.llm.gateway import acompletion
-    from packages.video.timeline import parse_llm_json
-
-    frames_dir.mkdir(parents=True, exist_ok=True)
-    key_frames: list[dict[str, Any]] = []
-    for i, nf in enumerate(norm_files):
-        if len(key_frames) >= 5:
-            break
-        dur = media_duration(nf)
-        for j, pct in enumerate([0.35, 0.55, 0.80]):
-            if len(key_frames) >= 5:
-                break
-            t = dur * pct
-            frame_path = frames_dir / f"key_{i}_{j}.jpg"
-            try:
-                run_ffmpeg(
-                    ffmpeg_lib.input(str(nf), ss=t)
-                    .output(str(frame_path), vframes=1, q=2)
-                    .overwrite_output(),
-                    label=f"key_frame_{i}_{j}",
-                )
-                key_frames.append({"frame_path": str(frame_path), "time": round(t, 1), "clip": f"clip{i}"})
-            except Exception:
-                pass
-
-    vision_blocks = frames_to_vision_content(key_frames) if key_frames else []
-
-    user_content: list[dict[str, Any]] = [{"type": "text", "text": (
-        f"<creator_input>\n"
-        f"<brief>{brief or '(ไม่ระบุ)'}</brief>\n"
-        f"<user_script>{user_script or '(ไม่ระบุ — generate จากวิดีโอ)'}</user_script>\n"
-        f"</creator_input>\n\n"
-        "<instruction>Sample frames (key moments from the video) follow. Return script plan JSON only.</instruction>"
-    )}]
-    user_content.extend(vision_blocks)
-    user_content.append({"type": "text", "text": "<reminder>Return ONLY the JSON object — no prose.</reminder>"})
-
-    messages = [{"role": "user", "content": user_content}]
-    try:
-        from packages.llm.config import vision_call_kwargs
-        resp = await acompletion(messages, system=_SCRIPT_OUTLINE_SYSTEM, **vision_call_kwargs())
-        raw = resp.choices[0].message.content or ""
-        parsed = parse_llm_json(raw)
-        scenes = parsed.get("scenes", [])
-        log.info("script_outline_done", scenes=len(scenes))
-        return scenes
-    except Exception as exc:
-        log.warning("script_outline_failed", error=str(exc))
-        return []
+_DUB_EDIT_SYSTEM = _DUB_EDIT_SYSTEM_IMPORTED
+_DUB_TIMELINE_SYSTEM = _DUB_TIMELINE_SYSTEM_IMPORTED
 
 
 async def analyze_dub_first(ctx: dict[str, Any], *, job_id: str, project_uid: str, tenant_slug: str) -> dict:
-    """2-step Claude Vision: plan script outline → match scenes → render silent cut."""
+    """1-step Claude Vision: write script + match scenes → render silent cut."""
     log.info("task_start", task="analyze_dub_first", project_uid=project_uid)
-    await _video_progress(job_id, 52, "analyze", "กำลังวางแผน script…")
+    await _video_progress(job_id, 52, "analyze", "กำลังวิเคราะห์วิดีโอ…")
     session = await _tenant_session(tenant_slug)
     _usage_token = None
     try:
@@ -1945,35 +1120,9 @@ async def analyze_dub_first(ctx: dict[str, Any], *, job_id: str, project_uid: st
         brief = proj.brief or ""
         user_script = proj.user_script or ""
 
-        from packages.video.scene import (
-            build_vision_content,
-            detect_scenes,
-            extract_sample_frames,
-            extract_edge_frames,
-            format_frame_descriptor,
-        )
-        from packages.llm.gateway import acompletion
-        from packages.video.timeline import parse_llm_json
+        from packages.video.scene import extract_dub_budget_frames, extract_edge_frames
 
-        # ── Step 1: script planning (key frames only, fast) ───────────────────
-        script_scenes = await _plan_script_outline(
-            brief=brief,
-            user_script=user_script,
-            norm_files=norm_files,
-            frames_dir=frames_dir,
-        )
-
-        script_plan_path = output_dir / "script_plan.json"
-        script_plan_path.write_text(
-            json.dumps({"scenes": script_scenes}, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
-
-        await _video_progress(job_id, 62, "analyze", "กำลังเลือกซีนให้ตรง script…")
-
-        if await _abort_if_cancelled(session, project_uid, job_id):
-            return {"cancelled": True}
-
-        # ── Step 2: scene matching (all frames) ───────────────────────────────
+        # ── Single step: extract all frames → write script + match in one call ──
         all_frames: list[dict[str, Any]] = []
         for i, norm_file in enumerate(norm_files):
             clip_id = f"clip{i}"
@@ -1984,28 +1133,23 @@ async def analyze_dub_first(ctx: dict[str, Any], *, job_id: str, project_uid: st
                 f"กำลังหาซีนในคลิป {i + 1}/{len(norm_files)}…",
             )
             try:
-                scenes = detect_scenes(norm_file)
                 from packages.video.ffmpeg_bin import media_duration
-                from packages.video.scene import DUB_LEAD_SKIP_PCT, DUB_SAMPLES_PER_SCENE, dub_scene_cap, dub_sample_frame_budget
+                from packages.video.scene import dub_scene_cap, dub_sample_frame_budget
 
                 clip_dur = media_duration(norm_file)
-                frame_budget = dub_sample_frame_budget(clip_dur, samples_per_scene=DUB_SAMPLES_PER_SCENE)
                 clip_frames_dir = frames_dir / f"clip{i}"
-                scene_frames = extract_sample_frames(
+                scene_frames = extract_dub_budget_frames(
                     norm_file,
-                    scenes,
                     clip_frames_dir,
                     clip_id=clip_id,
-                    max_frames=frame_budget,
-                    samples_per_scene=DUB_SAMPLES_PER_SCENE,
-                    lead_skip_pct=DUB_LEAD_SKIP_PCT,
+                    duration_sec=clip_dur,
                 )
                 log.info(
                     "dub_sample_budget",
                     clip=clip_id,
                     duration_sec=round(clip_dur, 1),
                     scene_cap=dub_scene_cap(clip_dur),
-                    max_frames=frame_budget,
+                    max_frames=dub_sample_frame_budget(clip_dur),
                     extracted=len(scene_frames),
                 )
                 edge_frames = extract_edge_frames(norm_file, clip_frames_dir, clip_id=clip_id)
@@ -2017,57 +1161,20 @@ async def analyze_dub_first(ctx: dict[str, Any], *, job_id: str, project_uid: st
 
         await _video_progress(job_id, 74, "analyze", "กำลัง match script กับซีนวิดีโอ…")
 
-        import time as _time
-
-        _t_payload = _time.monotonic()
-        vision_content, vision_stats = build_vision_content(all_frames)
-        payload_build_ms = round((_time.monotonic() - _t_payload) * 1000)
-        frame_descs = "\n".join(format_frame_descriptor(f) for f in all_frames)
-
-        if script_scenes:
-            script_plan_xml = (
-                f"<script_plan>\n{json.dumps(script_scenes, ensure_ascii=False)}\n</script_plan>"
+        async def _push_thinking(excerpt: str) -> None:
+            await _update_job(
+                job_id, "running", 74,
+                result={"step": "analyze", "message": "กำลัง match script กับซีนวิดีโอ…", "thinking": excerpt},
             )
-        else:
-            script_plan_xml = f"<brief>{brief or '(none)'}</brief>"
 
-        user_msg_content: list[dict[str, Any]] = [{"type": "text", "text": (
-            f"{script_plan_xml}\n\n"
-            f"<frame_timestamps>\n{frame_descs}\n</frame_timestamps>\n\n"
-            "<instruction>Sample frames follow in order. Scene samples skip early prep within each scene; "
-            "clip opening/closing edge samples are included as extra options (use only when they fit the script). "
-            "Match voiceover lines to ready-on-camera moments only. "
-            "Set matchedFrameTime to the frame timestamp you chose; keep sourceIn within ±0.35s of it. "
-            "For product/OOTD/demo lines: use 3–6 angle changes per line (1.5–3.5s each) from DISTINCT timestamps — "
-            "avoid one long 5s+ hold on a single angle when other frames are available.</instruction>"
-        )}]
-        user_msg_content.extend(vision_content)
-        user_msg_content.append({"type": "text", "text": "<reminder>Return ONLY the Edit Script JSON object — no prose.</reminder>"})
-
-        messages = [{"role": "user", "content": user_msg_content}]
-        from packages.llm.config import vision_call_kwargs
-        vx = vision_call_kwargs()
-        text_chars = len(user_msg_content[0]["text"]) + len(user_msg_content[-1]["text"])
-        log.info(
-            "analyze_dub_scene_match_payload",
+        edit_script = await generate_dub_edit_script(
+            all_frames,
+            brief=brief,
+            user_script=user_script,
+            target_duration_sec=getattr(proj, "target_duration_sec", None),
             project_uid=project_uid,
-            model=vx.get("model", "default"),
-            reasoning_effort=vx.get("reasoning_effort"),
-            payload_build_ms=payload_build_ms,
-            text_chars=text_chars,
-            **vision_stats,
+            on_thinking=_push_thinking,
         )
-        log.info(
-            "analyze_dub_scene_match_send",
-            project_uid=project_uid,
-            image_blocks=vision_stats["image_blocks"],
-            payload_approx_kb=vision_stats["base64_kb"] + round(text_chars / 1024),
-            note="payload_build_ms=local disk read; API wait logged as llm_acompletion_waiting",
-        )
-        resp = await acompletion(messages, system=_EDIT_SCRIPT_SYSTEM, **vx)
-        raw = resp.choices[0].message.content or ""
-        edit_script = parse_llm_json(raw)
-        edit_script = normalize_dub_edit_script(edit_script, sample_frames=all_frames)
 
         edit_script_path = output_dir / "edit_script.json"
         edit_script_path.write_text(
@@ -2122,9 +1229,6 @@ async def render_dub_silent(ctx: dict[str, Any], *, job_id: str, project_uid: st
     await _video_progress(job_id, 80, "render", "กำลังตัดวิดีโอตาม script…")
     session = await _tenant_session(tenant_slug)
     try:
-        import ffmpeg as ffmpeg_lib
-        import zipfile
-
         if await _abort_if_cancelled(session, project_uid, job_id):
             return {"cancelled": True}
 
@@ -2133,7 +1237,6 @@ async def render_dub_silent(ctx: dict[str, Any], *, job_id: str, project_uid: st
         root = data_root()
         output_dir = root / "video_outputs" / project_uid
         clips_dir = output_dir / "clips"
-        clips_dir.mkdir(exist_ok=True)
 
         proj = await _get_video_project(session, project_uid)
         if not proj.edit_script_path:
@@ -2148,10 +1251,15 @@ async def render_dub_silent(ctx: dict[str, Any], *, job_id: str, project_uid: st
 
         norm_files_sorted = sorted((output_dir / "normalized").glob("norm_*.mp4"))
 
-        def _norm_for_clip(clip_id: str) -> pathlib.Path:
-            idx = int(clip_id.replace("clip", "")) if clip_id.startswith("clip") else 0
-            return norm_files_sorted[idx] if idx < len(norm_files_sorted) else norm_files_sorted[0]
+        from packages.video.dub_render import (
+            build_dub_bundle_zip,
+            concat_stream_copy,
+            prepare_clips_dir,
+            trim_one_segment,
+            write_dub_script_txt,
+        )
 
+        prepare_clips_dir(clips_dir)
         clip_paths: list[pathlib.Path] = []
         total = len(segments)
         log.info("render_dub_silent_cutting", project_uid=project_uid, total_segments=total)
@@ -2164,84 +1272,21 @@ async def render_dub_silent(ctx: dict[str, Any], *, job_id: str, project_uid: st
                 "render",
                 f"กำลังตัดซีนที่ {i + 1}/{total}…",
             )
-            src = _norm_for_clip(seg.get("sourceClip", "clip0"))
-            src_in = float(seg.get("sourceIn", 0.0))
-            src_out = float(seg.get("sourceOut", src_in + 3.0))
-            clip_out = clips_dir / f"clip_{i:03d}.mp4"
-            log.info("render_dub_clip", idx=i+1, total=total, src=src.name, in_=round(src_in,2), out=round(src_out,2))
-            # Frame-accurate trim via video filter + reset PTS (avoids keyframe-stutter from vcodec=copy).
-            # Re-encode to h264/yuv420p so concat timestamps are always consistent.
-            run_ffmpeg(
-                ffmpeg_lib.input(str(src))
-                .video
-                .filter("trim", start=src_in, end=src_out)
-                .filter("setpts", "PTS-STARTPTS")
-                .output(str(clip_out),
-                        vcodec="libx264", preset="fast", crf=18,
-                        pix_fmt="yuv420p",
-                        **{"an": None})
-                .overwrite_output(),
-                label=f"dub_trim_{i}",
-            )
-            clip_paths.append(clip_out)
+            clip_paths.append(trim_one_segment(norm_files_sorted, seg, clips_dir, i, total))
 
         log.info("render_dub_silent_concat", project_uid=project_uid, clips=len(clip_paths))
         await _video_progress(job_id, 93, "render", "กำลังรวมคลิปเป็นวิดีโอเดียว…")
 
-        # Concatenate all clips
-        concat_list_path = output_dir / "concat_silent.txt"
-        concat_list_path.write_text(
-            "\n".join(f"file '{p.relative_to(output_dir).as_posix()}'" for p in clip_paths),
-            encoding="utf-8",
-        )
         final_path = output_dir / "final_silent.mp4"
-        run_ffmpeg(
-            ffmpeg_lib.input(str(concat_list_path), format="concat", safe=0)
-            .output(str(final_path), c="copy", movflags="+faststart")
-            .overwrite_output(),
-            label="dub_concat",
-        )
+        concat_stream_copy(clip_paths, final_path, output_dir / "concat_silent.txt")
 
-        # Write script.txt (grouped by voiceover line; montage noted)
-        script_lines = ["=== Script ===\n"]
-        if proj.brief:
-            script_lines.append(f"Brief: {proj.brief}\n")
-        script_lines.append("")
-        seen_line_ids: set[int] = set()
-        line_no = 0
-        for seg in segments:
-            lid = int(seg.get("voiceoverLineId") or seg.get("order") or 0)
-            if lid in seen_line_ids:
-                continue
-            seen_line_ids.add(lid)
-            line_no += 1
-            line_segs = [
-                s for s in segments
-                if int(s.get("voiceoverLineId") or s.get("order") or 0) == lid
-            ]
-            o_in = float(line_segs[0].get("voiceoverLineOutputIn") or line_segs[0].get("outputIn") or 0)
-            o_out = float(line_segs[-1].get("voiceoverLineOutputOut") or line_segs[-1].get("outputOut") or 0)
-            vo = str(line_segs[0].get("voiceoverScript") or "").strip()
-            montage = len(line_segs) > 1
-            hdr = f"[Line {line_no} | {o_in:.1f}s → {o_out:.1f}s"
-            if montage:
-                hdr += f" | {len(line_segs)} cuts"
-            script_lines.append(f"{hdr}]")
-            script_lines.append(vo)
-            script_lines.append("")
-        out_t = float(segments[-1].get("outputOut") or 0) if segments else 0.0
-        script_lines.append(f"===\nTotal: {out_t:.0f}s")
         script_path = output_dir / "script.txt"
-        script_path.write_text("\n".join(script_lines), encoding="utf-8")
+        write_dub_script_txt(segments, proj.brief, script_path)
 
         # Build ZIP
         await _video_progress(job_id, 96, "render", "กำลังสร้าง bundle…")
         zip_path = output_dir / "dub_bundle.zip"
-        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-            zf.write(final_path, "final_silent.mp4")
-            zf.write(script_path, "script.txt")
-            for cp in clip_paths:
-                zf.write(cp, f"clips/{cp.name}")
+        build_dub_bundle_zip(final_path, script_path, clip_paths, zip_path)
 
         final_rel = str(final_path.relative_to(root))
         zip_rel = str(zip_path.relative_to(root))
@@ -2312,47 +1357,16 @@ async def plan_dub_timeline(ctx: dict[str, Any], *, job_id: str, project_uid: st
         if vo_duration <= 0:
             raise ValueError("Voiceover file has no detectable duration")
 
-        from packages.llm.gateway import complete
-
-        prompt = (
-            f"<voiceover>\n"
-            f"<voDurationSec>{round(vo_duration, 2)}</voDurationSec>\n"
-            f"</voiceover>\n\n"
-            f"<edit_script>\n{json.dumps(edit_script, ensure_ascii=False)}\n</edit_script>\n\n"
-            f"<instruction>Map each segment to a timeline cut. "
-            f"Total cut duration MUST NOT exceed {round(vo_duration, 2)} seconds.</instruction>"
-        )
-
-        raw = await complete(prompt, system=_DUB_TIMELINE_SYSTEM)
-        from packages.video.timeline import parse_llm_json
-        parsed = parse_llm_json(raw)
-        raw_cuts = parsed.get("timeline", [])
-        if not raw_cuts:
-            raise ValueError("Claude returned empty timeline for dub_first")
-
         # Build full timeline.json (same schema as talking_head)
         from packages.video.ffmpeg_bin import video_stream_info
         norm_files = sorted((output_dir / "normalized").glob("norm_*.*"))
         sources = [{"id": f"clip{i}", "file": f"normalized/{p.name}"} for i, p in enumerate(norm_files)]
         source_info = video_stream_info(norm_files[0]) if norm_files else {"width": 0, "height": 0, "fps": 30}
 
-        from packages.video.timeline import (
-            MIN_RENDER_CUT_SEC,
-            build_clip_boundaries,
-            filter_short_cuts,
-            localize_cuts,
-        )
         from packages.video.ffmpeg_bin import media_duration as _dur
 
         clip_durations = [_dur(p) for p in norm_files]
-        boundaries = build_clip_boundaries(clip_durations)
-
-        render_cuts = filter_short_cuts(
-            localize_cuts(raw_cuts, boundaries),
-            min_sec=MIN_RENDER_CUT_SEC,
-        )
-        if not render_cuts:
-            raise ValueError("No valid cuts remain after localization")
+        render_cuts = await plan_dub_timeline_cuts(edit_script, vo_duration, clip_durations)
 
         from packages.video.timeline import cuts_duration
         kept_sec = cuts_duration(render_cuts)
@@ -2451,6 +1465,227 @@ async def analyze_reference(ctx: dict[str, Any], *, job_id: str, project_uid: st
         await session.close()
 
 
+# ── task: analyze_dub_local ──────────────────────────────────────────────────
+
+
+async def analyze_dub_local(ctx: dict[str, Any], *, job_id: str, project_uid: str, tenant_slug: str) -> dict:
+    """Local-render (desktop) variant of analyze_dub_first.
+
+    The desktop app already extracted frames locally and uploaded the JPEGs +
+    frames_manifest.json via POST /videos/{uid}/analyze-frames — no video files
+    exist on the server. This task only runs the Vision call and stores
+    edit_script.json; the desktop app then renders silently on the user's machine.
+    """
+    log.info("task_start", task="analyze_dub_local", project_uid=project_uid)
+    await _video_progress(job_id, 20, "analyze", "กำลังวิเคราะห์ frames…")
+    session = await _tenant_session(tenant_slug)
+    _usage_token = None
+    try:
+        if await _abort_if_cancelled(session, project_uid, job_id):
+            return {"cancelled": True}
+
+        await _pull_project_files(project_uid)
+
+        root = data_root()
+        output_dir = root / "video_outputs" / project_uid
+        manifest_file = output_dir / "frames" / "frames_manifest.json"
+        if not manifest_file.is_file():
+            raise ValueError("frames_manifest.json missing — upload frames first")
+
+        proj = await _get_video_project(session, project_uid)
+        tenant_id = await _get_tenant_id_by_slug(tenant_slug)
+        _usage_token = _set_video_usage_ctx(proj, tenant_id, project_uid)
+
+        records = json.loads(manifest_file.read_text(encoding="utf-8"))
+        all_frames: list[dict[str, Any]] = []
+        for rec in records:
+            frame_path = output_dir / rec["file"]
+            if not frame_path.is_file():
+                log.warning("local_frame_missing", file=rec["file"], project_uid=project_uid)
+                continue
+            all_frames.append({**rec, "frame_path": str(frame_path)})
+        if not all_frames:
+            raise ValueError("No usable frames found in manifest")
+
+        await _video_progress(job_id, 74, "analyze", "กำลัง match script กับซีนวิดีโอ…")
+
+        async def _push_thinking(excerpt: str) -> None:
+            await _update_job(
+                job_id, "running", 74,
+                result={"step": "analyze", "message": "กำลัง match script กับซีนวิดีโอ…", "thinking": excerpt},
+            )
+
+        edit_script = await generate_dub_edit_script(
+            all_frames,
+            brief=proj.brief or "",
+            user_script=proj.user_script or "",
+            target_duration_sec=getattr(proj, "target_duration_sec", None),
+            project_uid=project_uid,
+            on_thinking=_push_thinking,
+        )
+
+        edit_script_path = output_dir / "edit_script.json"
+        edit_script_path.write_text(
+            json.dumps(edit_script, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        rel = str(edit_script_path.relative_to(root))
+        # Desktop app renders locally from here; server-side status parks at waiting_vo.
+        await _update_video(session, project_uid, edit_script_path=rel, status="waiting_vo")
+        await _push_project_files(project_uid)
+
+        segments = len(edit_script.get("segments", []))
+        await _update_job(
+            job_id, "ok", 100,
+            result={"step": "edit_script_ready", "message": "Edit script พร้อมแล้ว", "segments": segments},
+        )
+        log.info("analyze_dub_local_done", project_uid=project_uid, segments=segments)
+        return {"segments": segments}
+    except Exception as exc:
+        ts = await _tenant_session(tenant_slug)
+        try:
+            if await _abort_if_cancelled(ts, project_uid, job_id):
+                return {"cancelled": True}
+            await _update_video(ts, project_uid, status="error", error_msg=format_exception_message(exc))
+        finally:
+            await ts.close()
+        await _update_job(
+            job_id, "error", 0,
+            result={"step": "error", "message": format_exception_message(exc)},
+            error=format_exception_message(exc),
+        )
+        raise
+    finally:
+        await session.close()
+        if _usage_token is not None:
+            from packages.llm.usage import reset_usage_ctx
+            reset_usage_ctx(_usage_token)
+
+
+# ── task: plan_talking_local ─────────────────────────────────────────────────
+
+
+async def plan_talking_local(ctx: dict[str, Any], *, job_id: str, project_uid: str, tenant_slug: str) -> dict:
+    """Local-render (desktop) talking_head: transcribe uploaded WAVs + plan timeline.
+
+    The desktop app extracted the speech WAVs locally and uploaded them via
+    POST /videos/{uid}/transcribe-audio — no video files exist on the server.
+    This task runs Whisper + the planning LLM passes and stores
+    transcript.json + timeline.json; the desktop app then renders locally.
+    """
+    log.info("task_start", task="plan_talking_local", project_uid=project_uid)
+    await _video_progress(job_id, 10, "transcribe", "กำลังโหลดโมเดล Whisper…")
+    session = await _tenant_session(tenant_slug)
+    _usage_token = None
+    try:
+        if await _abort_if_cancelled(session, project_uid, job_id):
+            return {"cancelled": True}
+
+        await _pull_project_files(project_uid)
+
+        root = data_root()
+        output_dir = root / "video_outputs" / project_uid
+        audio_files = sorted((output_dir / "audio").glob("audio_*.wav"))
+        if not audio_files:
+            raise ValueError("No audio files to transcribe — upload them first")
+
+        proj = await _get_video_project(session, project_uid)
+        tenant_id = await _get_tenant_id_by_slug(tenant_slug)
+        _usage_token = _set_video_usage_ctx(proj, tenant_id, project_uid)
+
+        clips_meta = (proj.local_meta or {}).get("clips", [])
+        if not clips_meta:
+            raise ValueError("local_meta.clips missing — create the project with clip metadata")
+
+        async def _t_progress(phase: str, idx: int, total: int) -> None:
+            if phase == "retry":
+                await _video_progress(job_id, 45, "transcribe", "Whisper พลาดช่วงเงียบ — ถอดเสียงรอบ 2…")
+                return
+            span = 30 if phase == "clip_modal" else 20
+            await _video_progress(
+                job_id,
+                int(10 + span * idx / max(total, 1)),
+                "transcribe",
+                f"กำลังถอดเสียงคลิป {idx + 1}/{total}…",
+            )
+
+        async def _t_abort() -> bool:
+            return await _abort_if_cancelled(session, project_uid, job_id)
+
+        transcript = await run_transcription(
+            audio_files, on_progress=_t_progress, should_abort=_t_abort
+        )
+        if transcript is None:
+            return {"cancelled": True}
+
+        transcript_path = output_dir / "transcript.json"
+        transcript_path.write_text(json.dumps(transcript, ensure_ascii=False, indent=2), encoding="utf-8")
+        await _update_video(session, project_uid, transcript_path=str(transcript_path.relative_to(root)))
+
+        await _video_progress(job_id, 60, "plan", "กำลังวิเคราะห์ transcript…")
+        segments = await _clean_transcript_with_llm(transcript["segments"])
+
+        clip_durations = [float(c["durationSec"]) for c in clips_meta]
+        first = clips_meta[0]
+        source_info = {
+            "width": int(first.get("width", 0)),
+            "height": int(first.get("height", 0)),
+            "fps": int(first.get("fps", 30)),
+        }
+        sources = [
+            {"id": str(c["id"]), "file": f"normalized/norm_{i:03d}.mp4"}
+            for i, c in enumerate(clips_meta)
+        ]
+
+        async def _p_progress(msg: str) -> None:
+            await _video_progress(job_id, 70, "plan", msg)
+
+        timeline = await build_talking_head_timeline(
+            segments,
+            duration_mode=proj.duration_mode,
+            target_duration_sec=proj.target_duration_sec,
+            clip_durations=clip_durations,
+            source_info=source_info,
+            sources=sources,
+            on_progress=_p_progress,
+        )
+
+        timeline_path = output_dir / "timeline.json"
+        timeline_path.write_text(json.dumps(timeline, ensure_ascii=False, indent=2), encoding="utf-8")
+        await _update_video(session, project_uid, timeline_path=str(timeline_path.relative_to(root)))
+        await _push_project_files(project_uid)
+
+        cut_count = len(timeline["timeline"])
+        await _update_job(
+            job_id, "ok", 100,
+            result={
+                "step": "timeline_ready",
+                "message": f"วางแผนเสร็จแล้ว ({cut_count} ช่วง) พร้อม render บนเครื่อง",
+                "cuts": cut_count,
+            },
+        )
+        log.info("plan_talking_local_done", project_uid=project_uid, cuts=cut_count)
+        return {"cuts": cut_count}
+    except Exception as exc:
+        ts = await _tenant_session(tenant_slug)
+        try:
+            if await _abort_if_cancelled(ts, project_uid, job_id):
+                return {"cancelled": True}
+            await _update_video(ts, project_uid, status="error", error_msg=format_exception_message(exc))
+        finally:
+            await ts.close()
+        await _update_job(
+            job_id, "error", 0,
+            result={"step": "error", "message": format_exception_message(exc)},
+            error=format_exception_message(exc),
+        )
+        raise
+    finally:
+        await session.close()
+        if _usage_token is not None:
+            from packages.llm.usage import reset_usage_ctx
+            reset_usage_ctx(_usage_token)
+
+
 # ── WorkerSettings ────────────────────────────────────────────────────────────
 
 
@@ -2486,6 +1721,8 @@ class WorkerSettings:
         plan_edit,
         render_video,
         analyze_dub_first,
+        analyze_dub_local,
+        plan_talking_local,
         render_dub_silent,
         plan_dub_timeline,
         analyze_reference,

@@ -26,6 +26,7 @@ import {
   GripVertical,
   Loader2,
   Mic,
+  Pencil,
   Square,
   Trash2,
   Upload,
@@ -37,6 +38,7 @@ import { api, storedPathBasename, type DubEditScript, type VideoProjectOut } fro
 import { useAuth } from '../auth/AuthContext'
 import { formatUserError } from '../errors'
 import { ConfirmModal } from '../hud/ConfirmModal'
+import { VideoTimelineEditor } from '../hud/VideoTimelineEditor'
 import { useNavigateWithDoor } from '../navigation/NavigationContext'
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -48,6 +50,7 @@ interface JobStatus {
   step: VideoStep
   message: string
   jobStatus: string
+  thinking?: string
 }
 
 const STEPS_TALKING_HEAD: { key: VideoStep; label: string }[] = [
@@ -95,29 +98,44 @@ function buildDubSegmentsWithOutput(script: DubEditScript): DubSegmentWithOutput
 }
 
 function buildDubVoiceoverLines(segments: DubSegmentWithOutput[]): DubVoiceoverLine[] {
-  const order: number[] = []
   const byLine = new Map<number, DubSegmentWithOutput[]>()
   for (const seg of segments) {
     const lineId = seg.voiceoverLineId ?? seg.order
     if (!byLine.has(lineId)) {
-      order.push(lineId)
       byLine.set(lineId, [])
     }
     byLine.get(lineId)!.push(seg)
   }
-  return order.map((lineId, idx) => {
+  const lineIds = [...byLine.keys()].sort((a, b) => a - b)
+  return lineIds.map((lineId) => {
     const cuts = byLine.get(lineId)!
-    const outputIn = cuts[0].voiceoverLineOutputIn ?? cuts[0].outputIn
-    const outputOut = cuts[cuts.length - 1].voiceoverLineOutputOut ?? cuts[cuts.length - 1].outputOut
+    const script = cuts.find((c) => c.voiceoverScript)?.voiceoverScript ?? ''
     return {
       lineId,
-      lineOrder: idx + 1,
-      voiceoverScript: cuts[0].voiceoverScript,
-      outputIn,
-      outputOut,
+      lineOrder: lineId,
+      voiceoverScript: script,
+      outputIn: cuts[0].outputIn,
+      outputOut: cuts[cuts.length - 1].outputOut,
       cuts,
     }
   })
+}
+
+function findActiveDubVoiceoverLine(
+  lines: DubVoiceoverLine[],
+  active: DubSegmentWithOutput | null,
+): DubVoiceoverLine | null {
+  if (!active) return null
+  const lineId = active.voiceoverLineId ?? active.order
+  return lines.find((l) => l.lineId === lineId) ?? null
+}
+
+function findActiveCutIndex(line: DubVoiceoverLine, active: DubSegmentWithOutput): number {
+  const idx = line.cuts.findIndex(
+    (c) => c.order === active.order
+      || (c.outputIn === active.outputIn && c.outputOut === active.outputOut),
+  )
+  return idx >= 0 ? idx + 1 : 1
 }
 
 function findActiveDubSegment(
@@ -125,13 +143,6 @@ function findActiveDubSegment(
   currentTime: number,
 ): DubSegmentWithOutput | null {
   return segments.find((s) => currentTime >= s.outputIn && currentTime < s.outputOut) ?? null
-}
-
-function findActiveDubVoiceoverLine(
-  lines: DubVoiceoverLine[],
-  currentTime: number,
-): DubVoiceoverLine | null {
-  return lines.find((l) => currentTime >= l.outputIn && currentTime < l.outputOut) ?? null
 }
 
 /** Shared glass tone for script hint + full overlay */
@@ -170,12 +181,10 @@ function DubScriptHintPanel({
 
   if (!render) return null
 
-  const lineOrder = activeLine?.lineOrder ?? active.order
+  const lineOrder = activeLine?.lineOrder ?? active.voiceoverLineId ?? active.order
   const lineIn = activeLine?.outputIn ?? active.outputIn
   const lineOut = activeLine?.outputOut ?? active.outputOut
-  const cutIdx = activeLine
-    ? activeLine.cuts.findIndex((c) => c.order === active.order) + 1
-    : 1
+  const cutIdx = activeLine ? findActiveCutIndex(activeLine, active) : 1
   const montage = (activeLine?.cuts.length ?? 1) > 1
   const meta = montage
     ? `บรรทัด ${lineOrder} · มุม ${cutIdx}/${activeLine!.cuts.length} · ${lineIn.toFixed(1)}s – ${lineOut.toFixed(1)}s`
@@ -194,7 +203,9 @@ function DubScriptHintPanel({
           className={`w-full ${DUB_SCRIPT_GRADIENT} px-3 pb-3 pt-10 text-left`}
         >
           <p className="mb-1 text-[10px] font-semibold text-amber-300">{meta}</p>
-          <p className="line-clamp-3 text-sm leading-snug text-white">{active.voiceoverScript}</p>
+          <p className="line-clamp-3 text-sm leading-snug text-white">
+            {activeLine?.voiceoverScript || active.voiceoverScript}
+          </p>
           <p className="mt-1.5 text-[10px] font-medium text-amber-200/80">แตะเพื่อดู script ทั้งหมด</p>
         </button>
         <button
@@ -213,13 +224,13 @@ function DubScriptHintPanel({
 function DubScriptVoiceoverLineList({
   lines,
   activeLineOrder = null,
-  activeCutOrder = null,
+  activeCutIndex = null,
   onLineClick,
   registerRef,
 }: {
   lines: DubVoiceoverLine[]
   activeLineOrder?: number | null
-  activeCutOrder?: number | null
+  activeCutIndex?: number | null
   onLineClick?: (outputIn: number) => void
   registerRef?: (lineOrder: number, el: HTMLElement | null) => void
 }) {
@@ -242,9 +253,9 @@ function DubScriptVoiceoverLineList({
                   {line.cuts.length} มุม
                 </span>
               )}
-              {isActive && montage && activeCutOrder != null && (
+              {isActive && montage && activeCutIndex != null && (
                 <span className="text-[10px] font-medium text-amber-700">
-                  กำลังเล่นมุม {line.cuts.findIndex((c) => c.order === activeCutOrder) + 1}
+                  กำลังเล่นมุม {activeCutIndex}
                 </span>
               )}
             </div>
@@ -288,7 +299,7 @@ function DubScriptVideoOverlay({
   open,
   lines,
   activeLineOrder,
-  activeCutOrder,
+  activeCutIndex,
   onClose,
   onLineClick,
   registerRef,
@@ -296,7 +307,7 @@ function DubScriptVideoOverlay({
   open: boolean
   lines: DubVoiceoverLine[]
   activeLineOrder: number | null
-  activeCutOrder: number | null
+  activeCutIndex: number | null
   onClose: () => void
   onLineClick: (outputIn: number) => void
   registerRef: (lineOrder: number, el: HTMLElement | null) => void
@@ -359,7 +370,7 @@ function DubScriptVideoOverlay({
           <DubScriptVoiceoverLineList
             lines={lines}
             activeLineOrder={activeLineOrder}
-            activeCutOrder={activeCutOrder}
+            activeCutIndex={activeCutIndex}
             onLineClick={onLineClick}
             registerRef={registerRef}
           />
@@ -421,13 +432,16 @@ function parseJobStatus(job: {
   status: string
   progress: number
   result: Record<string, unknown> | null
+  error?: string | null
 }): JobStatus {
-  const step = (job.result?.step as VideoStep | undefined) ?? 'queued'
+  const step = (job.result?.step as VideoStep | undefined) ?? (job.status === 'error' ? 'error' : 'queued')
   const rawMessage =
     (typeof job.result?.message === 'string' ? job.result.message : null) ??
+    (typeof job.error === 'string' && job.error.trim() ? job.error : null) ??
     fallbackMessage(job.progress)
-  const message = step === 'error' ? formatUserError(rawMessage) : rawMessage
-  return { progress: job.progress, step, message, jobStatus: job.status }
+  const message = (step === 'error' || job.status === 'error') ? formatUserError(rawMessage) : rawMessage
+  const thinking = typeof job.result?.thinking === 'string' ? job.result.thinking : undefined
+  return { progress: job.progress, step, message, jobStatus: job.status, thinking }
 }
 
 function statusLabel(s: VideoProjectOut['status']) {
@@ -709,7 +723,7 @@ function SortableUploadFileRow({
   )
 }
 
-function VideoPreview({ uid }: { uid: string }) {
+function VideoPreview({ uid, mediaRevision }: { uid: string; mediaRevision: string }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [visible, setVisible] = useState(false)
   const [src, setSrc] = useState<string | null>(null)
@@ -738,7 +752,7 @@ function VideoPreview({ uid }: { uid: string }) {
       setLoading(true)
       setError(false)
       try {
-        const resolved = await api.videos.resolvePreviewSrc(uid)
+        const resolved = await api.videos.resolvePreviewSrc(uid, mediaRevision)
         if (cancelled) {
           resolved.cleanup()
           return
@@ -756,7 +770,7 @@ function VideoPreview({ uid }: { uid: string }) {
       cancelled = true
       cleanup()
     }
-  }, [uid, visible])
+  }, [uid, visible, mediaRevision])
 
   return (
     <div ref={containerRef} className="mt-3 w-full">
@@ -828,10 +842,12 @@ const DUB_MEDIA_FRAME =
 
 function DubDoneMedia({
   uid,
+  mediaRevision,
   tab,
   onTabChange,
 }: {
   uid: string
+  mediaRevision: string
   tab: 'video' | 'script'
   onTabChange: (tab: 'video' | 'script') => void
 }) {
@@ -841,10 +857,10 @@ function DubDoneMedia({
         <div className="relative aspect-[9/16] w-full">
           <DubMediaTabBar tab={tab} onChange={onTabChange} />
           {tab === 'video' ? (
-            <DubVideoPlayer uid={uid} />
+            <DubVideoPlayer uid={uid} mediaRevision={mediaRevision} />
           ) : (
             <div className="absolute inset-0 flex flex-col bg-[#fffdf7] pt-11">
-              <ScriptTab uid={uid} fillHeight embedded />
+              <ScriptTab uid={uid} fillHeight embedded mediaRevision={mediaRevision} />
             </div>
           )}
         </div>
@@ -853,7 +869,7 @@ function DubDoneMedia({
   )
 }
 
-function DubVideoPlayer({ uid }: { uid: string }) {
+function DubVideoPlayer({ uid, mediaRevision }: { uid: string; mediaRevision: string }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
   const segmentRefs = useRef<Map<number, HTMLElement>>(new Map())
@@ -890,7 +906,7 @@ function DubVideoPlayer({ uid }: { uid: string }) {
       setError(false)
       try {
         const [resolved, editScript] = await Promise.all([
-          api.videos.resolvePreviewSrc(uid),
+          api.videos.resolvePreviewSrc(uid, mediaRevision),
           api.videos.getEditScript(uid),
         ])
         if (cancelled) {
@@ -911,12 +927,13 @@ function DubVideoPlayer({ uid }: { uid: string }) {
       cancelled = true
       cleanup()
     }
-  }, [uid, visible])
+  }, [uid, visible, mediaRevision])
 
   const segments = script ? buildDubSegmentsWithOutput(script) : []
   const voiceoverLines = buildDubVoiceoverLines(segments)
   const active = findActiveDubSegment(segments, currentTime)
-  const activeLine = findActiveDubVoiceoverLine(voiceoverLines, currentTime)
+  const activeLine = findActiveDubVoiceoverLine(voiceoverLines, active)
+  const activeCutIndex = active && activeLine ? findActiveCutIndex(activeLine, active) : null
 
   useEffect(() => {
     if (!scriptOverlayOpen || !activeLine) return
@@ -982,7 +999,7 @@ function DubVideoPlayer({ uid }: { uid: string }) {
             open={scriptOverlayOpen}
             lines={voiceoverLines}
             activeLineOrder={activeLine?.lineOrder ?? null}
-            activeCutOrder={active?.order ?? null}
+            activeCutIndex={activeCutIndex}
             onClose={closeScriptOverlay}
             onLineClick={seekTo}
             registerRef={(lineOrder, el) => {
@@ -1019,12 +1036,14 @@ function ScriptTab({
   uid,
   fillHeight = false,
   embedded = false,
+  mediaRevision,
   activeOrder = null,
   onSegmentClick,
 }: {
   uid: string
   fillHeight?: boolean
   embedded?: boolean
+  mediaRevision?: string
   activeOrder?: number | null
   onSegmentClick?: (outputIn: number) => void
 }) {
@@ -1038,7 +1057,7 @@ function ScriptTab({
       .then(setScript)
       .catch(() => {})
       .finally(() => setLoading(false))
-  }, [uid])
+  }, [uid, mediaRevision])
 
   function copyAll() {
     if (!script) return
@@ -1061,6 +1080,11 @@ function ScriptTab({
 
   const segmentsWithOutput = buildDubSegmentsWithOutput(script)
   const voiceoverLines = buildDubVoiceoverLines(segmentsWithOutput)
+  const activeSeg = activeOrder != null
+    ? segmentsWithOutput.find((s) => s.order === activeOrder) ?? null
+    : null
+  const activeLine = findActiveDubVoiceoverLine(voiceoverLines, activeSeg)
+  const activeCutIndex = activeLine && activeSeg ? findActiveCutIndex(activeLine, activeSeg) : null
   const totalSec = script.totalEstimatedSec ?? segmentsWithOutput.at(-1)?.outputOut ?? 0
   const cutCount = segmentsWithOutput.length
 
@@ -1086,12 +1110,8 @@ function ScriptTab({
       >
         <DubScriptVoiceoverLineList
           lines={voiceoverLines}
-          activeLineOrder={
-            activeOrder != null
-              ? voiceoverLines.find((l) => l.cuts.some((c) => c.order === activeOrder))?.lineOrder ?? null
-              : null
-          }
-          activeCutOrder={activeOrder}
+          activeLineOrder={activeLine?.lineOrder ?? null}
+          activeCutIndex={activeCutIndex}
           onLineClick={onSegmentClick}
         />
       </div>
@@ -1107,6 +1127,7 @@ function ProjectCard({
   onCancel,
   onDelete,
   onVoUploaded,
+  onEdit,
   downloading,
   actionUid,
 }: {
@@ -1117,6 +1138,7 @@ function ProjectCard({
   onCancel: (uid: string) => void
   onDelete: (uid: string) => void
   onVoUploaded: (updated: VideoProjectOut) => void
+  onEdit: (uid: string) => void
   downloading: string | null
   actionUid: string | null
 }) {
@@ -1132,6 +1154,22 @@ function ProjectCard({
   const [voUploading, setVoUploading] = useState(false)
   const [voError, setVoError] = useState<string | null>(null)
   const [doneTab, setDoneTab] = useState<'video' | 'script'>('video')
+  const mediaRevision = project.updated_at ?? project.created_at
+
+  const thinkingRef = useRef<HTMLDivElement>(null)
+  const thinkingPinnedRef = useRef(true)
+
+  useEffect(() => {
+    const el = thinkingRef.current
+    if (!el || !thinkingPinnedRef.current) return
+    el.scrollTop = el.scrollHeight
+  }, [job?.thinking])
+
+  function handleThinkingScroll() {
+    const el = thinkingRef.current
+    if (!el) return
+    thinkingPinnedRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 32
+  }
 
   async function handleVoUpload(file: File) {
     setVoUploading(true)
@@ -1160,6 +1198,14 @@ function ProjectCard({
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
+          {project.origin === 'local' && (
+            <span
+              title="โปรเจกต์นี้ตัดต่อผ่านแอพ desktop — ไฟล์วิดีโออยู่บนเครื่องที่ render"
+              className="rounded-full bg-sky-100 px-2.5 py-0.5 text-xs font-semibold text-sky-700"
+            >
+              🖥️ ตัดต่อบนเครื่อง
+            </span>
+          )}
           <span className={`rounded-full bg-current/10 px-2.5 py-0.5 text-xs font-semibold ${statusColor(project.status)}`}>
             {statusLabel(project.status)}
           </span>
@@ -1193,6 +1239,18 @@ function ProjectCard({
             </span>
           </div>
           {job && <StepBar job={job} mode={project.mode} />}
+          {job?.thinking && (
+            <div className="mt-2 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2">
+              <p className="mb-1 text-[10px] font-medium text-zinc-400">Claude กำลังคิด…</p>
+              <div
+                ref={thinkingRef}
+                onScroll={handleThinkingScroll}
+                className="scroll-light max-h-80 overflow-y-auto font-mono text-[10px] leading-relaxed whitespace-pre-wrap text-zinc-500"
+              >
+                {job.thinking}
+              </div>
+            </div>
+          )}
           <button
             type="button"
             onClick={() => onCancel(project.uid)}
@@ -1205,7 +1263,13 @@ function ProjectCard({
         </>
       )}
 
-      {project.status === 'waiting_vo' && (
+      {project.status === 'waiting_vo' && project.origin === 'local' && (
+        <p className="mt-3 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2.5 text-xs text-sky-700">
+          รออัดเสียงพากย์ — อัปโหลดและ render ต่อผ่านแอพ desktop บนเครื่องที่ใช้ตัดต่อ
+        </p>
+      )}
+
+      {project.status === 'waiting_vo' && project.origin !== 'local' && (
         <div className="mt-3 space-y-3">
           <div className="rounded-lg border border-purple-200 bg-purple-50 px-3 py-2.5">
             <p className="flex items-center gap-1.5 text-xs font-semibold text-purple-700">
@@ -1268,25 +1332,26 @@ function ProjectCard({
         </p>
       )}
 
-      {project.status === 'done' && (
+      {project.status === 'done' && project.origin === 'local' && (
+        <p className="mt-3 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2.5 text-xs text-sky-700">
+          เสร็จแล้ว — ไฟล์วิดีโออยู่บนเครื่องที่ render ผ่านแอพ desktop (server ไม่เก็บไฟล์วิดีโอ)
+        </p>
+      )}
+
+      {project.status === 'done' && project.origin !== 'local' && (
         <>
           {project.final_path && (
             project.mode === 'dub_first'
               ? (
                 <DubDoneMedia
                   uid={project.uid}
+                  mediaRevision={mediaRevision}
                   tab={doneTab}
                   onTabChange={setDoneTab}
                 />
               )
-              : <VideoPreview uid={project.uid} />
+              : <VideoPreview uid={project.uid} mediaRevision={mediaRevision} />
           )}
-          <p className="mt-2 flex items-center gap-1.5 text-xs text-green-700">
-            <CheckCircle2 size={13} />
-            {project.mode === 'dub_first'
-              ? 'ตัดคลิป silent เสร็จแล้ว ดาวน์โหลดแล้วพากย์เสียงเอง'
-              : 'ตัดต่อเสร็จแล้ว พร้อมดาวน์โหลด'}
-          </p>
           <div className="mt-3 flex gap-2">
             <button
               onClick={() => onDownloadFinal(project)}
@@ -1309,6 +1374,13 @@ function ProjectCard({
               {project.mode === 'dub_first' ? 'Bundle + Script (ZIP)' : 'CapCut Bundle (ZIP)'}
             </button>
           </div>
+          <button
+            onClick={() => onEdit(project.uid)}
+            className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg border border-[#5b3a1a]/30 px-3 py-2 text-xs font-medium text-[#5b3a1a] hover:bg-amber-50"
+          >
+            <Pencil size={12} />
+            แก้ไขวิดีโอ
+          </button>
         </>
       )}
     </div>
@@ -1350,6 +1422,7 @@ export default function VideoPage() {
   const [downloading, setDownloading] = useState<string | null>(null)
   const [actionUid, setActionUid] = useState<string | null>(null)
   const [confirmDeleteUid, setConfirmDeleteUid] = useState<string | null>(null)
+  const [editingUid, setEditingUid] = useState<string | null>(null)
 
   const uploadSensors = useSensors(
     useSensor(PointerSensor),
@@ -1428,8 +1501,14 @@ export default function VideoPage() {
           mode: videoMode,
           brief: videoMode === 'dub_first' ? buildBrief() : undefined,
           userScript: videoMode === 'dub_first' && scriptMode === 'own' ? (userScript.trim() || undefined) : undefined,
-          durationMode: videoMode === 'dub_first' ? 'full' : durationMode,
-          targetDurationSec: videoMode !== 'dub_first' && durationMode === 'custom' ? targetDurationSec : null,
+          durationMode: videoMode === 'dub_first'
+            ? (scriptDuration && scriptDuration !== 'auto' && !(scriptDuration === 'custom' && !scriptCustomSec) ? 'custom' : 'full')
+            : durationMode,
+          targetDurationSec: videoMode === 'dub_first'
+            ? (scriptDuration === 'custom' && scriptCustomSec ? parseInt(scriptCustomSec, 10)
+              : scriptDuration && scriptDuration !== 'auto' && scriptDuration !== 'custom' ? parseInt(scriptDuration, 10)
+              : null)
+            : (durationMode === 'custom' ? targetDurationSec : null),
           uploadMode: files.length > 1 ? uploadMode : 'merge',
         },
       )
@@ -1532,7 +1611,7 @@ export default function VideoPage() {
       className="flex h-full w-full flex-col overflow-hidden"
       style={{ background: 'linear-gradient(160deg, #1a0e06 0%, #0d1a14 100%)' }}
     >
-      <header className="flex items-center gap-3 border-b border-white/10 px-6 py-4">
+      <header className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-white/10 px-4 py-3 sm:px-6 sm:py-4">
         <button
           onClick={() => navigateWithDoor('/')}
           className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm text-amber-200/80 hover:bg-white/10 hover:text-amber-200"
@@ -1547,14 +1626,14 @@ export default function VideoPage() {
         </span>
       </header>
 
-      <div className="flex min-h-0 flex-1 gap-6 overflow-hidden p-6">
-        <div className="flex min-h-0 w-96 shrink-0 flex-col overflow-hidden">
+      <div className="scroll-ghost flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4 lg:flex-row lg:gap-6 lg:overflow-hidden lg:p-6">
+        <div className="flex w-full shrink-0 flex-col lg:min-h-0 lg:w-96 lg:overflow-hidden">
           <h2 className="mb-1 shrink-0 text-sm font-semibold text-amber-200/70 uppercase tracking-widest">
             อัปโหลดวิดีโอ
           </h2>
-          <p className="mb-3 shrink-0 text-[11px] text-amber-200/45">คลิปต้นฉบับสูงสุด 20 นาทีต่อไฟล์</p>
+          <p className="mb-3 shrink-0 text-[11px] text-amber-200/45">คลิปต้นฉบับสูงสุด 10 นาทีต่อไฟล์</p>
 
-          <div className="scroll-ghost min-h-0 flex-1 overflow-y-auto pr-1">
+          <div className="scroll-ghost pr-1 lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
             <div className="flex flex-col gap-4 pb-2">
           <div
             onDragOver={(e) => e.preventDefault()}
@@ -1952,7 +2031,7 @@ export default function VideoPage() {
           </div>
         </div>
 
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-y-auto scroll-ghost">
+        <div className="scroll-ghost flex min-w-0 flex-col gap-4 lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
           <h2 className="text-sm font-semibold text-amber-200/70 uppercase tracking-widest">
             โปรเจกต์ของฉัน
           </h2>
@@ -1979,6 +2058,7 @@ export default function VideoPage() {
                   onCancel={handleCancel}
                   onDelete={setConfirmDeleteUid}
                   onVoUploaded={handleVoUploaded}
+                  onEdit={setEditingUid}
                   downloading={downloading}
                   actionUid={actionUid}
                 />
@@ -1995,6 +2075,15 @@ export default function VideoPage() {
           confirmLabel="ลบถาวร"
           onConfirm={() => void doDelete(confirmDeleteUid)}
           onCancel={() => setConfirmDeleteUid(null)}
+        />
+      )}
+
+      {editingUid && (
+        <VideoTimelineEditor
+          uid={editingUid}
+          mode={projects.find((p) => p.uid === editingUid)?.mode ?? 'talking_head'}
+          onClose={() => setEditingUid(null)}
+          onSaved={() => void loadProjects()}
         />
       )}
     </div>

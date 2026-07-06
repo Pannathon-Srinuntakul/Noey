@@ -108,10 +108,10 @@ export default function CreateTablePage() {
   return (
     <div className="scroll-light flex h-full flex-col bg-zinc-50">
       {/* header */}
-      <div className="flex items-center gap-3 border-b border-zinc-200 bg-white px-5 py-3 shadow-sm">
+      <div className="flex items-center gap-2 border-b border-zinc-200 bg-white px-4 py-3 shadow-sm sm:gap-3 sm:px-5">
         <button
           onClick={() => navigate('/tables')}
-          className="flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm text-zinc-500 hover:bg-zinc-100"
+          className="flex shrink-0 items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm text-zinc-500 hover:bg-zinc-100"
         >
           <ArrowLeft size={15} /> กลับ
         </button>
@@ -140,7 +140,7 @@ export default function CreateTablePage() {
         </div>
       )}
 
-      <div className="flex-1 overflow-auto p-5">
+      <div className="flex-1 overflow-auto p-4 sm:p-5">
         {/* template picker */}
         <div className="mb-5">
           <p className="mb-2 text-xs font-medium text-zinc-500">เริ่มจากแม่แบบ</p>

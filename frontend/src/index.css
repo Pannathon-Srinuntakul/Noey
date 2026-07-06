@@ -53,6 +53,34 @@ body,
 .scroll-ghost::-webkit-scrollbar-thumb { background: var(--sb-dark-thumb); border-radius: 99px; }
 .scroll-ghost::-webkit-scrollbar-thumb:hover { background: var(--sb-dark-thumb-hover); }
 
+/* Fully hidden scrollbar — timeline editor (overrides global * rules). */
+.scroll-none {
+  -ms-overflow-style: none;
+  scrollbar-width: none !important;
+  scrollbar-color: transparent transparent !important;
+}
+.scroll-none::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+  background: transparent !important;
+}
+.scroll-none::-webkit-scrollbar-thumb,
+.scroll-none::-webkit-scrollbar-track,
+.scroll-none::-webkit-scrollbar-corner {
+  display: none !important;
+  background: transparent !important;
+}
+
+/** Clip the horizontal scrollbar gutter on Windows/Chromium. */
+.scroll-none-clip {
+  overflow: hidden;
+}
+.scroll-none-clip > .scroll-none {
+  margin-bottom: -14px;
+  padding-bottom: 14px;
+}
+
 /* ── Chat markdown (assistant bubbles) ─────────────────────────────────────── */
 .chat-markdown {
   line-height: 1.55;

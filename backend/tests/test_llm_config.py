@@ -53,3 +53,4 @@ def test_vision_call_kwargs(monkeypatch):
     extra = vision_call_kwargs()
     assert extra["model"] == "anthropic/claude-sonnet-4-6"
     assert extra["reasoning_effort"] == "medium"
+    assert extra["timeout"] == 900

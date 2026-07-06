@@ -52,8 +52,11 @@ export function RoomPage({
 
       {/* Hint */}
       {!panel && (
-        <div className="pointer-events-none absolute inset-x-0 bottom-5 z-10 flex justify-center">
-          <span className="rounded-full bg-black/45 px-4 py-1.5 text-xs text-amber-100/80 backdrop-blur">
+        <div className="pointer-events-none absolute inset-x-0 bottom-5 z-10 flex justify-center px-4">
+          <span
+            style={{ maxWidth: 'calc(100vw - 2rem)' }}
+            className="rounded-full bg-black/45 px-4 py-1.5 text-center text-xs text-amber-100/80 backdrop-blur"
+          >
             🖱️ Drag to look around · click a glowing object to open its data
           </span>
         </div>

@@ -726,12 +726,12 @@ def test_format_frame_descriptor_edge() -> None:
 
 
 def test_enforce_unique_chronological_dub_cuts() -> None:
+    """Dedup duplicate anchors but keep AI playback order (not source-time sort)."""
     frames = [
         {"clip_id": "clip0", "time": 7.3, "scene_start": 0.0, "scene_end": 30.0},
         {"clip_id": "clip0", "time": 45.0, "scene_start": 40.0, "scene_end": 55.0},
         {"clip_id": "clip0", "time": 91.2, "scene_start": 80.0, "scene_end": 100.0},
         {"clip_id": "clip0", "time": 118.5, "scene_start": 110.0, "scene_end": 130.0},
-        {"clip_id": "clip0", "time": 138.6, "scene_start": 130.0, "scene_end": 150.0},
     ]
     script = {
         "totalEstimatedSec": 10,
@@ -740,20 +740,20 @@ def test_enforce_unique_chronological_dub_cuts() -> None:
                 "order": 1,
                 "voiceoverLineId": 1,
                 "sourceClip": "clip0",
-                "sourceIn": 7.3,
-                "sourceOut": 9.0,
+                "sourceIn": 118.5,
+                "sourceOut": 120.2,
                 "durationSec": 1.7,
-                "matchedFrameTime": 7.3,
+                "matchedFrameTime": 118.5,
                 "voiceoverScript": "hook",
             },
             {
                 "order": 2,
                 "voiceoverLineId": 2,
                 "sourceClip": "clip0",
-                "sourceIn": 91.2,
-                "sourceOut": 92.9,
+                "sourceIn": 7.3,
+                "sourceOut": 9.0,
                 "durationSec": 1.7,
-                "matchedFrameTime": 91.2,
+                "matchedFrameTime": 7.3,
                 "voiceoverScript": "demo",
             },
             {
@@ -767,12 +767,13 @@ def test_enforce_unique_chronological_dub_cuts() -> None:
             },
             {
                 "order": 4,
-                "voiceoverLineId": 2,
+                "voiceoverLineId": 3,
                 "sourceClip": "clip0",
-                "sourceIn": 118.5,
-                "sourceOut": 120.2,
+                "sourceIn": 91.2,
+                "sourceOut": 92.9,
                 "durationSec": 1.7,
-                "matchedFrameTime": 118.5,
+                "matchedFrameTime": 91.2,
+                "voiceoverScript": "cta",
             },
         ],
     }
@@ -781,7 +782,8 @@ def test_enforce_unique_chronological_dub_cuts() -> None:
     anchors = [s["matchedFrameTime"] for s in segs]
     assert len(anchors) == 3
     assert len(anchors) == len(set(round(a, 1) for a in anchors))
-    assert anchors == sorted(anchors)
+    assert anchors == [118.5, 7.3, 91.2]
+    assert [s["voiceoverScript"] for s in segs if s.get("voiceoverScript")] == ["hook", "demo", "cta"]
     assert 7.29 not in anchors
 
 

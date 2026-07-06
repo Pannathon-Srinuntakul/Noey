@@ -17,7 +17,7 @@ import pathlib
 import uuid
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -30,12 +30,18 @@ from packages.video.s3 import (
     delete_project as s3_delete_project,
     output_basename,
     output_presigned_url,
+    push_project_files,
     push_uploads,
     resolve_stored_output,
     s3_enabled,
 )
 from packages.video.storage import data_root, delete_project_files
-from packages.video.timeline import normalize_dub_edit_script
+from packages.video.ffmpeg_bin import media_duration
+from packages.video.timeline import (
+    captions_for_edited_cuts,
+    normalize_dub_edit_script,
+    resolve_edit_target,
+)
 from services.api.deps import CurrentUser, db_session
 
 router = APIRouter(prefix="/videos", tags=["videos"])
@@ -64,7 +70,9 @@ def _to_out(p: VideoProject) -> VideoProjectOut:
         reference_clip_path=p.reference_clip_path,
         style_profile_path=p.style_profile_path,
         product_marks=p.product_marks,
+        origin=p.origin,
         created_at=p.created_at.isoformat(),
+        updated_at=p.updated_at.isoformat(),
     )
 
 
@@ -155,7 +163,9 @@ class VideoProjectOut(BaseModel):
     reference_clip_path: str | None = None
     style_profile_path: str | None = None
     product_marks: list | None = None
+    origin: str | None = None
     created_at: str
+    updated_at: str
 
     model_config = {"from_attributes": True}
 
@@ -180,6 +190,45 @@ class PlaybackUrlOut(BaseModel):
     """How the browser should load final.mp4 — direct presigned URL (S3) or authenticated API fetch (local)."""
     mode: str  # "direct" | "authenticated"
     url: str | None = None
+
+
+class EditTimelineSource(BaseModel):
+    id: str
+    durationSec: float
+
+
+class EditTimelineCut(BaseModel):
+    id: str
+    source: str
+    in_: float = Field(alias="in")
+    out: float
+    label: str = ""
+    voiceoverLineId: int | None = None
+    voiceoverScript: str | None = None
+
+    model_config = {"populate_by_name": True}
+
+
+class EditTimelineOut(BaseModel):
+    mode: str
+    editTarget: str
+    sources: list[EditTimelineSource]
+    cuts: list[EditTimelineCut]
+
+
+class EditTimelineSaveCut(BaseModel):
+    source: str
+    in_: float = Field(alias="in")
+    out: float
+    label: str = ""
+    voiceoverLineId: int | None = None
+    voiceoverScript: str | None = None
+
+    model_config = {"populate_by_name": True}
+
+
+class EditTimelineSaveIn(BaseModel):
+    cuts: list[EditTimelineSaveCut]
 
 
 UPLOAD_MODES = ("merge", "separate")
@@ -500,6 +549,243 @@ async def get_edit_script(
     return normalize_dub_edit_script(_json.loads(script_file.read_text(encoding="utf-8")))
 
 
+def _normalized_clip_path(output_dir_path: pathlib.Path, source_id: str) -> pathlib.Path:
+    """Resolve a 'clip{N}' source id to its normalized clip file — same lookup render_video/render_dub_silent use."""
+    norm_files = sorted((output_dir_path / "normalized").glob("norm_*.mp4"))
+    if not norm_files:
+        raise FileNotFoundError("normalized clips not found")
+    if not source_id.startswith("clip"):
+        raise ValueError(f"unknown source id '{source_id}'")
+    idx = int(source_id.replace("clip", ""))
+    if idx >= len(norm_files):
+        raise ValueError(f"source id '{source_id}' out of range")
+    return norm_files[idx]
+
+
+async def _load_edit_timeline_state(
+    session: AsyncSession, uid: str, auth: CurrentUser
+) -> tuple[VideoProject, str, dict, list[dict]]:
+    """Load project + resolved edit target + raw file content + source list ({id, durationSec})."""
+    import json as _json
+
+    p = await _get_project(session, uid, auth.user_id)
+    if p.status != "done":
+        raise HTTPException(400, f"Project not ready for editing (status: {p.status})")
+
+    target = resolve_edit_target(p.mode, bool(p.voiceover_path))
+    output_dir_path = data_root() / "video_outputs" / uid
+    norm_files = sorted((output_dir_path / "normalized").glob("norm_*.mp4"))
+    if not norm_files:
+        raise HTTPException(404, "Normalized source clips not found")
+    sources = [
+        {"id": f"clip{i}", "durationSec": round(media_duration(f), 3)}
+        for i, f in enumerate(norm_files)
+    ]
+
+    if target == "timeline":
+        if not p.timeline_path:
+            raise HTTPException(404, "Timeline not available yet")
+        try:
+            tl_file = await resolve_stored_output(uid, p.timeline_path)
+        except FileNotFoundError as exc:
+            raise HTTPException(404, "Timeline file not found") from exc
+        raw = _json.loads(tl_file.read_text(encoding="utf-8"))
+    else:
+        if not p.edit_script_path:
+            raise HTTPException(404, "Edit script not available yet")
+        try:
+            es_file = await resolve_stored_output(uid, p.edit_script_path)
+        except FileNotFoundError as exc:
+            raise HTTPException(404, "Edit script file not found") from exc
+        raw = normalize_dub_edit_script(_json.loads(es_file.read_text(encoding="utf-8")))
+
+    return p, target, raw, sources
+
+
+@router.get("/{uid}/edit-timeline", response_model=EditTimelineOut)
+async def get_edit_timeline(
+    uid: str,
+    auth: CurrentUser,
+    session: AsyncSession = Depends(db_session),
+) -> EditTimelineOut:
+    """Return the manually-editable cut list, normalized regardless of underlying mode/state."""
+    p, target, raw, sources = await _load_edit_timeline_state(session, uid, auth)
+
+    if target == "timeline":
+        cuts = [
+            EditTimelineCut.model_validate({
+                "id": f"cut{i}", "source": c["source"], "in": float(c["in"]),
+                "out": float(c["out"]), "label": str(c.get("label", "")),
+            })
+            for i, c in enumerate(raw.get("timeline", []))
+        ]
+    else:
+        segs = sorted(raw.get("segments", []), key=lambda s: int(s.get("order") or 0))
+        cuts = [
+            EditTimelineCut.model_validate({
+                "id": f"cut{i}", "source": s.get("sourceClip", "clip0"),
+                "in": float(s.get("sourceIn", 0.0)), "out": float(s.get("sourceOut", 0.0)),
+                "label": str(s.get("voiceoverLineId", i + 1)),
+                "voiceoverLineId": int(s["voiceoverLineId"]) if s.get("voiceoverLineId") is not None else None,
+                "voiceoverScript": s.get("voiceoverScript"),
+            })
+            for i, s in enumerate(segs)
+        ]
+
+    return EditTimelineOut(
+        mode=p.mode,
+        editTarget=target,
+        sources=[EditTimelineSource(**s) for s in sources],
+        cuts=cuts,
+    )
+
+
+@router.put("/{uid}/edit-timeline", response_model=UploadProjectItem)
+async def save_edit_timeline(
+    uid: str,
+    body: EditTimelineSaveIn,
+    auth: CurrentUser,
+    session: AsyncSession = Depends(db_session),
+) -> UploadProjectItem:
+    """Apply a manually-edited cut list and re-render — never re-invokes the AI."""
+    import json as _json
+
+    p, target, raw, sources = await _load_edit_timeline_state(session, uid, auth)
+    if p.origin == "local":
+        # Local-render projects have no normalized files on the server — the
+        # desktop app edits + re-renders locally (PUT /videos/{uid}/local-edit-script).
+        raise HTTPException(400, "โปรเจกต์ local-render แก้ไขผ่านแอพ desktop เท่านั้น")
+
+    if not body.cuts:
+        raise HTTPException(400, "cuts list cannot be empty")
+    source_durations = {s["id"]: s["durationSec"] for s in sources}
+    for c in body.cuts:
+        if c.source not in source_durations:
+            raise HTTPException(400, f"Unknown source '{c.source}'")
+        if c.in_ < 0 or c.out <= c.in_ or c.out > source_durations[c.source] + 0.05:
+            raise HTTPException(400, f"Cut on '{c.source}' has invalid in/out range")
+
+    output_dir_path = data_root() / "video_outputs" / uid
+    edited_cuts = [
+        {"source": c.source, "in": c.in_, "out": c.out, "label": c.label}
+        for c in body.cuts
+    ]
+
+    if target == "timeline":
+        raw["timeline"] = [
+            {"type": "cut", "source": c.source, "in": c.in_, "out": c.out, "label": c.label}
+            for c in body.cuts
+        ]
+        if p.transcript_path:
+            try:
+                transcript_file = await resolve_stored_output(uid, p.transcript_path)
+                transcript = _json.loads(transcript_file.read_text(encoding="utf-8"))
+                raw["captions"] = captions_for_edited_cuts(
+                    transcript.get("segments", []), raw.get("sources", []), edited_cuts
+                )
+            except FileNotFoundError:
+                raw["captions"] = []
+        else:
+            raw["captions"] = []
+
+        timeline_path = output_dir_path / "timeline.json"
+        timeline_path.write_text(_json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8")
+        render_task = "render_video"
+    else:
+        from packages.video.timeline import dub_segments_from_edit_cuts
+
+        cut_dicts = [
+            {
+                "source": c.source,
+                "in": c.in_,
+                "out": c.out,
+                "label": c.label,
+                "voiceoverLineId": c.voiceoverLineId,
+                "voiceoverScript": c.voiceoverScript or "",
+            }
+            for c in body.cuts
+        ]
+        raw["segments"] = dub_segments_from_edit_cuts(cut_dicts)
+        raw = normalize_dub_edit_script(raw)
+        edit_script_path = output_dir_path / "edit_script.json"
+        edit_script_path.write_text(_json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8")
+        render_task = "render_dub_silent"
+
+    p.status = "processing"
+    job_id = p.job_id or f"video_{uid[:8]}"
+    p.job_id = job_id
+    # Flush tenant-scoped project row before touching core.jobs — otherwise autoflush
+    # runs UPDATE video_projects while search_path is core-only (UndefinedTableError).
+    await session.flush()
+
+    await session.execute(text("SET search_path TO core, public"))
+    with session.no_autoflush:
+        existing = (await session.execute(select(Job).where(Job.id == job_id))).scalar_one_or_none()
+        if existing:
+            existing.status = "queued"
+            existing.progress = 2
+            existing.result = {"step": "queued", "message": "บันทึกการแก้ไขแล้ว รอ render ใหม่…"}
+        else:
+            existing = Job(
+                id=job_id,
+                tenant_id=auth.tenant_id,
+                type="video_edit",
+                status="queued",
+                progress=2,
+                result={"step": "queued", "message": "บันทึกการแก้ไขแล้ว รอ render ใหม่…"},
+            )
+            session.add(existing)
+    await bind_tenant_search_path(session, auth.tenant_slug)
+    await session.commit()
+
+    await push_project_files(uid)
+    await _enqueue(job_id, render_task, project_uid=uid, tenant_slug=auth.tenant_slug)
+    return UploadProjectItem(project_uid=uid, job_id=job_id)
+
+
+@router.get("/{uid}/source-url", response_model=PlaybackUrlOut)
+async def get_source_url(
+    uid: str,
+    source: str,
+    auth: CurrentUser,
+    session: AsyncSession = Depends(db_session),
+) -> PlaybackUrlOut:
+    """Return a URL for the original/normalized source clip — for Edit Mode preview, not the final render."""
+    p = await _get_project(session, uid, auth.user_id)
+    output_dir_path = data_root() / "video_outputs" / uid
+    try:
+        clip_path = _normalized_clip_path(output_dir_path, source)
+    except (FileNotFoundError, ValueError) as exc:
+        raise HTTPException(404, str(exc)) from exc
+    rel_name = f"normalized/{clip_path.name}"
+    if s3_enabled():
+        url = await output_presigned_url(uid, rel_name)
+        if url:
+            return PlaybackUrlOut(mode="direct", url=url)
+    if clip_path.is_file():
+        return PlaybackUrlOut(mode="authenticated", url=source)
+    raise HTTPException(404, "File not found")
+
+
+@router.get("/{uid}/source-file", response_model=None)
+async def get_source_file(
+    uid: str,
+    source: str,
+    auth: CurrentUser,
+    session: AsyncSession = Depends(db_session),
+) -> FileResponse:
+    """Stream a normalized source clip for Edit Mode preview (authenticated local fallback)."""
+    await _get_project(session, uid, auth.user_id)
+    output_dir_path = data_root() / "video_outputs" / uid
+    try:
+        clip_path = _normalized_clip_path(output_dir_path, source)
+    except (FileNotFoundError, ValueError) as exc:
+        raise HTTPException(404, str(exc)) from exc
+    if not clip_path.is_file():
+        raise HTTPException(404, "File not found")
+    return FileResponse(str(clip_path), media_type="video/mp4", filename=clip_path.name)
+
+
 @router.post("/{uid}/voiceover", response_model=VideoProjectOut)
 async def upload_voiceover(
     uid: str,
@@ -509,6 +795,10 @@ async def upload_voiceover(
 ) -> VideoProjectOut:
     """Upload voiceover file for a dub_first project. Triggers plan_dub_timeline."""
     p = await _get_project(session, uid, auth.user_id)
+    if p.origin == "local":
+        # Local-render projects keep VO on the user's machine — the desktop app
+        # measures it and calls POST /videos/{uid}/plan-dub instead.
+        raise HTTPException(400, "โปรเจกต์ local-render อัพโหลด voiceover ผ่านแอพ desktop เท่านั้น")
     if p.mode != "dub_first":
         raise HTTPException(400, "Voiceover upload only supported for dub_first projects")
     if p.status != "waiting_vo":

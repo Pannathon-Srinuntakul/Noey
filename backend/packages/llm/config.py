@@ -9,9 +9,8 @@ from packages.core.settings import get_settings
 
 EffortLevel = Literal["low", "medium", "high", "max"]
 
-# LiteLLM defaults chat completion HTTP timeout to 600s when unset. Use ~1 year so
-# long vision/reasoning jobs (dub-first scene matching) are not cut off mid-call.
-LLM_REQUEST_TIMEOUT_SEC = 86_400 * 365
+# Default per-request HTTP timeout (overridden by Settings.llm_*_timeout_sec).
+LLM_REQUEST_TIMEOUT_SEC = 300
 
 
 def _normalize_key(val: str | None) -> str | None:
@@ -45,7 +44,7 @@ def sync_llm_env() -> None:
             os.environ[env_var] = key
     # Must differ from LiteLLM DEFAULT_REQUEST_TIMEOUT_SECONDS (6000) or chat calls
     # fall back to COMPLETION_HTTP_FALLBACK_SECONDS (600).
-    litellm.request_timeout = LLM_REQUEST_TIMEOUT_SEC
+    litellm.request_timeout = max(int(s.llm_timeout_sec), int(s.llm_vision_timeout_sec))
 
 
 def model_supports_effort(model: str) -> bool:
@@ -90,7 +89,7 @@ def model_params() -> dict:
     key = _api_key_for_model(model, s)
     if key:
         params["api_key"] = key
-    params["timeout"] = LLM_REQUEST_TIMEOUT_SEC
+    params["timeout"] = int(s.llm_timeout_sec)
     return _with_effort(params, model, s.llm_effort)
 
 
@@ -117,7 +116,20 @@ def vision_call_kwargs() -> dict:
     s = get_settings()
     model = s.llm_vision_model or s.llm_model
     effort = s.llm_vision_effort or "medium"
-    return call_kwargs(model=model, effort=effort)
+    extra = call_kwargs(model=model, effort=effort)
+    extra["timeout"] = int(s.llm_vision_timeout_sec)
+    return extra
+
+
+def anthropic_file_kwargs() -> dict:
+    """Kwargs for litellm.acreate_file / afile_delete on Anthropic Files API."""
+    sync_llm_env()
+    s = get_settings()
+    extra: dict = {"custom_llm_provider": "anthropic"}
+    key = _api_key_for_model("anthropic/claude-sonnet-4-6", s)
+    if key:
+        extra["api_key"] = key
+    return extra
 
 
 def llm_call_extra(

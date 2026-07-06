@@ -27,6 +27,7 @@ from services.api.routers import (
     table_io,
     usage,
     videos,
+    videos_local,
 )
 
 log = get_logger(__name__)
@@ -85,6 +86,7 @@ def create_app() -> FastAPI:
         custom_tables,
         table_io,
         videos,
+        videos_local,
         jobs,
         usage,
     ):

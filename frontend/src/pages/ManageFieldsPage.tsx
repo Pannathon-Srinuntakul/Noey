@@ -103,10 +103,10 @@ export default function ManageFieldsPage() {
   return (
     <div className="scroll-light flex h-full flex-col bg-zinc-50">
       {/* header */}
-      <div className="flex items-center gap-3 border-b border-zinc-200 bg-white px-5 py-3 shadow-sm">
+      <div className="flex items-center gap-2 border-b border-zinc-200 bg-white px-4 py-3 shadow-sm sm:gap-3 sm:px-5">
         <button
           onClick={() => navigate(`/tables/${tableId}`)}
-          className="flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm text-zinc-500 hover:bg-zinc-100"
+          className="flex shrink-0 items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm text-zinc-500 hover:bg-zinc-100"
         >
           <ArrowLeft size={15} /> กลับ
         </button>
@@ -129,7 +129,7 @@ export default function ManageFieldsPage() {
         </div>
       )}
 
-      <div className="flex-1 overflow-auto p-5">
+      <div className="flex-1 overflow-auto p-4 sm:p-5">
         <p className="mb-3 text-xs text-zinc-400">ลากเพื่อจัดลำดับ · ลำดับนี้จะส่งผลต่อการแสดงคอลัมน์ในตาราง</p>
 
         {table.columns.length === 0 && (
