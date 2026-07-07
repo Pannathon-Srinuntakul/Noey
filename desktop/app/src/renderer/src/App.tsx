@@ -5,7 +5,9 @@ import type { ApiSession } from './lib/videosLocalApi'
 import ProjectListPage from './pages/ProjectListPage'
 import DubWizard from './pages/DubWizard'
 
-const DEFAULT_BASE_URL = 'http://localhost:8000'
+// Backend URL is baked in at build time — users never see or set it.
+// Override for local dev/self-hosting: VITE_BACKEND_URL=... npm run build
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL ?? 'https://noey-api-production.up.railway.app'
 
 interface Session {
   baseUrl: string
@@ -15,7 +17,6 @@ interface Session {
 }
 
 function LoginPage({ onLogin }: { onLogin: (s: Session) => void }): React.JSX.Element {
-  const [baseUrl, setBaseUrl] = useState(DEFAULT_BASE_URL)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -23,10 +24,7 @@ function LoginPage({ onLogin }: { onLogin: (s: Session) => void }): React.JSX.El
 
   useEffect(() => {
     window.noey.auth.load().then((stored) => {
-      if (stored) {
-        setBaseUrl(stored.baseUrl)
-        setEmail(stored.email)
-      }
+      if (stored) setEmail(stored.email)
     })
   }, [])
 
@@ -35,16 +33,16 @@ function LoginPage({ onLogin }: { onLogin: (s: Session) => void }): React.JSX.El
     setBusy(true)
     setError(null)
     try {
-      const pair = await login(baseUrl, email, password)
-      const profile = await me(baseUrl, pair.access_token)
+      const pair = await login(BACKEND_URL, email, password)
+      const profile = await me(BACKEND_URL, pair.access_token)
       await window.noey.auth.save({
-        baseUrl,
+        baseUrl: BACKEND_URL,
         email,
         accessToken: pair.access_token,
         refreshToken: pair.refresh_token
       })
       onLogin({
-        baseUrl,
+        baseUrl: BACKEND_URL,
         accessToken: pair.access_token,
         refreshToken: pair.refresh_token,
         profile
@@ -60,10 +58,6 @@ function LoginPage({ onLogin }: { onLogin: (s: Session) => void }): React.JSX.El
     <div className="login-page">
       <h1>Noey Video Edit</h1>
       <form onSubmit={submit} className="login-form">
-        <label>
-          Server
-          <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} required />
-        </label>
         <label>
           อีเมล
           <input
@@ -172,16 +166,18 @@ function App(): React.JSX.Element {
     const attempt = async (): Promise<void> => {
       const stored = await window.noey.auth.load()
       if (!stored) return
-      const pair = await restoreSession(stored.baseUrl, stored.accessToken, stored.refreshToken)
+      // Always use the baked-in backend URL, ignoring any older stored value.
+      const pair = await restoreSession(BACKEND_URL, stored.accessToken, stored.refreshToken)
       if (!pair) return
-      const profile = await me(stored.baseUrl, pair.access_token)
+      const profile = await me(BACKEND_URL, pair.access_token)
       await window.noey.auth.save({
         ...stored,
+        baseUrl: BACKEND_URL,
         accessToken: pair.access_token,
         refreshToken: pair.refresh_token
       })
       setSession({
-        baseUrl: stored.baseUrl,
+        baseUrl: BACKEND_URL,
         accessToken: pair.access_token,
         refreshToken: pair.refresh_token,
         profile

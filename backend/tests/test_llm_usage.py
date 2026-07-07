@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import types
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -64,17 +64,27 @@ def test_reset_restores_previous():
 
 # ── 2. period_start ──────────────────────────────────────────────────────────
 
-def test_period_start_with_explicit_reset():
-    explicit = datetime(2026, 5, 15, tzinfo=timezone.utc)
-    assert _period_start(explicit) == explicit
+def _today_start() -> datetime:
+    now = datetime.now(tz=timezone.utc)
+    return datetime(now.year, now.month, now.day, tzinfo=timezone.utc)
 
 
-def test_period_start_fallback_to_month():
+def test_period_start_honors_reset_within_today():
+    # A manual reset later in the same UTC day takes precedence.
+    reset = _today_start() + timedelta(hours=5)
+    assert _period_start(reset) == reset
+
+
+def test_period_start_ignores_stale_reset():
+    # A reset from a previous day is ignored → falls back to the daily start.
+    stale = datetime(2020, 1, 1, tzinfo=timezone.utc)
+    assert _period_start(stale) == _today_start()
+
+
+def test_period_start_daily_fallback():
     result = _period_start(None)
-    today = datetime.now(tz=timezone.utc).date()
-    assert result.year == today.year
-    assert result.month == today.month
-    assert result.day == 1
+    assert result == _today_start()
+    assert result.hour == 0 and result.minute == 0 and result.second == 0
 
 
 # ── 3. estimate_cost_usd ─────────────────────────────────────────────────────
@@ -196,9 +206,9 @@ async def test_reset_at_resets_window():
     """Tokens before usage_reset_at should not count toward current period.
 
     We simulate this by verifying that sum_tokens_since is called with the
-    explicit reset_at datetime, not the start-of-month.
+    explicit reset_at datetime (a same-day admin reset), not the daily start.
     """
-    reset_time = datetime(2026, 6, 20, 12, 0, 0, tzinfo=timezone.utc)
+    reset_time = _today_start() + timedelta(hours=1)
     ctx = _ctx(user_id=5)
 
     mock_user = MagicMock()

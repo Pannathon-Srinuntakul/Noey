@@ -906,8 +906,8 @@ export function VideoTimelineEditor({ uid, mode, onClose, onSaved }: Props) {
         setIsPlaying(false)
       }
       const maxScroll = getMaxScrollLeft()
-      el.scrollLeft = clamp(startScrollLeft - (ev.clientX - startX), 0, maxScroll)
-      updateScrubTimeFromScroll(el.scrollLeft, true)
+      el!.scrollLeft = clamp(startScrollLeft - (ev.clientX - startX), 0, maxScroll)
+      updateScrubTimeFromScroll(el!.scrollLeft, true)
     }
 
     function onUp(ev: PointerEvent) {
@@ -917,7 +917,7 @@ export function VideoTimelineEditor({ uid, mode, onClose, onSaved }: Props) {
         captureTarget.classList.remove('cursor-grabbing')
         captureTarget.classList.add('cursor-grab')
         const dur = getActiveDurationSec()
-        const sec = clamp(el.scrollLeft / PX_PER_SEC, 0, dur)
+        const sec = clamp(el!.scrollLeft / PX_PER_SEC, 0, dur)
         applyScrubTime(sec, true)
         resumeAfterScrub()
       } else if (viewMode === 'edited') {

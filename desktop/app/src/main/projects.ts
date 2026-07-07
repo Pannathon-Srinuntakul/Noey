@@ -1,7 +1,8 @@
 import { app, ipcMain, shell } from 'electron'
-import { join } from 'path'
-import { mkdir, readdir, readFile, writeFile, rm } from 'fs/promises'
+import { join, sep } from 'path'
+import { mkdir, readdir, readFile, writeFile, rm, stat } from 'fs/promises'
 import { randomUUID } from 'crypto'
+import { isSafeUid } from './uid'
 
 /**
  * Local project registry — one directory per project under
@@ -54,7 +55,14 @@ export function projectsRoot(): string {
 }
 
 export function projectDir(uid: string): string {
-  return join(projectsRoot(), uid)
+  if (!isSafeUid(uid)) throw new Error(`invalid project id: ${JSON.stringify(uid)}`)
+  const root = projectsRoot()
+  const dir = join(root, uid)
+  // Belt-and-suspenders: the resolved path must stay strictly inside root.
+  if (dir !== join(root, uid) || !dir.startsWith(root + sep)) {
+    throw new Error(`project path escapes root: ${uid}`)
+  }
+  return dir
 }
 
 function projectFile(uid: string): string {
@@ -117,7 +125,17 @@ async function updateProject(uid: string, patch: Partial<LocalProject>): Promise
 }
 
 async function deleteProject(uid: string): Promise<void> {
-  await rm(projectDir(uid), { recursive: true, force: true })
+  const dir = projectDir(uid) // throws on any unsafe uid
+  // Only remove a real project directory: it must exist, be a directory, and
+  // hold a project.json. Never rm anything that isn't provably our project.
+  try {
+    const info = await stat(dir)
+    if (!info.isDirectory()) return
+    await stat(join(dir, 'project.json'))
+  } catch {
+    return // no such project dir (or no manifest) → nothing to delete
+  }
+  await rm(dir, { recursive: true, force: true })
 }
 
 /** Register project-registry IPC handlers (call once from app.whenReady). */

@@ -91,13 +91,20 @@ export default function DubWizard({ project: initial, session, onBack }: Props):
     setError(null)
     setThinking('')
     try {
-      let current = await patchProject({ step: 'analyzing', brief, userScript, error: undefined })
+      let current = await patchProject({
+        step: 'analyzing',
+        brief,
+        userScript,
+        targetDurationSec: durationMode === 'custom' ? targetSec : undefined,
+        error: undefined
+      })
 
       let remoteUid = current.remote?.uid
       if (!remoteUid) {
         const created = await createLocalProject(session, {
           brief: brief || null,
           user_script: userScript || null,
+          target_duration_sec: durationMode === 'custom' ? targetSec : null,
           clips: current.clips.map((c) => ({
             id: c.id,
             durationSec: c.durationSec,
@@ -488,6 +495,36 @@ export default function DubWizard({ project: initial, session, onBack }: Props):
                   rows={3}
                 />
               </label>
+              <div className="mode-picker">
+                <label>
+                  <input
+                    type="radio"
+                    name="dubDuration"
+                    checked={durationMode === 'full'}
+                    onChange={() => setDurationMode('full')}
+                  />
+                  ให้ AI กำหนดความยาวเอง (~50–60 วิ)
+                </label>
+                <label>
+                  <input
+                    type="radio"
+                    name="dubDuration"
+                    checked={durationMode === 'custom'}
+                    onChange={() => setDurationMode('custom')}
+                  />
+                  กำหนดความยาว ~
+                  <input
+                    type="number"
+                    min={15}
+                    max={600}
+                    value={targetSec}
+                    disabled={durationMode !== 'custom'}
+                    onChange={(e) => setTargetSec(Number(e.target.value))}
+                    style={{ width: 70, margin: '0 6px' }}
+                  />
+                  วินาที
+                </label>
+              </div>
               <button className="primary" onClick={runAnalyze}>
                 เริ่มวิเคราะห์ด้วย AI
               </button>

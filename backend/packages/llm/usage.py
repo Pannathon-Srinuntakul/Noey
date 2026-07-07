@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from typing import Any
 
 from packages.core.logging import get_logger
@@ -102,15 +102,18 @@ class UsageLimitExceeded(Exception):
 # ---------------------------------------------------------------------------
 
 def _period_start(reset_at: datetime | None) -> datetime:
-    """Return the start of the current usage period.
+    """Return the start of the current usage period (a rolling UTC day).
 
-    If ``reset_at`` is set (manual admin reset), use it directly.
-    Otherwise fall back to the first second of the current calendar month (UTC).
+    Quotas reset every calendar day (UTC). A manual admin reset (``reset_at``)
+    takes precedence only when it falls within today — so a reset earlier today
+    counts usage from that instant, while a stale reset from a previous day is
+    ignored in favor of the daily start.
     """
-    if reset_at is not None:
+    now = datetime.now(tz=timezone.utc)
+    day_start = datetime(now.year, now.month, now.day, tzinfo=timezone.utc)
+    if reset_at is not None and reset_at > day_start:
         return reset_at
-    today = date.today()
-    return datetime(today.year, today.month, 1, tzinfo=timezone.utc)
+    return day_start
 
 
 async def sum_tokens_since(
