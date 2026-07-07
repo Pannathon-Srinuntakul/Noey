@@ -132,6 +132,17 @@ def anthropic_file_kwargs() -> dict:
     return extra
 
 
+def gemini_file_kwargs() -> dict:
+    """Kwargs for litellm.acreate_file / afile_delete on the Gemini Files API."""
+    sync_llm_env()
+    s = get_settings()
+    extra: dict = {"custom_llm_provider": "gemini"}
+    key = _api_key_for_model("gemini/gemini-3.5-flash", s)
+    if key:
+        extra["api_key"] = key
+    return extra
+
+
 def llm_call_extra(
     model: str,
     base_url: str | None = None,

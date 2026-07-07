@@ -86,6 +86,7 @@ const noey = {
     render: jobCommand('sidecar:render'),
     ingest: jobCommand('sidecar:ingest'),
     extractFrames: jobCommand('sidecar:extractFrames'),
+    extractProxy: jobCommand('sidecar:extractProxy'),
     renderSilent: jobCommand('sidecar:renderSilent'),
     renderFinal: jobCommand('sidecar:renderFinal'),
     extractAudio: jobCommand('sidecar:extractAudio'),

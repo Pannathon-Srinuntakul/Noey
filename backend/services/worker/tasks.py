@@ -1089,6 +1089,7 @@ from packages.video.dub_ai import (  # noqa: E402  (prompt + LLM cores shared wi
     DUB_EDIT_SYSTEM as _DUB_EDIT_SYSTEM_IMPORTED,
     DUB_TIMELINE_SYSTEM as _DUB_TIMELINE_SYSTEM_IMPORTED,
     generate_dub_edit_script,
+    generate_dub_edit_script_video,
     plan_dub_timeline_cuts,
 )
 
@@ -1561,6 +1562,105 @@ async def analyze_dub_local(ctx: dict[str, Any], *, job_id: str, project_uid: st
             reset_usage_ctx(_usage_token)
 
 
+# ── task: analyze_dub_video_local ────────────────────────────────────────────
+
+
+async def analyze_dub_video_local(ctx: dict[str, Any], *, job_id: str, project_uid: str, tenant_slug: str) -> dict:
+    """Local-render (desktop) dub_first variant using Gemini native video.
+
+    The desktop sidecar already encoded a downscaled, no-audio proxy MP4 per
+    clip and uploaded them + proxy_manifest.json via POST
+    /videos/{uid}/analyze-video — no frame JPEGs involved. This task runs the
+    Gemini video Vision call and stores edit_script.json; the desktop app then
+    renders silently on the user's machine. Parallel to analyze_dub_local
+    (frame path), which stays unchanged for the Claude path.
+    """
+    log.info("task_start", task="analyze_dub_video_local", project_uid=project_uid)
+    await _video_progress(job_id, 20, "analyze", "กำลังส่งวิดีโอให้ AI วิเคราะห์…")
+    session = await _tenant_session(tenant_slug)
+    _usage_token = None
+    try:
+        if await _abort_if_cancelled(session, project_uid, job_id):
+            return {"cancelled": True}
+
+        await _pull_project_files(project_uid)
+
+        root = data_root()
+        output_dir = root / "video_outputs" / project_uid
+        manifest_file = output_dir / "proxy" / "proxy_manifest.json"
+        if not manifest_file.is_file():
+            raise ValueError("proxy_manifest.json missing — upload proxies first")
+
+        proj = await _get_video_project(session, project_uid)
+        tenant_id = await _get_tenant_id_by_slug(tenant_slug)
+        _usage_token = _set_video_usage_ctx(proj, tenant_id, project_uid)
+
+        records = json.loads(manifest_file.read_text(encoding="utf-8"))
+        records.sort(key=lambda r: int(r.get("order") or 0))
+        clip_videos: list[tuple[str, pathlib.Path, float]] = []
+        for rec in records:
+            proxy_path = output_dir / "proxy" / rec["file"]
+            if not proxy_path.is_file():
+                log.warning("local_proxy_missing", file=rec["file"], project_uid=project_uid)
+                continue
+            clip_videos.append((rec["clip_id"], proxy_path, float(rec.get("durationSec") or 0)))
+        if not clip_videos:
+            raise ValueError("No usable proxy clips found in manifest")
+
+        await _video_progress(job_id, 74, "analyze", "กำลัง match script กับซีนวิดีโอ…")
+
+        async def _push_thinking(excerpt: str) -> None:
+            await _update_job(
+                job_id, "running", 74,
+                result={"step": "analyze", "message": "กำลัง match script กับซีนวิดีโอ…", "thinking": excerpt},
+            )
+
+        edit_script = await generate_dub_edit_script_video(
+            clip_videos,
+            brief=proj.brief or "",
+            user_script=proj.user_script or "",
+            target_duration_sec=getattr(proj, "target_duration_sec", None),
+            project_uid=project_uid,
+            on_thinking=_push_thinking,
+        )
+
+        edit_script_path = output_dir / "edit_script.json"
+        edit_script_path.write_text(
+            json.dumps(edit_script, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        rel = str(edit_script_path.relative_to(root))
+        # Desktop app renders locally from here; server-side status parks at waiting_vo.
+        await _update_video(session, project_uid, edit_script_path=rel, status="waiting_vo")
+        await _push_project_files(project_uid)
+
+        segments = len(edit_script.get("segments", []))
+        await _update_job(
+            job_id, "ok", 100,
+            result={"step": "edit_script_ready", "message": "Edit script พร้อมแล้ว", "segments": segments},
+        )
+        log.info("analyze_dub_video_local_done", project_uid=project_uid, segments=segments)
+        return {"segments": segments}
+    except Exception as exc:
+        ts = await _tenant_session(tenant_slug)
+        try:
+            if await _abort_if_cancelled(ts, project_uid, job_id):
+                return {"cancelled": True}
+            await _update_video(ts, project_uid, status="error", error_msg=format_exception_message(exc))
+        finally:
+            await ts.close()
+        await _update_job(
+            job_id, "error", 0,
+            result={"step": "error", "message": format_exception_message(exc)},
+            error=format_exception_message(exc),
+        )
+        raise
+    finally:
+        await session.close()
+        if _usage_token is not None:
+            from packages.llm.usage import reset_usage_ctx
+            reset_usage_ctx(_usage_token)
+
+
 # ── task: plan_talking_local ─────────────────────────────────────────────────
 
 
@@ -1722,6 +1822,7 @@ class WorkerSettings:
         render_video,
         analyze_dub_first,
         analyze_dub_local,
+        analyze_dub_video_local,
         plan_talking_local,
         render_dub_silent,
         plan_dub_timeline,

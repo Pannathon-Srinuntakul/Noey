@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { LocalProject, SidecarEvent } from '../../../preload'
 import { ApiError } from './api'
 import {
-  analyzeFrames,
+  analyzeVideo,
   createLocalProject,
   getEditScript,
   getLocalTimeline,
@@ -15,7 +15,7 @@ import {
   type ApiSession,
   type DubEditScript,
   type DubTimeline,
-  type FrameManifestEntry
+  type ProxyManifestEntry
 } from './videosLocalApi'
 import { configureEditorApi, editScriptFromCuts, type SaveCutPayload } from './editorApi'
 import { pickFile } from './pickFile'
@@ -105,30 +105,30 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
         current = await patchProject({ remote: { uid: remoteUid } })
       }
 
-      setProgressMsg('กำลังหาซีนในคลิป…')
+      setProgressMsg('กำลังย่อวิดีโอให้ AI…')
       const projectDir = await window.noey.projects.dir(project.uid)
-      const unsub = window.noey.sidecar.extractFrames.onProgress((evt: SidecarEvent) => {
-        setProgressMsg(`กำลังหาซีนในคลิป ${evt.step}/${evt.total}…`)
+      const unsub = window.noey.sidecar.extractProxy.onProgress((evt: SidecarEvent) => {
+        setProgressMsg(`กำลังย่อวิดีโอให้ AI ${evt.step}/${evt.total}…`)
       })
       try {
-        await window.noey.sidecar.extractFrames.run({ projectDir })
+        await window.noey.sidecar.extractProxy.run({ projectDir })
       } finally {
         unsub()
       }
 
-      setProgressMsg('กำลังอัพโหลด frames ให้ AI…')
-      const manifestUrl = window.noey.media.urlFor(project.uid, 'frames/frames_manifest.json')
-      let entries: FrameManifestEntry[]
+      setProgressMsg('กำลังอัพโหลดวิดีโอให้ AI…')
+      const manifestUrl = window.noey.media.urlFor(project.uid, 'proxy/proxy_manifest.json')
+      let proxies: ProxyManifestEntry[]
       try {
-        entries = (await (await fetch(manifestUrl)).json()) as FrameManifestEntry[]
+        proxies = (await (await fetch(manifestUrl)).json()) as ProxyManifestEntry[]
       } catch (err) {
         void window.noey.log.write(
           'useProjectPipeline',
-          `frame manifest fetch failed ${manifestUrl}: ${String(err)}`
+          `proxy manifest fetch failed ${manifestUrl}: ${String(err)}`
         )
-        throw new Error('อ่านไฟล์ frame ที่ตัดไว้ไม่ได้ — ลองวิเคราะห์ใหม่อีกครั้ง')
+        throw new Error('อ่านไฟล์วิดีโอที่ย่อไว้ไม่ได้ — ลองวิเคราะห์ใหม่อีกครั้ง')
       }
-      const { job_id } = await analyzeFrames(session, remoteUid, project.uid, entries)
+      const { job_id } = await analyzeVideo(session, remoteUid, project.uid, proxies)
       await patchProject({ remote: { uid: remoteUid, jobId: job_id } })
 
       abortRef.current = new AbortController()

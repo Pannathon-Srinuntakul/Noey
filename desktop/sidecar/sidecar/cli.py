@@ -7,6 +7,7 @@ Commands (all output is JSON, one object per line, on stdout):
 - ``render --job F``          → generic cut-list render (trim + concat)
 - ``ingest --job F``          → copy sources → normalized/ + upload_sources.json
 - ``extract-frames --job F``  → Vision sample frames + frames_manifest.json
+- ``extract-proxy --job F``   → downscaled no-audio proxy MP4s + proxy_manifest.json
 - ``render-silent --job F``   → edit script → final_silent.mp4 + script.txt + dub_bundle.zip
 - ``render-final --job F``    → timeline + voiceover → final.mp4 (+ final_bundle.zip)
 
@@ -90,6 +91,15 @@ def cmd_extract_frames(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_extract_proxy(args: argparse.Namespace) -> int:
+    from sidecar.dub import load_json_job
+    from sidecar.proxy import ExtractProxyJob, run_extract_proxy
+
+    job = load_json_job(args.job, ExtractProxyJob)
+    emit(run_extract_proxy(job, emit))
+    return 0
+
+
 def cmd_render_silent(args: argparse.Namespace) -> int:
     from sidecar.dub import RenderSilentJob, load_json_job, run_render_silent
 
@@ -138,6 +148,7 @@ def build_parser() -> argparse.ArgumentParser:
         ("render", cmd_render, "run a generic cut-list render job"),
         ("ingest", cmd_ingest, "copy source clips into a project dir"),
         ("extract-frames", cmd_extract_frames, "sample Vision frames from normalized clips"),
+        ("extract-proxy", cmd_extract_proxy, "encode downscaled no-audio proxy MP4s for Gemini video analysis"),
         ("render-silent", cmd_render_silent, "render silent dub video from an edit script"),
         ("render-final", cmd_render_final, "render final video from timeline + voiceover"),
         ("extract-audio", cmd_extract_audio, "extract speech WAVs for server transcription"),

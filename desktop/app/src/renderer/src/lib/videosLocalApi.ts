@@ -41,6 +41,14 @@ export interface FrameManifestEntry {
   file: string
 }
 
+export interface ProxyManifestEntry {
+  clip_id: string
+  /** filename inside the sidecar's proxy/ dir, e.g. "clip0.mp4" */
+  file: string
+  durationSec: number
+  order: number
+}
+
 export interface JobStatus {
   id: string
   type: string
@@ -144,6 +152,35 @@ export async function analyzeFrames(
   }))
   form.append('manifest', JSON.stringify(manifest))
   return request(session, `/videos/${remoteUid}/analyze-frames`, { method: 'POST', body: form })
+}
+
+/** Upload per-clip proxy MP4s (fetched from media:// URLs) + manifest → {job_id}. */
+export async function analyzeVideo(
+  session: ApiSession,
+  remoteUid: string,
+  localUid: string,
+  proxies: ProxyManifestEntry[]
+): Promise<{ job_id: string }> {
+  const form = new FormData()
+  for (const entry of proxies) {
+    const mediaUrl = window.noey.media.urlFor(localUid, `proxy/${entry.file}`)
+    let blob: Blob
+    try {
+      blob = await (await fetch(mediaUrl)).blob()
+    } catch (err) {
+      void window.noey.log.write('videosLocalApi', `proxy read failed ${mediaUrl}: ${String(err)}`)
+      throw new ApiError(0, `อ่านไฟล์วิดีโอไม่ได้: ${entry.file}`)
+    }
+    form.append('files', blob, entry.file)
+  }
+  const manifest = proxies.map((e) => ({
+    clip_id: e.clip_id,
+    file: e.file,
+    durationSec: e.durationSec,
+    order: e.order
+  }))
+  form.append('manifest', JSON.stringify(manifest))
+  return request(session, `/videos/${remoteUid}/analyze-video`, { method: 'POST', body: form })
 }
 
 export function getJob(session: ApiSession, jobId: string): Promise<JobStatus> {

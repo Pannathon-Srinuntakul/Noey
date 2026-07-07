@@ -135,6 +135,7 @@ export function registerSidecarIpc(): void {
     ['sidecar:render', 'render'],
     ['sidecar:ingest', 'ingest'],
     ['sidecar:extractFrames', 'extract-frames'],
+    ['sidecar:extractProxy', 'extract-proxy'],
     ['sidecar:renderSilent', 'render-silent'],
     ['sidecar:renderFinal', 'render-final'],
     ['sidecar:extractAudio', 'extract-audio'],

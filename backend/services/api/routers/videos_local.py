@@ -7,6 +7,7 @@ calls (Vision edit-script generation, dub timeline planning), and status.
 
 POST  /videos/local                    — create a metadata-only project (origin="local")
 POST  /videos/{uid}/analyze-frames     — dub: upload frame JPEGs + manifest → arq analyze_dub_local → {job_id}
+POST  /videos/{uid}/analyze-video      — dub: upload proxy MP4s + manifest → arq analyze_dub_video_local → {job_id}
 POST  /videos/{uid}/plan-dub           — dub: VO duration + clip durations → timeline JSON (sync LLM call)
 POST  /videos/{uid}/transcribe-audio   — talking_head: upload WAVs → arq plan_talking_local → {job_id}
 GET   /videos/{uid}/local-timeline     — fetch the planned timeline.json
@@ -75,6 +76,13 @@ class FrameManifestEntry(BaseModel):
 
 class AnalyzeFramesOut(BaseModel):
     job_id: str
+
+
+class ProxyManifestEntry(BaseModel):
+    clip_id: str
+    file: str
+    durationSec: float = Field(gt=0)
+    order: int = 0
 
 
 class PlanDubIn(BaseModel):
@@ -192,6 +200,74 @@ async def analyze_frames(
     await session.commit()
 
     await _enqueue(job_id, "analyze_dub_local", project_uid=uid, tenant_slug=auth.tenant_slug)
+    return AnalyzeFramesOut(job_id=job_id)
+
+
+@router.post("/{uid}/analyze-video", response_model=AnalyzeFramesOut, status_code=202)
+async def analyze_video(
+    uid: str,
+    auth: CurrentUser,
+    session: AsyncSession = Depends(db_session),
+    files: list[UploadFile] = File(...),
+    manifest: str = Form(...),
+) -> AnalyzeFramesOut:
+    """dub_first: receive per-clip proxy MP4s (Gemini native-video path)."""
+    proj = await _get_local_project(session, uid, auth.user_id)
+    if proj.mode != "dub_first":
+        raise HTTPException(400, "analyze-video ใช้ได้เฉพาะโหมด dub_first")
+    if proj.status not in ("pending", "error", "waiting_vo", "done"):
+        raise HTTPException(400, "โปรเจกต์กำลังประมวลผลอยู่")
+
+    try:
+        entries = [ProxyManifestEntry.model_validate(e) for e in json.loads(manifest)]
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise HTTPException(422, f"manifest ไม่ถูกต้อง: {exc}") from exc
+
+    by_file = {e.file: e for e in entries}
+    uploaded_names = [f.filename for f in files]
+    missing = set(by_file) - set(uploaded_names)
+    extra = set(uploaded_names) - set(by_file)
+    if missing or extra:
+        raise HTTPException(422, f"manifest/ไฟล์ไม่ตรงกัน (missing={sorted(missing)}, extra={sorted(extra)})")
+
+    root = data_root()
+    proxy_dir = root / "video_outputs" / uid / "proxy"
+    proxy_dir.mkdir(parents=True, exist_ok=True)
+    manifest_records: list[dict] = []
+    for f in files:
+        entry = by_file[f.filename or ""]
+        dest = proxy_dir / entry.file
+        dest.write_bytes(await f.read())
+        manifest_records.append(entry.model_dump())
+
+    (proxy_dir / "proxy_manifest.json").write_text(
+        json.dumps(manifest_records, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    await push_project_files(uid)  # proxy MP4s + manifest only
+
+    job_id = f"vlocal_{uid[:8]}"
+    await session.execute(text("SET search_path TO core, public"))
+    existing = await session.get(Job, job_id)
+    if existing:
+        existing.status = "queued"
+        existing.progress = 2
+        existing.result = {"step": "queued", "message": "รับวิดีโอแล้ว รอ worker วิเคราะห์…"}
+        existing.error = None
+    else:
+        session.add(Job(
+            id=job_id,
+            tenant_id=auth.tenant_id,
+            type="video_edit",
+            status="queued",
+            progress=2,
+            result={"step": "queued", "message": "รับวิดีโอแล้ว รอ worker วิเคราะห์…"},
+        ))
+    await bind_tenant_search_path(session, auth.tenant_slug)
+    proj.status = "processing"
+    proj.job_id = job_id
+    await session.commit()
+
+    await _enqueue(job_id, "analyze_dub_video_local", project_uid=uid, tenant_slug=auth.tenant_slug)
     return AnalyzeFramesOut(job_id=job_id)
 
 
