@@ -31,8 +31,9 @@ async function request<T>(baseUrl: string, path: string, init?: RequestInit): Pr
   let res: Response
   try {
     res = await fetch(`${baseUrl.replace(/\/+$/, '')}${path}`, init)
-  } catch {
-    throw new ApiError(0, `เชื่อมต่อ server ไม่ได้ (${baseUrl})`)
+  } catch (err) {
+    void window.noey.log.write('api', `fetch failed ${baseUrl}${path}: ${String(err)}`)
+    throw new ApiError(0, 'เชื่อมต่อ server ไม่ได้ ลองใหม่อีกครั้ง')
   }
   if (!res.ok) {
     let detail = `HTTP ${res.status}`

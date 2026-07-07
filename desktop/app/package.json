@@ -28,6 +28,7 @@
     "@dnd-kit/utilities": "^3.2.2",
     "@electron-toolkit/preload": "^3.0.2",
     "@electron-toolkit/utils": "^4.0.0",
+    "@fontsource/noto-sans-thai": "^5.2.8",
     "lucide-react": "^1.23.0"
   },
   "devDependencies": {

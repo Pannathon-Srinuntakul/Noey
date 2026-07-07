@@ -4,7 +4,8 @@
  * source clips from the API. On desktop everything is local: the edit model
  * is derived from the project's edit script (pre-VO) or planned timeline
  * (post-VO), sources play via media://, and saving re-renders locally.
- * DubWizard calls `configureEditorApi` before mounting the editor.
+ * useProjectPipeline's openEditor() calls `configureEditorApi` before mounting
+ * the editor.
  */
 
 import { ApiError } from './api'
@@ -42,7 +43,7 @@ export interface EditorContext {
   editTarget: 'timeline' | 'edit_script'
   editScript?: DubEditScript | null
   timeline?: DubTimeline | null
-  /** Persist + re-render; DubWizard owns the flow. */
+  /** Persist + re-render; useProjectPipeline owns the flow. */
   onSave: (cuts: SaveCutPayload[]) => Promise<void>
 }
 

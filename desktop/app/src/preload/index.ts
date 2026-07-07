@@ -51,6 +51,7 @@ export interface LocalProject {
   clips: LocalClip[]
   brief?: string
   userScript?: string
+  scriptStyles?: string[]
   targetDurationSec?: number
   remote?: { uid: string; jobId?: string }
   voiceoverPath?: string
@@ -111,6 +112,11 @@ const noey = {
     save: (auth: StoredAuth): Promise<void> => ipcRenderer.invoke('auth:save', auth),
     load: (): Promise<StoredAuth | null> => ipcRenderer.invoke('auth:load'),
     clear: (): Promise<void> => ipcRenderer.invoke('auth:clear')
+  },
+  log: {
+    write: (scope: string, message: string): Promise<void> =>
+      ipcRenderer.invoke('log:write', scope, message),
+    openFolder: (): Promise<void> => ipcRenderer.invoke('log:openFolder')
   }
 }
 

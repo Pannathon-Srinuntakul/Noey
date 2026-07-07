@@ -16,6 +16,8 @@ import {
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import {
+  ChevronDown,
+  ChevronUp,
   GripVertical,
   HelpCircle,
   Layers,
@@ -485,6 +487,8 @@ export function VideoTimelineEditor({ uid, mode, onClose, onSaved }: Props) {
   const [saving, setSaving] = useState(false)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [viewMode, setViewMode] = useState<'source' | 'edited'>('source')
+  const [sceneCollapsed, setSceneCollapsed] = useState(false)
+  const [scriptCollapsed, setScriptCollapsed] = useState(false)
 
   // Two <video> elements so the "next" edited-mode segment can be pre-seeked in the
   // background (hidden) and swapped in instantly — avoids the seek/reload freeze that
@@ -818,6 +822,11 @@ export function VideoTimelineEditor({ uid, mode, onClose, onSaved }: Props) {
     resumePlaybackRef.current = true
     playRangeRef.current = { in: next.in, out: next.out }
 
+    void window.noey.log.write(
+      'TimelineEditor',
+      `maybeAdvanceEditedSegment cut=${cut.id}->${next.id} source=${cut.source}->${next.source} bufferReady=${isBufferReadyFor(next)} previewSource=${previewSource}`
+    )
+
     if (isBufferReadyFor(next)) {
       // Instant swap: the hidden buffer is already seeked & decoded at next.in.
       const buf = inactiveVideo()!
@@ -1063,6 +1072,10 @@ export function VideoTimelineEditor({ uid, mode, onClose, onSaved }: Props) {
         captureTarget.classList.add('cursor-grab')
         const dur = getActiveDurationSec()
         const sec = clamp(lane.scrollLeft / PX_PER_SEC, 0, dur)
+        void window.noey.log.write(
+          'TimelineEditor',
+          `timeline drag onUp scrollLeft=${lane.scrollLeft} dur=${dur} sec=${sec} viewMode=${viewMode} maxScroll=${getMaxScrollLeft()}`
+        )
         applyScrubTime(sec, true)
         resumeAfterScrub()
       } else if (viewMode === 'edited') {
@@ -1137,8 +1150,18 @@ export function VideoTimelineEditor({ uid, mode, onClose, onSaved }: Props) {
     editedActiveCutIdRef.current = cut.id
     playRangeRef.current = { in: cut.in, out: cut.out }
     const needsSrcSwap = previewSource !== cut.source
+    void window.noey.log.write(
+      'TimelineEditor',
+      `selectCut cut=${cut.id} source=${cut.source} in=${cut.in} needsSrcSwap=${needsSrcSwap} viewMode=${viewMode}`
+    )
     if (needsSrcSwap) {
+      // Don't touch the (stale) active video here — the `previewSrc` effect
+      // below applies the seek once the new source has actually swapped in.
+      // Seeking here too raced with that effect and could apply to the wrong
+      // video element since setPreviewSrc/setPreviewSource haven't committed
+      // to a re-render yet at this point in the async function.
       await loadPreviewFor(cut.source)
+      return
     }
     const v = activeVideo()
     if (v) {
@@ -1151,7 +1174,7 @@ export function VideoTimelineEditor({ uid, mode, onClose, onSaved }: Props) {
       setCurrentTime(activeT)
       syncScrollFromTime(activeT)
       updateTimeLabel(activeT)
-      if (!needsSrcSwap && resumePlaybackRef.current) void v.play()
+      if (resumePlaybackRef.current) void v.play()
     }
   }
 
@@ -1173,6 +1196,10 @@ export function VideoTimelineEditor({ uid, mode, onClose, onSaved }: Props) {
           ? (computeEditedSegments(cutsRef.current).find((s) => s.cut.id === cutId)?.editedIn ??
             range.in)
           : range.in
+      void window.noey.log.write(
+        'TimelineEditor',
+        `previewSrc onLoaded cutId=${cutId} range.in=${range.in} activeT=${activeT} duration=${v.duration}`
+      )
       currentTimeRef.current = activeT
       setCurrentTime(activeT)
       syncScrollFromTime(activeT)
@@ -1933,61 +1960,73 @@ export function VideoTimelineEditor({ uid, mode, onClose, onSaved }: Props) {
             </div>
           </div>
 
-          {/* Scene sequence — fixed height, horizontal scroll */}
+          {/* Scene sequence — fixed height, horizontal scroll, collapsible */}
           <div
             className="flex shrink-0 flex-col overflow-hidden border-t border-white/10 px-5 py-2"
-            style={{ height: EDITOR_SCENE_BAND_PX }}
+            style={{ height: sceneCollapsed ? 'auto' : EDITOR_SCENE_BAND_PX }}
           >
             <div className="mb-1.5 flex shrink-0 items-center justify-between gap-2">
-              <h3 className="text-xs font-semibold text-amber-200/60 uppercase tracking-widest">
-                ลำดับเล่นจริง ({cuts.length} scene
-                {isDub ? ` · ${countVoiceoverLines(cuts)} บรรทัด` : ''})
-              </h3>
               <button
                 type="button"
-                onClick={addSceneAtPlayhead}
-                title={withShortcut('เพิ่ม scene ที่ตำแหน่งขีดแดง (playhead)', 'add-scene')}
-                className="flex shrink-0 items-center gap-1 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[10px] font-medium text-amber-200 hover:bg-amber-500/20"
+                onClick={() => setSceneCollapsed((v) => !v)}
+                className="flex items-center gap-1 text-xs font-semibold text-amber-200/60 uppercase tracking-widest hover:text-amber-100"
               >
-                <Plus size={11} />
-                เพิ่ม scene
+                {sceneCollapsed ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                ลำดับเล่นจริง ({cuts.length} scene
+                {isDub ? ` · ${countVoiceoverLines(cuts)} บรรทัด` : ''})
               </button>
+              {!sceneCollapsed && (
+                <button
+                  type="button"
+                  onClick={addSceneAtPlayhead}
+                  title={withShortcut('เพิ่ม scene ที่ตำแหน่งขีดแดง (playhead)', 'add-scene')}
+                  className="flex shrink-0 items-center gap-1 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[10px] font-medium text-amber-200 hover:bg-amber-500/20"
+                >
+                  <Plus size={11} />
+                  เพิ่ม scene
+                </button>
+              )}
             </div>
-            <DndContext
-              sensors={sensors}
-              collisionDetection={closestCenter}
-              onDragEnd={handleSequenceDragEnd}
-            >
-              <SortableContext
-                items={cuts.map((c) => c.id)}
-                strategy={horizontalListSortingStrategy}
+            {!sceneCollapsed && (
+              <DndContext
+                sensors={sensors}
+                collisionDetection={closestCenter}
+                onDragEnd={handleSequenceDragEnd}
               >
-                <ul className="scroll-ghost flex min-h-0 flex-1 gap-2 overflow-x-auto overflow-y-hidden pb-1">
-                  {cuts.map((c, i) => (
-                    <SequenceItem
-                      key={c.id}
-                      cut={c}
-                      index={i}
-                      allCuts={cuts}
-                      isDub={isDub}
-                      selected={c.id === selectedId}
-                      onSelect={() => void selectCut(c)}
-                      onDelete={() => deleteCut(c.id)}
-                    />
-                  ))}
-                </ul>
-              </SortableContext>
-            </DndContext>
+                <SortableContext
+                  items={cuts.map((c) => c.id)}
+                  strategy={horizontalListSortingStrategy}
+                >
+                  <ul className="scroll-ghost flex min-h-0 flex-1 gap-2 overflow-x-auto overflow-y-hidden pb-1">
+                    {cuts.map((c, i) => (
+                      <SequenceItem
+                        key={c.id}
+                        cut={c}
+                        index={i}
+                        selected={c.id === selectedId}
+                        onSelect={() => void selectCut(c)}
+                        onDelete={() => deleteCut(c.id)}
+                      />
+                    ))}
+                  </ul>
+                </SortableContext>
+              </DndContext>
+            )}
           </div>
 
-          {/* Voiceover script — fixed height when dub_first */}
+          {/* Voiceover script — fixed height when dub_first, collapsible */}
           {isDub && selectedCut && (
             <div
               className="flex shrink-0 flex-col overflow-hidden border-t border-white/10 px-5 py-2"
-              style={{ height: EDITOR_SCRIPT_BAND_PX }}
+              style={{ height: scriptCollapsed ? 'auto' : EDITOR_SCRIPT_BAND_PX }}
             >
               <div className="mb-1 flex shrink-0 items-center justify-between gap-2">
-                <h3 className="text-xs font-semibold text-amber-200/60 uppercase tracking-widest">
+                <button
+                  type="button"
+                  onClick={() => setScriptCollapsed((v) => !v)}
+                  className="flex items-center gap-1 text-xs font-semibold text-amber-200/60 uppercase tracking-widest hover:text-amber-100"
+                >
+                  {scriptCollapsed ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
                   สคริปต์เสียงพากย์ — บรรทัด {cutLineId(selectedCut)}
                   {cutsInLine(cuts, cutLineId(selectedCut)).length > 1 && (
                     <span className="ml-1.5 font-normal normal-case text-amber-300/45">
@@ -1995,25 +2034,29 @@ export function VideoTimelineEditor({ uid, mode, onClose, onSaved }: Props) {
                       {cutsInLine(cuts, cutLineId(selectedCut)).length})
                     </span>
                   )}
-                </h3>
-                <button
-                  type="button"
-                  onClick={addMontageCut}
-                  title={withShortcut('เพิ่มมุม', 'add-angle')}
-                  className="flex shrink-0 items-center gap-1 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[10px] font-medium text-amber-200 hover:bg-amber-500/20"
-                >
-                  <Layers size={11} />
-                  เพิ่มมุม
                 </button>
+                {!scriptCollapsed && (
+                  <button
+                    type="button"
+                    onClick={addMontageCut}
+                    title={withShortcut('เพิ่มมุม', 'add-angle')}
+                    className="flex shrink-0 items-center gap-1 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[10px] font-medium text-amber-200 hover:bg-amber-500/20"
+                  >
+                    <Layers size={11} />
+                    เพิ่มมุม
+                  </button>
+                )}
               </div>
-              <textarea
-                value={lineScriptFor(cuts, cutLineId(selectedCut))}
-                onChange={(e) => updateLineScript(cutLineId(selectedCut), e.target.value)}
-                onFocus={beginEdit}
-                onBlur={commitEdit}
-                className="min-h-0 flex-1 resize-none rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-amber-50 outline-none focus:border-amber-400/50"
-                placeholder="พิมพ์สคริปต์สำหรับบรรทัดนี้ (ใช้ร่วมทุกมุม)…"
-              />
+              {!scriptCollapsed && (
+                <textarea
+                  value={lineScriptFor(cuts, cutLineId(selectedCut))}
+                  onChange={(e) => updateLineScript(cutLineId(selectedCut), e.target.value)}
+                  onFocus={beginEdit}
+                  onBlur={commitEdit}
+                  className="min-h-0 flex-1 resize-none rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-amber-50 outline-none focus:border-amber-400/50"
+                  placeholder="พิมพ์สคริปต์สำหรับบรรทัดนี้ (ใช้ร่วมทุกมุม)…"
+                />
+              )}
             </div>
           )}
         </div>
@@ -2420,16 +2463,12 @@ function EditedCutBlock({
 function SequenceItem({
   cut,
   index,
-  allCuts,
-  isDub,
   selected,
   onSelect,
   onDelete
 }: {
   cut: WorkingCut
   index: number
-  allCuts: WorkingCut[]
-  isDub: boolean
   selected: boolean
   onSelect: () => void
   onDelete: () => void
@@ -2442,14 +2481,10 @@ function SequenceItem({
     transition,
     opacity: isDragging ? 0.55 : 1
   }
-  const lineId = cutLineId(cut)
-  const lineCuts = cutsInLine(allCuts, lineId)
-  const angleIdx = cutIndexInLine(allCuts, cut)
-  const badgeLabel = isDub ? String(lineId) : String(index + 1)
-  const subLabel =
-    isDub && lineCuts.length > 1
-      ? `มุม ${angleIdx}/${lineCuts.length} · ${(cut.out - cut.in).toFixed(1)}s`
-      : `${(cut.out - cut.in).toFixed(1)}s`
+  // Plain sequential position (1, 2, 3, ...) — always matches current visual
+  // order, so drag-reordering renumbers automatically with no extra state.
+  const badgeLabel = String(index + 1)
+  const subLabel = `${(cut.out - cut.in).toFixed(1)}s`
 
   return (
     <li
@@ -2473,11 +2508,7 @@ function SequenceItem({
         {badgeLabel}
       </span>
       <div className="min-w-0 flex-1">
-        <p className="truncate font-medium text-amber-100/90">
-          {isDub
-            ? `บรรทัด ${lineId}${lineCuts.length > 1 ? ` · มุม ${angleIdx}` : ''}`
-            : cut.label || cut.source}
-        </p>
+        <p className="truncate font-medium text-amber-100/90">{badgeLabel}</p>
         <p className="text-amber-300/40">{subLabel}</p>
       </div>
       <button

@@ -23,7 +23,7 @@ extraResources:
   - from: resources-staging/ffmpeg
     to: ffmpeg
 win:
-  executableName: noey-video-edit
+  executableName: Noey Video Edit
   target:
     - target: nsis
       arch: [x64]

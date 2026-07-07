@@ -104,8 +104,8 @@ def has_audio_stream(path: str | Path) -> bool:
     return any(s.get("codec_type") == "audio" for s in meta.get("streams", []))
 
 
-def video_stream_info(path: str | Path) -> dict[str, int]:
-    """Return width, height, and rounded fps for the primary video stream."""
+def video_stream_info(path: str | Path) -> dict[str, Any]:
+    """Return width, height, rounded fps, and codec name for the primary video stream."""
     meta = probe_media(path)
     stream = next(s for s in meta.get("streams", []) if s.get("codec_type") == "video")
     fps_raw = stream.get("r_frame_rate") or stream.get("avg_frame_rate") or "30/1"
@@ -114,7 +114,41 @@ def video_stream_info(path: str | Path) -> dict[str, int]:
         fps = round(int(num) / max(int(den), 1))
     else:
         fps = round(float(fps_raw))
-    return {"width": int(stream["width"]), "height": int(stream["height"]), "fps": max(fps, 1)}
+    return {
+        "width": int(stream["width"]),
+        "height": int(stream["height"]),
+        "fps": max(fps, 1),
+        "codec_name": str(stream.get("codec_name") or ""),
+    }
+
+
+# Video codecs Chromium/Electron's <video> element can reliably play AND seek.
+# Phone exports in HEVC (H.265) or other codecs decode/play in Electron but
+# silently fail to seek — see desktop TimelineEditor investigation (2026-07-07).
+BROWSER_SAFE_VIDEO_CODECS = {"h264", "vp8", "vp9", "av1"}
+
+
+def is_browser_safe_video_codec(codec_name: str) -> bool:
+    return codec_name.lower() in BROWSER_SAFE_VIDEO_CODECS
+
+
+def transcode_to_h264(src: Path, dest: Path) -> None:
+    """Re-encode `src` to H.264/AAC with faststart into `dest` (may be the same
+    path as `src` — writes to a temp file first, then replaces atomically)."""
+    import ffmpeg
+
+    tmp = dest.with_name(f".{dest.name}.transcoding{dest.suffix}")
+    stream = ffmpeg.input(str(src)).output(
+        str(tmp),
+        vcodec="libx264",
+        preset="veryfast",
+        crf=20,
+        acodec="aac",
+        audio_bitrate="192k",
+        movflags="+faststart",
+    )
+    run_ffmpeg(stream.overwrite_output(), label="transcode_to_h264")
+    tmp.replace(dest)
 
 
 def media_duration(path: str | Path) -> float:

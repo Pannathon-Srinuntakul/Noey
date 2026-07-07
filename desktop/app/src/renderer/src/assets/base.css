@@ -31,12 +31,18 @@
   --color-text: var(--ev-c-text-1);
 }
 
-*,
-*::before,
-*::after {
-  box-sizing: border-box;
-  margin: 0;
-  font-weight: normal;
+/* Layered (not left bare) so Tailwind's utilities — which live in its own
+ * layers — can still override this reset. Unlayered CSS always beats layered
+ * CSS regardless of selector specificity, so a bare `* { margin: 0 }` here
+ * would silently zero out every mb-*/mt-*/space-y-* utility in the app. */
+@layer base {
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+    margin: 0;
+    font-weight: normal;
+  }
 }
 
 ul {
@@ -48,19 +54,7 @@ body {
   color: var(--color-text);
   background: var(--color-background);
   line-height: 1.6;
-  font-family:
-    Inter,
-    -apple-system,
-    BlinkMacSystemFont,
-    'Segoe UI',
-    Roboto,
-    Oxygen,
-    Ubuntu,
-    Cantarell,
-    'Fira Sans',
-    'Droid Sans',
-    'Helvetica Neue',
-    sans-serif;
+  font-family: 'Noto Sans Thai', ui-sans-serif, system-ui, -apple-system, sans-serif;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;

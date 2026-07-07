@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
+import { Film, Loader2 } from 'lucide-react'
 import type { LocalProject } from '../../preload'
 import { ApiError, login, me, restoreSession, type Me } from './lib/api'
 import type { ApiSession } from './lib/videosLocalApi'
-import ProjectListPage from './pages/ProjectListPage'
-import DubWizard from './pages/DubWizard'
+import NewProjectSidebar from './components/NewProjectSidebar'
+import ProjectCard from './components/ProjectCard'
 
 // Backend URL is baked in at build time — users never see or set it.
 // Override for local dev/self-hosting: VITE_BACKEND_URL=... npm run build
@@ -55,33 +56,54 @@ function LoginPage({ onLogin }: { onLogin: (s: Session) => void }): React.JSX.El
   }
 
   return (
-    <div className="login-page">
-      <h1>Noey Video Edit</h1>
-      <form onSubmit={submit} className="login-form">
-        <label>
-          อีเมล
-          <input
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            autoFocus
-            required
-          />
-        </label>
-        <label>
-          รหัสผ่าน
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-          />
-        </label>
-        {error && <div className="login-error">{error}</div>}
-        <button type="submit" disabled={busy}>
-          {busy ? 'กำลังเข้าสู่ระบบ…' : 'เข้าสู่ระบบ'}
-        </button>
-      </form>
+    <div className="flex h-full items-center justify-center bg-[#07080d]">
+      <div className="w-full max-w-sm rounded-2xl border border-white/10 bg-white/5 p-8 shadow-2xl backdrop-blur">
+        <h1 className="mb-1 text-xl font-bold text-amber-200">Noey Video Edit</h1>
+        <p className="mb-6 text-sm text-zinc-400">เข้าสู่ระบบ</p>
+
+        <form onSubmit={submit} className="space-y-4">
+          <label className="block">
+            <span className="mb-1 block text-xs font-medium text-zinc-400">อีเมล</span>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              autoFocus
+              required
+              className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-amber-500"
+            />
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-xs font-medium text-zinc-400">รหัสผ่าน</span>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+              className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-amber-500"
+            />
+          </label>
+          {error && (
+            <div className="space-y-1 rounded-lg bg-red-500/15 px-3 py-2 text-sm text-red-300">
+              <p>{error}</p>
+              <button
+                type="button"
+                className="text-xs text-red-300/60 underline hover:text-red-200"
+                onClick={() => window.noey.log.openFolder()}
+              >
+                เปิดโฟลเดอร์ log
+              </button>
+            </div>
+          )}
+          <button
+            type="submit"
+            disabled={busy}
+            className="w-full rounded-lg bg-amber-600 py-2.5 text-sm font-semibold text-white shadow hover:bg-amber-500 disabled:opacity-40"
+          >
+            {busy ? 'กำลังเข้าสู่ระบบ…' : 'เข้าสู่ระบบ'}
+          </button>
+        </form>
+      </div>
     </div>
   )
 }
@@ -93,9 +115,8 @@ function Workspace({
   session: Session
   onLogout: () => void
 }): React.JSX.Element {
-  const [openProject, setOpenProject] = useState<LocalProject | null>(null)
-  const [importing, setImporting] = useState(false)
-  const [importError, setImportError] = useState<string | null>(null)
+  const [projects, setProjects] = useState<LocalProject[]>([])
+  const [loadingList, setLoadingList] = useState(true)
 
   const apiSession: ApiSession = {
     baseUrl: session.baseUrl,
@@ -111,49 +132,79 @@ function Workspace({
     }
   }
 
-  const createFromFiles = useCallback(
-    async (files: { path: string; name: string }[]): Promise<void> => {
-      setImporting(true)
-      setImportError(null)
-      try {
-        const name = files[0].name.replace(/\.[^.]+$/, '')
-        const project = await window.noey.projects.create({ name })
-        const projectDir = await window.noey.projects.dir(project.uid)
-        const done = await window.noey.sidecar.ingest.run({
-          projectDir,
-          sources: files.map((f) => f.path)
-        })
-        const updated = await window.noey.projects.update(project.uid, {
-          clips: done.clips as LocalProject['clips'],
-          step: 'imported'
-        })
-        setOpenProject(updated)
-      } catch (err) {
-        setImportError(String((err as Error).message ?? err))
-      } finally {
-        setImporting(false)
-      }
-    },
-    []
-  )
+  const load = useCallback(() => {
+    window.noey.projects.list().then((list) => {
+      setProjects(list)
+      setLoadingList(false)
+    })
+  }, [])
 
-  if (openProject) {
-    return (
-      <DubWizard project={openProject} session={apiSession} onBack={() => setOpenProject(null)} />
-    )
+  useEffect(load, [load])
+
+  const handleCreated = (project: LocalProject): void => {
+    setProjects((prev) => [project, ...prev])
+  }
+
+  const handleDeleted = (uid: string): void => {
+    setProjects((prev) => prev.filter((p) => p.uid !== uid))
   }
 
   return (
-    <div className="workspace">
-      <header className="workspace-header">
-        <span>
-          {session.profile.email} · {session.profile.tenant_slug}
-        </span>
-        <button onClick={onLogout}>ออกจากระบบ</button>
+    <div
+      className="flex h-screen w-full flex-col overflow-hidden"
+      style={{ background: 'linear-gradient(160deg, #1a0e06 0%, #0d1a14 100%)' }}
+    >
+      <header className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-white/10 px-4 py-3 sm:px-6 sm:py-4">
+        <div className="flex items-center gap-3">
+          <Film size={18} className="text-amber-400" />
+          <h1 className="font-bold tracking-wide text-amber-100">AI Video Editor</h1>
+          <span className="rounded-full border border-amber-500/40 px-2 py-0.5 text-[10px] font-semibold text-amber-400">
+            MVP · talking_head + dub_first
+          </span>
+        </div>
+        <div className="flex items-center gap-3 text-sm text-zinc-400">
+          <span>
+            {session.profile.email} · {session.profile.tenant_slug}
+          </span>
+          <button
+            onClick={onLogout}
+            className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-zinc-300 hover:border-white/25 hover:text-white"
+          >
+            ออกจากระบบ
+          </button>
+        </div>
       </header>
-      {importing && <p className="progress-msg">กำลังนำเข้าคลิป…</p>}
-      {importError && <div className="wizard-error">{importError}</div>}
-      <ProjectListPage session={apiSession} onOpen={setOpenProject} onCreate={createFromFiles} />
+      <div className="scroll-ghost flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4 lg:flex-row lg:gap-6 lg:overflow-hidden lg:p-6">
+        <NewProjectSidebar onCreated={handleCreated} />
+
+        <div className="flex min-w-0 flex-col gap-4 lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
+          <h2 className="text-sm font-semibold uppercase tracking-widest text-amber-200/70">
+            โปรเจกต์ของฉัน
+          </h2>
+          {loadingList ? (
+            <div className="flex items-center gap-2 text-sm text-amber-300/50">
+              <Loader2 size={14} className="animate-spin" /> กำลังโหลด…
+            </div>
+          ) : projects.length === 0 ? (
+            <div className="flex flex-col items-center justify-center rounded-2xl border border-white/10 bg-white/5 py-16 text-center">
+              <Film size={40} className="text-amber-400/20" />
+              <p className="mt-4 text-sm text-amber-300/50">ยังไม่มีโปรเจกต์</p>
+              <p className="mt-1 text-xs text-amber-300/30">อัปโหลดวิดีโอเพื่อเริ่มต้น</p>
+            </div>
+          ) : (
+            <div className="grid items-stretch gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              {projects.map((p) => (
+                <ProjectCard
+                  key={p.uid}
+                  project={p}
+                  session={apiSession}
+                  onDeleted={handleDeleted}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   )
 }
@@ -193,7 +244,12 @@ function App(): React.JSX.Element {
     setSession(null)
   }, [])
 
-  if (restoring) return <div className="login-page">กำลังโหลด…</div>
+  if (restoring)
+    return (
+      <div className="flex h-full items-center justify-center bg-[#07080d] text-sm text-zinc-400">
+        กำลังโหลด…
+      </div>
+    )
   if (!session) return <LoginPage onLogin={setSession} />
   return <Workspace session={session} onLogout={logout} />
 }

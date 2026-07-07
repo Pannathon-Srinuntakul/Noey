@@ -42,6 +42,7 @@ export interface LocalProject {
   clips: LocalClip[]
   brief?: string
   userScript?: string
+  scriptStyles?: string[]
   targetDurationSec?: number
   remote?: { uid: string; jobId?: string }
   voiceoverPath?: string

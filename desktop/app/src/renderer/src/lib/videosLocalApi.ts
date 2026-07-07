@@ -73,8 +73,12 @@ async function request<T>(
   let res: Response
   try {
     res = await fetch(`${session.baseUrl.replace(/\/+$/, '')}${path}`, { ...init, headers })
-  } catch {
-    throw new ApiError(0, `เชื่อมต่อ server ไม่ได้ (${session.baseUrl})`)
+  } catch (err) {
+    void window.noey.log.write(
+      'videosLocalApi',
+      `fetch failed ${session.baseUrl}${path}: ${String(err)}`
+    )
+    throw new ApiError(0, 'เชื่อมต่อ server ไม่ได้ ลองใหม่อีกครั้ง')
   }
 
   if (res.status === 401 && !retried) {
@@ -120,7 +124,13 @@ export async function analyzeFrames(
   const form = new FormData()
   for (const entry of entries) {
     const mediaUrl = window.noey.media.urlFor(localUid, entry.file)
-    const blob = await (await fetch(mediaUrl)).blob()
+    let blob: Blob
+    try {
+      blob = await (await fetch(mediaUrl)).blob()
+    } catch (err) {
+      void window.noey.log.write('videosLocalApi', `frame read failed ${mediaUrl}: ${String(err)}`)
+      throw new ApiError(0, `อ่านไฟล์ frame ไม่ได้: ${entry.name}`)
+    }
     form.append('files', blob, entry.name)
   }
   const manifest = entries.map((e) => ({
@@ -196,7 +206,14 @@ export async function uploadAudio(
 ): Promise<{ job_id: string }> {
   const form = new FormData()
   for (const wav of wavFiles) {
-    const blob = await (await fetch(window.noey.media.urlFor(localUid, wav.file))).blob()
+    const mediaUrl = window.noey.media.urlFor(localUid, wav.file)
+    let blob: Blob
+    try {
+      blob = await (await fetch(mediaUrl)).blob()
+    } catch (err) {
+      void window.noey.log.write('videosLocalApi', `wav read failed ${mediaUrl}: ${String(err)}`)
+      throw new ApiError(0, `อ่านไฟล์เสียงไม่ได้: ${wav.name}`)
+    }
     form.append('files', blob, wav.name)
   }
   return request(session, `/videos/${remoteUid}/transcribe-audio`, { method: 'POST', body: form })

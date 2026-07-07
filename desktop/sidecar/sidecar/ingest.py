@@ -18,7 +18,13 @@ from sidecar.bootstrap import ensure_backend_on_path
 
 ensure_backend_on_path()
 
-from packages.video.ffmpeg_bin import has_audio_stream, media_duration, video_stream_info  # noqa: E402
+from packages.video.ffmpeg_bin import (  # noqa: E402
+    has_audio_stream,
+    is_browser_safe_video_codec,
+    media_duration,
+    transcode_to_h264,
+    video_stream_info,
+)
 from packages.video.scene import DUB_MAX_CLIP_SEC, dub_clip_exceeds_upload_limit  # noqa: E402
 
 
@@ -55,6 +61,20 @@ def run_ingest(job: IngestJob, emit) -> dict[str, Any]:
             info = video_stream_info(dest)
         except StopIteration:
             raise ValueError(f"{src.name} ไม่มี video stream") from None
+
+        # Phone exports in HEVC/H.265 (or other non-browser codecs) decode and
+        # play in the Electron preview but silently fail to seek — re-encode to
+        # H.264 so the timeline editor's scrub/scene-jump/edited-mode playback
+        # actually works. ffmpeg's own render pipeline (final cuts) handles any
+        # codec fine; this only affects what's shown in the local preview.
+        if not is_browser_safe_video_codec(info["codec_name"]):
+            emit({
+                "event": "progress", "stage": "transcode", "step": i + 1, "total": total,
+                "message": f"กำลังแปลงวิดีโอให้เล่น/ลากได้ ({src.name})…",
+            })
+            transcode_to_h264(dest, dest)
+            info = video_stream_info(dest)
+
         clip = {
             "id": f"clip{i}",
             "file": f"normalized/{dest.name}",

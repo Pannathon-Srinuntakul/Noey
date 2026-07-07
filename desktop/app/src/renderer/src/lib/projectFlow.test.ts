@@ -82,9 +82,9 @@ describe('groupScriptLines', () => {
       ]
     })
     expect(lines).toEqual([
-      { lineId: 1, script: 'เปิดคลิป', cutCount: 1 },
-      { lineId: 2, script: 'ช่วงกลาง', cutCount: 2 },
-      { lineId: 3, script: 'CTA', cutCount: 1 }
+      { lineId: 1, script: 'เปิดคลิป', cutCount: 1, outputIn: 0, outputOut: 0 },
+      { lineId: 2, script: 'ช่วงกลาง', cutCount: 2, outputIn: 0, outputOut: 0 },
+      { lineId: 3, script: 'CTA', cutCount: 1, outputIn: 0, outputOut: 0 }
     ])
   })
 

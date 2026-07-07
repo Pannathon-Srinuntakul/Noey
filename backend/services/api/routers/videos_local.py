@@ -29,7 +29,7 @@ from packages.db.models.core_auth import Job
 from packages.db.models.video_project import VideoProject
 from packages.db.session import bind_tenant_search_path
 from packages.llm.usage import UsageCtx, reset_usage_ctx, set_usage_ctx
-from packages.video.s3 import push_project_files
+from packages.video.s3 import push_project_files, resolve_stored_output
 from packages.video.storage import data_root
 from packages.video.timeline import cuts_duration, normalize_dub_edit_script
 from services.api.deps import CurrentUser, db_session
@@ -207,9 +207,10 @@ async def plan_dub(
         raise HTTPException(400, "ยังไม่มี edit script — ต้อง analyze ก่อน")
 
     root = data_root()
-    edit_script_file = root / proj.edit_script_path
-    if not edit_script_file.is_file():
-        raise HTTPException(404, "edit_script.json หายจาก server")
+    try:
+        edit_script_file = await resolve_stored_output(uid, proj.edit_script_path)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, "edit_script.json หายจาก server") from exc
     edit_script = json.loads(edit_script_file.read_text(encoding="utf-8"))
 
     from packages.video.dub_ai import plan_dub_timeline_cuts
@@ -322,9 +323,10 @@ async def get_local_timeline(
     proj = await _get_local_project(session, uid, auth.user_id)
     if not proj.timeline_path:
         raise HTTPException(404, "ยังไม่มี timeline — รอ AI วางแผนก่อน")
-    timeline_file = data_root() / proj.timeline_path
-    if not timeline_file.is_file():
-        raise HTTPException(404, "timeline.json หายจาก server")
+    try:
+        timeline_file = await resolve_stored_output(uid, proj.timeline_path)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, "timeline.json หายจาก server") from exc
     return json.loads(timeline_file.read_text(encoding="utf-8"))
 
 

@@ -6,6 +6,7 @@ import { registerSidecarIpc } from './sidecar'
 import { registerAuthIpc } from './authStore'
 import { registerProjectsIpc } from './projects'
 import { registerMediaProtocol, registerMediaScheme } from './media'
+import { registerLogIpc } from './logger'
 
 // Privileged scheme registration must happen before app is ready.
 registerMediaScheme()
@@ -57,6 +58,7 @@ app.whenReady().then(() => {
   })
 
   registerMediaProtocol()
+  registerLogIpc()
   registerSidecarIpc()
   registerAuthIpc()
   registerProjectsIpc()
