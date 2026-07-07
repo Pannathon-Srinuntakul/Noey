@@ -174,10 +174,10 @@ function Workspace({
           </button>
         </div>
       </header>
-      <div className="scroll-ghost flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4 lg:flex-row lg:gap-6 lg:overflow-hidden lg:p-6">
+      <div className="scroll-ghost flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4 md:flex-row md:gap-6 md:overflow-hidden md:p-6">
         <NewProjectSidebar onCreated={handleCreated} />
 
-        <div className="flex min-w-0 flex-col gap-4 lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
+        <div className="flex min-w-0 flex-col gap-4 md:min-h-0 md:flex-1 md:overflow-y-auto">
           <h2 className="text-sm font-semibold uppercase tracking-widest text-amber-200/70">
             โปรเจกต์ของฉัน
           </h2>

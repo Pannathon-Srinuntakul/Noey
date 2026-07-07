@@ -69,7 +69,7 @@ class WhisperService:
                 ),
                 "vad_filter": vad_filter,
                 "no_speech_threshold": 0.80,
-                "log_prob_threshold": -2.0,
+                "log_prob_threshold": -1.0,
                 "compression_ratio_threshold": 2.4,
                 "temperature": [0.0, 0.2, 0.4, 0.6, 0.8, 1.0],
             }
@@ -88,7 +88,7 @@ class WhisperService:
                 avg_lp = getattr(seg, "avg_logprob", 0.0)
                 comp = getattr(seg, "compression_ratio", 0.0)
                 text = (seg.text or "").strip()
-                if not text or no_speech >= 0.80 or avg_lp < -2.0 or comp > 2.4:
+                if not text or no_speech >= 0.80 or avg_lp < -1.0 or comp > 2.4:
                     dropped += 1
                     continue
                 tight = _tighten({

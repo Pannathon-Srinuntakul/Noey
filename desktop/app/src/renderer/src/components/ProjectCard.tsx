@@ -172,12 +172,6 @@ export default function ProjectCard({
 
       {step === 'waiting_vo' && (
         <div className="mt-3 space-y-3">
-          <div className="rounded-lg border border-purple-200 bg-purple-50 px-3 py-2.5">
-            <p className="text-xs font-semibold text-purple-700">AI วิเคราะห์ซีนเสร็จแล้ว</p>
-            <p className="mt-1 text-[11px] text-purple-600/80">
-              เลือกไฟล์เสียงพากย์ (mp3/wav/m4a) เพื่อสร้างคลิปขั้นสุดท้าย
-            </p>
-          </div>
           <DubVideoPlayer
             key={mediaKey}
             mediaKey={mediaKey}
@@ -227,15 +221,19 @@ export default function ProjectCard({
 
       {step === 'done' && (
         <div className="mt-3 space-y-2">
-          <p className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2.5 text-xs text-sky-700">
-            เสร็จแล้ว — ไฟล์วิดีโออยู่บนเครื่องที่ render ผ่านแอพ desktop (server ไม่เก็บไฟล์วิดีโอ)
-          </p>
-          {mode === 'dub_first' && (
+          {mode === 'dub_first' ? (
             <DubVideoPlayer
               key={mediaKey}
               mediaKey={mediaKey}
               src={window.noey.media.urlFor(project.uid, 'final.mp4')}
               editScript={editScript}
+            />
+          ) : (
+            <video
+              key={mediaKey}
+              controls
+              className="aspect-9/16 w-full rounded-lg bg-black"
+              src={window.noey.media.urlFor(project.uid, 'final.mp4')}
             />
           )}
           <div className="flex gap-2">

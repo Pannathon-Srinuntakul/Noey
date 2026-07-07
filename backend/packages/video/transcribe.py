@@ -20,14 +20,21 @@ def merge_graphemes_to_words(words: list[dict[str, Any]]) -> list[dict[str, Any]
     """
     if not words:
         return words
-    try:
-        from pythainlp.tokenize import word_tokenize  # type: ignore[import-untyped]
-    except ImportError:
-        return words
 
     # Build full text from graphemes
     full_text = "".join(w.get("word", "") for w in words)
     if not full_text.strip():
+        return words
+    # Only Thai text is actually split into grapheme clusters by Whisper — running
+    # non-Thai words (numbers, English fragments) through the Thai word tokenizer
+    # can merge/collapse distinct words that were never grapheme fragments to
+    # begin with, corrupting their timestamps.
+    if not re.search(r"[฀-๿]", full_text):
+        return words
+
+    try:
+        from pythainlp.tokenize import word_tokenize  # type: ignore[import-untyped]
+    except ImportError:
         return words
 
     thai_words = word_tokenize(full_text, engine="newmm", keep_whitespace=False)
@@ -79,8 +86,9 @@ _HALLUCINATION_PHRASES = frozenset({
 # Decode-confidence gates (faster-whisper exposes these per segment).
 # Calibrated for Thai fine-tuned models (Thonburian) which output lower logprob
 # than OpenAI base models even on clear speech.
-NO_SPEECH_PROB_MAX = 0.80     # above this → likely non-speech
-AVG_LOGPROB_MIN = -2.0        # Thai fine-tuned baseline is lower than English models
+NO_SPEECH_PROB_MAX = 0.60     # above this → likely non-speech
+AVG_LOGPROB_MIN = -1.5        # Thai fine-tuned baseline is lower than English models,
+# but real Thai speech sits around -0.4 to -0.8 — -2.0 is genuinely garbled output.
 COMPRESSION_RATIO_MAX = 2.4   # above this → repetition loop (hallucination)
 # A single word should not span longer than this (DTW timestamp glitch otherwise).
 MAX_WORD_SPAN = 1.2

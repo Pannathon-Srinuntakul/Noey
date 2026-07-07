@@ -18,7 +18,7 @@ import {
 import { CSS } from '@dnd-kit/utilities'
 import { ChevronDown, ChevronUp, Film, GripVertical, Loader2, Upload } from 'lucide-react'
 import type { LocalProject } from '../../../preload'
-import { pickVideoFiles, type PickedVideoFile } from '../lib/pickVideoFiles'
+import { pickVideoFiles, toPickedVideoFiles, type PickedVideoFile } from '../lib/pickVideoFiles'
 import {
   DUB_DURATION_CHIPS,
   DUB_SCRIPT_STYLES,
@@ -259,6 +259,12 @@ export default function NewProjectSidebar({ onCreated }: Props): React.JSX.Eleme
     if (picked.length > 0) setFiles((prev) => [...prev, ...picked.map(toUploadItem)])
   }
 
+  const handleFilesDrop = (e: React.DragEvent): void => {
+    e.preventDefault()
+    const dropped = toPickedVideoFiles(Array.from(e.dataTransfer.files))
+    if (dropped.length > 0) setFiles((prev) => [...prev, ...dropped.map(toUploadItem)])
+  }
+
   const handleFileDragEnd = (event: DragEndEvent): void => {
     const { active, over } = event
     if (!over || active.id === over.id) return
@@ -318,7 +324,7 @@ export default function NewProjectSidebar({ onCreated }: Props): React.JSX.Eleme
   }
 
   return (
-    <div className="flex w-full shrink-0 flex-col gap-4 lg:min-h-0 lg:w-96 lg:overflow-y-auto">
+    <div className="flex w-full shrink-0 flex-col gap-4 md:min-h-0 md:w-96 md:overflow-y-auto">
       <div className="flex flex-col gap-3">
         <h2 className="text-sm font-semibold uppercase tracking-widest text-amber-200/70">
           อัปโหลดวิดีโอ
@@ -329,13 +335,21 @@ export default function NewProjectSidebar({ onCreated }: Props): React.JSX.Eleme
           <button
             type="button"
             onClick={pickFiles}
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={handleFilesDrop}
             className="flex flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-amber-500/30 bg-amber-500/5 p-6 text-center transition hover:border-amber-400/50 hover:bg-amber-500/10"
           >
             <Upload size={28} className="text-amber-400/60" />
-            <span className="text-sm font-medium text-amber-100/80">เลือกวิดีโอ</span>
+            <span className="text-sm font-medium text-amber-100/80">
+              เลือกวิดีโอ หรือลากไฟล์มาวาง
+            </span>
           </button>
         ) : (
-          <div className="space-y-2">
+          <div
+            className="space-y-2"
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={handleFilesDrop}
+          >
             <DndContext
               sensors={sensors}
               collisionDetection={closestCenter}

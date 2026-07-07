@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow } from 'electron'
+import { app, screen, shell, BrowserWindow } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
@@ -12,10 +12,20 @@ import { registerLogIpc } from './logger'
 registerMediaScheme()
 
 function createWindow(): void {
+  // Size relative to the actual screen (capped) instead of a fixed 900x670 —
+  // a fixed size could exceed a smaller display or look tiny on a large one,
+  // and 900px width sat right at Tailwind's `lg:` breakpoint (1024px), so the
+  // split-panel desktop layout never actually activated by default.
+  const { width: workW, height: workH } = screen.getPrimaryDisplay().workAreaSize
+  const width = Math.min(Math.round(workW * 0.85), 1440)
+  const height = Math.min(Math.round(workH * 0.85), 900)
+
   // Create the browser window.
   const mainWindow = new BrowserWindow({
-    width: 900,
-    height: 670,
+    width,
+    height,
+    minWidth: 1024,
+    minHeight: 600,
     show: false,
     autoHideMenuBar: true,
     ...(process.platform === 'linux' ? { icon } : {}),
