@@ -23,6 +23,13 @@ from packages.video.transcribe import (
     tighten_segment_bounds,
     transcript_coverage_stats,
 )
+from packages.video.transcribe_refine import (
+    GEMINI_REFINE_SCHEMA,
+    apply_refine_results,
+    batch_segment_indices,
+    build_refine_prompt,
+    build_refine_request,
+)
 
 log = get_logger(__name__)
 
@@ -30,6 +37,11 @@ log = get_logger(__name__)
 MODAL_CHUNK_SEC = 180.0         # max audio seconds per Modal request
 MODAL_CHUNK_WHEN_SEC = 240.0    # chunk when WAV longer than 4 min (5-min uploads → 2 chunks)
 MODAL_CHUNK_WHEN_MB = 28.0      # chunk when WAV exceeds ~28 MB (16 kHz mono ≈ 4 min)
+
+# Cap the audio span per Gemini refine call so the inline base64 payload stays
+# well under the ~20 MB request limit. 16 kHz mono s16le ≈ 32 KB/s → 240 s ≈
+# 7.7 MB raw ≈ 10 MB base64. Comfortable headroom.
+REFINE_MAX_SPAN_SEC = 240.0
 
 # (phase, clip_index, clip_total) — phase: "clip_modal" | "clip_local" | "retry"
 ProgressFn = Callable[[str, int, int], Awaitable[None]]
@@ -184,6 +196,101 @@ async def transcribe_via_modal(
     return all_segments
 
 
+def _slice_wav_bytes(wav_path: pathlib.Path, start: float, end: float) -> bytes:
+    """Extract [start, end] of a WAV as 16 kHz mono s16le bytes (small payload)."""
+    import ffmpeg as ffmpeg_lib
+
+    dur = max(0.1, end - start)
+    tmp = wav_path.parent / f"_refine_{wav_path.stem}_{int(start * 1000)}.wav"
+    try:
+        run_ffmpeg(
+            ffmpeg_lib
+            .input(str(wav_path), ss=max(0.0, start), t=dur)
+            .output(str(tmp), ac=1, ar=16000, acodec="pcm_s16le", f="wav")
+            .overwrite_output(),
+            label="refine_slice_wav",
+        )
+        return tmp.read_bytes()
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+async def _call_gemini_refine(
+    model: str,
+    audio_bytes: bytes,
+    request_items: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """One Gemini refine call: audio slice + segment list → [{id, text, action}]."""
+    import base64
+    import json
+
+    from packages.llm.config import call_kwargs
+    from packages.llm.gateway import acompletion
+
+    encoded = base64.b64encode(audio_bytes).decode()
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": build_refine_prompt(request_items)},
+                {"type": "file", "file": {"file_data": f"data:audio/wav;base64,{encoded}"}},
+            ],
+        }
+    ]
+    extra = call_kwargs(model=model)
+    resp = await acompletion(
+        messages,
+        response_format={
+            "type": "json_object",
+            "response_schema": GEMINI_REFINE_SCHEMA,
+            "enforce_validation": True,
+        },
+        **extra,
+    )
+    content = resp.choices[0].message.content or "{}"
+    data = json.loads(content)
+    results = data.get("results", []) if isinstance(data, dict) else []
+    return results if isinstance(results, list) else []
+
+
+async def refine_via_gemini(
+    wav_path: pathlib.Path,
+    segments: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Gemini refine pass over ONE clip's Whisper segments (local timestamps).
+
+    ``segments`` carry timestamps local to ``wav_path`` (before any clip offset).
+    The audio is sliced into spans ≤ ``REFINE_MAX_SPAN_SEC`` so each request stays
+    under the inline-audio limit; each span's audio + its segments' text is sent
+    to Gemini, and the corrected text / cut decisions are merged back by id.
+    Timestamps are never touched. Raises on hard failure — the caller wraps this
+    and falls back to the unmodified segments.
+    """
+    from packages.core.settings import get_settings
+
+    _s = get_settings()
+    model = f"gemini/{_s.gemini_refine_model}"
+    request_items = build_refine_request(segments)
+
+    all_results: list[dict[str, Any]] = []
+    for start_i, end_i in batch_segment_indices(segments, REFINE_MAX_SPAN_SEC):
+        span_start = float(segments[start_i]["start"])
+        span_end = max(float(segments[k]["end"]) for k in range(start_i, end_i))
+        audio_bytes = _slice_wav_bytes(wav_path, span_start, span_end)
+        batch_items = request_items[start_i:end_i]
+        log.info(
+            "gemini_refine_batch",
+            wav=wav_path.name,
+            model=model,
+            segments=len(batch_items),
+            span_sec=round(span_end - span_start, 1),
+            audio_kb=round(len(audio_bytes) / 1024),
+        )
+        all_results.extend(await _call_gemini_refine(model, audio_bytes, batch_items))
+
+    return apply_refine_results(segments, all_results)
+
+
 async def run_transcription(
     audio_files: list[pathlib.Path],
     *,
@@ -209,6 +316,37 @@ async def run_transcription(
     async def _aborted() -> bool:
         return bool(should_abort and await should_abort())
 
+    # Gemini refine runs per-clip on LOCAL (pre-offset) timestamps so it hears the
+    # exact audio that produced those segments. Additive + never blocking: any
+    # failure logs and falls back to the raw Whisper segments unchanged.
+    refine_on = bool(_s.gemini_refine_enabled and _s.gemini_api_key)
+
+    async def _refine_clip(wav: pathlib.Path, local: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if not refine_on or not local:
+            return local
+        try:
+            refined = await refine_via_gemini(wav, local)
+            log.info("gemini_refine_done", wav=wav.name, before=len(local), after=len(refined),
+                     model=_s.gemini_refine_model)
+            return refined
+        except Exception as exc:  # noqa: BLE001
+            log.warning("gemini_refine_failed", wav=wav.name, error=str(exc)[:300])
+            return local
+
+    def _append_with_offset(collected: list[dict[str, Any]], local: list[dict[str, Any]], offset: float) -> None:
+        for s in local:
+            collected.append({
+                "start": round(float(s["start"]) + offset, 3),
+                "end": round(float(s["end"]) + offset, 3),
+                "text": s["text"],
+                "words": [
+                    {"word": w["word"],
+                     "start": round(float(w["start"]) + offset, 3),
+                     "end": round(float(w["end"]) + offset, 3)}
+                    for w in s.get("words", [])
+                ],
+            })
+
     if use_modal:
         log.info("whisper_config", backend="modal", url=_s.modal_whisper_url, language=_s.whisper_language)
         model = None
@@ -233,6 +371,7 @@ async def run_transcription(
                 wav, _s.modal_whisper_url, _s.whisper_language, vad_filter=vad_filter,
             )
             clip_dur = media_duration(wav)
+            local: list[dict[str, Any]] = []
             for seg in segs:
                 tight = tighten_segment_bounds({
                     "start": float(seg["start"]),
@@ -240,17 +379,14 @@ async def run_transcription(
                     "text": str(seg.get("text", "")).strip(),
                     "words": seg.get("words", []),
                 })
-                collected.append({
-                    "start": round(tight["start"] + offset, 3),
-                    "end": round(tight["end"] + offset, 3),
+                local.append({
+                    "start": tight["start"],
+                    "end": tight["end"],
                     "text": tight["text"],
-                    "words": [
-                        {"word": w["word"],
-                         "start": round(float(w["start"]) + offset, 3),
-                         "end": round(float(w["end"]) + offset, 3)}
-                        for w in tight.get("words", [])
-                    ],
+                    "words": tight.get("words", []),
                 })
+            local = await _refine_clip(wav, local)
+            _append_with_offset(collected, local, offset)
             offset += clip_dur
         return collected, 0, offset
 
@@ -278,6 +414,7 @@ async def run_transcription(
             t_wav = time.monotonic()
             segs, info = model.transcribe(str(wav), **transcribe_options)
             raw_count = 0
+            local: list[dict[str, Any]] = []
             for seg in segs:
                 if is_hallucinated_segment(
                     seg.text or "",
@@ -297,17 +434,15 @@ async def run_transcription(
                         for w in (seg.words or [])
                     ],
                 })
-                collected.append({
-                    "start": round(tight["start"] + offset, 3),
-                    "end": round(tight["end"] + offset, 3),
+                local.append({
+                    "start": tight["start"],
+                    "end": tight["end"],
                     "text": tight["text"],
-                    "words": [
-                        {"word": w["word"], "start": round(w["start"] + offset, 3),
-                         "end": round(w["end"] + offset, 3)}
-                        for w in tight["words"]
-                    ],
+                    "words": tight["words"],
                 })
                 raw_count += 1
+            local = await _refine_clip(wav, local)
+            _append_with_offset(collected, local, offset)
             clip_dur = media_duration(wav)
             log.info(
                 "transcribe_clip_done",

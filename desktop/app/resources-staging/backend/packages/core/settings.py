@@ -45,6 +45,10 @@ class Settings(BaseSettings):
     openai_api_key: str | None = None
     gemini_api_key: str | None = None
 
+    # --- Desktop dub_first video analysis (Gemini native video, proxy upload) ---
+    dub_vision_model: str = "gemini-3.5-flash"  # override via DUB_VISION_MODEL
+    dub_vision_timeout_sec: int = 1200  # video inference is slower than Files-API frames
+
     # --- Auth (JWT) ---
     jwt_secret: str = "dev_change_me_in_production"
     jwt_algorithm: str = "HS256"
@@ -82,6 +86,15 @@ class Settings(BaseSettings):
     whisper_device: str = "cpu"          # "cpu" | "cuda"
     whisper_compute: str = "int8"        # cpu: int8 | cuda: float16
     whisper_language: str = "th"         # force language; "" = auto-detect (risk of drift)
+
+    # --- Gemini transcript refine pass (hybrid: Whisper owns timing, Gemini fixes text) ---
+    # When enabled, after Whisper transcribes, Gemini LISTENS to the same audio and
+    # corrects mis-heard Thai words + flags stutter/repeat/dead-air segments to cut.
+    # Timestamps always come from Whisper — Gemini never sees or returns them.
+    # Set GEMINI_REFINE_ENABLED=false to run Whisper-only (needs gemini_api_key set to
+    # actually take effect either way).
+    gemini_refine_enabled: bool = True
+    gemini_refine_model: str = "gemini-3.5-flash"  # override via GEMINI_REFINE_MODEL
 
     # --- LLM plan limits (tokens per DAILY window, 0 = unlimited) ---
     # The window is a rolling UTC calendar day — see packages/llm/usage.py:_period_start.

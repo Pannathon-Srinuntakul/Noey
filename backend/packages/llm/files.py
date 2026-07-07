@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import pathlib
+import time
 from typing import Any
 
 import litellm
@@ -14,6 +16,12 @@ log = get_logger(__name__)
 
 VISION_JPEG_MIME = "image/jpeg"
 VIDEO_MP4_MIME = "video/mp4"
+
+# Gemini processes uploaded video files asynchronously (state PROCESSING ->
+# ACTIVE/FAILED); using a file before it reaches ACTIVE returns a 400
+# FAILED_PRECONDITION from generateContent. Poll until ready.
+GEMINI_FILE_POLL_INTERVAL_SEC = 2.0
+GEMINI_FILE_ACTIVE_TIMEOUT_SEC = 180.0
 
 
 async def upload_message_file(
@@ -73,6 +81,31 @@ def vision_file_block(file_id: str, *, mime_type: str = VISION_JPEG_MIME) -> dic
     }
 
 
+async def _wait_for_gemini_file_active(
+    file_id: str,
+    *,
+    timeout_sec: float = GEMINI_FILE_ACTIVE_TIMEOUT_SEC,
+) -> None:
+    """Poll a Gemini file until it finishes server-side processing (state ACTIVE).
+
+    LiteLLM maps Gemini's `state` to an OpenAI-style `status`: ACTIVE -> "processed",
+    FAILED -> "error", PROCESSING/unknown -> "uploaded".
+    """
+    kwargs = gemini_file_kwargs()
+    deadline = time.monotonic() + timeout_sec
+    while True:
+        info = await litellm.afile_retrieve(file_id, **kwargs)
+        status = str(getattr(info, "status", "") or "")
+        if status == "processed":
+            return
+        if status == "error":
+            detail = getattr(info, "status_details", None)
+            raise RuntimeError(f"Gemini file processing failed ({file_id}): {detail}")
+        if time.monotonic() >= deadline:
+            raise TimeoutError(f"Gemini file did not become ACTIVE within {timeout_sec:.0f}s: {file_id}")
+        await asyncio.sleep(GEMINI_FILE_POLL_INTERVAL_SEC)
+
+
 async def upload_gemini_file(
     path: pathlib.Path,
     *,
@@ -80,6 +113,8 @@ async def upload_gemini_file(
 ) -> str:
     """Upload a video to the Gemini Files API; returns the Gemini file URI.
 
+    Blocks until the file reaches ACTIVE state — Gemini processes uploaded
+    video async, and referencing it before that fails with FAILED_PRECONDITION.
     `purpose` is ignored by LiteLLM's Gemini handler (it always returns the
     uploaded file's URI as `id`), so any value works.
     """
@@ -93,6 +128,7 @@ async def upload_gemini_file(
     file_id = str(getattr(uploaded, "id", "") or "")
     if not file_id:
         raise RuntimeError("Gemini file upload returned empty id")
+    await _wait_for_gemini_file_active(file_id)
     return file_id
 
 
