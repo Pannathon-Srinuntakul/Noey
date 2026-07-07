@@ -320,6 +320,41 @@ async def generate_dub_edit_script(
         await delete_message_files(uploaded_file_ids)
 
 
+DUB_EDIT_SCHEMA_VIDEO: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "mode": {"type": "string"},
+        "totalEstimatedSec": {"type": "number"},
+        "segments": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "order": {"type": "integer"},
+                    "voiceoverLineId": {"type": "integer"},
+                    "sourceClip": {"type": "string"},
+                    "sourceIn": {"type": "number"},
+                    "sourceOut": {"type": "number"},
+                    "durationSec": {"type": "number"},
+                    "matchedFrameTime": {"type": "number"},
+                    "visualDescription": {"type": "string"},
+                    "cutStyle": {
+                        "type": "string",
+                        "enum": ["jump_cut", "standard", "zoom_in", "zoom_out"],
+                    },
+                    "voiceoverScript": {"type": "string"},
+                },
+                "required": [
+                    "order", "voiceoverLineId", "sourceClip", "sourceIn", "sourceOut",
+                    "matchedFrameTime", "cutStyle",
+                ],
+            },
+        },
+    },
+    "required": ["segments"],
+}
+
+
 def build_dub_edit_user_text_video(
     *,
     brief: str,
@@ -398,6 +433,15 @@ async def generate_dub_edit_script_video(
         messages = [{"role": "user", "content": user_msg_content}]
         extra = call_kwargs(model=model)
         extra["timeout"] = settings.dub_vision_timeout_sec
+        # Gemini does not reliably follow a JSON shape from prose instructions
+        # alone (observed in production: it invented its own top-level keys
+        # instead of "segments"). response_schema constrains decoding so the
+        # shape is guaranteed, not just requested.
+        extra["response_format"] = {
+            "type": "json_object",
+            "response_schema": DUB_EDIT_SCHEMA_VIDEO,
+            "enforce_validation": True,
+        }
 
         log.info(
             "analyze_dub_video_payload",

@@ -136,6 +136,14 @@ async def test_generate_dub_edit_script_video_message_assembly(
     # Cleanup runs once with both uploaded file_ids, even on success.
     assert deleted == [["gemini-file://clip0.mp4", "gemini-file://clip1.mp4"]]
 
+    # Structured output enforced — Gemini has been observed inventing its own
+    # top-level keys ("narrative_progression") instead of "segments" without this.
+    rf = captured["kwargs"]["response_format"]
+    assert rf["type"] == "json_object"
+    assert rf["enforce_validation"] is True
+    assert rf["response_schema"] == dub_ai.DUB_EDIT_SCHEMA_VIDEO
+    assert "segments" in rf["response_schema"]["required"]
+
 
 @pytest.mark.asyncio
 async def test_generate_dub_edit_script_video_deletes_files_on_failure(
