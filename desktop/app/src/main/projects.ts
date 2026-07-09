@@ -1,5 +1,5 @@
 import { app, ipcMain, shell } from 'electron'
-import { join, sep } from 'path'
+import { join, normalize, relative, sep } from 'path'
 import { mkdir, readdir, readFile, writeFile, rm, stat } from 'fs/promises'
 import { randomUUID } from 'crypto'
 import { isSafeUid } from './uid'
@@ -68,6 +68,16 @@ export function projectDir(uid: string): string {
 
 function projectFile(uid: string): string {
   return join(projectDir(uid), 'project.json')
+}
+
+function resolveProjectPath(uid: string, relPath: string): string {
+  const dir = projectDir(uid)
+  const resolved = normalize(join(dir, relPath))
+  const rel = relative(dir, resolved)
+  if (rel.startsWith('..') || rel === '') {
+    throw new Error(`path escapes project dir: ${relPath}`)
+  }
+  return resolved
 }
 
 async function readProject(uid: string): Promise<LocalProject | null> {
@@ -151,6 +161,9 @@ export function registerProjectsIpc(): void {
   )
   ipcMain.handle('projects:delete', (_e, uid: string) => deleteProject(uid))
   ipcMain.handle('projects:dir', (_e, uid: string) => projectDir(uid))
+  ipcMain.handle('projects:resolvePath', (_e, uid: string, relPath: string) =>
+    resolveProjectPath(uid, relPath)
+  )
   ipcMain.handle('projects:openFolder', async (_e, uid: string, relPath = '.') => {
     await shell.openPath(join(projectDir(uid), relPath))
   })

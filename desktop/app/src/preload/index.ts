@@ -102,6 +102,8 @@ const noey = {
       ipcRenderer.invoke('projects:update', uid, patch),
     delete: (uid: string): Promise<void> => ipcRenderer.invoke('projects:delete', uid),
     dir: (uid: string): Promise<string> => ipcRenderer.invoke('projects:dir', uid),
+    resolvePath: (uid: string, relPath: string): Promise<string> =>
+      ipcRenderer.invoke('projects:resolvePath', uid, relPath),
     openFolder: (uid: string, relPath?: string): Promise<void> =>
       ipcRenderer.invoke('projects:openFolder', uid, relPath)
   },
@@ -119,6 +121,17 @@ const noey = {
     write: (scope: string, message: string): Promise<void> =>
       ipcRenderer.invoke('log:write', scope, message),
     openFolder: (): Promise<void> => ipcRenderer.invoke('log:openFolder')
+  },
+  api: {
+    fetch: (job: {
+      url: string
+      method?: string
+      headers?: Record<string, string>
+      jsonBody?: string
+      formFields?: Record<string, string>
+      formFiles?: { field: string; path: string; filename?: string }[]
+    }): Promise<{ ok: boolean; status: number; bodyText: string }> =>
+      ipcRenderer.invoke('api:fetch', job)
   }
 }
 

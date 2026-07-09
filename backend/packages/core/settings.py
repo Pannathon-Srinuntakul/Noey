@@ -61,8 +61,11 @@ class Settings(BaseSettings):
     jwt_refresh_ttl: int = 60 * 60 * 24 * 14  # 14 days
     allow_registration: bool = False  # Register endpoint gated off per requirements.
 
-    # --- CORS (frontend origin) ---
+    # --- CORS (frontend origin + desktop Electron) ---
     frontend_url: str = "http://localhost:5173"
+    # Comma-separated extra origins (e.g. another web deploy). Electron packaged
+    # apps send Origin: null — always allowed in create_app().
+    cors_extra_origins: str = ""
 
     # --- Encryption (Fernet) for AI keys stored in DB ---
     # urlsafe base64 32-byte key. Set via env in production.
@@ -122,6 +125,18 @@ class Settings(BaseSettings):
             "enterprise": self.plan_enterprise_monthly_tokens,
         }
         return mapping.get(plan, self.plan_free_monthly_tokens)
+
+    @property
+    def cors_origins(self) -> list[str]:
+        origins = [self.frontend_url.rstrip("/")]
+        for raw in self.cors_extra_origins.split(","):
+            origin = raw.strip().rstrip("/")
+            if origin and origin not in origins:
+                origins.append(origin)
+        # Electron desktop (file://) sends Origin: null
+        if "null" not in origins:
+            origins.append("null")
+        return origins
 
     @property
     def database_url(self) -> str:

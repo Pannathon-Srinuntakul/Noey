@@ -2,6 +2,7 @@
  * app's own JWT session (no session sharing with the browser). */
 
 import { isTokenExpired } from './jwt'
+import { apiFetch } from './httpClient'
 
 export interface TokenPair {
   access_token: string
@@ -27,10 +28,14 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(baseUrl: string, path: string, init?: RequestInit): Promise<T> {
-  let res: Response
+function apiUrl(baseUrl: string, path: string): string {
+  return `${baseUrl.replace(/\/+$/, '')}${path}`
+}
+
+async function request<T>(baseUrl: string, path: string, init?: ApiFetchInit): Promise<T> {
+  let res
   try {
-    res = await fetch(`${baseUrl.replace(/\/+$/, '')}${path}`, init)
+    res = await apiFetch(apiUrl(baseUrl, path), init)
   } catch (err) {
     void window.noey.log.write('api', `fetch failed ${baseUrl}${path}: ${String(err)}`)
     throw new ApiError(0, 'เชื่อมต่อ server ไม่ได้ ลองใหม่อีกครั้ง')
@@ -38,20 +43,28 @@ async function request<T>(baseUrl: string, path: string, init?: RequestInit): Pr
   if (!res.ok) {
     let detail = `HTTP ${res.status}`
     try {
-      const body = await res.json()
+      const body = res.json() as { detail?: string }
       if (typeof body?.detail === 'string') detail = body.detail
     } catch {
       /* non-JSON error body */
     }
     throw new ApiError(res.status, detail)
   }
-  return (await res.json()) as T
+  if (res.status === 204) return undefined as T
+  return res.json() as T
+}
+
+type ApiFetchInit = {
+  method?: string
+  headers?: Record<string, string>
+  body?: string
+  formFields?: Record<string, string>
+  formFiles?: { field: string; path: string; filename?: string }[]
 }
 
 export function login(baseUrl: string, email: string, password: string): Promise<TokenPair> {
   return request<TokenPair>(baseUrl, '/auth/login', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email, password })
   })
 }

@@ -5,6 +5,7 @@
  */
 
 import { ApiError, refresh } from './api'
+import { apiFetch } from './httpClient'
 
 export interface ApiSession {
   baseUrl: string
@@ -73,14 +74,26 @@ export interface DubTimeline {
 async function request<T>(
   session: ApiSession,
   path: string,
-  init: RequestInit = {},
+  init: {
+    method?: string
+    headers?: Record<string, string>
+    body?: string
+    formFields?: Record<string, string>
+    formFiles?: { field: string; path: string; filename?: string }[]
+  } = {},
   retried = false
 ): Promise<T> {
-  const headers = new Headers(init.headers)
-  headers.set('Authorization', `Bearer ${session.accessToken}`)
-  let res: Response
+  const headers = { ...(init.headers ?? {}) }
+  headers.Authorization = `Bearer ${session.accessToken}`
+  let res
   try {
-    res = await fetch(`${session.baseUrl.replace(/\/+$/, '')}${path}`, { ...init, headers })
+    res = await apiFetch(`${session.baseUrl.replace(/\/+$/, '')}${path}`, {
+      method: init.method,
+      headers,
+      body: init.body,
+      formFields: init.formFields,
+      formFiles: init.formFiles
+    })
   } catch (err) {
     void window.noey.log.write(
       'videosLocalApi',
@@ -100,7 +113,7 @@ async function request<T>(
   if (!res.ok) {
     let detail = `HTTP ${res.status}`
     try {
-      const body = await res.json()
+      const body = res.json() as { detail?: string }
       if (typeof body?.detail === 'string') detail = body.detail
     } catch {
       /* non-JSON body */
@@ -108,7 +121,7 @@ async function request<T>(
     throw new ApiError(res.status, detail)
   }
   if (res.status === 204) return undefined as T
-  return (await res.json()) as T
+  return res.json() as T
 }
 
 export function createLocalProject(
@@ -117,7 +130,6 @@ export function createLocalProject(
 ): Promise<{ uid: string }> {
   return request(session, '/videos/local', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ mode: 'dub_first', ...body })
   })
 }
@@ -129,18 +141,6 @@ export async function analyzeFrames(
   localUid: string,
   entries: FrameManifestEntry[]
 ): Promise<{ job_id: string }> {
-  const form = new FormData()
-  for (const entry of entries) {
-    const mediaUrl = window.noey.media.urlFor(localUid, entry.file)
-    let blob: Blob
-    try {
-      blob = await (await fetch(mediaUrl)).blob()
-    } catch (err) {
-      void window.noey.log.write('videosLocalApi', `frame read failed ${mediaUrl}: ${String(err)}`)
-      throw new ApiError(0, `อ่านไฟล์ frame ไม่ได้: ${entry.name}`)
-    }
-    form.append('files', blob, entry.name)
-  }
   const manifest = entries.map((e) => ({
     name: e.name,
     clip_id: e.clip_id,
@@ -150,8 +150,17 @@ export async function analyzeFrames(
     scene_end: e.scene_end,
     ...(e.edge ? { edge: e.edge } : {})
   }))
-  form.append('manifest', JSON.stringify(manifest))
-  return request(session, `/videos/${remoteUid}/analyze-frames`, { method: 'POST', body: form })
+  return request(session, `/videos/${remoteUid}/analyze-frames`, {
+    method: 'POST',
+    formFields: { manifest: JSON.stringify(manifest) },
+    formFiles: await Promise.all(
+      entries.map(async (entry) => ({
+        field: 'files',
+        path: await window.noey.projects.resolvePath(localUid, entry.file),
+        filename: entry.name
+      }))
+    )
+  })
 }
 
 /** Upload per-clip proxy MP4s (fetched from media:// URLs) + manifest → {job_id}. */
@@ -161,26 +170,23 @@ export async function analyzeVideo(
   localUid: string,
   proxies: ProxyManifestEntry[]
 ): Promise<{ job_id: string }> {
-  const form = new FormData()
-  for (const entry of proxies) {
-    const mediaUrl = window.noey.media.urlFor(localUid, `proxy/${entry.file}`)
-    let blob: Blob
-    try {
-      blob = await (await fetch(mediaUrl)).blob()
-    } catch (err) {
-      void window.noey.log.write('videosLocalApi', `proxy read failed ${mediaUrl}: ${String(err)}`)
-      throw new ApiError(0, `อ่านไฟล์วิดีโอไม่ได้: ${entry.file}`)
-    }
-    form.append('files', blob, entry.file)
-  }
   const manifest = proxies.map((e) => ({
     clip_id: e.clip_id,
     file: e.file,
     durationSec: e.durationSec,
     order: e.order
   }))
-  form.append('manifest', JSON.stringify(manifest))
-  return request(session, `/videos/${remoteUid}/analyze-video`, { method: 'POST', body: form })
+  return request(session, `/videos/${remoteUid}/analyze-video`, {
+    method: 'POST',
+    formFields: { manifest: JSON.stringify(manifest) },
+    formFiles: await Promise.all(
+      proxies.map(async (entry) => ({
+        field: 'files',
+        path: await window.noey.projects.resolvePath(localUid, `proxy/${entry.file}`),
+        filename: entry.file
+      }))
+    )
+  })
 }
 
 export function getJob(session: ApiSession, jobId: string): Promise<JobStatus> {
@@ -216,7 +222,6 @@ export function planDub(
 ): Promise<DubTimeline> {
   return request(session, `/videos/${remoteUid}/plan-dub`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ voDurationSec, clipDurations })
   })
 }
@@ -229,7 +234,6 @@ export function patchLocalStatus(
 ): Promise<{ uid: string; status: string }> {
   return request(session, `/videos/${remoteUid}/local-status`, {
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ status, error_msg: errorMsg ?? null })
   })
 }
@@ -243,33 +247,32 @@ export async function uploadAudio(
   wavFiles: { file: string; name: string }[],
   proxyVideoFiles?: { file: string; name: string }[]
 ): Promise<{ job_id: string }> {
-  const form = new FormData()
+  const formFiles: { field: string; path: string; filename: string }[] = []
   for (const wav of wavFiles) {
-    const mediaUrl = window.noey.media.urlFor(localUid, wav.file)
-    let blob: Blob
-    try {
-      blob = await (await fetch(mediaUrl)).blob()
-    } catch (err) {
-      void window.noey.log.write('videosLocalApi', `wav read failed ${mediaUrl}: ${String(err)}`)
-      throw new ApiError(0, `อ่านไฟล์เสียงไม่ได้: ${wav.name}`)
-    }
-    form.append('files', blob, wav.name)
+    formFiles.push({
+      field: 'files',
+      path: await window.noey.projects.resolvePath(localUid, wav.file),
+      filename: wav.name
+    })
   }
-  // Optional: an upload/encode failure here shouldn't block transcription — just
-  // falls back to code-only cuts for that clip (whisper_client.run_transcription).
   for (const video of proxyVideoFiles ?? []) {
-    const mediaUrl = window.noey.media.urlFor(localUid, video.file)
     try {
-      const blob = await (await fetch(mediaUrl)).blob()
-      form.append('video_files', blob, video.name)
+      formFiles.push({
+        field: 'video_files',
+        path: await window.noey.projects.resolvePath(localUid, video.file),
+        filename: video.name
+      })
     } catch (err) {
       void window.noey.log.write(
         'videosLocalApi',
-        `proxy video read failed ${mediaUrl}: ${String(err)}`
+        `proxy video resolve failed ${video.file}: ${String(err)}`
       )
     }
   }
-  return request(session, `/videos/${remoteUid}/transcribe-audio`, { method: 'POST', body: form })
+  return request(session, `/videos/${remoteUid}/transcribe-audio`, {
+    method: 'POST',
+    formFiles
+  })
 }
 
 export function getLocalTimeline(session: ApiSession, remoteUid: string): Promise<DubTimeline> {
@@ -283,7 +286,6 @@ export function putLocalTimeline(
 ): Promise<{ uid: string; cuts: number }> {
   return request(session, `/videos/${remoteUid}/local-timeline`, {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(timeline)
   })
 }
@@ -305,7 +307,6 @@ export function putLocalEditScript(
 ): Promise<{ uid: string; segments: number }> {
   return request(session, `/videos/${remoteUid}/local-edit-script`, {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(editScript)
   })
 }
