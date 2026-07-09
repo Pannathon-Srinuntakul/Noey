@@ -46,7 +46,12 @@ class Settings(BaseSettings):
     gemini_api_key: str | None = None
 
     # --- Desktop dub_first video analysis (Gemini native video, proxy upload) ---
-    dub_vision_model: str = "gemini-3.5-flash"  # override via DUB_VISION_MODEL
+    # flash was tested and never produced a multi-angle line (always 1 cut per
+    # voiceoverLineId) despite explicit prompt reinforcement — pro reasons
+    # better about multi-shot editing structure. gemini-3.5-pro is not yet GA on
+    # the public API (as of 2026-07-08) — 3.1-pro-preview is the current pro
+    # tier. override via DUB_VISION_MODEL.
+    dub_vision_model: str = "gemini-3.1-pro-preview"
     dub_vision_timeout_sec: int = 1200  # video inference is slower than Files-API frames
 
     # --- Auth (JWT) ---
@@ -87,14 +92,18 @@ class Settings(BaseSettings):
     whisper_compute: str = "int8"        # cpu: int8 | cuda: float16
     whisper_language: str = "th"         # force language; "" = auto-detect (risk of drift)
 
-    # --- Gemini transcript refine pass (hybrid: Whisper owns timing, Gemini fixes text) ---
-    # When enabled, after Whisper transcribes, Gemini LISTENS to the same audio and
-    # corrects mis-heard Thai words + flags stutter/repeat/dead-air segments to cut.
-    # Timestamps always come from Whisper — Gemini never sees or returns them.
-    # Set GEMINI_REFINE_ENABLED=false to run Whisper-only (needs gemini_api_key set to
-    # actually take effect either way).
+    # --- Gemini talking-head review pass (hybrid: Whisper owns timing, Gemini watches video) ---
+    # When enabled, after Whisper transcribes each clip, Gemini WATCHES that clip's actual video
+    # (not just audio) and corrects mis-heard Thai words, classifies each segment (keep / stutter /
+    # repeat / semantic-repeat / dead-air), and decides keep/cut for candidate silence gaps.
+    # Timestamps always come from Whisper — Gemini never sees or returns them. This is a reasoning-
+    # heavy multimodal judgment call (not a cheap text fix), so it uses the same model tier as
+    # dub_first's video review, not a flash model.
+    # Set GEMINI_REFINE_ENABLED=false to run Whisper-only, code-only cuts (needs gemini_api_key set
+    # to actually take effect either way).
     gemini_refine_enabled: bool = True
-    gemini_refine_model: str = "gemini-3.5-flash"  # override via GEMINI_REFINE_MODEL
+    talking_vision_model: str = "gemini-3.1-pro-preview"  # override via TALKING_VISION_MODEL
+    talking_vision_timeout_sec: int = 1200  # per-clip call; video inference is slow
 
     # --- LLM plan limits (tokens per DAILY window, 0 = unlimited) ---
     # The window is a rolling UTC calendar day — see packages/llm/usage.py:_period_start.

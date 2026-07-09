@@ -124,7 +124,10 @@ async def create_local_project(
         brief=body.brief or None,
         user_script=body.user_script or None,
         target_duration_sec=body.target_duration_sec,
-        duration_mode="custom" if body.target_duration_sec else "full",
+        # duration_mode only ever mattered for talking_head's now-removed highlight
+        # mode; dub_first's own target_duration_sec (script length) is independent
+        # of this column. Always "full" — see plan_core.build_talking_head_timeline.
+        duration_mode="full",
         local_meta={"clips": [c.model_dump() for c in body.clips]},
         source_files=[],
     )
@@ -340,8 +343,15 @@ async def transcribe_audio(
     auth: CurrentUser,
     session: AsyncSession = Depends(db_session),
     files: list[UploadFile] = File(...),
+    video_files: list[UploadFile] = File(default=[]),
 ) -> AnalyzeFramesOut:
-    """talking_head: receive speech WAVs → transcribe + plan on the server → timeline."""
+    """talking_head: receive speech WAVs (+ optional downscaled proxy MP4s, WITH audio,
+    for Gemini's per-clip video review) → transcribe + plan on the server → timeline.
+
+    ``video_files`` is optional so older desktop builds (or a run with the Gemini
+    review disabled) keep working audio-only — the worker falls back to
+    code-only cuts when no proxy video is present for a clip.
+    """
     proj = await _get_local_project(session, uid, auth.user_id)
     if proj.mode != "talking_head":
         raise HTTPException(400, "transcribe-audio ใช้ได้เฉพาะโหมด talking_head")
@@ -354,6 +364,10 @@ async def transcribe_audio(
     for f in files:
         if not f.filename or not name_re.match(f.filename):
             raise HTTPException(422, f"ชื่อไฟล์เสียงต้องเป็น audio_NNN.wav (ได้ {f.filename})")
+    video_re = re.compile(r"^clip\d+\.mp4$")
+    for f in video_files:
+        if not f.filename or not video_re.match(f.filename):
+            raise HTTPException(422, f"ชื่อไฟล์วิดีโอต้องเป็น clipN.mp4 (ได้ {f.filename})")
 
     root = data_root()
     audio_dir = root / "video_outputs" / uid / "audio"
@@ -362,7 +376,16 @@ async def transcribe_audio(
         stale.unlink(missing_ok=True)
     for f in files:
         (audio_dir / f.filename).write_bytes(await f.read())
-    await push_project_files(uid)  # WAVs only — no video bytes
+
+    if video_files:
+        proxy_dir = root / "video_outputs" / uid / "proxy"
+        proxy_dir.mkdir(parents=True, exist_ok=True)
+        for stale in proxy_dir.glob("clip*.mp4"):
+            stale.unlink(missing_ok=True)
+        for f in video_files:
+            (proxy_dir / f.filename).write_bytes(await f.read())
+
+    await push_project_files(uid)  # WAVs (+ proxy MP4s if provided)
 
     job_id = f"vlocal_{uid[:8]}"
     await session.execute(text("SET search_path TO core, public"))

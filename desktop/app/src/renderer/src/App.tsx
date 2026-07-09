@@ -151,7 +151,7 @@ function Workspace({
 
   return (
     <div
-      className="flex h-screen w-full flex-col overflow-hidden"
+      className="flex h-full w-full flex-col overflow-hidden"
       style={{ background: 'linear-gradient(160deg, #1a0e06 0%, #0d1a14 100%)' }}
     >
       <header className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-white/10 px-4 py-3 sm:px-6 sm:py-4">
@@ -209,6 +209,22 @@ function Workspace({
   )
 }
 
+// Windows only: main process hides the native (white, untheme-able) titlebar
+// and draws an overlay for the caption buttons — this strip fills the rest so
+// the window stays draggable and matches the dark/amber theme.
+function TitleBar(): React.JSX.Element | null {
+  if (window.noey.platform !== 'win32') return null
+  return (
+    <div
+      className="flex h-9 shrink-0 items-center gap-2 border-b border-white/10 bg-[#140b06] px-3 text-xs font-semibold tracking-wide text-amber-200/70"
+      style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
+    >
+      <Film size={12} className="text-amber-400/70" />
+      Noey Video Edit
+    </div>
+  )
+}
+
 function App(): React.JSX.Element {
   const [session, setSession] = useState<Session | null>(null)
   const [restoring, setRestoring] = useState(true)
@@ -244,14 +260,22 @@ function App(): React.JSX.Element {
     setSession(null)
   }, [])
 
-  if (restoring)
-    return (
-      <div className="flex h-full items-center justify-center bg-[#07080d] text-sm text-zinc-400">
-        กำลังโหลด…
+  return (
+    <div className="flex h-full flex-col">
+      <TitleBar />
+      <div className="min-h-0 flex-1">
+        {restoring ? (
+          <div className="flex h-full items-center justify-center bg-[#07080d] text-sm text-zinc-400">
+            กำลังโหลด…
+          </div>
+        ) : !session ? (
+          <LoginPage onLogin={setSession} />
+        ) : (
+          <Workspace session={session} onLogout={logout} />
+        )}
       </div>
-    )
-  if (!session) return <LoginPage onLogin={setSession} />
-  return <Workspace session={session} onLogout={logout} />
+    </div>
+  )
 }
 
 export default App

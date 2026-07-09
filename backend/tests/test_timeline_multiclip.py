@@ -3,32 +3,40 @@
 from packages.video.timeline import (
     _repair_segment_words,
     _snap_to_words,
-    apply_semantic_dedupe_plan,
     annotate_dub_script_output_times,
     anchor_dub_segments_to_frames,
+    clamp_dub_segments_to_clip_durations,
     normalize_dub_edit_script,
     build_clip_boundaries,
-    build_speech_blocks,
+    build_silence_gap_candidates,
     build_speech_cuts,
-    cascade_filter_keep_ids,
-    dedupe_repeated_cuts,
-    dedupe_spaced_word_repeats,
-    enforce_cuts_budget,
     enforce_unique_chronological_dub_cuts,
     filter_renderable_cuts,
     filter_short_cuts,
-    is_likely_continuation,
     localize_cuts,
     remove_overlapping_cuts,
-    select_speech_cuts_by_ids,
     resnap_selected_cuts,
-    split_cuts_on_internal_silence,
     split_global_cut,
-    trim_range_to_segment_budget,
-    cuts_duration,
     MAX_WORD_DUR,
     WORD_TAIL,
 )
+
+
+def test_build_silence_gap_candidates_between_cuts() -> None:
+    speech_cuts = [
+        {"type": "cut", "source": "clip0", "in": 0.0, "out": 5.0, "label": "opening"},
+        {"type": "cut", "source": "clip0", "in": 8.5, "out": 12.0, "label": "speech"},
+        {"type": "cut", "source": "clip0", "in": 12.1, "out": 15.0, "label": "conclusion"},
+    ]
+    gaps = build_silence_gap_candidates(speech_cuts)
+    assert len(gaps) == 2
+    assert gaps[0] == {"id": 0, "in": 5.0, "out": 8.5}
+    assert gaps[1] == {"id": 1, "in": 12.0, "out": 12.1}
+
+
+def test_build_silence_gap_candidates_no_gaps() -> None:
+    assert build_silence_gap_candidates([]) == []
+    assert build_silence_gap_candidates([{"in": 0.0, "out": 5.0}]) == []
 
 
 def test_build_clip_boundaries_offsets() -> None:
@@ -85,174 +93,6 @@ def test_filter_short_cuts_drops_under_one_second() -> None:
     assert len(kept) == 2
     assert kept[0]["in"] == 2.0
     assert kept[1]["in"] == 4.0
-
-
-def test_dedupe_repeated_cuts_keeps_latest_take() -> None:
-    segments = [
-        {
-            "start": 0.0,
-            "end": 4.0,
-            "text": "วันนี้มารีวิวครีมตัวนี้",
-            "words": [
-                {"word": "วันนี้", "start": 0.0, "end": 0.5},
-                {"word": "มารีวิว", "start": 0.5, "end": 1.2},
-                {"word": "ครีม", "start": 1.2, "end": 1.8},
-                {"word": "ตัวนี้", "start": 1.8, "end": 2.4},
-            ],
-        },
-        {
-            "start": 10.0,
-            "end": 12.0,
-            "text": "วันนี้มารีวิวครีม",
-            "words": [
-                {"word": "วันนี้", "start": 10.0, "end": 10.4},
-                {"word": "มารีวิว", "start": 10.4, "end": 11.0},
-                {"word": "ครีม", "start": 11.0, "end": 11.6},
-            ],
-        },
-        {
-            "start": 20.0,
-            "end": 25.0,
-            "text": "ราคาไม่แพงมาก",
-            "words": [
-                {"word": "ราคา", "start": 20.0, "end": 20.6},
-                {"word": "ไม่แพง", "start": 20.6, "end": 21.2},
-                {"word": "มาก", "start": 21.2, "end": 21.8},
-            ],
-        },
-    ]
-    cuts = [
-        {"type": "cut", "source": "clip0", "in": 0.0, "out": 3.0, "label": "opening"},
-        {"type": "cut", "source": "clip0", "in": 10.0, "out": 12.5, "label": "speech"},
-        {"type": "cut", "source": "clip0", "in": 20.0, "end": 22.5, "out": 22.5, "label": "conclusion"},
-    ]
-    cuts[2] = {"type": "cut", "source": "clip0", "in": 20.0, "out": 22.5, "label": "conclusion"}
-
-    kept = dedupe_repeated_cuts(cuts, segments)
-    assert len(kept) == 2
-    assert kept[0]["in"] == 10.0
-    assert kept[1]["in"] == 20.0
-
-
-def test_dedupe_spaced_word_repeats_drops_thung_retakes() -> None:
-    """Spaced single-word retakes (>1s gap) keep latest; multi-word lead-in stays."""
-    segments = [{
-        "start": 42.0,
-        "end": 53.0,
-        "text": "เสร็จ ถิ้ง ถิ้ง ถิ้ง",
-        "words": [
-            {"word": "เสร็จ", "start": 42.23, "end": 43.43},
-            {"word": "ถิ้ง", "start": 43.71, "end": 44.91},
-            {"word": "ถิ้ง", "start": 47.74, "end": 48.94},
-            {"word": "ถิ้ง", "start": 51.75, "end": 52.95},
-        ],
-    }]
-    cuts = [
-        {"type": "cut", "source": "clip0", "in": 41.95, "out": 45.86, "label": "speech"},
-        {"type": "cut", "source": "clip0", "in": 47.46, "out": 49.89, "label": "speech"},
-        {"type": "cut", "source": "clip0", "in": 51.47, "out": 53.90, "label": "speech"},
-    ]
-    kept = dedupe_spaced_word_repeats(cuts, segments)
-    assert len(kept) == 2
-    assert kept[0]["in"] == 41.95
-    assert kept[1]["in"] == 51.47
-
-
-def test_dedupe_spaced_word_repeats_keeps_consecutive_emphasis() -> None:
-    """Same word repeated quickly (gap <= 1s) is intentional — keep all cuts."""
-    segments = [{
-        "start": 0.0,
-        "end": 3.0,
-        "text": "ดี ดี ดี",
-        "words": [
-            {"word": "ดี", "start": 0.0, "end": 0.5},
-            {"word": "ดี", "start": 0.6, "end": 1.1},
-            {"word": "ดี", "start": 1.2, "end": 1.7},
-        ],
-    }]
-    cuts = [
-        {"type": "cut", "source": "clip0", "in": 0.0, "out": 0.55, "label": "speech"},
-        {"type": "cut", "source": "clip0", "in": 0.58, "out": 1.15, "label": "speech"},
-        {"type": "cut", "source": "clip0", "in": 1.18, "out": 1.75, "label": "speech"},
-    ]
-    kept = dedupe_spaced_word_repeats(cuts, segments)
-    assert len(kept) == 3
-
-
-def test_dedupe_repeated_cuts_drops_spaced_phrase_retake() -> None:
-    """Same multi-word phrase >0.5s apart → drop retake."""
-    phrase = "วันนี้มารีวิวครีมตัวนี้"
-    segments = [
-        {
-            "start": 0.0, "end": 8.0, "text": phrase,
-            "words": [
-                {"word": "วันนี้", "start": 0.0, "end": 0.5},
-                {"word": "มารีวิว", "start": 0.5, "end": 1.2},
-                {"word": "ครีม", "start": 1.2, "end": 1.8},
-                {"word": "ตัวนี้", "start": 1.8, "end": 2.4},
-                {"word": "วันนี้", "start": 5.0, "end": 5.5},
-                {"word": "มารีวิว", "start": 5.5, "end": 6.2},
-                {"word": "ครีม", "start": 6.2, "end": 6.8},
-                {"word": "ตัวนี้", "start": 6.8, "end": 7.4},
-            ],
-        },
-    ]
-    cuts = [
-        {"type": "cut", "source": "clip0", "in": 0.0, "out": 3.0, "label": "speech"},
-        {"type": "cut", "source": "clip0", "in": 5.0, "out": 8.0, "label": "speech"},
-    ]
-    kept = dedupe_repeated_cuts(cuts, segments)
-    assert len(kept) == 1
-    assert kept[0]["in"] == 5.0
-
-
-def test_dedupe_repeated_cuts_keeps_consecutive_phrase() -> None:
-    """Same phrase repeated within 0.5s gap → keep both."""
-    phrase = "ดีมากเลยนะ"
-    segments = [{
-        "start": 0.0, "end": 2.0, "text": phrase,
-        "words": [
-            {"word": "ดี", "start": 0.0, "end": 0.3},
-            {"word": "มาก", "start": 0.35, "end": 0.6},
-            {"word": "เลย", "start": 0.65, "end": 0.9},
-            {"word": "นะ", "start": 0.95, "end": 1.2},
-        ],
-    }]
-    cuts = [
-        {"type": "cut", "source": "clip0", "in": 0.0, "out": 1.25, "label": "speech"},
-        {"type": "cut", "source": "clip0", "in": 1.35, "out": 2.0, "label": "speech"},
-    ]
-    kept = dedupe_repeated_cuts(cuts, segments)
-    assert len(kept) == 2
-
-
-def test_dedupe_repeated_cuts_short_identical_text() -> None:
-    """Single-word identical cuts are handled by dedupe_spaced_word_repeats, not phrase dedupe."""
-    segments = [
-        {"start": 10.0, "end": 11.0, "text": "โอเค", "words": [{"word": "โอเค", "start": 10.0, "end": 11.0}]},
-        {"start": 15.0, "end": 16.0, "text": "โอเค", "words": [{"word": "โอเค", "start": 15.0, "end": 16.0}]},
-    ]
-    cuts = [
-        {"type": "cut", "source": "clip0", "in": 10.0, "out": 11.0, "label": "speech"},
-        {"type": "cut", "source": "clip0", "in": 15.0, "out": 16.0, "label": "speech"},
-    ]
-    assert len(dedupe_repeated_cuts(cuts, segments)) == 2
-    kept = dedupe_spaced_word_repeats(cuts, segments)
-    assert len(kept) == 1
-    assert kept[0]["in"] == 15.0
-
-
-def test_dedupe_repeated_cuts_keeps_distinct_phrases() -> None:
-    segments = [
-        {"start": 0.0, "end": 2.0, "text": "เปิดคลิปวันนี้", "words": []},
-        {"start": 5.0, "end": 7.0, "text": "โชว์เนื้อครีม", "words": []},
-    ]
-    cuts = [
-        {"type": "cut", "source": "clip0", "in": 0.0, "out": 2.0, "label": "opening"},
-        {"type": "cut", "source": "clip0", "in": 5.0, "out": 7.0, "label": "conclusion"},
-    ]
-    kept = dedupe_repeated_cuts(cuts, segments)
-    assert len(kept) == 2
 
 
 def test_remove_overlapping_cuts_trims_later_cut() -> None:
@@ -365,52 +205,6 @@ def test_build_speech_cuts_drops_hallucinated_micro_segment() -> None:
     assert cuts[0]["in"] >= 19.7  # segment.start=20.0 minus WORD_LEAD_IN padding
 
 
-def test_is_likely_continuation_noun_phrase() -> None:
-    assert is_likely_continuation(
-        "วันนี้มารีวิวครีม",
-        "ตัวนี้ดีมาก",
-        gap_sec=0.8,
-    )
-
-
-def test_is_likely_continuation_not_after_long_pause() -> None:
-    assert not is_likely_continuation(
-        "วันนี้มารีวิวครีม",
-        "ตัวนี้ดีมาก",
-        gap_sec=3.0,
-    )
-
-
-def test_cascade_filter_drops_orphan_continuation() -> None:
-    blocks = [
-        {"id": 0, "text": "วันนี้มารีวิวครีม", "gap_from_prev_sec": None, "likely_continuation": False},
-        {"id": 1, "text": "ตัวนี้ดีมาก", "gap_from_prev_sec": 0.6, "likely_continuation": True},
-        {"id": 2, "text": "ราคาไม่แพง", "gap_from_prev_sec": 2.0, "likely_continuation": False},
-    ]
-    # Claude dropped block 0 but kept 1 — block 1 is mid-sentence orphan
-    filtered = cascade_filter_keep_ids([1, 2], blocks)
-    assert filtered == [2]
-
-
-def test_select_speech_cuts_by_ids_applies_cascade() -> None:
-    speech_cuts = [
-        {"type": "cut", "source": "clip0", "in": 0.0, "out": 3.0, "label": "speech"},
-        {"type": "cut", "source": "clip0", "in": 3.5, "out": 5.0, "label": "speech"},
-        {"type": "cut", "source": "clip0", "in": 8.0, "out": 10.0, "label": "speech"},
-    ]
-    blocks = build_speech_blocks(
-        speech_cuts,
-        [
-            {"start": 0.0, "end": 3.0, "text": "วันนี้มารีวิวครีม", "words": []},
-            {"start": 3.5, "end": 5.0, "text": "ตัวนี้ดีมาก", "words": []},
-            {"start": 8.0, "end": 10.0, "text": "ราคาไม่แพง", "words": []},
-        ],
-    )
-    kept = select_speech_cuts_by_ids(speech_cuts, [1, 2], blocks)
-    assert len(kept) == 1
-    assert kept[0]["in"] == 8.0
-
-
 def test_resnap_selected_cuts_expands_join_lead() -> None:
     """After AI jump, second block should start earlier than raw cut.in."""
     segments = [
@@ -434,126 +228,6 @@ def test_resnap_selected_cuts_expands_join_lead() -> None:
     assert resnapped[0]["out"] > 12.0 + WORD_TAIL - 0.05
 
 
-
-
-def test_trim_range_to_segment_budget_never_splits_segment() -> None:
-    segments = [
-        {"start": 0.0, "end": 5.0, "text": "a"},
-        {"start": 5.5, "end": 12.0, "text": "b"},
-        {"start": 12.5, "end": 20.0, "text": "c"},
-    ]
-    lo, hi = trim_range_to_segment_budget(segments, 0.0, 20.0, 8.0, prefer="start")
-    assert lo == 0.0
-    assert hi == 5.0  # first whole segment only
-
-
-
-
-def test_split_cuts_on_internal_silence() -> None:
-    segments = [
-        {"start": 10.0, "end": 12.0, "text": "part one", "words": [{"word": "part", "start": 10.0, "end": 12.0}]},
-        {"start": 20.0, "end": 23.0, "text": "part two", "words": [{"word": "two", "start": 20.0, "end": 23.0}]},
-    ]
-    cuts = [{"type": "cut", "source": "clip0", "in": 9.5, "out": 24.0, "label": "speech"}]
-    out = split_cuts_on_internal_silence(cuts, segments, max_gap_sec=2.0)
-    assert len(out) == 2
-    assert out[0]["out"] <= 13.0
-    assert out[1]["in"] >= 19.0
-
-
-def test_split_cuts_on_internal_word_gap_single_segment() -> None:
-    # One Whisper segment whose words straddle a long internal pause: the cut
-    # spans the whole segment but the gap (12s) inside must still split it.
-    segments = [
-        {
-            "start": 80.0, "end": 141.0, "text": "มันเกิด",
-            "words": [
-                {"word": "มัน", "start": 80.0, "end": 81.5},
-                {"word": "เกิด", "start": 140.0, "end": 141.0},
-            ],
-        },
-    ]
-    cuts = [{"type": "cut", "source": "clip0", "in": 79.5, "out": 141.5, "label": "speech"}]
-    out = split_cuts_on_internal_silence(cuts, segments, max_gap_sec=2.0)
-    assert len(out) == 2
-    assert out[0]["out"] <= 82.5
-    assert out[1]["in"] >= 139.5
-
-
-
-
-def test_trim_speech_cuts_to_budget_slices_oversized_blocks() -> None:
-    from packages.video.timeline import trim_speech_cuts_to_budget
-
-    speech_cuts = [
-        {"type": "cut", "source": "clip0", "in": 224.0, "out": 526.0, "label": "opening"},
-        {"type": "cut", "source": "clip0", "in": 569.0, "out": 572.5, "label": "conclusion"},
-    ]
-    trimmed = trim_speech_cuts_to_budget(speech_cuts, 51.0)
-    assert 45.0 <= cuts_duration(trimmed) <= 51.5
-    assert len(trimmed) >= 2
-    assert trimmed[0]["in"] == 224.0
-    assert trimmed[-1]["out"] == 572.5
-
-
-def test_apply_semantic_dedupe_plan() -> None:
-    cuts = [
-        {"type": "cut", "source": "clip0", "in": 0.0, "out": 5.0, "label": "opening"},
-        {"type": "cut", "source": "clip0", "in": 10.0, "out": 15.0, "label": "speech"},
-        {"type": "cut", "source": "clip0", "in": 30.0, "out": 35.0, "label": "speech"},
-    ]
-    segments = [
-        {"start": 0.0, "end": 5.0, "text": "วันนี้มารีวิวครีมตัวนี้"},
-        {"start": 10.0, "end": 15.0, "text": "ฟีเจอร์แรกคือความชุ่มชื้น"},
-        {"start": 30.0, "end": 35.0, "text": "วันนี้จะมารีวิวครีมนี้ให้ดู"},
-    ]
-    parsed = {
-        "duplicate_groups": [
-            {"keep": 0, "remove": [2], "reason": "same intro different wording"},
-        ],
-    }
-    out = apply_semantic_dedupe_plan(cuts, segments, parsed)
-    assert len(out) == 2
-    assert out[0]["in"] == 0.0
-
-
-def test_enforce_cuts_budget_after_resnap_expansion() -> None:
-    """Resnap padding can inflate planned duration — final pass must honor target."""
-    segments = [
-        {"start": 0.0, "end": 8.0, "text": "opening hook here", "words": [
-            {"word": "opening", "start": 0.0, "end": 1.0},
-            {"word": "hook", "start": 1.0, "end": 2.0},
-            {"word": "here", "start": 2.0, "end": 7.5},
-        ]},
-        {"start": 12.0, "end": 22.0, "text": "middle feature talk", "words": [
-            {"word": "middle", "start": 12.0, "end": 14.0},
-            {"word": "feature", "start": 14.0, "end": 18.0},
-            {"word": "talk", "start": 18.0, "end": 21.5},
-        ]},
-        {"start": 28.0, "end": 38.0, "text": "another demo section", "words": [
-            {"word": "another", "start": 28.0, "end": 30.0},
-            {"word": "demo", "start": 30.0, "end": 34.0},
-            {"word": "section", "start": 34.0, "end": 37.5},
-        ]},
-        {"start": 45.0, "end": 55.0, "text": "closing call to action", "words": [
-            {"word": "closing", "start": 45.0, "end": 47.0},
-            {"word": "call", "start": 47.0, "end": 50.0},
-            {"word": "action", "start": 50.0, "end": 54.5},
-        ]},
-    ]
-    planned = [
-        {"type": "cut", "source": "clip0", "in": 0.5, "out": 7.5, "label": "opening"},
-        {"type": "cut", "source": "clip0", "in": 12.5, "out": 21.5, "label": "speech"},
-        {"type": "cut", "source": "clip0", "in": 28.5, "out": 37.5, "label": "speech"},
-        {"type": "cut", "source": "clip0", "in": 45.5, "out": 54.5, "label": "conclusion"},
-    ]
-    expanded = resnap_selected_cuts(planned, segments, source_duration=60.0)
-    assert cuts_duration(expanded) > 30.0
-
-    trimmed = enforce_cuts_budget(expanded, segments, 30.0)
-    assert cuts_duration(trimmed) <= 30.15
-    assert trimmed[0]["label"] == "opening"
-    assert trimmed[-1]["label"] == "conclusion"
 
 
 def test_annotate_dub_script_output_times() -> None:
@@ -663,6 +337,45 @@ def test_anchor_dub_segments_snaps_loose_trim() -> None:
     assert out["segments"][0]["sourceIn"] == 12.0
     assert out["segments"][0]["sourceOut"] == 15.0
     assert out["segments"][1]["sourceIn"] == 28.0
+
+
+def test_clamp_dub_segments_drops_segment_starting_past_clip_end() -> None:
+    """Gemini video path: a segment starting at/after the real clip duration is hallucinated — drop it."""
+    script = {
+        "segments": [
+            {"order": 1, "sourceClip": "clip0", "sourceIn": 5.0, "sourceOut": 8.0},
+            {"order": 2, "sourceClip": "clip0", "sourceIn": 45.0, "sourceOut": 49.0},  # clip0 is only 40s
+        ],
+    }
+    out = clamp_dub_segments_to_clip_durations(script, {"clip0": 40.0})
+    assert len(out["segments"]) == 1
+    assert out["segments"][0]["order"] == 1
+
+
+def test_clamp_dub_segments_clamps_overshoot() -> None:
+    """sourceOut spilling slightly past the clip's real end is clamped, not dropped."""
+    script = {
+        "segments": [
+            {"order": 1, "sourceClip": "clip0", "sourceIn": 38.0, "sourceOut": 41.5, "matchedFrameTime": 41.5},
+        ],
+    }
+    out = clamp_dub_segments_to_clip_durations(script, {"clip0": 40.0})
+    seg = out["segments"][0]
+    assert seg["sourceOut"] == 40.0
+    assert seg["matchedFrameTime"] == 40.0
+
+
+def test_clamp_dub_segments_drops_unknown_clip_and_invalid_range() -> None:
+    script = {
+        "segments": [
+            {"order": 1, "sourceClip": "clip9", "sourceIn": 1.0, "sourceOut": 3.0},  # unknown clip
+            {"order": 2, "sourceClip": "clip0", "sourceIn": -1.0, "sourceOut": 3.0},  # negative sourceIn
+            {"order": 3, "sourceClip": "clip0", "sourceIn": 5.0, "sourceOut": 4.0},  # out <= in
+            {"order": 4, "sourceClip": "clip0", "sourceIn": 10.0, "sourceOut": 12.0},  # valid
+        ],
+    }
+    out = clamp_dub_segments_to_clip_durations(script, {"clip0": 40.0})
+    assert [s["order"] for s in out["segments"]] == [4]
 
 
 def test_normalize_dub_with_sample_frames_anchors() -> None:

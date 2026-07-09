@@ -25,12 +25,19 @@ from packages.video.ffmpeg_bin import (  # noqa: E402
     transcode_to_h264,
     video_stream_info,
 )
-from packages.video.scene import DUB_MAX_CLIP_SEC, dub_clip_exceeds_upload_limit  # noqa: E402
+from packages.video.scene import (  # noqa: E402
+    DUB_FIRST_MAX_TOTAL_SEC,
+    DUB_MAX_CLIP_SEC,
+    dub_clip_exceeds_upload_limit,
+    dub_project_exceeds_total_limit,
+)
+from packages.video.timeline import TALKING_HEAD_MAX_TOTAL_SEC  # noqa: E402
 
 
 class IngestJob(BaseModel):
     projectDir: Path
     sources: list[Path] = Field(min_length=1)
+    mode: str = "talking_head"
 
 
 def run_ingest(job: IngestJob, emit) -> dict[str, Any]:
@@ -41,6 +48,7 @@ def run_ingest(job: IngestJob, emit) -> dict[str, Any]:
     clips: list[dict[str, Any]] = []
     sources_manifest: list[dict[str, Any]] = []
     total = len(job.sources)
+    total_dur_sec = 0.0
     for i, src in enumerate(job.sources):
         if not src.is_file():
             raise FileNotFoundError(f"source clip not found: {src}")
@@ -48,10 +56,13 @@ def run_ingest(job: IngestJob, emit) -> dict[str, Any]:
               "message": src.name})
 
         dur = media_duration(src)
+        # This cap applies to every mode, not just dub_first — the message used
+        # to hardcode "dub_first" even when the clip was talking_head.
         if dub_clip_exceeds_upload_limit(dur):
             raise ValueError(
-                f"คลิป {src.name} ยาว {dur:.0f}s เกินลิมิต {DUB_MAX_CLIP_SEC}s ของโหมด dub_first"
+                f"คลิป {src.name} ยาว {dur:.0f}s เกินลิมิตต่อคลิป {DUB_MAX_CLIP_SEC}s"
             )
+        total_dur_sec += dur
 
         ext = src.suffix.lower() or ".mp4"
         dest = norm_dir / f"norm_{i:03d}{ext}"
@@ -86,6 +97,20 @@ def run_ingest(job: IngestJob, emit) -> dict[str, Any]:
         }
         clips.append(clip)
         sources_manifest.append({"id": clip["id"], "file": clip["file"], "original": str(src)})
+
+    # Total across ALL clips, any clip count — the per-clip cap above doesn't
+    # stop many short clips adding up to hours of footage in one project.
+    if job.mode == "dub_first":
+        if dub_project_exceeds_total_limit(total_dur_sec):
+            raise ValueError(
+                f"คลิปทั้งหมดรวมกันยาว {total_dur_sec:.0f}s — โหมด Dub First รองรับสูงสุด "
+                f"{DUB_FIRST_MAX_TOTAL_SEC // 60} นาทีต่อโปรเจกต์ กรุณาลดจำนวน/ความยาวคลิป"
+            )
+    elif total_dur_sec > TALKING_HEAD_MAX_TOTAL_SEC:
+        raise ValueError(
+            f"คลิปทั้งหมดรวมกันยาว {total_dur_sec / 3600:.1f} ชม. — รองรับสูงสุด "
+            f"{TALKING_HEAD_MAX_TOTAL_SEC // 3600} ชั่วโมงต่อโปรเจกต์ กรุณาลดจำนวน/ความยาวคลิป"
+        )
 
     (project_dir / "upload_sources.json").write_text(
         json.dumps(sources_manifest, ensure_ascii=False, indent=2), encoding="utf-8"

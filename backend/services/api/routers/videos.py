@@ -292,7 +292,11 @@ async def _create_video_project(
 
 # ── endpoints ─────────────────────────────────────────────────────────────────
 
-DURATION_MODES = ("full", "auto", "custom")
+# Only "full" remains — talking_head's highlight/custom mode was removed
+# (Gemini reviews every clip now regardless of mode). Kept as a set (not a
+# literal) so legacy rows/clients sending "auto"/"custom" degrade to a clear
+# 400 instead of silently doing something unexpected server-side.
+DURATION_MODES = ("full",)
 
 
 @router.post("", response_model=UploadResponse, status_code=201)
@@ -323,8 +327,6 @@ async def upload_video(
         raise HTTPException(400, f"duration_mode must be one of: {', '.join(DURATION_MODES)}")
     if not files:
         raise HTTPException(400, "At least one video file required")
-    if duration_mode == "custom" and target_duration_sec is None:
-        raise HTTPException(400, "target_duration_sec required when duration_mode='custom'")
     if target_duration_sec is not None:
         if target_duration_sec < 15 or target_duration_sec > 600:
             raise HTTPException(400, "target_duration_sec must be between 15 and 600")

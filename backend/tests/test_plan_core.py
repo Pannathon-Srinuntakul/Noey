@@ -1,4 +1,11 @@
-"""Extracted talking_head planning core — behavior guard after tasks.py refactor."""
+"""Extracted talking_head planning core — behavior guard after tasks.py refactor.
+
+There is only one behavior now (Gemini review happens upstream, per-clip, inside
+whisper_client.run_transcription before segments/silence_gaps ever reach this
+module) — build_talking_head_timeline itself makes no LLM calls and no longer
+branches on duration_mode; that field is accepted only for backward DB
+compatibility with legacy rows.
+"""
 
 from __future__ import annotations
 
@@ -21,13 +28,13 @@ TRANSCRIPT_SEGMENTS = [
 ]
 
 
+async def _boom(*a: Any, **k: Any) -> str:
+    raise AssertionError("build_talking_head_timeline must never call an LLM directly")
+
+
 @pytest.mark.asyncio
-async def test_full_mode_builds_timeline_without_llm(monkeypatch: pytest.MonkeyPatch) -> None:
-    """duration_mode=full is pure code — any LLM call would be a regression."""
-
-    async def _boom(*a: Any, **k: Any) -> str:
-        raise AssertionError("full mode must not call the LLM")
-
+async def test_builds_timeline_without_llm(monkeypatch: pytest.MonkeyPatch) -> None:
+    """All content decisions happen upstream (Gemini review) — this is pure assembly."""
     monkeypatch.setattr("packages.llm.gateway.complete", _boom)
 
     progress_msgs: list[str] = []
@@ -54,35 +61,48 @@ async def test_full_mode_builds_timeline_without_llm(monkeypatch: pytest.MonkeyP
     for cut in timeline["timeline"]:
         assert cut["out"] > cut["in"] >= 0
     assert len(timeline["captions"]) >= 1
-    assert progress_msgs == ["ตัดช่วงเงียบ + ลบคำพูดซ้ำ…"]
+    assert progress_msgs == ["กำลังประกอบไทม์ไลน์…"]
 
 
 @pytest.mark.asyncio
-async def test_custom_mode_uses_haiku_selection(monkeypatch: pytest.MonkeyPatch) -> None:
-    prompts: list[tuple[str, str]] = []
+async def test_legacy_duration_mode_values_still_run_full(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Rows saved before this change may still say "custom"/"auto" — must degrade to full, not error."""
+    monkeypatch.setattr("packages.llm.gateway.complete", _boom)
 
-    async def fake_complete(prompt: str, *, system: str) -> str:
-        prompts.append((system[:40], prompt[:60]))
-        if "targetSec" in prompt:
-            return '{"keep": [0, 1, 2], "remove_reason": {}}'
-        return '{"duplicate_groups": []}'
+    for legacy_mode in ("custom", "auto", None):
+        timeline = await plan_core.build_talking_head_timeline(
+            TRANSCRIPT_SEGMENTS,
+            duration_mode=legacy_mode,
+            target_duration_sec=30,
+            clip_durations=[20.0],
+            source_info={"width": 720, "height": 1280, "fps": 30},
+            sources=[{"id": "clip0", "file": "normalized/norm_000.mp4"}],
+        )
+        assert timeline["editMode"] == "full"
+        assert timeline["output"]["targetDurationSec"] is None  # legacy target ignored, not honored
 
-    monkeypatch.setattr("packages.llm.gateway.complete", fake_complete)
 
+@pytest.mark.asyncio
+async def test_silence_gaps_merged_in_as_kept_cuts() -> None:
+    """A Gemini-approved silent span becomes its own cut alongside the speech cuts."""
+    # Segments span [0.5-3.0] and [6.0-9.5] and [12.0-14.0]; the gap between the
+    # first two speech cuts is a real candidate span worth testing the merge on.
     timeline = await plan_core.build_talking_head_timeline(
         TRANSCRIPT_SEGMENTS,
-        duration_mode="custom",
-        target_duration_sec=30,
+        duration_mode="full",
+        target_duration_sec=None,
         clip_durations=[20.0],
-        source_info={"width": 720, "height": 1280, "fps": 30},
+        source_info={"width": 1080, "height": 1920, "fps": 30},
         sources=[{"id": "clip0", "file": "normalized/norm_000.mp4"}],
+        silence_gaps=[{"in": 3.0, "out": 6.0}],
     )
-
-    assert timeline["editMode"] == "highlight"
-    assert timeline["output"]["targetDurationSec"] == 30
-    assert len(timeline["timeline"]) >= 1
-    # highlight selection prompt was sent
-    assert any("targetSec" in p for _, p in prompts)
+    cuts = timeline["timeline"]
+    # The kept silence span should show up somewhere in the final localized cuts,
+    # bridging what would otherwise be a gap between the first two speech blocks.
+    covers_gap = any(c["in"] <= 3.5 and c["out"] >= 5.5 for c in cuts) or any(
+        c["in"] < 6.0 and c["out"] > 3.0 for c in cuts
+    )
+    assert covers_gap, f"expected a cut covering the kept silence gap, got {cuts}"
 
 
 @pytest.mark.asyncio
@@ -96,36 +116,6 @@ async def test_empty_transcript_raises() -> None:
             source_info={"width": 0, "height": 0, "fps": 30},
             sources=[],
         )
-
-
-@pytest.mark.asyncio
-async def test_clean_transcript_short_text_skips_llm(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def _boom(*a: Any, **k: Any) -> str:
-        raise AssertionError("short transcript must not call the LLM")
-
-    monkeypatch.setattr("packages.llm.gateway.complete", _boom)
-    segs = [{"start": 0, "end": 1, "text": "สั้น"}]
-    assert await plan_core.clean_transcript_with_llm(segs) == segs
-
-
-@pytest.mark.asyncio
-async def test_clean_transcript_applies_corrections(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def fake_complete(prompt: str, *, system: str) -> str:
-        return '[{"i": 0, "t": "ข้อความที่แก้แล้ว"}]'
-
-    monkeypatch.setattr("packages.llm.gateway.complete", fake_complete)
-    segs = [{"start": 0.0, "end": 2.0, "text": "ก" * 60, "words": []}]
-    out = await plan_core.clean_transcript_with_llm(segs)
-    assert out[0]["text"] == "ข้อความที่แก้แล้ว"
-    assert out[0]["start"] == 0.0  # timing preserved
-
-
-def test_worker_aliases_point_at_plan_core() -> None:
-    from services.worker import tasks
-
-    assert tasks._clean_transcript_with_llm is plan_core.clean_transcript_with_llm
-    assert tasks._plan_highlight_with_haiku is plan_core.plan_highlight_with_haiku
-    assert tasks._dedupe_semantic_cuts_with_llm is plan_core.dedupe_semantic_cuts_with_llm
 
 
 def test_plan_talking_local_registered() -> None:

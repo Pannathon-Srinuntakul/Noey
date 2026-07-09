@@ -115,6 +115,12 @@ This pipeline renders a SILENT video from your cuts only — the creator records
 totalEstimatedSec = sum of all segment durationSec = the actual silent-video length the creator must fill with narration. There is NO separate voiceover track — durationSec IS the speaking time for that line.
 </video_model>
 
+<coverage>
+Watch EVERY clip in FULL, start to finish, before selecting any cuts. Each clip's exact duration is given below — treat that as the range you must review, not a suggestion. The strongest shots are often NOT at the start; a clip can open with setup/prep and only reach its best product reveal, demo, or reaction near the middle or end. Never stop scanning early because you feel you already have "enough" material — finish watching every clip fully, THEN choose the best moments from anywhere across the whole timeline, including the final seconds.
+This applies whether or not a target duration is set. The target only controls how much of the best material to keep in the final script — it never limits which part of the footage you are allowed to look at or use. Do not cluster all cuts in the first portion of a clip; if strong footage exists later, use it.
+A clip is NOT one uniform scene — it is made of multiple distinct scene segments over time, each showing a different angle, action, or moment (e.g. one stretch shows the product held up, a later stretch shows it being applied, a later stretch shows a different angle of the same demo). Do NOT collapse the clip down to only its single most impressive scene. Evaluate EACH distinct scene segment on its own merit and pick that segment's best usable moment — every scene that has a usable moment should contribute a cut, not just the overall-strongest one. Only skip a scene entirely if nothing in it is usable (fails reject_safety / reject_prep, or is out of focus / low quality throughout) — never skip a scene just because a different scene elsewhere looks better.
+</coverage>
+
 <shot_types>
 Classify each shot as you watch the video: hook / product-display / close-up / on-body-demo / full-body-OOTD / back-view / reaction / cta-closing. Mark each USE or REJECT against the reject rules below.
 </shot_types>
@@ -139,18 +145,25 @@ Timing: switch angles often — do not let viewers stare at one angle too long. 
 Prioritize: strong product reveal, clear demonstrations, confident camera-facing delivery, clear product interaction (holding/showing/applying), genuine reactions, and a strong conclusion.
 </editing_style>
 
+<video_multi_angle_reminder>
+This has been observed failing in practice: lines rendered as one long single-shot hold instead of 2-3 varied cuts, even when the clip clearly shows multiple distinct angles/distances for that moment. Re-check every line against <editing_style> before finalizing: if the clip offers more than one usable angle for a line's topic, you MUST split it into multi-angle cuts (2-3 shorter cuts), not one continuous hold. A single cut running longer than ~4s is only acceptable when the footage genuinely offers no second usable angle for that moment.
+</video_multi_angle_reminder>
+
 <anchor>
 - Every segment MUST include matchedFrameTime: the exact timestamp (seconds) in the video you chose for this cut.
 - sourceIn must be within ±0.35s of matchedFrameTime — do NOT start the trim earlier to include prep.
 - durationSec = sourceOut - sourceIn; keep the visual action inside the ready moment.
 - cutStyle options: "jump_cut" | "standard" | "zoom_in" | "zoom_out" — default to "jump_cut"
 - Multiple clips arrive as separately labeled videos (e.g. "=== clip0 ==="); sourceClip must be that exact label, and sourceIn/sourceOut are timestamps within that clip's own video.
+- HARD BOUND: sourceIn and sourceOut MUST be real timestamps that exist within that clip's given duration (see <clips> below) — sourceOut can never exceed the clip's duration, and sourceIn can never be negative. Never invent or extrapolate a timestamp past the end of the actual footage.
+- PRECISION: you sample the video at 1 frame/second, so a pose that only appears briefly (e.g. a quick turn to show the back) is hard to timestamp exactly — the second you pick may land a moment before or after the pose is fully visible. Prefer moments that are HELD for at least ~1 second (the creator pauses in that pose) over a fleeting transition; if a described moment (e.g. "back-view") is only visible for a fraction of a second, either find a held instance of it elsewhere in the clip or do not write a line claiming that visual — a claim in the script that isn't reliably backed by the timestamp you give will render as a mismatch.
 </anchor>
 
 <script>
 Understand the product, the action, and the story before writing a single line. Write a coherent Thai voiceover: hook → product intro → features/demo → full look → CTA. Each line describes ONLY what its matched frame actually shows — if no frame supports a claim, do not write that line. Do not repeat a feature already mentioned; move to the next point.
 Hook: the first line (0–3s) must grab attention, not a generic stand-still intro.
 Length: each line ≈ one spoken beat, 3–8s summed across its cuts. Total duration is a 45s hard floor (target 50–60s); aim for 12–18 lines (minimum 10 segments) when footage supports it.
+AUTHENTICITY OVER DURATION: the floor/target above describes the common case, not a license to pad. Never invent a timestamp beyond a clip's real duration, and never reuse the same moment past the reuse limits in <editing_style>, just to reach the floor. If the total real usable footage across all clips is genuinely shorter than the floor, produce a shorter, fully honest script instead — every segment must point at real, distinct footage that actually exists.
 Product lines need a frame where the label/logo is readable; vague frames → lifestyle/OOTD lines only.
 Last line = CTA ("สั่งได้เลยที่ TikTok Shop" / "คลิกลิงค์ใน bio เลย"), matched to a closing frame: creator facing camera or presenting the product toward camera.
 Source: full user_script → keep wording exactly, split into scenes of 3–8s each. Brief only → write from brief + frames. Neither → infer from frames.
@@ -162,7 +175,7 @@ Hard limit: at most 3 segments per voiceoverLineId (single-shot = 1; multi-angle
 </grouping>
 
 <verify>
-Before returning, confirm in English: durationSec sum ≥45s (prefer ≥50s); ≥10 segments / 12–18 lines; ≥60% of lines are multi-angle; last line is a CTA; no two adjacent lines look the same; zero reject_safety violations remain.
+Before returning, confirm in English: you watched every clip to its FULL given duration, not just the first portion; every sourceIn/sourceOut is within its clip's real given duration (never beyond it); durationSec sum ≥45s (prefer ≥50s) UNLESS real footage is shorter, in which case a shorter honest script is correct; ≥10 segments / 12–18 lines when footage supports it; ≥60% of lines are multi-angle (re-check any single-shot line against <video_multi_angle_reminder>); last line is a CTA; no two adjacent lines look the same; the chosen matchedFrameTime values are spread across each clip's duration, not bunched only near the start; zero reject_safety violations remain.
 </verify>
 
 <output_format>
@@ -320,34 +333,89 @@ async def generate_dub_edit_script(
         await delete_message_files(uploaded_file_ids)
 
 
-def build_dub_edit_user_text_video(
+DUB_EDIT_SCHEMA_VIDEO: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "mode": {"type": "string"},
+        "totalEstimatedSec": {"type": "number"},
+        "segments": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "order": {"type": "integer"},
+                    "voiceoverLineId": {"type": "integer"},
+                    "sourceClip": {"type": "string"},
+                    "sourceIn": {"type": "number"},
+                    "sourceOut": {"type": "number"},
+                    "durationSec": {"type": "number"},
+                    "matchedFrameTime": {"type": "number"},
+                    "visualDescription": {"type": "string"},
+                    "cutStyle": {
+                        "type": "string",
+                        "enum": ["jump_cut", "standard", "zoom_in", "zoom_out"],
+                    },
+                    "voiceoverScript": {"type": "string"},
+                },
+                "required": [
+                    "order", "voiceoverLineId", "sourceClip", "sourceIn", "sourceOut",
+                    "matchedFrameTime", "cutStyle",
+                ],
+            },
+        },
+    },
+    "required": ["segments"],
+}
+
+
+def build_dub_edit_context_text_video(
     *,
     brief: str,
     user_script: str,
-    target_duration_sec: int | None,
+    clip_durations: list[tuple[str, float]],
 ) -> str:
-    """Assemble the leading text block of the Gemini video edit-script request.
+    """Assemble the text block that comes BEFORE the video content.
 
-    Same as build_dub_edit_user_text minus the <frame_timestamps> block — Gemini
-    watches the video directly, no frame descriptors to hand it.
+    Per Gemini's own prompt-design guidance for long videos: data context goes
+    first, specific instructions go last (after the model has "seen" the data).
+    This block is just data — creator brief/script + real per-clip durations —
+    no directives. See build_dub_edit_instruction_text_video for the directives,
+    which are sent AFTER the video blocks.
     """
-    duration_hint = (
-        f"Target video length: ~{target_duration_sec} seconds. totalEstimatedSec = sum of ALL segment durationSec = actual rendered video length. Plan 12–18 lines with multi-angle middle sections so all cuts total ~{target_duration_sec}s — add more lines if needed. "
-        if target_duration_sec
-        else "No target set — minimum 45s, target 50–60s (standard TikTok affiliate length). totalEstimatedSec = sum of ALL segment durationSec = actual rendered video length. 45s is a hard floor — plan 12–18 lines (≥10 segments), prefer multi-angle on product/demo/OOTD lines, and keep adding until the sum reaches 45s+. "
-    )
     creator_input = (
         f"<creator_input>\n"
         f"<brief>{brief or '(ไม่ระบุ)'}</brief>\n"
         f"<user_script>{user_script or '(ไม่ระบุ — generate จากวิดีโอ)'}</user_script>\n"
         f"</creator_input>"
     )
+    clips_block = "\n".join(f"{clip_id}: {dur:.1f}s" for clip_id, dur in clip_durations)
+    return f"{creator_input}\n\n<clips>\n{clips_block}\n</clips>"
+
+
+def build_dub_edit_instruction_text_video(
+    *,
+    target_duration_sec: int | None,
+    clip_durations: list[tuple[str, float]],
+) -> str:
+    """Assemble the directive block sent AFTER the video content.
+
+    Gemini's guidance for long-video prompts: place specific instructions at
+    the end, after the data — not before it, the way build_dub_edit_user_text
+    (Claude+frames path) does. This is the same content that used to precede
+    the video; only its position in the message moved.
+    """
+    total_footage = sum(dur for _clip_id, dur in clip_durations)
+    duration_hint = (
+        f"Target video length: ~{target_duration_sec} seconds. totalEstimatedSec = sum of ALL segment durationSec = actual rendered video length. Plan 12–18 lines with multi-angle middle sections so all cuts total ~{target_duration_sec}s — add more lines if needed, but NEVER by inventing timestamps beyond a clip's real duration (see <clips> above). "
+        if target_duration_sec
+        else f"No target set — minimum 45s, target 50–60s (standard TikTok affiliate length), but this floor is secondary to authenticity: total available footage across all clips is {total_footage:.1f}s. totalEstimatedSec = sum of ALL segment durationSec = actual rendered video length. Plan 12–18 lines (≥10 segments), prefer multi-angle on product/demo/OOTD lines, and add lines until the sum reaches 45s+ ONLY using real distinct moments — if real usable footage runs out sooner, stop there rather than inventing or reusing beyond the reuse limits. "
+    )
     return (
-        f"{creator_input}\n\n"
         "<instruction>"
         f"{duration_hint}"
-        "Catalog the frames, understand the clip, then write the Thai voiceover script and match each line to the best real moments. "
-        "Default multi-angle on product/demo/OOTD lines. Follow all system rules (safety, no-prep, frame-match, shot completeness, visual variety, timing, CTA). "
+        "Based on the video(s) above: watch each clip in full for its ENTIRE given duration before selecting any cuts — do not stop early once you feel you have enough. "
+        "Catalog the frames, understand the clip, then write the Thai voiceover script and match each line to the best real moments from anywhere across the full timeline, including near the end. "
+        "Default multi-angle on product/demo/OOTD lines. Follow all system rules (safety, no-prep, frame-match, shot completeness, visual variety, timing, CTA, coverage). "
         "Return ONLY the Edit Script JSON."
         "</instruction>"
     )
@@ -373,7 +441,11 @@ async def generate_dub_edit_script_video(
     from packages.llm.config import call_kwargs
     from packages.llm.files import delete_gemini_files, gemini_video_block, upload_gemini_file
     from packages.llm.gateway import acompletion_stream_thinking
-    from packages.video.timeline import normalize_dub_edit_script, parse_llm_json
+    from packages.video.timeline import (
+        clamp_dub_segments_to_clip_durations,
+        normalize_dub_edit_script,
+        parse_llm_json,
+    )
 
     settings = get_settings()
     model = f"gemini/{settings.dub_vision_model}"
@@ -385,19 +457,35 @@ async def generate_dub_edit_script_video(
             file_ids.append(await upload_gemini_file(path, mime_type="video/mp4"))
         upload_ms = round((time.monotonic() - t_upload) * 1000)
 
-        user_msg_content: list[dict[str, Any]] = [{"type": "text", "text": build_dub_edit_user_text_video(
+        clip_durations = [(clip_id, duration) for clip_id, _path, duration in clip_videos]
+        # Gemini's long-video guidance: data first, directives last — video
+        # blocks sit between the context text and the instruction text.
+        user_msg_content: list[dict[str, Any]] = [{"type": "text", "text": build_dub_edit_context_text_video(
             brief=brief,
             user_script=user_script,
-            target_duration_sec=target_duration_sec,
+            clip_durations=clip_durations,
         )}]
         for (clip_id, _path, _duration), file_id in zip(clip_videos, file_ids, strict=True):
             user_msg_content.append({"type": "text", "text": f"=== {clip_id} ==="})
             user_msg_content.append(gemini_video_block(file_id))
+        user_msg_content.append({"type": "text", "text": build_dub_edit_instruction_text_video(
+            target_duration_sec=target_duration_sec,
+            clip_durations=clip_durations,
+        )})
         user_msg_content.append({"type": "text", "text": DUB_EDIT_REMINDER})
 
         messages = [{"role": "user", "content": user_msg_content}]
         extra = call_kwargs(model=model)
         extra["timeout"] = settings.dub_vision_timeout_sec
+        # Gemini does not reliably follow a JSON shape from prose instructions
+        # alone (observed in production: it invented its own top-level keys
+        # instead of "segments"). response_schema constrains decoding so the
+        # shape is guaranteed, not just requested.
+        extra["response_format"] = {
+            "type": "json_object",
+            "response_schema": DUB_EDIT_SCHEMA_VIDEO,
+            "enforce_validation": True,
+        }
 
         log.info(
             "analyze_dub_video_payload",
@@ -413,6 +501,8 @@ async def generate_dub_edit_script_video(
         )
         raw = resp.choices[0].message.content or ""
         edit_script = parse_llm_json(raw)
+        clip_durations = {clip_id: duration for clip_id, _path, duration in clip_videos}
+        edit_script = clamp_dub_segments_to_clip_durations(edit_script, clip_durations)
         return normalize_dub_edit_script(edit_script, sample_frames=None)
     finally:
         await delete_gemini_files(file_ids)

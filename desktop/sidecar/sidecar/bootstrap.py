@@ -42,6 +42,16 @@ def ensure_backend_on_path() -> Path:
     return backend
 
 
+def configure_utf8_stdio() -> None:
+    """Force UTF-8 on stdout so Thai error messages survive the Electron pipe on Windows."""
+    import sys
+
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            reconfigure(encoding="utf-8", errors="replace")
+
+
 def configure_stderr_logging() -> None:
     """Route backend structlog output to stderr.
 

@@ -166,6 +166,9 @@ function sourceNeighborBounds(
 }
 
 const LANE_HEIGHT_PX = 64
+// Floor for a source lane's rendered width (so a very short clip stays clickable) —
+// getSourceLayoutDurationSec must apply this exact same floor to its cumulative axis math.
+const MIN_LANE_PX = 80
 /** Fixed bands below the video preview — video gets all remaining height. */
 const EDITOR_TIMELINE_BAND_PX = 112
 const EDITOR_SCENE_BAND_PX = 96
@@ -424,59 +427,15 @@ function ShortcutsHelpModal({ isDub, onClose }: { isDub: boolean; onClose: () =>
 }
 
 interface Filmstrip {
-  thumbs: string[]
+  /** Sparse — index `undefined` means that tile hasn't been generated yet (lazy). */
+  thumbs: (string | undefined)[]
   /** Display width per tile — scaled so tiles cover the full lane edge-to-edge. */
   tileWidthPx: number
 }
 
-/**
- * Tile a continuous filmstrip across the whole lane width (CapCut-style — no gaps):
- * one frame per native-aspect tile, covering the full clip duration.
- */
-async function generateFilmstrip(src: string, durationSec: number): Promise<Filmstrip> {
-  const video = document.createElement('video')
-  video.muted = true
-  video.playsInline = true
-  video.crossOrigin = 'anonymous'
-  video.src = src
-  await new Promise<void>((resolve, reject) => {
-    video.addEventListener('loadedmetadata', () => resolve(), { once: true })
-    video.addEventListener('error', () => reject(new Error('video load failed')), { once: true })
-  })
-
-  const duration =
-    video.duration > 0 && Number.isFinite(video.duration) ? video.duration : durationSec
-  const laneWidthPx = Math.max(duration * PX_PER_SEC, 80)
-
-  const ratio =
-    video.videoWidth && video.videoHeight ? video.videoWidth / video.videoHeight : 9 / 16
-  const tileWidthPx = Math.max(1, Math.round(LANE_HEIGHT_PX * ratio))
-  // Capture at ~2x display size for sharpness without wasting time on oversized canvases/encodes.
-  const captureH = Math.min(video.videoHeight || 320, LANE_HEIGHT_PX * 2)
-  const captureW = Math.max(1, Math.round(captureH * ratio))
-  const canvas = document.createElement('canvas')
-  canvas.width = captureW
-  canvas.height = captureH
-  const ctx = canvas.getContext('2d')
-  if (!ctx) return { thumbs: [], tileWidthPx }
-
-  const count = Math.max(4, Math.ceil(laneWidthPx / tileWidthPx))
-  const thumbs: string[] = []
-  for (let i = 0; i < count; i++) {
-    const t = count <= 1 ? 0 : (duration * i) / (count - 1)
-    await new Promise<void>((resolve) => {
-      const onSeeked = () => {
-        video.removeEventListener('seeked', onSeeked)
-        resolve()
-      }
-      video.addEventListener('seeked', onSeeked)
-      video.currentTime = clamp(t, 0, Math.max(duration - 0.05, 0))
-    })
-    ctx.drawImage(video, 0, 0, captureW, captureH)
-    thumbs.push(canvas.toDataURL('image/jpeg', 0.82))
-  }
-  return { thumbs, tileWidthPx }
-}
+// A few extra seconds generated past each edge of the visible viewport, so a small
+// scroll doesn't show a blank gap while the next tile is still seeking in.
+const FILMSTRIP_PREFETCH_SEC = 6
 
 export function VideoTimelineEditor({ uid, mode, onClose, onSaved }: Props) {
   const [timeline, setTimeline] = useState<EditTimeline | null>(null)
@@ -505,6 +464,18 @@ export function VideoTimelineEditor({ uid, mode, onClose, onSaved }: Props) {
   const scrollFinishTimerRef = useRef<number | undefined>(undefined)
   const lastProgrammaticScrollRef = useRef<number | null>(null)
   const scrollMovedRef = useRef(false)
+  // Source-mode boundary-crossing: dedupe against re-triggering loadPreviewFor for the
+  // same target on every pointermove while the previous swap is still in flight, and
+  // stamp each swap with a token so a stale resolution can't stomp a newer one's state.
+  const pendingSourceSwapRef = useRef<{ sourceId: string; token: number } | null>(null)
+  const sourceSwapTokenRef = useRef(0)
+  // Swapping `<video src>` makes the browser reset currentTime to 0 and fire an
+  // early timeupdate/seeked at 0 before `loadedmetadata` lets us correct it — that
+  // transient event was reaching syncTimeFromVideo and yanking the scrollbar to
+  // the start for a frame (the "jump to start, then jump to target" on every
+  // click/drag across a clip boundary, in both modes). Suppress time-sync from
+  // video events for the whole pending-swap window, same idea as isScrubbingRef.
+  const isSourceSwapPendingRef = useRef(false)
   const currentTimeRef = useRef(0)
   const [lanePadPx, setLanePadPx] = useState(0)
   const [videoDuration, setVideoDuration] = useState(0)
@@ -523,6 +494,19 @@ export function VideoTimelineEditor({ uid, mode, onClose, onSaved }: Props) {
   const editedViewStateRef = useRef<ViewModePlaybackState | null>(null)
   const newCutCounter = useRef(0)
   const [filmstrips, setFilmstrips] = useState<Record<string, Filmstrip>>({})
+  const filmstripsRef = useRef<Record<string, Filmstrip>>({})
+  useEffect(() => {
+    filmstripsRef.current = filmstrips
+  }, [filmstrips])
+  // One hidden <video> + probed metadata per source, reused across every lazy fill
+  // instead of recreated per request. Fills are serialized per source (a shared
+  // <video> can't handle two concurrent seeks) via filmstripQueueRef; different
+  // sources still generate in parallel.
+  const filmstripVideoCache = useRef<Map<string, HTMLVideoElement>>(new Map())
+  const filmstripMetaCache = useRef<
+    Map<string, { duration: number; tileWidthPx: number; totalTiles: number }>
+  >(new Map())
+  const filmstripQueueRef = useRef<Map<string, Promise<void>>>(new Map())
   const [isPlaying, setIsPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
@@ -600,9 +584,11 @@ export function VideoTimelineEditor({ uid, mode, onClose, onSaved }: Props) {
         setTimeline(t)
         setCuts(normalizeDubCuts(t.cuts))
         setEditorPhase('preparing')
-        await loadFilmstrips(t.sources, (hint) => {
-          if (!cancelled) setPrepareHint(hint)
-        })
+        // Filmstrip thumbnails are no longer generated eagerly here — that used to
+        // seek through every source clip's full duration before the editor could
+        // even open (minutes-long freeze for a long talking_head clip). They now
+        // load lazily: the visible viewport (source mode scroll) or a cut's own
+        // window (edited mode) requests just what's on screen.
         if (cancelled) return
         const firstCut = t.cuts[0]
         if (firstCut) {
@@ -654,8 +640,12 @@ export function VideoTimelineEditor({ uid, mode, onClose, onSaved }: Props) {
     let raf = 0
     const tick = () => {
       const v = activeVideo()
-      if (v && !v.paused && !isScrubbingRef.current) {
+      if (v && !v.paused && !isScrubbingRef.current && !isSourceSwapPendingRef.current) {
         if (viewMode === 'edited' && maybeAdvanceEditedSegment(v)) {
+          raf = requestAnimationFrame(tick)
+          return
+        }
+        if (viewMode === 'source' && maybeAdvanceSourceSegment(v)) {
           raf = requestAnimationFrame(tick)
           return
         }
@@ -669,9 +659,9 @@ export function VideoTimelineEditor({ uid, mode, onClose, onSaved }: Props) {
             : 0
           totalForLabel = computeEditedDuration(cuts)
         } else {
-          const dur = getPlayDuration(previewSource)
-          t = clamp(v.currentTime, 0, dur)
-          totalForLabel = v.duration || 0
+          const seg = findSourceGlobalSegmentBySourceId(previewSource)
+          totalForLabel = getSourceTotalDurationSec()
+          t = clamp((seg?.globalIn ?? 0) + v.currentTime, 0, totalForLabel)
         }
         currentTimeRef.current = t
         syncScrollFromTime(t)
@@ -696,13 +686,73 @@ export function VideoTimelineEditor({ uid, mode, onClose, onSaved }: Props) {
     return Math.max(meta, loadedVideo, maxCutOut)
   }
 
-  function getPlayDuration(sourceId: string | null): number {
-    return getSourceDurationSec(sourceId)
+  /** Stable per-clip duration for LAYOUT math (lane width, cumulative global axis) —
+   *  deliberately never mixes in the live <video>'s decoded duration the way
+   *  getSourceDurationSec does. That's fine for that function's original purpose
+   *  (snap one lane's width to reality once its own video loads), but summing it
+   *  across clips is not: whichever clip happens to be "active" would contribute
+   *  a slightly different number (decoder rounding vs. declared metadata) than
+   *  when inactive, shifting every clip after it on the strip — the jump-then-
+   *  settle jitter when dragging across a boundary. Metadata + real cut extent
+   *  only, so the axis never moves depending on which clip is currently loaded.
+   */
+  function getSourceLayoutDurationSec(sourceId: string): number {
+    if (!timeline) return 0
+    const meta = timeline.sources.find((s) => s.id === sourceId)?.durationSec ?? 0
+    const maxCutOut = cuts
+      .filter((c) => c.source === sourceId)
+      .reduce((m, c) => Math.max(m, c.out), 0)
+    // SourceLane floors its rendered width at MIN_LANE_PX so a very short clip is
+    // still clickable — the cumulative axis must apply the exact same floor, or a
+    // short clip renders wider on screen than it counts for here, and every clip
+    // after it drifts further out of sync with where it actually sits visually.
+    return Math.max(meta, maxCutOut, MIN_LANE_PX / PX_PER_SEC)
+  }
+
+  /** Map all source clips onto one continuous "raw footage" timeline — back-to-back,
+   *  in upload order — mirroring computeEditedSegments but for the un-cut originals. */
+  function computeSourceGlobalSegments(): {
+    sourceId: string
+    durationSec: number
+    globalIn: number
+    globalOut: number
+  }[] {
+    if (!timeline) return []
+    let acc = 0
+    return timeline.sources.map((s) => {
+      const dur = Math.max(getSourceLayoutDurationSec(s.id), 0)
+      const seg = { sourceId: s.id, durationSec: dur, globalIn: acc, globalOut: acc + dur }
+      acc += dur
+      return seg
+    })
+  }
+
+  /** Find which source clip a position on the concatenated raw-footage timeline falls into. */
+  function findSourceGlobalSegment(
+    t: number
+  ): ReturnType<typeof computeSourceGlobalSegments>[number] | null {
+    const segs = computeSourceGlobalSegments()
+    if (segs.length === 0) return null
+    for (const seg of segs) {
+      if (t < seg.globalOut - 0.001) return seg
+    }
+    return segs[segs.length - 1]
+  }
+
+  function findSourceGlobalSegmentBySourceId(
+    sourceId: string | null
+  ): ReturnType<typeof computeSourceGlobalSegments>[number] | null {
+    if (!sourceId) return null
+    return computeSourceGlobalSegments().find((s) => s.sourceId === sourceId) ?? null
+  }
+
+  function getSourceTotalDurationSec(): number {
+    return computeSourceGlobalSegments().reduce((sum, s) => sum + s.durationSec, 0)
   }
 
   /** Total duration of whichever timeline domain is currently visible (source clip vs. edited sequence). */
   function getActiveDurationSec(): number {
-    return viewMode === 'edited' ? computeEditedDuration(cuts) : getPlayDuration(previewSource)
+    return viewMode === 'edited' ? computeEditedDuration(cuts) : getSourceTotalDurationSec()
   }
 
   function currentEditedCut(): WorkingCut | null {
@@ -778,11 +828,32 @@ export function VideoTimelineEditor({ uid, mode, onClose, onSaved }: Props) {
     })()
   }
 
-  /** Seek the active <video> to a position on the active timeline domain (source-local or edited seconds). */
+  /** Seek the active <video> to a position on the active timeline domain (concatenated
+   *  raw footage in source mode, edited sequence in edited mode) — both may cross a
+   *  clip boundary, in which case the preview source swaps before seeking. */
   function seekActiveTime(t: number) {
     if (viewMode !== 'edited') {
-      const v = activeVideo()
-      if (v) v.currentTime = t
+      const seg = findSourceGlobalSegment(t)
+      if (!seg) return
+      const localTime = clamp(t - seg.globalIn, 0, seg.durationSec)
+      if (previewSource !== seg.sourceId) {
+        // Dragging fast fires this on every pointermove — don't re-trigger the async
+        // swap if one to this same clip is already in flight (that's what caused the
+        // jump-then-snap-back: overlapping loads each resolving with a stale position).
+        if (pendingSourceSwapRef.current?.sourceId === seg.sourceId) {
+          playRangeRef.current = { in: localTime, out: seg.durationSec }
+          return
+        }
+        const token = ++sourceSwapTokenRef.current
+        pendingSourceSwapRef.current = { sourceId: seg.sourceId, token }
+        isSourceSwapPendingRef.current = true
+        resumePlaybackRef.current = false
+        playRangeRef.current = { in: localTime, out: seg.durationSec }
+        void loadPreviewFor(seg.sourceId)
+      } else {
+        const v = activeVideo()
+        if (v) v.currentTime = localTime
+      }
       return
     }
     const seg = findEditedSegment(cuts, t)
@@ -790,6 +861,7 @@ export function VideoTimelineEditor({ uid, mode, onClose, onSaved }: Props) {
     const localTime = clamp(seg.cut.in + (t - seg.editedIn), seg.cut.in, seg.cut.out)
     editedActiveCutIdRef.current = seg.cut.id
     if (previewSource !== seg.cut.source) {
+      isSourceSwapPendingRef.current = true
       resumePlaybackRef.current = false
       playRangeRef.current = { in: localTime, out: seg.cut.out }
       void loadPreviewFor(seg.cut.source)
@@ -797,6 +869,35 @@ export function VideoTimelineEditor({ uid, mode, onClose, onSaved }: Props) {
       const v = activeVideo()
       if (v) v.currentTime = localTime
     }
+  }
+
+  /** While playing in source mode: once the active raw clip ends, advance into the next
+   *  one (no instant buffer-swap like edited mode gets — a brief reload is fine here,
+   *  this is for reviewing raw footage, not the final render). */
+  function maybeAdvanceSourceSegment(v: HTMLVideoElement): boolean {
+    if (!previewSource) return false
+    const seg = findSourceGlobalSegmentBySourceId(previewSource)
+    if (!seg) return false
+    const EPS = 0.05
+    if (v.currentTime < seg.durationSec - EPS) return false
+    const segs = computeSourceGlobalSegments()
+    const idx = segs.findIndex((s) => s.sourceId === previewSource)
+    const next = segs[idx + 1]
+    if (!next) {
+      v.pause()
+      setIsPlaying(false)
+      const total = getSourceTotalDurationSec()
+      currentTimeRef.current = total
+      setCurrentTime(total)
+      syncScrollFromTime(total)
+      updateTimeLabel(total)
+      return true
+    }
+    isSourceSwapPendingRef.current = true
+    resumePlaybackRef.current = true
+    playRangeRef.current = { in: 0, out: next.durationSec }
+    void loadPreviewFor(next.sourceId)
+    return true
   }
 
   /** While playing in edited mode: once the active cut's out-point is reached, jump to the next cut. */
@@ -839,6 +940,7 @@ export function VideoTimelineEditor({ uid, mode, onClose, onSaved }: Props) {
       setPreviewSrc(buf.currentSrc || buf.src)
       bufferPrimedKeyRef.current = null
     } else if (previewSource !== next.source) {
+      isSourceSwapPendingRef.current = true
       void loadPreviewFor(next.source)
     } else {
       v.currentTime = next.in
@@ -866,10 +968,7 @@ export function VideoTimelineEditor({ uid, mode, onClose, onSaved }: Props) {
 
   function updateTimeLabel(sec: number) {
     if (!timeLabelRef.current) return
-    const total =
-      viewMode === 'edited'
-        ? computeEditedDuration(cuts)
-        : (activeVideo()?.duration ?? videoDuration)
+    const total = viewMode === 'edited' ? computeEditedDuration(cuts) : getSourceTotalDurationSec()
     timeLabelRef.current.textContent = `${fmtTime(sec)} / ${fmtTime(total)}`
   }
 
@@ -888,10 +987,16 @@ export function VideoTimelineEditor({ uid, mode, onClose, onSaved }: Props) {
   function syncFocusToPlayhead(t: number) {
     if (isCutBlockEditingRef.current) return
 
-    const focusId =
-      viewMode === 'edited'
-        ? (findEditedSegment(cuts, t)?.cut.id ?? null)
-        : (findSourceCutAtTime(cuts, previewSource, t)?.id ?? null)
+    let focusId: string | null
+    if (viewMode === 'edited') {
+      focusId = findEditedSegment(cuts, t)?.cut.id ?? null
+    } else {
+      // `t` is a position on the concatenated raw-footage timeline — resolve which
+      // source clip it falls into and convert back to that clip's own local time
+      // before looking up the cut under the playhead.
+      const seg = findSourceGlobalSegment(t)
+      focusId = seg ? (findSourceCutAtTime(cuts, seg.sourceId, t - seg.globalIn)?.id ?? null) : null
+    }
 
     if (!focusId) return
 
@@ -956,6 +1061,36 @@ export function VideoTimelineEditor({ uid, mode, onClose, onSaved }: Props) {
     ro.observe(el)
     return () => ro.disconnect()
   }, [editorPhase, timeline])
+
+  // Source mode: load filmstrip tiles for whatever's actually visible (plus a small
+  // prefetch margin), not the whole raw clip. Runs on every scroll — drag, click-to-
+  // seek, and auto-advance during playback all move scrollLeft, so this one listener
+  // covers all of them. Fires once immediately too, so the initial view isn't blank.
+  useEffect(() => {
+    if (viewMode !== 'source' || editorPhase !== 'ready' || !timeline) return
+    const el = lanesViewportRef.current
+    if (!el) return
+    let raf = 0
+    const handler = () => {
+      cancelAnimationFrame(raf)
+      raf = requestAnimationFrame(() => {
+        const startGlobal = Math.max(el.scrollLeft / PX_PER_SEC - FILMSTRIP_PREFETCH_SEC, 0)
+        const endGlobal = (el.scrollLeft + el.clientWidth) / PX_PER_SEC + FILMSTRIP_PREFETCH_SEC
+        for (const seg of computeSourceGlobalSegments()) {
+          if (seg.globalOut < startGlobal || seg.globalIn > endGlobal) continue
+          const localStart = Math.max(startGlobal - seg.globalIn, 0)
+          const localEnd = Math.min(endGlobal - seg.globalIn, seg.durationSec)
+          queueFilmstripRange(seg.sourceId, seg.durationSec, localStart, localEnd)
+        }
+      })
+    }
+    handler()
+    el.addEventListener('scroll', handler, { passive: true })
+    return () => {
+      cancelAnimationFrame(raf)
+      el.removeEventListener('scroll', handler)
+    }
+  }, [viewMode, editorPhase, timeline, cuts])
 
   useEffect(() => {
     if (!previewSource || editorPhase !== 'ready') return
@@ -1109,27 +1244,126 @@ export function VideoTimelineEditor({ uid, mode, onClose, onSaved }: Props) {
     return r.src
   }
 
-  async function loadFilmstrips(
-    sources: { id: string; durationSec: number }[],
-    onProgress?: (hint: string) => void
-  ) {
-    for (let i = 0; i < sources.length; i++) {
-      const src = sources[i]
-      onProgress?.(
-        sources.length > 1
-          ? `กำลังสร้างภาพตัวอย่างคลิป ${i + 1}/${sources.length}…`
-          : 'กำลังสร้างภาพตัวอย่างคลิป…'
-      )
-      try {
-        const playableSrc = await ensureSourceSrc(src.id)
-        const strip = await generateFilmstrip(playableSrc, src.durationSec)
-        if (strip.thumbs.length > 0) {
-          setFilmstrips((prev) => ({ ...prev, [src.id]: strip }))
-        }
-      } catch {
-        // Filmstrip is a visual aid only (e.g. CORS-tainted canvas on S3) — lane still works without it.
-      }
+  async function getFilmstripVideo(sourceId: string): Promise<HTMLVideoElement | null> {
+    const cached = filmstripVideoCache.current.get(sourceId)
+    if (cached) return cached
+    try {
+      const src = await ensureSourceSrc(sourceId)
+      const video = document.createElement('video')
+      video.muted = true
+      video.playsInline = true
+      video.crossOrigin = 'anonymous'
+      video.src = src
+      await new Promise<void>((resolve, reject) => {
+        video.addEventListener('loadedmetadata', () => resolve(), { once: true })
+        video.addEventListener('error', () => reject(new Error('video load failed')), {
+          once: true
+        })
+      })
+      filmstripVideoCache.current.set(sourceId, video)
+      return video
+    } catch {
+      return null
     }
+  }
+
+  function getFilmstripMeta(
+    sourceId: string,
+    video: HTMLVideoElement,
+    declaredDurationSec: number
+  ): { duration: number; tileWidthPx: number; totalTiles: number } {
+    const cached = filmstripMetaCache.current.get(sourceId)
+    if (cached) return cached
+    const duration =
+      video.duration > 0 && Number.isFinite(video.duration) ? video.duration : declaredDurationSec
+    const laneWidthPx = Math.max(duration * PX_PER_SEC, MIN_LANE_PX)
+    const ratio =
+      video.videoWidth && video.videoHeight ? video.videoWidth / video.videoHeight : 9 / 16
+    const tileWidthPx = Math.max(1, Math.round(LANE_HEIGHT_PX * ratio))
+    // Same "~1 tile per second" density as before — unchanged, just generated lazily now.
+    const totalTiles = Math.max(4, Math.ceil(laneWidthPx / tileWidthPx))
+    const meta = { duration, tileWidthPx, totalTiles }
+    filmstripMetaCache.current.set(sourceId, meta)
+    return meta
+  }
+
+  /** Fill only the thumbnail tiles overlapping [startSec, endSec] for one source,
+   *  skipping tiles already cached. Called for the visible viewport (source mode,
+   *  as the user scrolls) or a single cut's own window (edited mode) — never for
+   *  a whole clip up front. That eager whole-clip generation (hundreds of
+   *  sequential seeks for a long talking_head clip) was the actual freeze on
+   *  entering the editor and while dragging the timeline. */
+  async function fillFilmstripRange(
+    sourceId: string,
+    declaredDurationSec: number,
+    startSec: number,
+    endSec: number
+  ) {
+    const video = await getFilmstripVideo(sourceId)
+    if (!video) return
+    const { duration, tileWidthPx, totalTiles } = getFilmstripMeta(
+      sourceId,
+      video,
+      declaredDurationSec
+    )
+    const tileDur = totalTiles > 0 ? duration / totalTiles : duration
+    const startIdx = clamp(Math.floor(startSec / Math.max(tileDur, 0.001)), 0, totalTiles - 1)
+    const endIdx = clamp(Math.ceil(endSec / Math.max(tileDur, 0.001)), 0, totalTiles - 1)
+
+    const existing = filmstripsRef.current[sourceId]
+    const thumbs: (string | undefined)[] =
+      existing?.thumbs && existing.thumbs.length === totalTiles
+        ? [...existing.thumbs]
+        : new Array(totalTiles).fill(undefined)
+
+    let changed = false
+    try {
+      for (let i = startIdx; i <= endIdx; i++) {
+        if (thumbs[i]) continue
+        const t = totalTiles <= 1 ? 0 : (duration * i) / (totalTiles - 1)
+        await new Promise<void>((resolve) => {
+          const onSeeked = () => {
+            video.removeEventListener('seeked', onSeeked)
+            resolve()
+          }
+          video.addEventListener('seeked', onSeeked)
+          video.currentTime = clamp(t, 0, Math.max(duration - 0.05, 0))
+        })
+        const ratio =
+          video.videoWidth && video.videoHeight ? video.videoWidth / video.videoHeight : 9 / 16
+        const captureH = Math.min(video.videoHeight || 320, LANE_HEIGHT_PX * 2)
+        const captureW = Math.max(1, Math.round(captureH * ratio))
+        const canvas = document.createElement('canvas')
+        canvas.width = captureW
+        canvas.height = captureH
+        const ctx = canvas.getContext('2d')
+        if (!ctx) break
+        ctx.drawImage(video, 0, 0, captureW, captureH)
+        thumbs[i] = canvas.toDataURL('image/jpeg', 0.82)
+        changed = true
+      }
+    } catch {
+      // Filmstrip is a visual aid only (e.g. CORS-tainted canvas on S3) — lane still works without it.
+    }
+    if (changed) {
+      setFilmstrips((prev) => ({ ...prev, [sourceId]: { thumbs, tileWidthPx } }))
+    }
+  }
+
+  /** Serialize fill requests per source — they share one hidden <video>, so two
+   *  concurrent seeks on it would race each other. Different sources still run
+   *  in parallel (each has its own <video>). */
+  function queueFilmstripRange(
+    sourceId: string,
+    declaredDurationSec: number,
+    startSec: number,
+    endSec: number
+  ) {
+    const prev = filmstripQueueRef.current.get(sourceId) ?? Promise.resolve()
+    const next = prev
+      .catch(() => undefined)
+      .then(() => fillFilmstripRange(sourceId, declaredDurationSec, startSec, endSec))
+    filmstripQueueRef.current.set(sourceId, next)
   }
 
   async function loadPreviewFor(sourceId: string) {
@@ -1160,6 +1394,11 @@ export function VideoTimelineEditor({ uid, mode, onClose, onSaved }: Props) {
       // Seeking here too raced with that effect and could apply to the wrong
       // video element since setPreviewSrc/setPreviewSource haven't committed
       // to a re-render yet at this point in the async function.
+      if (viewMode === 'source') {
+        sourceSwapTokenRef.current += 1
+        pendingSourceSwapRef.current = { sourceId: cut.source, token: sourceSwapTokenRef.current }
+      }
+      isSourceSwapPendingRef.current = true
       await loadPreviewFor(cut.source)
       return
     }
@@ -1169,7 +1408,7 @@ export function VideoTimelineEditor({ uid, mode, onClose, onSaved }: Props) {
       const activeT =
         viewMode === 'edited'
           ? (computeEditedSegments(cuts).find((s) => s.cut.id === cut.id)?.editedIn ?? cut.in)
-          : cut.in
+          : (findSourceGlobalSegmentBySourceId(cut.source)?.globalIn ?? 0) + cut.in
       currentTimeRef.current = activeT
       setCurrentTime(activeT)
       syncScrollFromTime(activeT)
@@ -1184,10 +1423,18 @@ export function VideoTimelineEditor({ uid, mode, onClose, onSaved }: Props) {
   // still null and never apply the src once the elements actually exist.
   useEffect(() => {
     const v = activeVideo()
-    const range = playRangeRef.current
-    if (!v || !range || !previewSrc) return
+    if (!v || !playRangeRef.current || !previewSrc) return
     if (v.src !== previewSrc) v.src = previewSrc
+    // Snapshot which swap this effect instance is for — if a newer drag position
+    // superseded it before the video finishes loading, bail instead of applying a
+    // stale seek/scroll (that stale-apply was the jump-then-snap-back bug).
+    const myToken = sourceSwapTokenRef.current
     const onLoaded = () => {
+      if (viewModeRef.current === 'source' && sourceSwapTokenRef.current !== myToken) return
+      // Read fresh, not the value captured when this effect was set up — the user
+      // may have kept dragging while the video was still loading metadata.
+      const range = playRangeRef.current
+      if (!range) return
       v.currentTime = range.in
       setVideoDuration(v.duration || 0)
       const cutId = editedActiveCutIdRef.current
@@ -1195,15 +1442,22 @@ export function VideoTimelineEditor({ uid, mode, onClose, onSaved }: Props) {
         viewModeRef.current === 'edited' && cutId
           ? (computeEditedSegments(cutsRef.current).find((s) => s.cut.id === cutId)?.editedIn ??
             range.in)
-          : range.in
+          : viewModeRef.current === 'source'
+            ? (findSourceGlobalSegmentBySourceId(previewSource)?.globalIn ?? 0) + range.in
+            : range.in
       void window.noey.log.write(
         'TimelineEditor',
         `previewSrc onLoaded cutId=${cutId} range.in=${range.in} activeT=${activeT} duration=${v.duration}`
       )
       currentTimeRef.current = activeT
       setCurrentTime(activeT)
-      syncScrollFromTime(activeT)
+      // A live drag is the authoritative source for scroll position while it's
+      // happening — forcing it here from a just-resolved async load is exactly
+      // what produced the jump-then-snap-back.
+      if (!scrollMovedRef.current) syncScrollFromTime(activeT)
       updateTimeLabel(activeT)
+      if (pendingSourceSwapRef.current?.token === myToken) pendingSourceSwapRef.current = null
+      isSourceSwapPendingRef.current = false
       if (resumePlaybackRef.current) void v.play()
     }
     if (v.readyState >= 1 && v.src === previewSrc) onLoaded()
@@ -1212,7 +1466,7 @@ export function VideoTimelineEditor({ uid, mode, onClose, onSaved }: Props) {
   }, [previewSrc, editorPhase])
 
   function syncTimeFromVideo() {
-    if (isScrubbingRef.current) return
+    if (isScrubbingRef.current || isSourceSwapPendingRef.current) return
     const v = activeVideo()
     if (!v) return
     let t: number
@@ -1222,8 +1476,8 @@ export function VideoTimelineEditor({ uid, mode, onClose, onSaved }: Props) {
       if (!seg) return
       t = clamp(seg.editedIn + (v.currentTime - cut!.in), 0, computeEditedDuration(cuts))
     } else {
-      const dur = getPlayDuration(previewSource)
-      t = clamp(v.currentTime, 0, dur)
+      const seg = findSourceGlobalSegmentBySourceId(previewSource)
+      t = clamp((seg?.globalIn ?? 0) + v.currentTime, 0, getSourceTotalDurationSec())
     }
     currentTimeRef.current = t
     setCurrentTime(t)
@@ -1239,7 +1493,7 @@ export function VideoTimelineEditor({ uid, mode, onClose, onSaved }: Props) {
     const v = activeVideo()
     if (!v) return
     setVideoDuration(v.duration || 0)
-    if (!isScrubbingRef.current) syncTimeFromVideo()
+    if (!isScrubbingRef.current && !isSourceSwapPendingRef.current) syncTimeFromVideo()
   }
 
   function onTimeUpdate() {
@@ -1308,6 +1562,7 @@ export function VideoTimelineEditor({ uid, mode, onClose, onSaved }: Props) {
     resumePlaybackRef.current = nextWasPlaying
 
     if (nextPreviewSource && nextPreviewSource !== previewSource) {
+      isSourceSwapPendingRef.current = true
       await loadPreviewFor(nextPreviewSource)
     }
 
@@ -1849,7 +2104,11 @@ export function VideoTimelineEditor({ uid, mode, onClose, onSaved }: Props) {
                 </button>
                 <span ref={timeLabelRef} className="text-[11px] tabular-nums text-amber-300/50">
                   {fmtTime(currentTime)} /{' '}
-                  {fmtTime(viewMode === 'edited' ? computeEditedDuration(cuts) : videoDuration)}
+                  {fmtTime(
+                    viewMode === 'edited'
+                      ? computeEditedDuration(cuts)
+                      : getSourceTotalDurationSec()
+                  )}
                 </span>
               </div>
             </div>
@@ -1873,7 +2132,9 @@ export function VideoTimelineEditor({ uid, mode, onClose, onSaved }: Props) {
                 data-timeline-scroll
                 onPointerDown={onTimelinePointerDown}
                 title="ลากเพื่อเลื่อน timeline"
-                className="scroll-none absolute inset-x-0 top-0 cursor-grab overflow-x-auto overflow-y-hidden select-none active:cursor-grabbing"
+                className={`scroll-none absolute inset-x-0 top-0 cursor-grab overflow-x-auto select-none active:cursor-grabbing ${
+                  viewMode === 'source' ? 'overflow-y-auto' : 'overflow-y-hidden'
+                }`}
                 style={{
                   WebkitOverflowScrolling: 'touch',
                   height: 'calc(100% + 14px)',
@@ -1883,15 +2144,21 @@ export function VideoTimelineEditor({ uid, mode, onClose, onSaved }: Props) {
               >
                 {viewMode === 'source' ? (
                   <div
-                    className="space-y-1"
+                    className="flex items-start"
                     style={{
                       paddingLeft: lanePadPx,
                       paddingRight: lanePadPx,
-                      minWidth: lanePadPx * 2 + getPlayDuration(previewSource) * PX_PER_SEC
+                      minWidth:
+                        lanePadPx * 2 +
+                        timeline.sources.reduce(
+                          (sum, s) => sum + getSourceLayoutDurationSec(s.id),
+                          0
+                        ) *
+                          PX_PER_SEC
                     }}
                   >
                     {timeline.sources.map((src) => {
-                      const laneDurationSec = getSourceDurationSec(src.id)
+                      const laneDurationSec = getSourceLayoutDurationSec(src.id)
                       return (
                         <SourceLane
                           key={src.id}
@@ -1944,6 +2211,7 @@ export function VideoTimelineEditor({ uid, mode, onClose, onSaved }: Props) {
                             onChange={(patch) => updateCut(c.id, patch)}
                             onDragStart={beginCutBlockEdit}
                             onDragEnd={commitCutBlockEdit}
+                            onNeedFilmstrip={queueFilmstripRange}
                           />
                         ))}
                       </div>
@@ -2092,7 +2360,7 @@ function SourceLane({
   isActive: boolean
   compact?: boolean
 }) {
-  const width = Math.max(laneDurationSec * PX_PER_SEC, 80)
+  const width = Math.max(laneDurationSec * PX_PER_SEC, MIN_LANE_PX)
   const thumbWidthPx =
     strip && strip.thumbs.length > 0
       ? Math.max(strip.tileWidthPx, width / strip.thumbs.length)
@@ -2113,16 +2381,24 @@ function SourceLane({
       >
         {strip ? (
           <div className="pointer-events-none absolute inset-0 flex opacity-45">
-            {strip.thumbs.map((t, i) => (
-              <img
-                key={i}
-                src={t}
-                alt=""
-                draggable={false}
-                className="h-full shrink-0 object-cover"
-                style={{ width: thumbWidthPx }}
-              />
-            ))}
+            {strip.thumbs.map((t, i) =>
+              t ? (
+                <img
+                  key={i}
+                  src={t}
+                  alt=""
+                  draggable={false}
+                  className="h-full shrink-0 object-cover"
+                  style={{ width: thumbWidthPx }}
+                />
+              ) : (
+                <div
+                  key={i}
+                  className="h-full shrink-0 bg-zinc-800"
+                  style={{ width: thumbWidthPx }}
+                />
+              )
+            )}
           </div>
         ) : (
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-[10px] text-amber-300/30">
@@ -2356,7 +2632,8 @@ function EditedCutBlock({
   onHighlight,
   onChange,
   onDragStart,
-  onDragEnd
+  onDragEnd,
+  onNeedFilmstrip
 }: {
   cut: WorkingCut
   selected: boolean
@@ -2366,6 +2643,7 @@ function EditedCutBlock({
   onChange: (patch: Partial<WorkingCut>) => void
   onDragStart: () => void
   onDragEnd: () => void
+  onNeedFilmstrip: (sourceId: string, durationSec: number, startSec: number, endSec: number) => void
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: cut.id
@@ -2377,7 +2655,15 @@ function EditedCutBlock({
   }
   const durationSec = Math.max(cut.out - cut.in, 0)
   const widthPx = Math.max(durationSec * PX_PER_SEC, 28)
-  const fullSourcePx = Math.max(sourceDurationSec * PX_PER_SEC, 80)
+  const fullSourcePx = Math.max(sourceDurationSec * PX_PER_SEC, MIN_LANE_PX)
+
+  // Only this cut's own small window needs thumbnails — not the whole source clip.
+  // With hundreds of scenes sharing a handful of long source clips, that's the
+  // difference between a few tiles per block and generating the entire raw
+  // footage up front.
+  useEffect(() => {
+    onNeedFilmstrip(cut.source, sourceDurationSec, cut.in, cut.out)
+  }, [cut.source, cut.in, cut.out])
   const thumbWidthPx =
     filmstrip && filmstrip.thumbs.length > 0
       ? Math.max(filmstrip.tileWidthPx, fullSourcePx / filmstrip.thumbs.length)
@@ -2419,16 +2705,24 @@ function EditedCutBlock({
         >
           {filmstrip ? (
             <div className="absolute inset-0 flex opacity-60">
-              {filmstrip.thumbs.map((t, i) => (
-                <img
-                  key={i}
-                  src={t}
-                  alt=""
-                  draggable={false}
-                  className="h-full shrink-0 object-cover"
-                  style={{ width: thumbWidthPx }}
-                />
-              ))}
+              {filmstrip.thumbs.map((t, i) =>
+                t ? (
+                  <img
+                    key={i}
+                    src={t}
+                    alt=""
+                    draggable={false}
+                    className="h-full shrink-0 object-cover"
+                    style={{ width: thumbWidthPx }}
+                  />
+                ) : (
+                  <div
+                    key={i}
+                    className="h-full shrink-0 bg-zinc-800"
+                    style={{ width: thumbWidthPx }}
+                  />
+                )
+              )}
             </div>
           ) : (
             <div className="absolute inset-0 bg-zinc-800" />

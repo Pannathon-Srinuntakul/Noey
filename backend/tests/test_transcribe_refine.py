@@ -1,7 +1,11 @@
-"""Unit tests for the Gemini refine-pass merge/enforcement logic.
+"""Unit tests for the Gemini video-review merge/request logic.
 
 The critical invariant under test: Whisper owns timing. No matter what Gemini
-returns, ``start``/``end``/``words`` on kept segments are exactly Whisper's.
+returns, ``start``/``end``/``words`` on kept segments (and ``in``/``out`` on
+kept silence gaps) are exactly Whisper's / build_silence_gap_candidates'.
+Segment/gap *requests* do carry real start/end (Gemini needs it to know where
+to look in the video) — only the response schema is timestamp-free, which is
+what actually makes a timestamp hallucination structurally impossible.
 """
 
 from packages.video.transcribe_refine import (
@@ -9,9 +13,10 @@ from packages.video.transcribe_refine import (
     GEMINI_REFINE_SCHEMA,
     REFINE_ACTIONS,
     apply_refine_results,
-    batch_segment_indices,
-    build_refine_prompt,
+    apply_silence_gap_results,
     build_refine_request,
+    build_silence_gap_request,
+    build_talking_review_user_text,
 )
 
 
@@ -26,39 +31,24 @@ def _seg(start, end, text, words=None):
 
 # ── build_refine_request ─────────────────────────────────────────────────────
 
-def test_build_refine_request_strips_to_id_and_text():
+def test_build_refine_request_includes_id_start_end_text():
     segs = [_seg(1.0, 2.0, "หนึ่ง"), _seg(5.0, 6.0, "สอง")]
     req = build_refine_request(segs)
-    assert req == [{"id": 0, "text": "หนึ่ง"}, {"id": 1, "text": "สอง"}]
+    assert req == [
+        {"id": 0, "start": 1.0, "end": 2.0, "text": "หนึ่ง"},
+        {"id": 1, "start": 5.0, "end": 6.0, "text": "สอง"},
+    ]
 
 
-def test_build_refine_request_carries_no_timestamps():
-    req = build_refine_request([_seg(3.0, 9.0, "x")])
-    assert set(req[0].keys()) == {"id", "text"}
-    assert "start" not in req[0] and "end" not in req[0] and "words" not in req[0]
+# ── build_silence_gap_request ────────────────────────────────────────────────
 
-
-# ── batch_segment_indices ────────────────────────────────────────────────────
-
-def test_batch_all_in_one_when_under_span():
-    segs = [_seg(0.0, 5.0, "a"), _seg(5.0, 10.0, "b")]
-    assert batch_segment_indices(segs, 240.0) == [(0, 2)]
-
-
-def test_batch_splits_when_span_exceeds_cap():
-    # Spans: 0-100, 100-200, 260-300 → cap 240 keeps first two together (200<=240),
-    # third (300 - 0 = 300 > 240) starts a new batch.
-    segs = [_seg(0.0, 100.0, "a"), _seg(100.0, 200.0, "b"), _seg(260.0, 300.0, "c")]
-    assert batch_segment_indices(segs, 240.0) == [(0, 2), (2, 3)]
-
-
-def test_batch_oversized_single_segment_is_its_own_batch():
-    segs = [_seg(0.0, 500.0, "long")]
-    assert batch_segment_indices(segs, 240.0) == [(0, 1)]
-
-
-def test_batch_empty():
-    assert batch_segment_indices([], 240.0) == []
+def test_build_silence_gap_request_maps_in_out_to_start_end():
+    gaps = [{"id": 0, "in": 5.0, "out": 8.5}, {"id": 1, "in": 20.0, "out": 22.0}]
+    req = build_silence_gap_request(gaps)
+    assert req == [
+        {"id": 0, "start": 5.0, "end": 8.5},
+        {"id": 1, "start": 20.0, "end": 22.0},
+    ]
 
 
 # ── apply_refine_results: timing is sacred ───────────────────────────────────
@@ -84,11 +74,17 @@ def test_smuggled_timestamps_in_result_are_ignored():
 
 
 def test_cut_actions_drop_segment():
-    segs = [_seg(0.0, 1.0, "keep me"), _seg(1.0, 2.0, "เอ่อ"), _seg(2.0, 3.0, "silence")]
+    segs = [
+        _seg(0.0, 1.0, "keep me"),
+        _seg(1.0, 2.0, "เอ่อ"),
+        _seg(2.0, 3.0, "silence"),
+        _seg(3.0, 4.0, "same point again"),
+    ]
     results = [
         {"id": 0, "text": "keep me", "action": "keep"},
         {"id": 1, "text": "เอ่อ", "action": "cut_stutter"},
         {"id": 2, "text": "", "action": "cut_dead_air"},
+        {"id": 3, "text": "same point again", "action": "cut_semantic_repeat"},
     ]
     out = apply_refine_results(segs, results)
     assert [s["text"] for s in out] == ["keep me"]
@@ -129,12 +125,77 @@ def test_unknown_action_treated_as_keep():
     assert out[0]["text"] == "y"
 
 
+# ── apply_silence_gap_results: timing is sacred here too ────────────────────
+
+def test_silence_gap_keep_true_survives():
+    gaps = [{"id": 0, "in": 5.0, "out": 8.5}, {"id": 1, "in": 20.0, "out": 22.0}]
+    results = [{"id": 0, "keep": True}, {"id": 1, "keep": False}]
+    out = apply_silence_gap_results(gaps, results)
+    assert out == [{"id": 0, "in": 5.0, "out": 8.5}]
+
+
+def test_silence_gap_smuggled_timestamps_are_ignored():
+    gaps = [{"id": 0, "in": 5.0, "out": 8.5}]
+    results = [{"id": 0, "keep": True, "in": 999.0, "out": 1000.0}]
+    out = apply_silence_gap_results(gaps, results)
+    assert out[0]["in"] == 5.0
+    assert out[0]["out"] == 8.5
+
+
+def test_silence_gap_missing_or_malformed_result_drops_gap():
+    gaps = [{"id": 0, "in": 5.0, "out": 8.5}, {"id": 1, "in": 20.0, "out": 22.0}]
+    results = [{"id": 0, "keep": True}]  # id 1 absent — conservatively dropped
+    out = apply_silence_gap_results(gaps, results)
+    assert len(out) == 1
+    assert out[0]["id"] == 0
+
+
+def test_silence_gap_trims_to_meaningful_sub_range():
+    """A long gap where only part matters gets narrowed, not kept in full."""
+    gaps = [{"id": 0, "in": 20.0, "out": 80.0}]  # 60s gap
+    results = [{"id": 0, "keep": True, "start_pct": 0.45, "end_pct": 0.53}]
+    out = apply_silence_gap_results(gaps, results)
+    assert len(out) == 1
+    assert out[0]["in"] == 47.0   # 20 + 0.45*60
+    assert out[0]["out"] == 51.8  # 20 + 0.53*60
+
+
+def test_silence_gap_pct_clamped_to_valid_range():
+    """Fractions outside [0, 1] are clamped, never allowed to escape the real gap."""
+    gaps = [{"id": 0, "in": 10.0, "out": 20.0}]
+    results = [{"id": 0, "keep": True, "start_pct": -5.0, "end_pct": 50.0}]
+    out = apply_silence_gap_results(gaps, results)
+    assert out[0]["in"] == 10.0
+    assert out[0]["out"] == 20.0
+
+
+def test_silence_gap_malformed_pct_range_falls_back_to_full_gap():
+    """end_pct <= start_pct is nonsensical — fall back to keeping the whole gap."""
+    gaps = [{"id": 0, "in": 10.0, "out": 20.0}]
+    results = [{"id": 0, "keep": True, "start_pct": 0.8, "end_pct": 0.2}]
+    out = apply_silence_gap_results(gaps, results)
+    assert out[0]["in"] == 10.0
+    assert out[0]["out"] == 20.0
+
+
+def test_silence_gap_missing_pct_defaults_to_full_gap():
+    gaps = [{"id": 0, "in": 5.0, "out": 8.5}]
+    results = [{"id": 0, "keep": True}]  # no start_pct/end_pct given
+    out = apply_silence_gap_results(gaps, results)
+    assert out[0]["in"] == 5.0
+    assert out[0]["out"] == 8.5
+
+
 # ── schema + prompt sanity ───────────────────────────────────────────────────
 
 def test_schema_has_no_timestamp_fields():
-    item_props = GEMINI_REFINE_SCHEMA["properties"]["results"]["items"]["properties"]
-    assert set(item_props.keys()) == {"id", "text", "action"}
-    assert "start" not in item_props and "end" not in item_props
+    result_props = GEMINI_REFINE_SCHEMA["properties"]["results"]["items"]["properties"]
+    assert set(result_props.keys()) == {"id", "text", "action"}
+    assert "start" not in result_props and "end" not in result_props
+
+    gap_props = GEMINI_REFINE_SCHEMA["properties"]["silence_gaps"]["items"]["properties"]
+    assert set(gap_props.keys()) == {"id", "keep", "start_pct", "end_pct"}
+    assert "start" not in gap_props and "end" not in gap_props
 
 
 def test_schema_actions_match_constants():
@@ -142,12 +203,24 @@ def test_schema_actions_match_constants():
     assert set(enum) == set(REFINE_ACTIONS)
     assert "keep" in enum
     assert all(a in enum for a in CUT_ACTIONS)
+    assert "cut_semantic_repeat" in CUT_ACTIONS
 
 
-def test_prompt_includes_segments_vocab_and_hard_rules():
-    req = build_refine_request([_seg(0.0, 1.0, "สวัสดีค่ะ")])
-    prompt = build_refine_prompt(req)
-    assert "สวัสดีค่ะ" in prompt          # the actual segment text
-    assert "TikTok Shop" in prompt         # affiliate vocab seed
-    assert "NEVER output a timestamp" in prompt
-    assert '"action"' in prompt
+def test_user_text_includes_segments_gaps_vocab_and_brief():
+    text = build_talking_review_user_text(
+        segments=[_seg(0.0, 1.0, "สวัสดีค่ะ")],
+        gaps=[{"id": 0, "in": 5.0, "out": 8.0}],
+        brief="รีวิวรองเท้ายี่ห้อ X",
+    )
+    assert "สวัสดีค่ะ" in text          # the actual segment text
+    assert "TikTok Shop" in text        # affiliate vocab seed
+    assert "NEVER output a timestamp" in text
+    assert "รีวิวรองเท้ายี่ห้อ X" in text  # creator-provided context
+    assert '"silence_gaps"' in text or "silence_gaps" in text
+
+
+def test_user_text_omits_brief_block_when_empty():
+    text = build_talking_review_user_text(
+        segments=[_seg(0.0, 1.0, "a")], gaps=[], brief="",
+    )
+    assert "creator_context" not in text

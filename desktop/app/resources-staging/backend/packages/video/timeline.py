@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import re
-from difflib import SequenceMatcher
 from typing import Any
 
 # Merge consecutive Whisper segments with gap ≤ this into one cut.
@@ -14,11 +13,15 @@ from typing import Any
 # 2.5s: used by resnap forward-look to re-absorb adjacent segments into a selected
 # cut's tail — handles the gap inflation caused by tighten_segment_bounds (~0.5s).
 SEGMENT_MERGE_GAP = 2.5   # resnap forward-look threshold — must stay > WORD_TAIL + JOIN_LEAD_IN
-# Gap used when building editorial blocks for Claude's block-selection.
-# Smaller than SEGMENT_MERGE_GAP so Claude sees individual sentences (not one giant block)
-# and can selectively remove boring/filler sentences.  resnap will re-join adjacent
-# kept sentences that fall within SEGMENT_MERGE_GAP anyway.
+# Gap between speech segments long enough to be reviewed as its own candidate
+# silence span (see build_silence_gap_candidates) — Gemini decides keep/cut per
+# span based on whether something visually important happens during it.
 EDITORIAL_BLOCK_GAP = 1.0
+# Talking-head: total footage across ALL clips in a project, any clip count.
+# Safe to keep generous — each clip gets its own independent Gemini review call
+# (no shared/growing context across clips), so this is a practical ceiling, not
+# a technical one.
+TALKING_HEAD_MAX_TOTAL_SEC = 2 * 60 * 60
 # Kept for callers passing it as an arg; no longer the primary cut boundary.
 WORD_GAP_THRESHOLD = 0.35
 # VAD speech_pad_ms≈350 pre-rolls segment.start before detected speech.
@@ -47,108 +50,6 @@ FILLER_TOKENS = frozenset({
     "um", "umm", "uh", "uhh", "uhm", "er", "err", "erm", "hmm", "hm",
     "mm", "mmm", "ah", "ahh", "eh", "ehh",
 })
-# Drop repeated takes when normalized text is this similar (0–1).
-DUPLICATE_SIMILARITY = 0.85
-# Shorter phrase must reach this fraction of the longer one when it is a substring.
-DUPLICATE_SUBSTRING_RATIO = 0.65
-# Same word spoken again after this gap (sec) = false start / retake — drop later cuts.
-REPEAT_WORD_GAP_SEC = 1.0
-# Same phrase (multi-word cut) spoken again after this gap — drop later cut.
-REPEAT_PHRASE_GAP_SEC = 0.5
-
-# Heuristics for orphan-continuation detection (after AI removes a prior block).
-THAI_CONTINUATION_PREFIXES = (
-    "แล้ว", "ก็", "แต่", "เพราะ", "เมื่อ", "ถ้า", "และ", "หรือ",
-    "จาก", "โดย", "ซึ่ง", "ที่", "ให้", "จน", "กับ", "ยัง", "อีก",
-    "ต่อ", "ตาม", "เพื่อ", "จึง", "เลย", "ด้วย", "คือ", "ว่า", "ทำ",
-)
-THAI_STANDALONE_OPENERS = (
-    "วันนี้", "ตอนนี้", "สวัสดี", "สวัสดีค่ะ", "สวัสดีครับ",
-    "มา", "มาดู", "มารีวิว", "เปิด", "โอเค", "แนะนำ", "โชว์", "ลอง",
-    "ทุกคน", "เพื่อน", "ก่อน", "รีวิว", "ขอ", "เฮ้ย", "โอ้", "ว้าว",
-)
-THAI_CONTINUATION_PHRASES = (
-    "ตัวนี้", "อันนี้", "นี่", "นี้", "แบบนี้", "อย่างนี้", "แบบนั้น",
-    "ตัวนั้น", "อันนั้น", "ของมัน", "ของเรา", "ของเธอ", "ด้วยนะ",
-)
-THAI_SENTENCE_END_PARTICLES = (
-    "ครับ", "ค่ะ", "คะ", "นะ", "นะคะ", "นะครับ", "จ้า", "จ๊ะ", "เลย",
-)
-# Gaps shorter than this between blocks may still be one utterance split by VAD.
-CONTINUATION_MAX_GAP_SEC = 2.5
-# Within one kept cut, pause longer than this → jump-cut (skip dead air, TikTok pacing).
-MAX_INTERNAL_SILENCE_SEC = 1.0
-
-HIGHLIGHT_HAIKU_SYSTEM = """<role>
-You are a TikTok video editor for a Thai affiliate creator.
-</role>
-
-<task>
-Select speech blocks to keep within a target duration budget.
-You receive speech blocks with transcript text and timestamps.
-Return which block IDs to keep — prioritise content-rich, engaging delivery.
-</task>
-
-<rules>
-<budget>Total kept duration MUST NOT exceed the targetSec given in the user message.</budget>
-<selection>
-- Pick the most engaging blocks: hook, product demo, benefit highlights, conclusion/CTA
-- Remove repeated takes (same point said again), pure filler (ums, false starts), prep chatter
-- When in doubt between two similar blocks, keep the cleaner/more confident delivery
-</selection>
-<continuity>
-- If you remove block N, also remove block N+1 if it only continues that same sentence (mid-sentence fragment)
-- Prefer keeping a complete thought over a partial one
-</continuity>
-</rules>
-
-<forbidden>
-Do NOT output prose, markdown, or any text outside the JSON object.
-Do NOT invent block IDs — use only the indices from the speech_blocks list provided.
-</forbidden>
-
-<output_format>
-Return ONLY a valid JSON object:
-{"keep": [0, 2, 4], "remove_reason": {"1": "filler", "3": "repeated take"}}
-</output_format>"""
-
-AI_SEMANTIC_DEDUPE_SYSTEM = """<role>
-You are an expert TikTok video editor reviewing a rough cut transcript.
-</role>
-
-<task>
-Identify cuts that are REPEATED TAKES of the same spoken content — same meaning and intent —
-even when Whisper transcribed them with different words, spelling, or sentence structure.
-</task>
-
-<rules>
-- Compare MEANING, not exact text: paraphrases, false starts redone, and re-recorded lines count as duplicates
-- Each cut includes whisper_segments — read ALL snippets; Whisper often transcribes the same Thai line with different spelling or word order
-- Example duplicates: "วันนี้มารีวิวครีมตัวนี้" vs "วันนี้จะมารีวิวครีมนี้ให้ดู"; "ส่วนผสมดีมาก" vs "ส่วนประกอบดีเลย"
-- Thai affiliate content often repeats product name, benefits, or demo steps across takes — keep only ONE best take per repeated point
-- Do NOT mark cuts as duplicates if they cover genuinely different product features, demo steps, or story beats
-- When a group duplicates, the cut with the clearest complete delivery should stay (usually longer, more confident phrasing)
-- visual_broll / silent cuts (empty text) are never duplicates of speech
-</rules>
-
-<forbidden>
-Do NOT output prose or markdown — JSON only.
-</forbidden>
-
-<output_format>
-Return ONLY a valid JSON object:
-{
-  "duplicate_groups": [
-    {"keep": 0, "remove": [3], "reason": "same product intro, take 2"},
-    {"keep": 1, "remove": [5], "reason": "repeated demo step, different wording"}
-  ]
-}
-Each group lists cut_index values from the input. "keep" is the best take; "remove" are redundant repeats.
-If no duplicates found, return {"duplicate_groups": []}.
-</output_format>"""
-
-BEAT_TRIM_PREFER_END = frozenset({"cta", "conclusion"})
-
 
 def cuts_duration(cuts: list[dict[str, Any]]) -> float:
     return sum(float(c["out"]) - float(c["in"]) for c in cuts)
@@ -491,67 +392,31 @@ def build_speech_cuts(
     return cuts
 
 
+def build_silence_gap_candidates(
+    speech_cuts: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Candidate silent spans between kept speech cuts, for Gemini's silence-gap review.
+
+    ``speech_cuts`` must be sorted by "in" (as ``build_speech_cuts`` returns them) — every gap
+    between one cut's "out" and the next cut's "in" is, by construction, longer than the
+    gap_threshold ``build_speech_cuts`` was given (shorter gaps get merged into one cut), so
+    no extra threshold check is needed here. Gemini decides keep/cut per span; timing for a
+    kept span always comes back from these exact bounds, never invented.
+    """
+    gaps: list[dict[str, Any]] = []
+    for i in range(len(speech_cuts) - 1):
+        gap_in = float(speech_cuts[i]["out"])
+        gap_out = float(speech_cuts[i + 1]["in"])
+        if gap_out > gap_in:
+            gaps.append({"id": i, "in": round(gap_in, 3), "out": round(gap_out, 3)})
+    return gaps
+
+
 def _normalize_speech_text(text: str) -> str:
     """Normalize transcript text for duplicate-take comparison."""
     cleaned = re.sub(r"[^\w\s\u0E00-\u0E7F]", "", text, flags=re.UNICODE)
     cleaned = re.sub(r"\s+", "", cleaned)
     return cleaned.casefold()
-
-
-def _text_for_cut(cut: dict[str, Any], segments: list[dict[str, Any]]) -> str:
-    """Collect spoken words/text overlapping a cut range."""
-    cut_in, cut_out = float(cut["in"]), float(cut["out"])
-    parts: list[str] = []
-    for seg in segments:
-        seg_start, seg_end = float(seg["start"]), float(seg["end"])
-        if seg_end <= cut_in or seg_start >= cut_out:
-            continue
-        raw_words = seg.get("words") or []
-        if raw_words:
-            for w in raw_words:
-                ws, we = float(w["start"]), float(w["end"])
-                if we > cut_in and ws < cut_out:
-                    token = str(w.get("word", "")).strip()
-                    if token:
-                        parts.append(token)
-        else:
-            token = str(seg.get("text", "")).strip()
-            if token:
-                parts.append(token)
-    return " ".join(parts)
-
-
-def _take_score(cut: dict[str, Any], segments: list[dict[str, Any]]) -> float:
-    """Prefer the most complete, well-paced take when text repeats."""
-    text = _normalize_speech_text(_text_for_cut(cut, segments))
-    if not text:
-        return 0.0
-    dur = cut_duration(cut)
-    score = float(len(text) * 10)
-    if dur > 0:
-        pace = len(text) / dur
-        if 3.0 <= pace <= 30.0:
-            score += 5.0
-    return score
-
-
-def _is_duplicate_text(a: str, b: str, *, similarity: float) -> bool:
-    if not a or not b:
-        return False
-    if a == b:
-        return True
-    shorter, longer = (a, b) if len(a) <= len(b) else (b, a)
-    if shorter in longer and len(shorter) / len(longer) >= DUPLICATE_SUBSTRING_RATIO:
-        return True
-    if SequenceMatcher(None, a, b).ratio() >= similarity:
-        return True
-    prefix = 0
-    for ca, cb in zip(a, b, strict=False):
-        if ca != cb:
-            break
-        prefix += 1
-    min_len = min(len(a), len(b))
-    return min_len > 0 and prefix / min_len >= 0.8
 
 
 def _relabel_opening_conclusion(cuts: list[dict[str, Any]]) -> None:
@@ -562,576 +427,6 @@ def _relabel_opening_conclusion(cuts: list[dict[str, Any]]) -> None:
             cut["label"] = "speech"
     cuts[0]["label"] = "opening"
     cuts[-1]["label"] = "conclusion"
-
-
-def dedupe_repeated_cuts(
-    cuts: list[dict[str, Any]],
-    segments: list[dict[str, Any]],
-    *,
-    similarity: float = DUPLICATE_SIMILARITY,
-    gap_sec: float = REPEAT_PHRASE_GAP_SEC,
-) -> list[dict[str, Any]]:
-    """Drop spaced phrase retakes — words joined from cut range, compared cut-to-cut.
-
-    Single-word cuts are skipped here (handled by dedupe_spaced_word_repeats @ 1s).
-    Multi-word cuts: same/similar text with gap > gap_sec (default 0.5s) → keep latest,
-    drop the earlier take. gap <= gap_sec → keep both (intentional emphasis).
-    """
-    if len(cuts) < 2:
-        return cuts
-
-    kept: list[dict[str, Any]] = []
-    for cut in sorted(cuts, key=lambda c: float(c["in"])):
-        if _is_broll_cut(cut):
-            kept.append(cut)
-            continue
-
-        text = _normalize_speech_text(_text_for_cut(cut, segments))
-        if not text:
-            kept.append(cut)
-            continue
-
-        tokens = _words_for_cut(cut, segments)
-        if len(tokens) == 1:
-            kept.append(cut)
-            continue
-
-        replace_idx: int | None = None
-        for i, prev in enumerate(kept):
-            prev_text = _normalize_speech_text(_text_for_cut(prev, segments))
-            if not prev_text or len(_words_for_cut(prev, segments)) == 1:
-                continue
-            if not _is_duplicate_text(text, prev_text, similarity=similarity):
-                continue
-            gap = float(cut["in"]) - float(prev["out"])
-            if gap > gap_sec:
-                replace_idx = i
-                break
-
-        if replace_idx is not None:
-            kept.pop(replace_idx)
-        kept.append(cut)
-
-    if not kept:
-        return cuts
-    kept.sort(key=lambda c: float(c["in"]))
-    _relabel_opening_conclusion(kept)
-    return kept
-
-
-def _words_for_cut(
-    cut: dict[str, Any],
-    segments: list[dict[str, Any]],
-) -> list[tuple[str, float, float]]:
-    """Normalized word tokens with timestamps overlapping a cut."""
-    cut_in, cut_out = float(cut["in"]), float(cut["out"])
-    out: list[tuple[str, float, float]] = []
-    for seg in segments:
-        raw_words = seg.get("words") or []
-        if raw_words:
-            for w in raw_words:
-                ws, we = float(w["start"]), float(w["end"])
-                if we <= cut_in or ws >= cut_out:
-                    continue
-                token = str(w.get("word", "")).strip()
-                if not token:
-                    continue
-                norm = _normalize_speech_text(token)
-                if norm:
-                    out.append((norm, ws, we))
-        elif float(seg.get("end", 0)) > cut_in and float(seg.get("start", 0)) < cut_out:
-            for token in str(seg.get("text", "")).split():
-                norm = _normalize_speech_text(token)
-                if norm:
-                    s, e = float(seg["start"]), float(seg["end"])
-                    out.append((norm, s, e))
-    out.sort(key=lambda t: t[1])
-    return out
-
-
-def dedupe_spaced_word_repeats(
-    cuts: list[dict[str, Any]],
-    segments: list[dict[str, Any]],
-    *,
-    gap_sec: float = REPEAT_WORD_GAP_SEC,
-) -> list[dict[str, Any]]:
-    """Drop earlier single-word retakes when the same word is spoken again >gap_sec later.
-
-    Keeps the latest take. Consecutive repeats (gap <= gap_sec) are kept — emphasis.
-    """
-    if len(cuts) < 2:
-        return cuts
-
-    kept: list[dict[str, Any]] = []
-
-    for cut in sorted(cuts, key=lambda c: float(c["in"])):
-        if _is_broll_cut(cut):
-            kept.append(cut)
-            continue
-
-        tokens = _words_for_cut(cut, segments)
-        if not tokens:
-            kept.append(cut)
-            continue
-
-        if len(tokens) == 1:
-            norm, ws, we = tokens[0]
-            for i in range(len(kept) - 1, -1, -1):
-                prev = kept[i]
-                if _is_broll_cut(prev):
-                    continue
-                prev_tokens = _words_for_cut(prev, segments)
-                if len(prev_tokens) != 1 or prev_tokens[0][0] != norm:
-                    continue
-                prev_end = prev_tokens[0][2]
-                if ws - prev_end > gap_sec:
-                    kept.pop(i)
-                break
-            kept.append(cut)
-            continue
-
-        kept.append(cut)
-
-    if not kept:
-        return cuts
-    kept.sort(key=lambda c: float(c["in"]))
-    _relabel_opening_conclusion(kept)
-    return kept
-
-
-def _is_broll_cut(cut: dict[str, Any]) -> bool:
-    """True for explicit visual/broll cuts (no speech to split)."""
-    label = str(cut.get("label", "")).lower()
-    return label in {"visual", "product_closeup", "broll"} or "visual" in label
-
-
-def _is_visual_only_cut(cut: dict[str, Any], segments: list[dict[str, Any]]) -> bool:
-    """True for broll/silent cuts with no meaningful speech in range."""
-    if _is_broll_cut(cut):
-        return True
-    text = _normalize_speech_text(_text_for_cut(cut, segments))
-    return not text
-
-
-def whisper_segments_for_cut(
-    cut: dict[str, Any],
-    segments: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    """Ordered Whisper snippets inside a cut — for semantic duplicate review."""
-    segs = _segments_in_range(segments, float(cut["in"]), float(cut["out"]))
-    out: list[dict[str, Any]] = []
-    for seg in segs:
-        text = str(seg.get("text", "")).strip()
-        if not text:
-            continue
-        out.append({
-            "start": round(float(seg["start"]), 2),
-            "end": round(float(seg["end"]), 2),
-            "text": text[:200],
-        })
-    return out
-
-
-def apply_semantic_dedupe_plan(
-    cuts: list[dict[str, Any]],
-    segments: list[dict[str, Any]],
-    parsed: dict[str, Any],
-) -> list[dict[str, Any]]:
-    """Apply Haiku semantic duplicate groups — keep best take per repeated meaning."""
-    if not cuts:
-        return cuts
-    remove_indices: set[int] = set()
-    for group in parsed.get("duplicate_groups") or []:
-        if not isinstance(group, dict):
-            continue
-        keep_idx = group.get("keep")
-        remove_list = group.get("remove") or []
-        if keep_idx is None:
-            continue
-        keep_i = int(keep_idx)
-        if not (0 <= keep_i < len(cuts)):
-            continue
-        for raw in remove_list:
-            ri = int(raw)
-            if 0 <= ri < len(cuts) and ri != keep_i:
-                remove_indices.add(ri)
-    if not remove_indices:
-        return cuts
-    kept = [c for i, c in enumerate(cuts) if i not in remove_indices]
-    if not kept:
-        return cuts
-    _relabel_opening_conclusion(kept)
-    return kept
-
-
-def _word_gap_subspans(
-    words: list[tuple[float, float]],
-    span_in: float,
-    span_out: float,
-    max_gap_sec: float,
-) -> list[tuple[float, float]]:
-    """Split a [span_in, span_out] range at word gaps longer than max_gap_sec."""
-    sub = [(ws, we) for ws, we in words if we > span_in and ws < span_out]
-    if not sub:
-        return [(span_in, span_out)]
-    groups: list[list[tuple[float, float]]] = [[sub[0]]]
-    for ws, we in sub[1:]:
-        if ws - groups[-1][-1][1] <= max_gap_sec:
-            groups[-1].append((ws, we))
-        else:
-            groups.append([(ws, we)])
-    return [
-        (max(g[0][0], span_in), min(g[-1][1], span_out))
-        for g in groups
-    ]
-
-
-def split_cuts_on_internal_silence(
-    cuts: list[dict[str, Any]],
-    segments: list[dict[str, Any]],
-    *,
-    max_gap_sec: float = MAX_INTERNAL_SILENCE_SEC,
-    source_duration: float | None = None,
-) -> list[dict[str, Any]]:
-    """Split cuts when Whisper segments inside have pauses longer than max_gap_sec."""
-    if not cuts:
-        return cuts
-    words = _collect_words(segments)
-    out: list[dict[str, Any]] = []
-
-    for cut in cuts:
-        if _is_broll_cut(cut):
-            out.append(cut)
-            continue
-
-        cut_in, cut_out = float(cut["in"]), float(cut["out"])
-        segs = _segments_in_range(segments, cut_in, cut_out)
-
-        # When a single long segment covers the cut, fall back to word-level gap detection
-        if len(segs) < 2:
-            cut_words = [(ws, we) for ws, we in words if we > cut_in and ws < cut_out]
-            word_groups: list[list[tuple[float, float]]] = []
-            if cut_words:
-                word_groups = [[cut_words[0]]]
-                for ws, we in cut_words[1:]:
-                    gap = ws - word_groups[-1][-1][1]
-                    if gap <= max_gap_sec:
-                        word_groups[-1].append((ws, we))
-                    else:
-                        word_groups.append([(ws, we)])
-            if len(word_groups) < 2:
-                out.append(cut)
-                continue
-            for gi, grp in enumerate(word_groups):
-                g_in = max(grp[0][0], cut_in)
-                g_out = min(grp[-1][1], cut_out)
-                if g_out - g_in < MIN_KEEP_CUT_SEC:
-                    continue
-                out.append({**cut, "in": round(g_in, 3), "out": round(g_out, 3)})
-            continue
-
-        groups: list[list[dict[str, Any]]] = [[segs[0]]]
-        for seg in segs[1:]:
-            gap = float(seg["start"]) - float(groups[-1][-1]["end"])
-            if gap <= max_gap_sec:
-                groups[-1].append(seg)
-            else:
-                groups.append([seg])
-
-        # Expand each segment-group into word-gap subspans so a large pause
-        # *inside* a single Whisper segment also splits (defensive backstop for
-        # segments that slipped past transcribe-time word-gap splitting).
-        spans: list[tuple[float, float]] = []
-        for group in groups:
-            g_in = max(float(group[0]["start"]), cut_in)
-            g_out = min(float(group[-1]["end"]), cut_out)
-            spans.extend(_word_gap_subspans(words, g_in, g_out, max_gap_sec))
-
-        if len(spans) <= 1:
-            out.append(cut)
-            continue
-
-        for si, (s_in, s_out) in enumerate(spans):
-            is_first = si == 0
-            is_last = si == len(spans) - 1
-            snap_in, snap_out = _snap_to_words(
-                s_in,
-                s_out,
-                words,
-                is_opening=is_first and cut.get("label") == "opening",
-                is_conclusion=is_last and cut.get("label") == "conclusion",
-                join_cut=not is_first,
-            )
-            if source_duration is not None:
-                snap_out = min(snap_out, source_duration)
-            if snap_out <= snap_in or (snap_out - snap_in) < MIN_KEEP_CUT_SEC:
-                continue
-            out.append({
-                **cut,
-                "in": round(snap_in, 3),
-                "out": round(snap_out, 3),
-                "label": cut.get("label", "speech") if is_first else "speech",
-            })
-
-    if not out:
-        return cuts
-    out.sort(key=lambda c: float(c["in"]))
-    _relabel_opening_conclusion(out)
-    return out
-
-
-def _is_filler_only(text: str) -> bool:
-    """True when every spoken token in the text is a hesitation filler."""
-    cleaned = re.sub(r"[^\w\s฀-๿]", " ", text, flags=re.UNICODE)
-    tokens = [t.strip("ๆ").casefold() for t in cleaned.split() if t.strip("ๆ")]
-    if not tokens:
-        return False
-    return all(t in FILLER_TOKENS for t in tokens)
-
-
-def _is_filler_token(norm: str) -> bool:
-    return norm in FILLER_TOKENS
-
-
-def strip_filler_words_from_cuts(
-    cuts: list[dict[str, Any]],
-    segments: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    """Remove hesitation fillers inside speech cuts (เอ่อ, อืม, um, …).
-
-    Splits a cut around filler tokens using word timestamps. Whole-cut filler
-    blocks disappear; mixed speech loses only the filler intervals.
-    """
-    if not cuts:
-        return cuts
-
-    out: list[dict[str, Any]] = []
-    for cut in cuts:
-        if _is_broll_cut(cut):
-            out.append(cut)
-            continue
-
-        tokens = _words_for_cut(cut, segments)
-        if not tokens:
-            out.append(cut)
-            continue
-
-        groups: list[list[tuple[str, float, float]]] = []
-        current: list[tuple[str, float, float]] = []
-        for norm, ws, we in tokens:
-            if _is_filler_token(norm):
-                if current:
-                    groups.append(current)
-                    current = []
-                continue
-            if current and ws - current[-1][2] > MAX_INTERNAL_SILENCE_SEC:
-                groups.append(current)
-                current = []
-            current.append((norm, ws, we))
-        if current:
-            groups.append(current)
-
-        if not groups:
-            continue
-
-        cut_in, cut_out = float(cut["in"]), float(cut["out"])
-        for grp in groups:
-            g_in = max(cut_in, grp[0][1])
-            g_out = min(cut_out, grp[-1][2])
-            if g_out - g_in < MIN_KEEP_CUT_SEC:
-                continue
-            out.append({**cut, "in": round(g_in, 3), "out": round(g_out, 3)})
-
-    if not out:
-        return cuts
-    out.sort(key=lambda c: float(c["in"]))
-    _relabel_opening_conclusion(out)
-    return out
-
-
-def strip_filler_cuts(
-    cuts: list[dict[str, Any]],
-    segments: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    """Drop kept blocks whose spoken content is pure hesitation ("เอ่อ", "um", …).
-
-    Only removes a cut when its entire overlapping transcript is filler, so real
-    speech that merely contains a filler word is never touched. Re-labels the
-    surviving opening/conclusion afterwards.
-    """
-    if not cuts:
-        return cuts
-    kept = [c for c in cuts if not _is_filler_only(_text_for_cut(c, segments))]
-    if not kept:
-        # Everything looked like filler — keep originals rather than emptying the edit.
-        return cuts
-    if len(kept) != len(cuts):
-        _relabel_opening_conclusion(kept)
-    return kept
-
-
-def is_likely_continuation(
-    prev_text: str,
-    text: str,
-    *,
-    gap_sec: float | None,
-) -> bool:
-    """True when *text* probably continues *prev_text* rather than opening fresh."""
-    if gap_sec is None or gap_sec > CONTINUATION_MAX_GAP_SEC:
-        return False
-    t = text.strip()
-    if not t:
-        return False
-    norm = _normalize_speech_text(t)
-    for opener in THAI_STANDALONE_OPENERS:
-        if norm.startswith(_normalize_speech_text(opener)):
-            return False
-    for prefix in THAI_CONTINUATION_PREFIXES:
-        if norm.startswith(_normalize_speech_text(prefix)):
-            return True
-    for phrase in THAI_CONTINUATION_PHRASES:
-        if norm.startswith(_normalize_speech_text(phrase)):
-            return True
-    prev = _normalize_speech_text(prev_text)
-    if not prev:
-        return False
-    prev_complete = any(
-        prev.endswith(_normalize_speech_text(p)) for p in THAI_SENTENCE_END_PARTICLES
-    )
-    if not prev_complete:
-        if gap_sec < 1.5 and len(norm) <= 12:
-            return True
-        if gap_sec < 1.2 and len(norm) <= 20:
-            return True
-    return False
-
-
-def build_speech_blocks(
-    speech_cuts: list[dict[str, Any]],
-    segments: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    """Map speech cuts → editorial blocks for Claude block-selection."""
-    blocks: list[dict[str, Any]] = []
-    for i, sc in enumerate(speech_cuts):
-        cut_in, cut_out = float(sc["in"]), float(sc["out"])
-        block_text = _text_for_cut(sc, segments).strip()
-        gap = round(cut_in - float(speech_cuts[i - 1]["out"]), 2) if i > 0 else None
-        prev_text = blocks[i - 1]["text"] if i > 0 else ""
-        continuation = is_likely_continuation(prev_text, block_text, gap_sec=gap)
-        blocks.append({
-            "id": i,
-            "in": cut_in,
-            "out": cut_out,
-            "duration": round(cut_out - cut_in, 2),
-            "gap_from_prev_sec": gap,
-            "likely_continuation": continuation,
-            "text": block_text,
-        })
-    return blocks
-
-
-def cascade_filter_keep_ids(
-    keep_ids: list[int],
-    blocks: list[dict[str, Any]],
-) -> list[int]:
-    """Drop kept blocks that only make sense after a removed predecessor."""
-    keep = {int(i) for i in keep_ids if 0 <= int(i) < len(blocks)}
-    if not keep:
-        return []
-
-    changed = True
-    while changed:
-        changed = False
-        for idx in sorted(list(keep)):
-            if idx == 0:
-                continue
-            prev_idx = idx - 1
-            if prev_idx in keep:
-                continue
-            block = blocks[idx]
-            prev_text = blocks[prev_idx].get("text", "")
-            gap = block.get("gap_from_prev_sec")
-            text = str(block.get("text", ""))
-            if block.get("likely_continuation") or is_likely_continuation(
-                prev_text, text, gap_sec=gap if isinstance(gap, (int, float)) else None,
-            ):
-                keep.discard(idx)
-                changed = True
-    return sorted(keep)
-
-
-def select_speech_cuts_by_ids(
-    speech_cuts: list[dict[str, Any]],
-    keep_ids: list[int],
-    blocks: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    """Apply cascade-safe keep list → speech cut dicts."""
-    filtered = cascade_filter_keep_ids(keep_ids, blocks)
-    return [speech_cuts[i] for i in filtered if 0 <= i < len(speech_cuts)]
-
-
-
-
-def _segments_in_range(
-    segments: list[dict[str, Any]],
-    range_in: float,
-    range_out: float,
-) -> list[dict[str, Any]]:
-    return sorted(
-        [
-            s for s in segments
-            if float(s.get("end", 0)) > range_in and float(s.get("start", 0)) < range_out
-        ],
-        key=lambda s: float(s["start"]),
-    )
-
-
-def trim_range_to_segment_budget(
-    segments: list[dict[str, Any]],
-    range_in: float,
-    range_out: float,
-    budget_sec: float,
-    *,
-    prefer: str = "start",
-) -> tuple[float, float]:
-    """Trim to complete Whisper segments only — never cut mid-segment."""
-    segs = _segments_in_range(segments, range_in, range_out)
-    if not segs:
-        return range_in, range_out
-
-    clipped: list[tuple[float, float, float]] = []
-    for seg in segs:
-        s_in = max(float(seg["start"]), range_in)
-        s_out = min(float(seg["end"]), range_out)
-        if s_out > s_in:
-            clipped.append((s_in, s_out, s_out - s_in))
-
-    if not clipped:
-        return range_in, range_out
-
-    natural = sum(d for _, _, d in clipped)
-    if natural <= budget_sec + 0.05:
-        return clipped[0][0], clipped[-1][1]
-
-    order = list(reversed(clipped)) if prefer == "end" else clipped
-    picked: list[tuple[float, float, float]] = []
-    total = 0.0
-    for item in order:
-        if total + item[2] <= budget_sec + 0.05:
-            picked.append(item)
-            total += item[2]
-        elif not picked:
-            # Never split a segment — keep whole even if over budget.
-            picked.append(item)
-            break
-        else:
-            break
-
-    if prefer == "end":
-        picked.reverse()
-    return picked[0][0], picked[-1][1]
-
-
 
 
 
@@ -1312,167 +607,6 @@ def captions_for_edited_cuts(
         for c in cuts
     ]
     return build_captions_for_cuts(segments, global_cuts)
-
-
-def _cut_trim_priority(cut: dict[str, Any], index: int, total: int) -> int:
-    """Higher = trim or drop this cut before others (protect opening/conclusion)."""
-    label = str(cut.get("label", "")).lower()
-    btype = str(cut.get("beat_type", label)).lower()
-    if index == 0 or label == "opening":
-        return 0
-    if index == total - 1 or label == "conclusion":
-        return 1
-    if btype == "hook":
-        return 2
-    return 3
-
-
-def enforce_cuts_budget(
-    cuts: list[dict[str, Any]],
-    segments: list[dict[str, Any]],
-    budget_sec: float,
-) -> list[dict[str, Any]]:
-    """Final pass: total duration must fit budget after resnap padding (segment-safe)."""
-    if not cuts:
-        return cuts
-
-    ordered = sorted(cuts, key=lambda c: float(c["in"]))
-    if cuts_duration(ordered) <= budget_sec + 0.15:
-        return ordered
-
-    result = [dict(c) for c in ordered]
-    max_iters = max(len(result) * 24, 24)
-    for _ in range(max_iters):
-        total = cuts_duration(result)
-        if total <= budget_sec + 0.15:
-            break
-        over = total - budget_sec
-        n = len(result)
-
-        shrinkable: list[tuple[int, int, float]] = []
-        for i, cut in enumerate(result):
-            dur = cut_duration(cut)
-            if dur <= MIN_KEEP_CUT_SEC + 0.2:
-                continue
-            shrinkable.append((_cut_trim_priority(cut, i, n), i, dur))
-
-        if not shrinkable:
-            break
-
-        shrinkable.sort(key=lambda x: (-x[0], -x[2]))
-        pri, idx, dur = shrinkable[0]
-        cut = result[idx]
-        shave = min(over + 0.05, dur - MIN_KEEP_CUT_SEC)
-        if shave < 0.3:
-            if pri >= 2 and n > 1:
-                result.pop(idx)
-                continue
-            break
-
-        btype = str(cut.get("beat_type", cut.get("label", "speech"))).lower()
-        prefer = "end" if btype in BEAT_TRIM_PREFER_END else "start"
-        trim_in, trim_out = trim_range_to_segment_budget(
-            segments,
-            float(cut["in"]),
-            float(cut["out"]),
-            dur - shave,
-            prefer=prefer,
-        )
-        trimmed = {**cut, "in": round(trim_in, 3), "out": round(trim_out, 3)}
-        if cut_duration(trimmed) >= dur - 0.05:
-            if pri >= 2 and n > 1:
-                result.pop(idx)
-            else:
-                break
-        else:
-            result[idx] = trimmed
-
-    if cuts_duration(result) > budget_sec + 0.15:
-        result = trim_speech_cuts_to_budget(result, budget_sec)
-
-    result.sort(key=lambda c: float(c["in"]))
-    _relabel_opening_conclusion(result)
-    return result
-
-
-def _trim_cut_to_budget(
-    cut: dict[str, Any],
-    budget_sec: float,
-    *,
-    prefer: str = "start",
-) -> dict[str, Any]:
-    """Slice one speech cut down to budget_sec without crossing the range."""
-    cut_in, cut_out = float(cut["in"]), float(cut["out"])
-    dur = cut_out - cut_in
-    if dur <= budget_sec:
-        return cut
-    if prefer == "end":
-        new_in = cut_out - budget_sec
-    elif prefer == "middle":
-        mid = (cut_in + cut_out) / 2
-        half = budget_sec / 2
-        new_in = mid - half
-        new_out = mid + half
-        return {**cut, "in": round(new_in, 3), "out": round(new_out, 3)}
-    else:
-        new_in = cut_in
-    new_out = new_in + budget_sec
-    new_out = min(new_out, cut_out)
-    new_in = max(cut_in, new_out - budget_sec)
-    return {**cut, "in": round(new_in, 3), "out": round(new_out, 3)}
-
-
-def trim_speech_cuts_to_budget(
-    speech_cuts: list[dict[str, Any]],
-    target_duration: float,
-) -> list[dict[str, Any]]:
-    """Fallback: pick speech blocks spread across the timeline within budget."""
-    if not speech_cuts or cuts_duration(speech_cuts) <= target_duration:
-        return speech_cuts
-
-    if len(speech_cuts) == 1:
-        return [_trim_cut_to_budget(speech_cuts[0], target_duration, prefer="middle")]
-
-    # Always try opening + conclusion; slice oversized blocks instead of skipping them.
-    order: list[int] = [0, len(speech_cuts) - 1]
-    for i in range(len(speech_cuts)):
-        if i not in order:
-            order.append(i)
-
-    picked: list[dict[str, Any]] = []
-    total = 0.0
-    last_idx = len(speech_cuts) - 1
-    tail_reserve = 0.0
-    if last_idx > 0:
-        tail_reserve = min(cut_duration(speech_cuts[last_idx]), max(6.0, target_duration * 0.2))
-
-    for idx in order:
-        cut = speech_cuts[idx]
-        remaining = target_duration - total
-        if remaining < MIN_KEEP_CUT_SEC:
-            break
-        if idx == 0 and last_idx > 0 and idx != last_idx:
-            remaining = max(MIN_KEEP_CUT_SEC, remaining - tail_reserve)
-        dur = cut_duration(cut)
-        if dur <= remaining:
-            picked.append(dict(cut))
-            total += dur
-            continue
-        if idx == 0:
-            trimmed = _trim_cut_to_budget(cut, remaining, prefer="start")
-        elif idx == len(speech_cuts) - 1:
-            trimmed = _trim_cut_to_budget(cut, remaining, prefer="end")
-        else:
-            trimmed = _trim_cut_to_budget(cut, remaining, prefer="middle")
-        if cut_duration(trimmed) >= MIN_KEEP_CUT_SEC:
-            picked.append(trimmed)
-            total += cut_duration(trimmed)
-
-    picked.sort(key=lambda x: float(x["in"]))
-    if picked:
-        picked[0]["label"] = "opening"
-        picked[-1]["label"] = "conclusion"
-    return picked or [_trim_cut_to_budget(speech_cuts[0], target_duration, prefer="start")]
 
 
 # Dub-first silent preview floor (talking_head keeps MIN_KEEP_CUT_SEC).
@@ -1698,6 +832,94 @@ def anchor_dub_segments_to_frames(
         seg["durationSec"] = round(new_out - new_in, 2)
         seg["matchedFrameTime"] = round(anchor, 2)
 
+    return edit_script
+
+
+def clamp_dub_segments_to_clip_durations(
+    edit_script: dict[str, Any],
+    clip_durations: dict[str, float],
+) -> dict[str, Any]:
+    """Drop/clamp segments whose sourceIn/sourceOut fall outside their clip's real duration.
+
+    Safety net for the Gemini video path: unlike Claude+frames (every timestamp
+    is bounded by a real sampled frame), Gemini can output a timestamp beyond
+    the actual clip length — observed in production while padding toward the
+    duration floor. Prompt-only guidance is not sufficient (Gemini has also
+    been observed ignoring output-shape instructions), so this validates in
+    code. sourceOut is clamped down to the clip's duration (small overshoot —
+    a rounding slip); a segment starting at/after the clip's end is dropped
+    entirely (no real footage left to salvage).
+
+    Logs every drop at WARNING with the reason — this is the main diagnostic
+    for "the script text mentions a shot but the render doesn't have it": if a
+    montage line's sub-cut gets dropped here while a sibling cut (which shares
+    the line's voiceoverScript, filled in by normalize_dub_edit_script) survives,
+    the line's TEXT still describes the dropped shot even though only the
+    surviving cut renders.
+    """
+    from packages.core.logging import get_logger
+
+    log = get_logger(__name__)
+
+    segs = [s for s in (edit_script.get("segments") or []) if isinstance(s, dict)]
+    kept: list[dict[str, Any]] = []
+    dropped = 0
+    for seg in segs:
+        order = seg.get("order")
+        clip_id = str(seg.get("sourceClip") or "")
+        dur = clip_durations.get(clip_id)
+        if dur is None:
+            log.warning(
+                "dub_segment_dropped", reason="unknown_clip", order=order,
+                source_clip=clip_id, known_clips=list(clip_durations),
+            )
+            dropped += 1
+            continue
+        try:
+            src_in = float(seg["sourceIn"])
+            src_out = float(seg["sourceOut"])
+        except (KeyError, TypeError, ValueError):
+            log.warning(
+                "dub_segment_dropped", reason="unparseable_timestamps", order=order,
+                source_clip=clip_id, sourceIn=seg.get("sourceIn"), sourceOut=seg.get("sourceOut"),
+            )
+            dropped += 1
+            continue
+        if src_in < 0 or src_out <= src_in or src_in >= dur:
+            log.warning(
+                "dub_segment_dropped", reason="out_of_range", order=order,
+                source_clip=clip_id, source_in=src_in, source_out=src_out, clip_duration_sec=dur,
+            )
+            dropped += 1
+            continue
+        clamped = src_out > dur
+        src_out = min(src_out, dur)
+        if src_out - src_in < DUB_MIN_CUT_SEC:
+            log.warning(
+                "dub_segment_dropped", reason="too_short_after_clamp", order=order,
+                source_clip=clip_id, source_in=src_in, source_out=src_out,
+            )
+            dropped += 1
+            continue
+        if clamped:
+            log.warning(
+                "dub_segment_clamped", order=order, source_clip=clip_id,
+                source_out_original=round(float(seg["sourceOut"]), 2), clip_duration_sec=dur,
+            )
+        seg["sourceIn"] = round(src_in, 2)
+        seg["sourceOut"] = round(src_out, 2)
+        mft = seg.get("matchedFrameTime")
+        if mft is not None:
+            try:
+                seg["matchedFrameTime"] = round(min(max(float(mft), 0.0), dur), 2)
+            except (TypeError, ValueError):
+                pass
+        kept.append(seg)
+    if dropped:
+        log.warning(
+            "dub_segments_clamp_summary", total=len(segs), kept=len(kept), dropped=dropped,
+        )
+    edit_script["segments"] = kept
     return edit_script
 
 

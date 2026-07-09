@@ -1,13 +1,23 @@
 """Whisper transcription core — shared by the worker task and the local-render API.
 
-Extracted verbatim from ``services/worker/tasks.py`` transcribe_video: Modal
-GPU endpoint transport (with chunking + 303 polling), local faster-whisper
-fallback, and the coverage/retry/word-gap post-processing. No DB/arq — callers
-provide progress + abort via callbacks.
+Extracted from ``services/worker/tasks.py`` transcribe_video: Modal GPU endpoint
+transport (with chunking + 303 polling), local faster-whisper fallback, and the
+coverage/retry/word-gap post-processing. No DB/arq — callers provide progress +
+abort via callbacks.
+
+Also runs the Gemini per-clip video review (see ``transcribe_refine.py``): once
+ALL clips finish transcribing, every clip's video is reviewed by Gemini
+independently and in parallel (not bundled into one call, not chunked across a
+shared session — see the "talking-head pipeline redesign" plan for why: cost and
+latency stay flat regardless of clip count, and nothing needs another clip's
+context to judge stutter/repeat/dead-air/silence-worth-keeping within its own
+footage). Whisper still owns every timestamp — Gemini only ever returns
+``{id, text, action}`` / ``{id, keep}``, never a time.
 """
 
 from __future__ import annotations
 
+import asyncio
 import pathlib
 import time
 from collections.abc import Awaitable, Callable
@@ -26,9 +36,8 @@ from packages.video.transcribe import (
 from packages.video.transcribe_refine import (
     GEMINI_REFINE_SCHEMA,
     apply_refine_results,
-    batch_segment_indices,
-    build_refine_prompt,
-    build_refine_request,
+    apply_silence_gap_results,
+    build_talking_review_user_text,
 )
 
 log = get_logger(__name__)
@@ -37,11 +46,6 @@ log = get_logger(__name__)
 MODAL_CHUNK_SEC = 180.0         # max audio seconds per Modal request
 MODAL_CHUNK_WHEN_SEC = 240.0    # chunk when WAV longer than 4 min (5-min uploads → 2 chunks)
 MODAL_CHUNK_WHEN_MB = 28.0      # chunk when WAV exceeds ~28 MB (16 kHz mono ≈ 4 min)
-
-# Cap the audio span per Gemini refine call so the inline base64 payload stays
-# well under the ~20 MB request limit. 16 kHz mono s16le ≈ 32 KB/s → 240 s ≈
-# 7.7 MB raw ≈ 10 MB base64. Comfortable headroom.
-REFINE_MAX_SPAN_SEC = 240.0
 
 # (phase, clip_index, clip_total) — phase: "clip_modal" | "clip_local" | "retry"
 ProgressFn = Callable[[str, int, int], Awaitable[None]]
@@ -196,118 +200,96 @@ async def transcribe_via_modal(
     return all_segments
 
 
-def _slice_wav_bytes(wav_path: pathlib.Path, start: float, end: float) -> bytes:
-    """Extract [start, end] of a WAV as 16 kHz mono s16le bytes (small payload)."""
-    import ffmpeg as ffmpeg_lib
+async def review_clip_video(
+    video_path: pathlib.Path,
+    segments: list[dict[str, Any]],
+    brief: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Gemini review of ONE clip's whole video against its Whisper segments.
 
-    dur = max(0.1, end - start)
-    tmp = wav_path.parent / f"_refine_{wav_path.stem}_{int(start * 1000)}.wav"
-    try:
-        run_ffmpeg(
-            ffmpeg_lib
-            .input(str(wav_path), ss=max(0.0, start), t=dur)
-            .output(str(tmp), ac=1, ar=16000, acodec="pcm_s16le", f="wav")
-            .overwrite_output(),
-            label="refine_slice_wav",
-        )
-        return tmp.read_bytes()
-    finally:
-        tmp.unlink(missing_ok=True)
+    ``segments`` carry timestamps local to this clip (before any project-wide
+    offset) — that's what the candidate silence gaps and the request sent to
+    Gemini are built from. Returns ``(reviewed_segments, kept_silence_gaps)``,
+    both still local — the caller offsets them into the project timeline.
 
-
-async def _call_gemini_refine(
-    model: str,
-    audio_bytes: bytes,
-    request_items: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    """One Gemini refine call: audio slice + segment list → [{id, text, action}]."""
-    import base64
+    Raises on hard failure — the caller wraps this and falls back to the
+    unmodified segments with no silence gaps kept.
+    """
     import json
 
-    from packages.llm.config import call_kwargs
-    from packages.llm.gateway import acompletion
-
-    encoded = base64.b64encode(audio_bytes).decode()
-    messages = [
-        {
-            "role": "user",
-            "content": [
-                {"type": "text", "text": build_refine_prompt(request_items)},
-                {"type": "file", "file": {"file_data": f"data:audio/wav;base64,{encoded}"}},
-            ],
-        }
-    ]
-    extra = call_kwargs(model=model)
-    resp = await acompletion(
-        messages,
-        response_format={
-            "type": "json_object",
-            "response_schema": GEMINI_REFINE_SCHEMA,
-            "enforce_validation": True,
-        },
-        **extra,
-    )
-    content = resp.choices[0].message.content or "{}"
-    data = json.loads(content)
-    results = data.get("results", []) if isinstance(data, dict) else []
-    return results if isinstance(results, list) else []
-
-
-async def refine_via_gemini(
-    wav_path: pathlib.Path,
-    segments: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    """Gemini refine pass over ONE clip's Whisper segments (local timestamps).
-
-    ``segments`` carry timestamps local to ``wav_path`` (before any clip offset).
-    The audio is sliced into spans ≤ ``REFINE_MAX_SPAN_SEC`` so each request stays
-    under the inline-audio limit; each span's audio + its segments' text is sent
-    to Gemini, and the corrected text / cut decisions are merged back by id.
-    Timestamps are never touched. Raises on hard failure — the caller wraps this
-    and falls back to the unmodified segments.
-    """
     from packages.core.settings import get_settings
+    from packages.llm.config import call_kwargs
+    from packages.llm.files import delete_gemini_files, gemini_video_block, upload_gemini_file
+    from packages.llm.gateway import acompletion
+    from packages.video.timeline import build_silence_gap_candidates, build_speech_cuts
 
-    _s = get_settings()
-    model = f"gemini/{_s.gemini_refine_model}"
-    request_items = build_refine_request(segments)
+    s = get_settings()
+    model = f"gemini/{s.talking_vision_model}"
 
-    all_results: list[dict[str, Any]] = []
-    for start_i, end_i in batch_segment_indices(segments, REFINE_MAX_SPAN_SEC):
-        span_start = float(segments[start_i]["start"])
-        span_end = max(float(segments[k]["end"]) for k in range(start_i, end_i))
-        audio_bytes = _slice_wav_bytes(wav_path, span_start, span_end)
-        batch_items = request_items[start_i:end_i]
-        log.info(
-            "gemini_refine_batch",
-            wav=wav_path.name,
-            model=model,
-            segments=len(batch_items),
-            span_sec=round(span_end - span_start, 1),
-            audio_kb=round(len(audio_bytes) / 1024),
+    local_speech_cuts = build_speech_cuts(segments)
+    gaps = build_silence_gap_candidates(local_speech_cuts)
+
+    file_id = await upload_gemini_file(video_path, mime_type="video/mp4")
+    try:
+        user_text = build_talking_review_user_text(segments=segments, gaps=gaps, brief=brief)
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": user_text},
+                    gemini_video_block(file_id),
+                ],
+            }
+        ]
+        extra = call_kwargs(model=model)
+        extra["timeout"] = s.talking_vision_timeout_sec
+        resp = await acompletion(
+            messages,
+            response_format={
+                "type": "json_object",
+                "response_schema": GEMINI_REFINE_SCHEMA,
+                "enforce_validation": True,
+            },
+            **extra,
         )
-        all_results.extend(await _call_gemini_refine(model, audio_bytes, batch_items))
+        content = resp.choices[0].message.content or "{}"
+        data = json.loads(content)
+        results = data.get("results", []) if isinstance(data, dict) else []
+        gap_results = data.get("silence_gaps", []) if isinstance(data, dict) else []
+    finally:
+        await delete_gemini_files([file_id])
 
-    return apply_refine_results(segments, all_results)
+    reviewed = apply_refine_results(segments, results if isinstance(results, list) else [])
+    kept_gaps = apply_silence_gap_results(gaps, gap_results if isinstance(gap_results, list) else [])
+    return reviewed, kept_gaps
 
 
 async def run_transcription(
     audio_files: list[pathlib.Path],
     *,
+    video_files: list[pathlib.Path | None] | None = None,
+    brief: str = "",
     on_progress: ProgressFn | None = None,
     should_abort: AbortFn | None = None,
 ) -> dict[str, Any] | None:
-    """Transcribe WAVs (Modal if configured, else local faster-whisper).
+    """Transcribe WAVs (Modal if configured, else local faster-whisper), then run
+    Gemini's per-clip video review.
 
-    Returns ``{"segments": [...]}`` — timestamps absolute across the
-    concatenated clips — or None when aborted via ``should_abort``.
-    Includes the hallucination filter, coverage-based no-VAD retry, and
-    word-gap splitting the worker has always applied.
+    Returns ``{"segments": [...], "silence_gaps": [...]}`` — both timestamps
+    absolute across the concatenated clips — or None when aborted via
+    ``should_abort``. Includes the hallucination filter, coverage-based no-VAD
+    retry, and word-gap splitting the worker has always applied.
+
+    ``video_files`` (parallel to ``audio_files``, ``None`` entries allowed) are
+    each clip's video for Gemini to watch — a clip with no video present just
+    skips the AI review (code-only cuts for that clip, same fail-open contract
+    as when the review is disabled entirely or fails).
     """
     from packages.core.settings import get_settings
 
     _s = get_settings()
     use_modal = bool(_s.modal_whisper_url)
+    videos = video_files or [None] * len(audio_files)
 
     async def _progress(phase: str, idx: int, total: int) -> None:
         if on_progress:
@@ -315,23 +297,6 @@ async def run_transcription(
 
     async def _aborted() -> bool:
         return bool(should_abort and await should_abort())
-
-    # Gemini refine runs per-clip on LOCAL (pre-offset) timestamps so it hears the
-    # exact audio that produced those segments. Additive + never blocking: any
-    # failure logs and falls back to the raw Whisper segments unchanged.
-    refine_on = bool(_s.gemini_refine_enabled and _s.gemini_api_key)
-
-    async def _refine_clip(wav: pathlib.Path, local: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        if not refine_on or not local:
-            return local
-        try:
-            refined = await refine_via_gemini(wav, local)
-            log.info("gemini_refine_done", wav=wav.name, before=len(local), after=len(refined),
-                     model=_s.gemini_refine_model)
-            return refined
-        except Exception as exc:  # noqa: BLE001
-            log.warning("gemini_refine_failed", wav=wav.name, error=str(exc)[:300])
-            return local
 
     def _append_with_offset(collected: list[dict[str, Any]], local: list[dict[str, Any]], offset: float) -> None:
         for s in local:
@@ -358,14 +323,20 @@ async def run_transcription(
 
     aborted = False
 
-    async def _collect_segments_modal(*, vad_filter: bool = True) -> tuple[list[dict[str, Any]], int, float]:
+    # Per-clip (local, un-offset) segments, kept alongside the flattened/offset
+    # `collected` list so the Gemini review phase (after transcription settles)
+    # can run per clip on its own local timestamps.
+    async def _collect_segments_modal(
+        *, vad_filter: bool = True,
+    ) -> tuple[list[dict[str, Any]], int, float, list[tuple[list[dict[str, Any]], float]]]:
         nonlocal aborted
         collected: list[dict[str, Any]] = []
+        per_clip: list[tuple[list[dict[str, Any]], float]] = []
         offset = 0.0
         for idx, wav in enumerate(audio_files):
             if await _aborted():
                 aborted = True
-                return collected, 0, offset
+                return collected, 0, offset, per_clip
             await _progress("clip_modal", idx, len(audio_files))
             segs = await transcribe_via_modal(
                 wav, _s.modal_whisper_url, _s.whisper_language, vad_filter=vad_filter,
@@ -385,24 +356,25 @@ async def run_transcription(
                     "text": tight["text"],
                     "words": tight.get("words", []),
                 })
-            local = await _refine_clip(wav, local)
+            per_clip.append((local, offset))
             _append_with_offset(collected, local, offset)
             offset += clip_dur
-        return collected, 0, offset
+        return collected, 0, offset, per_clip
 
     async def _collect_segments(
         transcribe_options: dict[str, Any],
         *,
         pass_label: str,
-    ) -> tuple[list[dict[str, Any]], int, float]:
+    ) -> tuple[list[dict[str, Any]], int, float, list[tuple[list[dict[str, Any]], float]]]:
         nonlocal aborted
         collected: list[dict[str, Any]] = []
+        per_clip: list[tuple[list[dict[str, Any]], float]] = []
         dropped_count = 0
         offset = 0.0
         for idx, wav in enumerate(audio_files):
             if await _aborted():
                 aborted = True
-                return collected, dropped_count, offset
+                return collected, dropped_count, offset, per_clip
             await _progress("clip_local", idx, len(audio_files))
             log.info(
                 "transcribe_clip_start",
@@ -441,7 +413,7 @@ async def run_transcription(
                     "words": tight["words"],
                 })
                 raw_count += 1
-            local = await _refine_clip(wav, local)
+            per_clip.append((local, offset))
             _append_with_offset(collected, local, offset)
             clip_dur = media_duration(wav)
             log.info(
@@ -456,13 +428,13 @@ async def run_transcription(
                 transcribe_pass=pass_label,
             )
             offset += clip_dur
-        return collected, dropped_count, offset
+        return collected, dropped_count, offset, per_clip
 
     if use_modal:
-        all_segments, dropped, total_source = await _collect_segments_modal()
+        all_segments, dropped, total_source, per_clip = await _collect_segments_modal()
     else:
         options = build_transcribe_options(language=_s.whisper_language)
-        all_segments, dropped, total_source = await _collect_segments(options, pass_label="vad")
+        all_segments, dropped, total_source, per_clip = await _collect_segments(options, pass_label="vad")
     if aborted:
         return None
 
@@ -473,10 +445,10 @@ async def run_transcription(
         log.warning("transcribe_retry_no_vad", backend="modal" if use_modal else "local", **coverage)
         await _progress("retry", 0, len(audio_files))
         if use_modal:
-            retry_segments, retry_dropped, _ = await _collect_segments_modal(vad_filter=False)
+            retry_segments, retry_dropped, _, retry_per_clip = await _collect_segments_modal(vad_filter=False)
         else:
             retry_options = build_transcribe_options(language=_s.whisper_language, vad_filter=False)
-            retry_segments, retry_dropped, _ = await _collect_segments(retry_options, pass_label="no_vad")
+            retry_segments, retry_dropped, _, retry_per_clip = await _collect_segments(retry_options, pass_label="no_vad")
         if aborted:
             return None
         retry_cov = transcript_coverage_stats(retry_segments, total_source)
@@ -487,9 +459,48 @@ async def run_transcription(
         ):
             all_segments = retry_segments
             dropped = retry_dropped
+            per_clip = retry_per_clip
             log.info("transcribe_retry_adopted", **retry_cov)
 
     log.info("transcribe_filtered", kept=len(all_segments), dropped=dropped)
+
+    # Gemini per-clip video review — runs once transcription has fully settled
+    # (so a VAD retry never redoes/duplicates the AI review), independently and
+    # in parallel across clips. Additive + never blocking: any per-clip failure
+    # logs and falls back to that clip's unreviewed segments with no gaps kept.
+    review_on = bool(_s.gemini_refine_enabled and _s.gemini_api_key)
+
+    async def _review_clip(
+        video: pathlib.Path | None,
+        local: list[dict[str, Any]],
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        if not review_on or not local or video is None:
+            return local, []
+        try:
+            reviewed, kept_gaps = await review_clip_video(video, local, brief)
+            log.info(
+                "gemini_review_done", video=video.name, before=len(local), after=len(reviewed),
+                gaps_kept=len(kept_gaps), model=_s.talking_vision_model,
+            )
+            return reviewed, kept_gaps
+        except Exception as exc:  # noqa: BLE001
+            log.warning("gemini_review_failed", video=video.name, error=str(exc)[:300])
+            return local, []
+
+    review_results = await asyncio.gather(
+        *(_review_clip(videos[i] if i < len(videos) else None, local) for i, (local, _off) in enumerate(per_clip))
+    )
+
+    reviewed_segments: list[dict[str, Any]] = []
+    silence_gaps: list[dict[str, Any]] = []
+    for (reviewed_local, kept_gaps), (_orig_local, offset) in zip(review_results, per_clip, strict=True):
+        _append_with_offset(reviewed_segments, reviewed_local, offset)
+        for g in kept_gaps:
+            silence_gaps.append({
+                "in": round(float(g["in"]) + offset, 3),
+                "out": round(float(g["out"]) + offset, 3),
+            })
+    all_segments = reviewed_segments
 
     # Split segments whose words straddle long internal silence (Whisper
     # sometimes merges speech across a 60s pause into one segment).
@@ -500,4 +511,4 @@ async def run_transcription(
     if len(all_segments) != before_split:
         log.info("transcribe_word_gap_split", before=before_split, after=len(all_segments))
 
-    return {"segments": all_segments}
+    return {"segments": all_segments, "silence_gaps": silence_gaps}

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Folder, FolderArchive, Loader2, Mic, Pencil, Trash2, XCircle } from 'lucide-react'
+import { Folder, Loader2, Mic, Pencil, Trash2, XCircle } from 'lucide-react'
 import type { LocalProject } from '../../../preload'
 import { deleteRemote, type ApiSession } from '../lib/videosLocalApi'
 import { useProjectPipeline } from '../lib/useProjectPipeline'
@@ -113,12 +113,6 @@ export default function ProjectCard({
         </div>
         <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
           <span
-            title="โปรเจกต์นี้ตัดต่อผ่านแอพ desktop — ไฟล์วิดีโออยู่บนเครื่องที่ render"
-            className="whitespace-nowrap rounded-full bg-sky-100 px-2.5 py-0.5 text-xs font-semibold text-sky-700"
-          >
-            🖥️ ตัดต่อบนเครื่อง
-          </span>
-          <span
             className={`whitespace-nowrap rounded-full bg-current/10 px-2.5 py-0.5 text-xs font-semibold ${statusColor(step)}`}
           >
             {statusLabel(step)}
@@ -152,6 +146,16 @@ export default function ProjectCard({
           )}
         </div>
       </div>
+
+      {project.clips.length > 0 && (
+        <button
+          type="button"
+          onClick={() => window.noey.projects.openFolder(project.uid)}
+          className="mt-2 flex items-center gap-1.5 text-[10px] text-[#5b3a1a]/50 underline hover:text-[#5b3a1a]"
+        >
+          <Folder size={11} /> เปิดโฟลเดอร์โปรเจกต์
+        </button>
+      )}
 
       {isBusy(step) && (
         <>
@@ -221,37 +225,12 @@ export default function ProjectCard({
 
       {step === 'done' && (
         <div className="mt-3 space-y-2">
-          {mode === 'dub_first' ? (
-            <DubVideoPlayer
-              key={mediaKey}
-              mediaKey={mediaKey}
-              src={window.noey.media.urlFor(project.uid, 'final.mp4')}
-              editScript={editScript}
-            />
-          ) : (
-            <video
-              key={mediaKey}
-              controls
-              className="aspect-9/16 w-full rounded-lg bg-black"
-              src={window.noey.media.urlFor(project.uid, 'final.mp4')}
-            />
-          )}
-          <div className="flex gap-2">
-            <button
-              onClick={() => window.noey.projects.reveal(project.uid, 'final.mp4')}
-              className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-[#5b3a1a] px-3 py-2 text-xs font-medium text-amber-50 shadow hover:bg-[#4a2e0c]"
-            >
-              <Folder size={12} /> เปิดโฟลเดอร์วิดีโอ
-            </button>
-            {mode === 'talking_head' && (
-              <button
-                onClick={() => window.noey.projects.reveal(project.uid, 'capcut_bundle.zip')}
-                className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-[#5b3a1a]/40 bg-amber-50 px-3 py-2 text-xs font-medium text-[#5b3a1a] hover:bg-amber-100"
-              >
-                <FolderArchive size={12} /> CapCut Bundle
-              </button>
-            )}
-          </div>
+          <DubVideoPlayer
+            key={mediaKey}
+            mediaKey={mediaKey}
+            src={window.noey.media.urlFor(project.uid, 'final.mp4')}
+            editScript={editScript}
+          />
           <button
             onClick={openEditor}
             disabled={mode === 'talking_head' && !project.timeline}

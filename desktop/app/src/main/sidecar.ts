@@ -30,7 +30,12 @@ function sidecarSpawnSpec(): {
   cwd: string
   env: NodeJS.ProcessEnv
 } {
-  const env: NodeJS.ProcessEnv = { ...process.env }
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    // Thai error messages from the sidecar must survive the stdout pipe on Windows.
+    PYTHONUTF8: '1',
+    PYTHONIOENCODING: 'utf-8'
+  }
 
   if (process.env.NOEY_SIDECAR_DIR) {
     return {

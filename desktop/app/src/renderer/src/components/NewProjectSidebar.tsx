@@ -238,14 +238,17 @@ interface Props {
 export default function NewProjectSidebar({ onCreated }: Props): React.JSX.Element {
   const [files, setFiles] = useState<UploadItem[]>([])
   const [mode, setMode] = useState<'talking_head' | 'dub_first'>('talking_head')
+  // Independent from `mode` (edit style) — this is "how many clips → how many
+  // projects", same axis the web uploader exposes. Keep it a separate state so
+  // switching edit mode never resets or overrides this choice, and vice versa.
+  const [uploadMode, setUploadMode] = useState<'merge' | 'separate'>('merge')
   const [scriptMode, setScriptMode] = useState<'generate' | 'own'>('generate')
   const [userScript, setUserScript] = useState('')
   const [scriptStyles, setScriptStyles] = useState<string[]>([])
   const [scriptDuration, setScriptDuration] = useState('')
   const [scriptCustomSec, setScriptCustomSec] = useState('')
   const [scriptNote, setScriptNote] = useState('')
-  const [durationMode, setDurationMode] = useState<'full' | 'custom'>('full')
-  const [targetSec, setTargetSec] = useState(60)
+  const [talkingBrief, setTalkingBrief] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -277,13 +280,13 @@ export default function NewProjectSidebar({ onCreated }: Props): React.JSX.Eleme
 
   const reset = (): void => {
     setFiles([])
+    setUploadMode('merge')
     setUserScript('')
     setScriptStyles([])
     setScriptDuration('')
     setScriptCustomSec('')
     setScriptNote('')
-    setDurationMode('full')
-    setTargetSec(60)
+    setTalkingBrief('')
   }
 
   const submit = async (): Promise<void> => {
@@ -296,25 +299,35 @@ export default function NewProjectSidebar({ onCreated }: Props): React.JSX.Eleme
       const brief =
         mode === 'dub_first'
           ? (buildDubBrief(scriptDuration, scriptCustomSec, scriptNote, scriptStyles) ?? '')
-          : ''
+          : talkingBrief.trim()
       const userScriptFinal = mode === 'dub_first' && scriptMode === 'own' ? userScript.trim() : ''
+      const finalTargetDurationSec = targetDurationSec ?? undefined
 
-      const name = files[0].name.replace(/\.[^.]+$/, '')
-      const project = await window.noey.projects.create({ name, mode })
-      const projectDir = await window.noey.projects.dir(project.uid)
-      const ingested = await window.noey.sidecar.ingest.run({
-        projectDir,
-        sources: files.map((f) => f.path)
-      })
-      const updated = await window.noey.projects.update(project.uid, {
-        clips: ingested.clips as LocalProject['clips'],
-        step: 'imported',
-        brief,
-        userScript: userScriptFinal,
-        scriptStyles,
-        targetDurationSec: targetDurationSec ?? (durationMode === 'custom' ? targetSec : undefined)
-      })
-      onCreated(updated)
+      // "merge": one project, all clips concatenated (existing behavior).
+      // "separate": one project per clip — only offered/meaningful once there's
+      // more than one file, same split the web uploader does.
+      const groups: UploadItem[][] =
+        uploadMode === 'separate' && files.length > 1 ? files.map((f) => [f]) : [files]
+
+      for (const group of groups) {
+        const name = group[0].name.replace(/\.[^.]+$/, '')
+        const project = await window.noey.projects.create({ name, mode })
+        const projectDir = await window.noey.projects.dir(project.uid)
+        const ingested = await window.noey.sidecar.ingest.run({
+          projectDir,
+          sources: group.map((f) => f.path),
+          mode
+        })
+        const updated = await window.noey.projects.update(project.uid, {
+          clips: ingested.clips as LocalProject['clips'],
+          step: 'imported',
+          brief,
+          userScript: userScriptFinal,
+          scriptStyles,
+          targetDurationSec: finalTargetDurationSec
+        })
+        onCreated(updated)
+      }
       reset()
     } catch (err) {
       setError(String((err as Error).message ?? err))
@@ -329,7 +342,7 @@ export default function NewProjectSidebar({ onCreated }: Props): React.JSX.Eleme
         <h2 className="text-sm font-semibold uppercase tracking-widest text-amber-200/70">
           อัปโหลดวิดีโอ
         </h2>
-        <p className="-mt-2 text-[11px] text-amber-200/45">คลิปต้นฉบับสูงสุด 10 นาทีต่อไฟล์</p>
+        <p className="-mt-2 text-[11px] text-amber-200/45">คลิปต้นฉบับสูงสุด 20 นาทีต่อไฟล์</p>
 
         {files.length === 0 ? (
           <button
@@ -388,26 +401,100 @@ export default function NewProjectSidebar({ onCreated }: Props): React.JSX.Eleme
           <button
             type="button"
             onClick={() => setMode('talking_head')}
-            className={`flex-1 rounded-lg px-3 py-2.5 text-sm font-semibold transition-all ${
+            className={`flex-1 rounded-lg px-3 py-2.5 text-center transition-all ${
               mode === 'talking_head'
                 ? 'bg-amber-500 text-black shadow'
                 : 'border border-white/15 text-amber-300/70 hover:border-amber-400/40 hover:text-amber-200'
             }`}
           >
-            🎙 Talking Head
+            <span className="block text-sm font-semibold">🎙 ตัดช่วงเงียบ</span>
+            <span
+              className={`block text-[10px] ${mode === 'talking_head' ? 'text-black/60' : 'opacity-60'}`}
+            >
+              พูดหน้ากล้อง · Talking Head
+            </span>
           </button>
           <button
             type="button"
             onClick={() => setMode('dub_first')}
-            className={`flex-1 rounded-lg px-3 py-2.5 text-sm font-semibold transition-all ${
+            className={`flex-1 rounded-lg px-3 py-2.5 text-center transition-all ${
               mode === 'dub_first'
                 ? 'bg-purple-500 text-white shadow'
                 : 'border border-white/15 text-amber-300/70 hover:border-purple-400/40 hover:text-purple-200'
             }`}
           >
-            🎬 Dub First
+            <span className="block text-sm font-semibold">🎬 ตัดฉากเด่น พากย์เอง</span>
+            <span
+              className={`block text-[10px] ${mode === 'dub_first' ? 'text-white/70' : 'opacity-60'}`}
+            >
+              Dub First
+            </span>
           </button>
         </div>
+
+        {files.length > 1 && (
+          <div
+            className={`space-y-2 rounded-xl border p-4 ${
+              mode === 'dub_first'
+                ? 'border-purple-500/25 bg-purple-500/5'
+                : 'border-white/10 bg-white/5'
+            }`}
+          >
+            <p
+              className={`text-[11px] font-semibold uppercase tracking-widest ${
+                mode === 'dub_first' ? 'text-purple-200/55' : 'text-amber-200/55'
+              }`}
+            >
+              อัปโหลดหลายคลิป
+            </p>
+            <label className="flex cursor-pointer items-start gap-2.5">
+              <input
+                type="radio"
+                name="uploadMode"
+                checked={uploadMode === 'merge'}
+                onChange={() => setUploadMode('merge')}
+                className={`mt-0.5 ${mode === 'dub_first' ? 'accent-purple-400' : 'accent-amber-500'}`}
+              />
+              <div>
+                <p
+                  className={`text-sm font-medium ${mode === 'dub_first' ? 'text-purple-100/90' : 'text-amber-100/90'}`}
+                >
+                  รวมเป็นคลิปเดียว
+                </p>
+                <p
+                  className={`mt-0.5 text-xs leading-relaxed ${mode === 'dub_first' ? 'text-purple-300/50' : 'text-amber-300/50'}`}
+                >
+                  {mode === 'dub_first'
+                    ? 'ต่อคลิปตามลำดับ → AI วาง script + ตัด silent 1 ไฟล์'
+                    : 'ต่อคลิปตามลำดับด้านบน แล้วตัดเป็นวิดีโอไฟล์เดียว'}
+                </p>
+              </div>
+            </label>
+            <label className="flex cursor-pointer items-start gap-2.5">
+              <input
+                type="radio"
+                name="uploadMode"
+                checked={uploadMode === 'separate'}
+                onChange={() => setUploadMode('separate')}
+                className={`mt-0.5 ${mode === 'dub_first' ? 'accent-purple-400' : 'accent-amber-500'}`}
+              />
+              <div>
+                <p
+                  className={`text-sm font-medium ${mode === 'dub_first' ? 'text-purple-100/90' : 'text-amber-100/90'}`}
+                >
+                  แยกเป็นคนละโปรเจกต์
+                </p>
+                <p
+                  className={`mt-0.5 text-xs leading-relaxed ${mode === 'dub_first' ? 'text-purple-300/50' : 'text-amber-300/50'}`}
+                >
+                  {mode === 'dub_first'
+                    ? `สร้าง ${files.length} โปรเจกต์ — คลิปละ 1 script + วิดีโอ`
+                    : `สร้าง ${files.length} โปรเจกต์ — คลิปละ 1 งานตัดต่อ`}
+                </p>
+              </div>
+            </label>
+          </div>
+        )}
 
         {mode === 'dub_first' && (
           <div className="flex flex-col gap-3 rounded-xl border border-purple-500/20 bg-purple-500/5 p-3">
@@ -548,54 +635,26 @@ export default function NewProjectSidebar({ onCreated }: Props): React.JSX.Eleme
         )}
 
         {mode === 'talking_head' && (
-          <div className="space-y-2 rounded-xl border border-amber-500/20 bg-amber-500/5 p-4">
-            <p className="mb-1 text-[11px] font-semibold uppercase tracking-widest text-amber-200/55">
-              ความยาวคลิป
-            </p>
-            {(
-              [
-                {
-                  value: 'full',
-                  label: 'เก็บทั้งหมด',
-                  desc: 'ตัดช่วงเงียบ + ลบคำพูดซ้ำ ไม่ใช้ AI'
-                },
-                {
-                  value: 'custom',
-                  label: 'กำหนดเอง',
-                  desc: 'AI วิเคราะห์ script เลือกช่วงที่ดีที่สุดให้พอดีเวลาที่กำหนด'
-                }
-              ] as const
-            ).map(({ value, label, desc }) => (
-              <label
-                key={value}
-                className="flex cursor-pointer items-start gap-2.5 rounded-lg px-2 py-1.5 hover:bg-white/5"
-              >
-                <input
-                  type="radio"
-                  name="thDuration"
-                  checked={durationMode === value}
-                  onChange={() => setDurationMode(value)}
-                  className="mt-0.5 accent-amber-500"
-                />
-                <div>
-                  <p className="text-sm font-medium text-amber-100/90">{label}</p>
-                  <p className="text-xs leading-relaxed text-amber-300/50">{desc}</p>
-                </div>
-              </label>
-            ))}
-            {durationMode === 'custom' && (
-              <div className="flex items-center gap-2 pl-6 pt-1">
-                <input
-                  type="number"
-                  min={15}
-                  max={600}
-                  value={targetSec}
-                  onChange={(e) => setTargetSec(Number(e.target.value))}
-                  className="w-20 rounded-lg border border-amber-500/30 bg-black/20 px-2 py-1.5 text-sm font-medium text-amber-100 outline-none focus:border-amber-400"
-                />
-                <span className="text-xs text-amber-300/55">วินาที (15–600)</span>
-              </div>
-            )}
+          <div className="space-y-3 rounded-xl border border-amber-500/20 bg-amber-500/5 p-4">
+            <div>
+              <p className="text-sm font-medium text-amber-100/90">ตัดช่วงเงียบ + ลบคำพูดซ้ำ</p>
+              <p className="text-xs leading-relaxed text-amber-300/50">
+                AI ดูวิดีโอทุกคลิปให้ — แก้คำที่ถอดเสียงผิด ตัดพูดติด/พูดซ้ำ
+                และเก็บช่วงเงียบที่ยังมีภาพสำคัญไว้
+              </p>
+            </div>
+            <div className="space-y-1.5">
+              <span className="text-xs font-medium text-amber-100/85">
+                บริบท/ชื่อสินค้า (ไม่บังคับ)
+              </span>
+              <input
+                type="text"
+                value={talkingBrief}
+                onChange={(e) => setTalkingBrief(e.target.value)}
+                placeholder="เช่น รีวิวรองเท้ายี่ห้อ X — ช่วย AI สะกดชื่อแบรนด์ให้ถูก"
+                className="w-full rounded-lg border border-amber-500/30 bg-black/20 px-3 py-2 text-xs text-zinc-100 outline-none focus:border-amber-400"
+              />
+            </div>
           </div>
         )}
 
@@ -611,19 +670,27 @@ export default function NewProjectSidebar({ onCreated }: Props): React.JSX.Eleme
           className="flex items-center justify-center gap-2 rounded-xl bg-amber-500 py-3 text-sm font-bold text-black shadow hover:bg-amber-400 disabled:opacity-40"
         >
           {busy ? <Loader2 size={15} className="animate-spin" /> : <Film size={15} />}
-          {busy ? 'กำลังเริ่ม…' : mode === 'dub_first' ? 'เริ่ม Dub First' : 'เริ่มตัดต่อ AI'}
+          {busy
+            ? 'กำลังเริ่ม…'
+            : mode === 'dub_first'
+              ? 'เริ่มตัดฉากเด่น พากย์เอง'
+              : 'เริ่มตัดช่วงเงียบ'}
         </button>
 
         {mode === 'dub_first' ? (
           <div className="space-y-1 rounded-xl border border-purple-500/15 bg-purple-500/5 p-4">
-            <p className="text-xs font-semibold text-purple-100/90">โหมด: Dub First</p>
+            <p className="text-xs font-semibold text-purple-100/90">
+              โหมด: ตัดฉากเด่น พากย์เอง (Dub First)
+            </p>
             <p className="text-xs leading-relaxed text-purple-200/60">
               เตรียม → AI วาง script → ตัดคลิป silent → รออัดเสียงพากย์
             </p>
           </div>
         ) : (
           <div className="space-y-1 rounded-xl border border-white/10 bg-white/5 p-4">
-            <p className="text-xs font-semibold text-amber-100/80">โหมด: Talking Head</p>
+            <p className="text-xs font-semibold text-amber-100/80">
+              โหมด: ตัดช่วงเงียบ (Talking Head)
+            </p>
             <p className="text-xs leading-relaxed text-amber-300/50">
               เตรียมวิดีโอ → ถอดเสียง → วางแผนตัด → สร้างคลิป
             </p>

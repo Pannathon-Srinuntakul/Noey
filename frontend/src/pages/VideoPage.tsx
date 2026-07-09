@@ -1410,8 +1410,7 @@ export default function VideoPage() {
   const [scriptDuration, setScriptDuration] = useState('')  // '15'|'30'|'60'|'90'|'auto'|'custom'|''
   const [scriptCustomSec, setScriptCustomSec] = useState('')
   const [scriptNote, setScriptNote] = useState('')
-  const [durationMode, setDurationMode] = useState<'full' | 'custom'>('full')
-  const [targetDurationSec, setTargetDurationSec] = useState(60)
+  const [talkingBrief, setTalkingBrief] = useState('')
   const [uploading, setUploading] = useState(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
 
@@ -1470,14 +1469,6 @@ export default function VideoPage() {
 
   async function handleUpload() {
     if (files.length === 0) return
-    if (
-      videoMode === 'talking_head'
-      && durationMode === 'custom'
-      && (targetDurationSec < 15 || targetDurationSec > 600)
-    ) {
-      setUploadError('ความยาวคลิปต้องอยู่ระหว่าง 15–600 วินาที')
-      return
-    }
     const submittedIds = new Set(files.map((f) => f.id))
     setUploading(true)
     setUploadError(null)
@@ -1499,16 +1490,18 @@ export default function VideoPage() {
         files.map((item) => item.file),
         {
           mode: videoMode,
-          brief: videoMode === 'dub_first' ? buildBrief() : undefined,
+          brief: videoMode === 'dub_first' ? buildBrief() : (talkingBrief.trim() || undefined),
           userScript: videoMode === 'dub_first' && scriptMode === 'own' ? (userScript.trim() || undefined) : undefined,
-          durationMode: videoMode === 'dub_first'
-            ? (scriptDuration && scriptDuration !== 'auto' && !(scriptDuration === 'custom' && !scriptCustomSec) ? 'custom' : 'full')
-            : durationMode,
+          // Only "full" exists now — talking_head's highlight/custom mode was
+          // removed (Gemini reviews every clip regardless). dub_first's own
+          // script-length target still travels via targetDurationSec below,
+          // independent of this field.
+          durationMode: 'full',
           targetDurationSec: videoMode === 'dub_first'
             ? (scriptDuration === 'custom' && scriptCustomSec ? parseInt(scriptCustomSec, 10)
               : scriptDuration && scriptDuration !== 'auto' && scriptDuration !== 'custom' ? parseInt(scriptDuration, 10)
               : null)
-            : (durationMode === 'custom' ? targetDurationSec : null),
+            : null,
           uploadMode: files.length > 1 ? uploadMode : 'merge',
         },
       )
@@ -1526,8 +1519,7 @@ export default function VideoPage() {
       })
       setFiles((prev) => prev.filter((f) => !submittedIds.has(f.id)))
       setUploadMode('merge')
-      setDurationMode('full')
-      setTargetDurationSec(60)
+      setTalkingBrief('')
       setScriptMode('generate')
       setUserScript('')
       setScriptStyles([])
@@ -1955,42 +1947,23 @@ export default function VideoPage() {
             </div>
           )}
 
-          {videoMode !== 'dub_first' && <div className="rounded-xl border border-white/10 bg-white/5 p-4 space-y-2">
-            <p className="text-[11px] font-semibold uppercase tracking-widest text-amber-200/55 mb-3">ความยาวคลิป</p>
-            {(
-              [
-                { value: 'full', label: 'เก็บทั้งหมด', desc: 'ตัดช่วงเงียบ + ลบคำพูดซ้ำ ไม่ใช้ AI' },
-                { value: 'custom', label: 'กำหนดเอง', desc: 'Haiku วิเคราะห์ script เลือกช่วงที่ดีที่สุดให้พอดีเวลาที่กำหนด' },
-              ] as const
-            ).map(({ value, label, desc }) => (
-              <label key={value} className="flex cursor-pointer items-start gap-2.5 rounded-lg px-2 py-1.5 hover:bg-white/5">
-                <input
-                  type="radio"
-                  name="durationMode"
-                  checked={durationMode === value}
-                  onChange={() => setDurationMode(value)}
-                  className="mt-0.5 accent-amber-500"
-                />
-                <div>
-                  <p className="text-sm font-medium text-amber-100/90">{label}</p>
-                  <p className="text-xs leading-relaxed text-amber-300/50">{desc}</p>
-                </div>
-              </label>
-            ))}
-
-            {durationMode === 'custom' && (
-              <div className="flex items-center gap-2 pl-6 pt-1">
-                <input
-                  type="number"
-                  min={15}
-                  max={600}
-                  value={targetDurationSec}
-                  onChange={(e) => setTargetDurationSec(Number(e.target.value))}
-                  className="w-20 rounded-lg border border-amber-500/30 bg-black/20 px-2 py-1.5 text-sm font-medium text-amber-100 outline-none focus:border-amber-400"
-                />
-                <span className="text-xs text-amber-300/55">วินาที (15–600)</span>
-              </div>
-            )}
+          {videoMode !== 'dub_first' && <div className="rounded-xl border border-white/10 bg-white/5 p-4 space-y-3">
+            <div>
+              <p className="text-sm font-medium text-amber-100/90">ตัดช่วงเงียบ + ลบคำพูดซ้ำ</p>
+              <p className="text-xs leading-relaxed text-amber-300/50">
+                AI ดูวิดีโอทุกคลิปให้ — แก้คำที่ถอดเสียงผิด ตัดพูดติด/พูดซ้ำ และเก็บช่วงเงียบที่ยังมีภาพสำคัญไว้
+              </p>
+            </div>
+            <div className="space-y-1.5">
+              <p className="text-xs font-medium text-amber-100/85">บริบท/ชื่อสินค้า (ไม่บังคับ)</p>
+              <input
+                type="text"
+                value={talkingBrief}
+                onChange={(e) => setTalkingBrief(e.target.value)}
+                placeholder="เช่น รีวิวรองเท้ายี่ห้อ X — ช่วย AI สะกดชื่อแบรนด์ให้ถูก"
+                className="w-full rounded-lg border border-amber-500/30 bg-black/20 px-3 py-2 text-xs text-zinc-100 outline-none focus:border-amber-400"
+              />
+            </div>
           </div>}
 
           {uploadError && (

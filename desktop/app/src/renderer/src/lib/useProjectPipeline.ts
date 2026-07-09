@@ -246,6 +246,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
       if (!remoteUid) {
         const created = await createLocalProject(session, {
           mode: 'talking_head',
+          brief: current.brief || null,
           target_duration_sec: current.targetDurationSec ?? null,
           clips: current.clips.map((c) => ({
             id: c.id,
@@ -272,9 +273,31 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
         unsubAudio()
       }
 
+      // Downscaled proxy clips (WITH audio) so Gemini can watch+listen to each
+      // clip during review — only the small proxy ever leaves the device, never
+      // the original footage. Best-effort: an encode failure here shouldn't block
+      // transcription, it just falls back to code-only cuts for that clip.
+      let proxyVideos: { file: string; name: string }[] | undefined
+      try {
+        setProgressMsg('กำลังย่อวิดีโอให้ AI ตรวจสอบ…')
+        const unsubProxy = window.noey.sidecar.extractProxy.onProgress((evt: SidecarEvent) => {
+          setProgressMsg(`กำลังย่อวิดีโอให้ AI ตรวจสอบ ${evt.step}/${evt.total}…`)
+        })
+        try {
+          await window.noey.sidecar.extractProxy.run({ projectDir, keepAudio: true })
+        } finally {
+          unsubProxy()
+        }
+        const manifestUrl = window.noey.media.urlFor(project.uid, 'proxy/proxy_manifest.json')
+        const proxies = (await (await fetch(manifestUrl)).json()) as ProxyManifestEntry[]
+        proxyVideos = proxies.map((e) => ({ file: `proxy/${e.file}`, name: e.file }))
+      } catch (err) {
+        void window.noey.log.write('useProjectPipeline', `proxy extract failed: ${String(err)}`)
+      }
+
       await patchProject({ step: 'transcribing' })
       setProgressMsg('กำลังอัพโหลดไฟล์เสียง…')
-      const { job_id } = await uploadAudio(session, remoteUid, project.uid, wavs)
+      const { job_id } = await uploadAudio(session, remoteUid, project.uid, wavs, proxyVideos)
       await patchProject({ remote: { uid: remoteUid, jobId: job_id } })
 
       abortRef.current = new AbortController()

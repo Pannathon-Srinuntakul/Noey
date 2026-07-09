@@ -152,14 +152,16 @@ async def delete_gemini_files(file_ids: list[str]) -> None:
 def gemini_video_block(file_id: str, *, mime_type: str = VIDEO_MP4_MIME) -> dict[str, Any]:
     """LiteLLM/OpenAI-shaped block → Gemini file_uri pass-through via gateway.
 
-    `detail: "low"` maps to Gemini's media_resolution=LOW (100 tokens/sec of
-    video vs 300 at default) — plenty for shot/pose/cut-timing judgment.
+    Uses Gemini's default media_resolution (300 tokens/sec) rather than "low"
+    (100 tokens/sec) — production runs showed timestamp/content mismatches
+    (e.g. a "back-view" moment described but not actually at that timestamp)
+    that are consistent with reduced visual fidelity. Correctness over token
+    cost while this path is still stabilizing.
     """
     return {
         "type": "file",
         "file": {
             "file_id": file_id,
             "format": mime_type,
-            "detail": "low",
         },
     }

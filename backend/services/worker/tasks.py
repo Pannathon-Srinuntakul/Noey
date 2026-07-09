@@ -16,6 +16,7 @@ import csv
 import io
 import json
 import pathlib
+import re
 import shutil
 import time
 import zipfile
@@ -31,33 +32,9 @@ from packages.db.session import bind_tenant_search_path, get_engine, get_session
 from packages.video.storage import data_root
 from packages.video.ffmpeg_bin import configure_ffmpeg, has_audio_stream, media_duration, probe_media, run_ffmpeg, trim_media, video_stream_info
 from packages.video.timeline import (
-    AI_SEMANTIC_DEDUPE_SYSTEM,
-    EDITORIAL_BLOCK_GAP,
-    HIGHLIGHT_HAIKU_SYSTEM,
     normalize_dub_edit_script,
-    apply_semantic_dedupe_plan,
-    remove_overlapping_cuts,
-    build_captions_for_cuts,
-    build_clip_boundaries,
-    build_speech_blocks,
-    build_speech_cuts,
-    cut_duration,
     cuts_duration,
-    dedupe_repeated_cuts,
-    dedupe_spaced_word_repeats,
-    enforce_cuts_budget,
     filter_renderable_cuts,
-    filter_short_cuts,
-    localize_cuts,
-    parse_llm_json,
-    select_speech_cuts_by_ids,
-    resnap_selected_cuts,
-    split_cuts_on_internal_silence,
-    strip_filler_cuts,
-    strip_filler_words_from_cuts,
-    trim_speech_cuts_to_budget,
-    whisper_segments_for_cut,
-    _text_for_cut,
 )
 
 log = get_logger(__name__)
@@ -386,6 +363,8 @@ async def ingest_video(ctx: dict[str, Any], *, job_id: str, project_uid: str, te
 
         norm_paths: list[str] = []
         total = len(source_files)
+        total_dur_sec = 0.0
+        is_dub_first = False
         for i, rel_path in enumerate(source_files):
             if await _abort_if_cancelled(session, project_uid, job_id):
                 return {"cancelled": True}
@@ -421,12 +400,32 @@ async def ingest_video(ctx: dict[str, Any], *, job_id: str, project_uid: str, te
                     f"คลิป {i + 1}/{total} ยาว {int(clip_dur // 60)} น.{int(clip_dur % 60):02d} วิ "
                     f"— สูงสุด {DUB_MAX_CLIP_SEC // 60} นาที กรุณาตัดคลิปให้สั้นลง"
                 )
+            total_dur_sec += clip_dur
 
             # Extract mono 16 kHz WAV + loudnorm for faster-whisper (talking_head only)
             if not is_dub_first:
                 from packages.video.audio_extract import extract_speech_wav
 
                 extract_speech_wav(src, audio_out)
+
+        # Total across ALL clips, any clip count — per-clip cap above doesn't
+        # stop many short clips adding up to hours of footage in one project.
+        if is_dub_first:
+            from packages.video.scene import DUB_FIRST_MAX_TOTAL_SEC, dub_project_exceeds_total_limit
+            if dub_project_exceeds_total_limit(total_dur_sec):
+                raise ValueError(
+                    f"คลิปทั้งหมดรวมกันยาว {int(total_dur_sec // 60)} น.{int(total_dur_sec % 60):02d} วิ "
+                    f"— โหมด Dub First รองรับสูงสุด {DUB_FIRST_MAX_TOTAL_SEC // 60} นาทีต่อโปรเจกต์ "
+                    "กรุณาลดจำนวน/ความยาวคลิป"
+                )
+        else:
+            from packages.video.timeline import TALKING_HEAD_MAX_TOTAL_SEC
+            if total_dur_sec > TALKING_HEAD_MAX_TOTAL_SEC:
+                raise ValueError(
+                    f"คลิปทั้งหมดรวมกันยาว {int(total_dur_sec // 3600)} ชม. "
+                    f"— รองรับสูงสุด {TALKING_HEAD_MAX_TOTAL_SEC // 3600} ชั่วโมงต่อโปรเจกต์ "
+                    "กรุณาลดจำนวน/ความยาวคลิป"
+                )
 
         await _update_video(session, project_uid,
                             status="processing",
@@ -501,10 +500,20 @@ async def transcribe_video(ctx: dict[str, Any], *, job_id: str, project_uid: str
         root = data_root()
         output_dir = root / "video_outputs" / project_uid
         audio_dir = output_dir / "audio"
+        norm_dir = output_dir / "normalized"
 
         audio_files = sorted(audio_dir.glob("audio_*.wav"))
         if not audio_files:
             raise ValueError("No audio files to transcribe")
+        # Paired 1:1 with audio_files by clip index (audio_NNN.wav <-> norm_NNN.*) —
+        # Gemini's per-clip review (inside run_transcription) needs the actual video,
+        # not just the extracted WAV.
+        video_files = [
+            next(iter(norm_dir.glob(f"norm_{p.stem.split('_')[-1]}.*")), None)
+            for p in audio_files
+        ]
+        proj_for_brief = await _get_video_project(session, project_uid)
+        brief = proj_for_brief.brief or ""
 
         async def _progress(phase: str, idx: int, total: int) -> None:
             if phase == "retry":
@@ -522,13 +531,17 @@ async def transcribe_video(ctx: dict[str, Any], *, job_id: str, project_uid: str
             return await _abort_if_cancelled(session, project_uid, job_id)
 
         transcript = await run_transcription(
-            audio_files, on_progress=_progress, should_abort=_should_abort
+            audio_files,
+            video_files=video_files,
+            brief=brief,
+            on_progress=_progress,
+            should_abort=_should_abort,
         )
         if transcript is None:
             return {"cancelled": True}
         all_segments = transcript["segments"]
 
-        transcript = {"segments": all_segments}
+        transcript = {"segments": all_segments, "silence_gaps": transcript.get("silence_gaps", [])}
         transcript_path = output_dir / "transcript.json"
         transcript_path.write_text(json.dumps(transcript, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -572,15 +585,9 @@ async def transcribe_video(ctx: dict[str, Any], *, job_id: str, project_uid: str
         await session.close()
 
 
-from packages.video.plan_core import (  # noqa: E402  (planning cores shared with local-render API)
+from packages.video.plan_core import (  # noqa: E402  (planning core shared with local-render API)
     build_talking_head_timeline,
-    clean_transcript_with_llm as _clean_transcript_with_llm,
-    dedupe_semantic_cuts_with_llm as _dedupe_semantic_cuts_with_llm_imported,
-    plan_highlight_with_haiku as _plan_highlight_with_haiku_imported,
 )
-
-_plan_highlight_with_haiku = _plan_highlight_with_haiku_imported
-_dedupe_semantic_cuts_with_llm = _dedupe_semantic_cuts_with_llm_imported
 
 
 # ── task: plan_edit ───────────────────────────────────────────────────────────
@@ -612,7 +619,7 @@ async def plan_edit(ctx: dict[str, Any], *, job_id: str, project_uid: str, tenan
         transcript_text = (root / proj.transcript_path).read_text(encoding="utf-8")
         transcript_data = json.loads(transcript_text)
         segments = transcript_data.get("segments", [])
-        segments = await _clean_transcript_with_llm(segments)
+        silence_gaps = transcript_data.get("silence_gaps", [])
 
         norm_dir = output_dir / "normalized"
         norm_files = sorted(norm_dir.glob("norm_*.*"))
@@ -630,6 +637,7 @@ async def plan_edit(ctx: dict[str, Any], *, job_id: str, project_uid: str, tenan
             clip_durations=clip_durations,
             source_info=source_info,
             sources=sources,
+            silence_gaps=silence_gaps,
             on_progress=_plan_progress,
         )
         render_cuts = timeline["timeline"]
@@ -1667,10 +1675,12 @@ async def analyze_dub_video_local(ctx: dict[str, Any], *, job_id: str, project_u
 async def plan_talking_local(ctx: dict[str, Any], *, job_id: str, project_uid: str, tenant_slug: str) -> dict:
     """Local-render (desktop) talking_head: transcribe uploaded WAVs + plan timeline.
 
-    The desktop app extracted the speech WAVs locally and uploaded them via
-    POST /videos/{uid}/transcribe-audio — no video files exist on the server.
-    This task runs Whisper + the planning LLM passes and stores
-    transcript.json + timeline.json; the desktop app then renders locally.
+    The desktop app extracted the speech WAVs (+ optional downscaled proxy MP4s,
+    with audio, for Gemini's per-clip video review) locally and uploaded them via
+    POST /videos/{uid}/transcribe-audio. This task runs Whisper + Gemini's review
+    and stores transcript.json + timeline.json; the desktop app then renders
+    locally — only the small proxy clips ever leave the device, never the
+    original full-quality footage.
     """
     log.info("task_start", task="plan_talking_local", project_uid=project_uid)
     await _video_progress(job_id, 10, "transcribe", "กำลังโหลดโมเดล Whisper…")
@@ -1687,10 +1697,20 @@ async def plan_talking_local(ctx: dict[str, Any], *, job_id: str, project_uid: s
         audio_files = sorted((output_dir / "audio").glob("audio_*.wav"))
         if not audio_files:
             raise ValueError("No audio files to transcribe — upload them first")
+        # Optional — POST /videos/{uid}/transcribe-audio (`clipN.mp4`, same naming as
+        # dub_first's proxy manifest, paired by index with `audio_NNN.wav`). Absent on
+        # older clients or when the creator skipped it; Gemini's per-clip review just
+        # runs code-only cuts for a clip with no proxy video.
+        proxy_videos = sorted(
+            (output_dir / "proxy").glob("clip*.mp4"),
+            key=lambda p: int(re.search(r"\d+", p.stem).group()),  # type: ignore[union-attr]
+        )
+        video_files: list[pathlib.Path | None] = list(proxy_videos) if len(proxy_videos) == len(audio_files) else [None] * len(audio_files)
 
         proj = await _get_video_project(session, project_uid)
         tenant_id = await _get_tenant_id_by_slug(tenant_slug)
         _usage_token = _set_video_usage_ctx(proj, tenant_id, project_uid)
+        brief = proj.brief or ""
 
         clips_meta = (proj.local_meta or {}).get("clips", [])
         if not clips_meta:
@@ -1712,7 +1732,11 @@ async def plan_talking_local(ctx: dict[str, Any], *, job_id: str, project_uid: s
             return await _abort_if_cancelled(session, project_uid, job_id)
 
         transcript = await run_transcription(
-            audio_files, on_progress=_t_progress, should_abort=_t_abort
+            audio_files,
+            video_files=video_files,
+            brief=brief,
+            on_progress=_t_progress,
+            should_abort=_t_abort,
         )
         if transcript is None:
             return {"cancelled": True}
@@ -1722,7 +1746,8 @@ async def plan_talking_local(ctx: dict[str, Any], *, job_id: str, project_uid: s
         await _update_video(session, project_uid, transcript_path=str(transcript_path.relative_to(root)))
 
         await _video_progress(job_id, 60, "plan", "กำลังวิเคราะห์ transcript…")
-        segments = await _clean_transcript_with_llm(transcript["segments"])
+        segments = transcript["segments"]
+        silence_gaps = transcript.get("silence_gaps", [])
 
         clip_durations = [float(c["durationSec"]) for c in clips_meta]
         first = clips_meta[0]
@@ -1746,6 +1771,7 @@ async def plan_talking_local(ctx: dict[str, Any], *, job_id: str, project_uid: s
             clip_durations=clip_durations,
             source_info=source_info,
             sources=sources,
+            silence_gaps=silence_gaps,
             on_progress=_p_progress,
         )
 

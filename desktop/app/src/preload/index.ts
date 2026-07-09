@@ -80,6 +80,7 @@ function jobCommand(channel: string): JobCommandApi {
 // Typed bridge for the renderer — sidecar render engine, local projects,
 // media:// URLs, and the encrypted auth store.
 const noey = {
+  platform: process.platform,
   sidecar: {
     ping: (): Promise<SidecarEvent> => ipcRenderer.invoke('sidecar:ping'),
     probe: (file: string): Promise<SidecarEvent> => ipcRenderer.invoke('sidecar:probe', file),
@@ -101,8 +102,8 @@ const noey = {
       ipcRenderer.invoke('projects:update', uid, patch),
     delete: (uid: string): Promise<void> => ipcRenderer.invoke('projects:delete', uid),
     dir: (uid: string): Promise<string> => ipcRenderer.invoke('projects:dir', uid),
-    reveal: (uid: string, relPath: string): Promise<void> =>
-      ipcRenderer.invoke('projects:reveal', uid, relPath)
+    openFolder: (uid: string, relPath?: string): Promise<void> =>
+      ipcRenderer.invoke('projects:openFolder', uid, relPath)
   },
   media: {
     /** media:// URL for a file inside a project dir (path must be project-relative). */

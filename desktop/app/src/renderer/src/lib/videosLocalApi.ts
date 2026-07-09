@@ -234,12 +234,14 @@ export function patchLocalStatus(
   })
 }
 
-/** talking_head: upload the locally-extracted speech WAVs → {job_id}. */
+/** talking_head: upload the locally-extracted speech WAVs (+ optional downscaled
+ *  proxy clips, WITH audio, for Gemini's per-clip video review) → {job_id}. */
 export async function uploadAudio(
   session: ApiSession,
   remoteUid: string,
   localUid: string,
-  wavFiles: { file: string; name: string }[]
+  wavFiles: { file: string; name: string }[],
+  proxyVideoFiles?: { file: string; name: string }[]
 ): Promise<{ job_id: string }> {
   const form = new FormData()
   for (const wav of wavFiles) {
@@ -252,6 +254,20 @@ export async function uploadAudio(
       throw new ApiError(0, `อ่านไฟล์เสียงไม่ได้: ${wav.name}`)
     }
     form.append('files', blob, wav.name)
+  }
+  // Optional: an upload/encode failure here shouldn't block transcription — just
+  // falls back to code-only cuts for that clip (whisper_client.run_transcription).
+  for (const video of proxyVideoFiles ?? []) {
+    const mediaUrl = window.noey.media.urlFor(localUid, video.file)
+    try {
+      const blob = await (await fetch(mediaUrl)).blob()
+      form.append('video_files', blob, video.name)
+    } catch (err) {
+      void window.noey.log.write(
+        'videosLocalApi',
+        `proxy video read failed ${mediaUrl}: ${String(err)}`
+      )
+    }
   }
   return request(session, `/videos/${remoteUid}/transcribe-audio`, { method: 'POST', body: form })
 }

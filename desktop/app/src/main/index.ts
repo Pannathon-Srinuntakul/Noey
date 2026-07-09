@@ -28,7 +28,19 @@ function createWindow(): void {
     minHeight: 600,
     show: false,
     autoHideMenuBar: true,
+    backgroundColor: '#140b06',
     ...(process.platform === 'linux' ? { icon } : {}),
+    // Native Windows titlebar is always OS white/grey and ignores app theming —
+    // swap to a themed overlay (renderer draws its own drag strip to match).
+    // Left on default frame elsewhere (macOS traffic lights already sit on a
+    // transparent inset that follows the page background; unverified — no Mac
+    // to test against per DESKTOP_VIDEO_APP_REQUIREMENTS.md).
+    ...(process.platform === 'win32'
+      ? {
+          titleBarStyle: 'hidden' as const,
+          titleBarOverlay: { color: '#140b06', symbolColor: '#f2c14e', height: 36 }
+        }
+      : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false

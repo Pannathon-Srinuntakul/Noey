@@ -23,6 +23,7 @@ def test_dub_scene_cap_scales_with_duration() -> None:
     assert dub_scene_cap(300) == 20  # 5 min — under cap
     assert dub_scene_cap(450) == 30  # 7.5 min — hits DUB_MAX_BUDGET_FRAMES cap
     assert dub_scene_cap(600) == 30  # 10 min — capped
+    assert dub_scene_cap(1200) == 30  # 20 min — capped
 
 
 def test_dub_scene_cap_clamps_at_max_clip() -> None:
@@ -48,9 +49,9 @@ def test_longer_clip_gets_more_slots() -> None:
     assert dub_scene_cap(150) < dub_scene_cap(600)
 
 
-def test_upload_limit_allows_ten_minute_rounding() -> None:
-    assert not dub_clip_exceeds_upload_limit(600.0)
-    assert not dub_clip_exceeds_upload_limit(600.8)
+def test_upload_limit_allows_twenty_minute_rounding() -> None:
+    assert not dub_clip_exceeds_upload_limit(1200.0)
+    assert not dub_clip_exceeds_upload_limit(1200.8)
     assert not dub_clip_exceeds_upload_limit(DUB_MAX_CLIP_SEC + DUB_UPLOAD_TOLERANCE_SEC)
     assert dub_clip_exceeds_upload_limit(DUB_MAX_CLIP_SEC + DUB_UPLOAD_TOLERANCE_SEC + 0.1)
 

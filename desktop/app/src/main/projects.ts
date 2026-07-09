@@ -151,7 +151,7 @@ export function registerProjectsIpc(): void {
   )
   ipcMain.handle('projects:delete', (_e, uid: string) => deleteProject(uid))
   ipcMain.handle('projects:dir', (_e, uid: string) => projectDir(uid))
-  ipcMain.handle('projects:reveal', async (_e, uid: string, relPath: string) => {
-    shell.showItemInFolder(join(projectDir(uid), relPath))
+  ipcMain.handle('projects:openFolder', async (_e, uid: string, relPath = '.') => {
+    await shell.openPath(join(projectDir(uid), relPath))
   })
 }

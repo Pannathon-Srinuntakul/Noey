@@ -20,10 +20,11 @@ import argparse
 import sys
 from pathlib import Path
 
-from sidecar.bootstrap import configure_stderr_logging, ensure_backend_on_path
+from sidecar.bootstrap import configure_stderr_logging, configure_utf8_stdio, ensure_backend_on_path
 from sidecar.jobs import emit, load_job, run_render
 
 ensure_backend_on_path()
+configure_utf8_stdio()
 configure_stderr_logging()
 
 from packages.video.ffmpeg_bin import (  # noqa: E402

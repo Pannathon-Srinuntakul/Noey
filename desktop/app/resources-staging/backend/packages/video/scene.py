@@ -16,8 +16,14 @@ log = get_logger(__name__)
 
 MAX_FRAMES = 15  # cap Claude Vision payload (talking_head)
 # dub_first: evenly-spaced time slots scale with clip length (no early cap).
-DUB_MAX_CLIP_SEC = 10 * 60  # upload + sampling ceiling (10 minutes)
-DUB_UPLOAD_TOLERANCE_SEC = 5.0  # ffprobe/container slack for "10:00" exports
+DUB_MAX_CLIP_SEC = 20 * 60  # upload + sampling ceiling (20 minutes)
+DUB_UPLOAD_TOLERANCE_SEC = 5.0  # ffprobe/container slack for round "20:00" exports
+# Total across ALL clips in one project, any clip count — dub_first only ever
+# selects ~45-90s of highlights, so 100+ minutes of raw footage in one project
+# was never a real use case; this also protects generate_dub_edit_script_video's
+# single-bundled-call architecture (every clip goes in one Gemini request) from
+# the token/timeout ceiling that scales with total footage, not clip count.
+DUB_FIRST_MAX_TOTAL_SEC = 20 * 60 + 10  # 20 min + tolerance for near-cap exports
 DUB_SCENE_INTERVAL_SEC = 15  # ~1 slot every 15s; capped by DUB_MAX_BUDGET_FRAMES
 DUB_MAX_BUDGET_FRAMES = 30  # hard cap; frames distributed evenly when clip hits cap
 DUB_SAMPLES_PER_SCENE = 1  # one JPEG per slot
@@ -31,6 +37,11 @@ DUB_EDGE_OFFSET_SEC = 5.0  # opening at 5s; closing at duration − 5s
 def dub_clip_exceeds_upload_limit(duration_sec: float) -> bool:
     """True when source clip is over the advertised upload cap (with small ffprobe slack)."""
     return float(duration_sec) > DUB_MAX_CLIP_SEC + DUB_UPLOAD_TOLERANCE_SEC
+
+
+def dub_project_exceeds_total_limit(total_duration_sec: float) -> bool:
+    """True when a project's clips, summed, exceed the total-footage cap."""
+    return float(total_duration_sec) > DUB_FIRST_MAX_TOTAL_SEC
 
 
 def dub_scene_cap(duration_sec: float) -> int:
