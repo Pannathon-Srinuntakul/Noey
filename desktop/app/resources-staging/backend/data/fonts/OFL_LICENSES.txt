@@ -1,0 +1,11 @@
+Bundled caption fonts — all SIL Open Font License 1.1 (free for embedding/redistribution).
+
+- Kanit-Bold.ttf      — Cadson Demak, https://fonts.google.com/specimen/Kanit
+- Prompt-Bold.ttf     — Cadson Demak, https://fonts.google.com/specimen/Prompt
+- Sarabun-Bold.ttf    — Cadson Demak, https://fonts.google.com/specimen/Sarabun
+- Anuphan-Variable.ttf — https://fonts.google.com/specimen/Anuphan
+  (variable font — no static Bold instance is published upstream; used at its
+  default named instance weight)
+
+Source: https://github.com/google/fonts (ofl/ directory), full OFL.txt text
+included with each family upstream.

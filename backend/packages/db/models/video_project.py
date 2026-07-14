@@ -60,6 +60,8 @@ class VideoProject(Base):
     origin: Mapped[str | None] = mapped_column(String(16), nullable=True)
     # Local-render clip metadata: {"clips": [{"id", "durationSec", "width", "height", "fps"}]}
     local_meta: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # talking_head burned-in caption choice: {"font", "mode", "color"}
+    caption_style: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

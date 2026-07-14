@@ -4,6 +4,13 @@
 @import '@fontsource/noto-sans-thai/500.css';
 @import '@fontsource/noto-sans-thai/600.css';
 @import '@fontsource/noto-sans-thai/700.css';
+/* Caption font picker previews — same 4 fonts bundled for ffmpeg burn-in
+   (backend/data/fonts/), loaded here too so the chip labels render in the
+   real typeface instead of the UI's default font. */
+@import '@fontsource/kanit/700.css';
+@import '@fontsource/prompt/700.css';
+@import '@fontsource/sarabun/700.css';
+@import '@fontsource/anuphan/700.css';
 @import './base.css';
 
 body {

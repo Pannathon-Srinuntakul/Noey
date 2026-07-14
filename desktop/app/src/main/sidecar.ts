@@ -71,7 +71,8 @@ function sidecarSpawnSpec(): {
  */
 export function runSidecar(
   args: string[],
-  onEvent?: (evt: SidecarEvent) => void
+  onEvent?: (evt: SidecarEvent) => void,
+  projectDir?: string
 ): Promise<SidecarEvent> {
   const spec = sidecarSpawnSpec()
   return new Promise((resolvePromise, reject) => {
@@ -80,6 +81,7 @@ export function runSidecar(
       env: spec.env,
       windowsHide: true
     })
+    if (projectDir) activeProcs.set(projectDir, proc)
 
     let lastEvent: SidecarEvent | null = null
     const stderrTail: string[] = []
@@ -100,8 +102,12 @@ export function runSidecar(
       if (stderrTail.length > 50) stderrTail.shift()
     })
 
-    proc.on('error', (err) => reject(new Error(`sidecar spawn failed: ${err.message}`)))
+    proc.on('error', (err) => {
+      if (projectDir) activeProcs.delete(projectDir)
+      reject(new Error(`sidecar spawn failed: ${err.message}`))
+    })
     proc.on('close', (code) => {
+      if (projectDir) activeProcs.delete(projectDir)
       if (code === 0 && lastEvent) {
         resolvePromise(lastEvent)
       } else {
@@ -115,20 +121,46 @@ export function runSidecar(
   })
 }
 
+const activeProcs = new Map<string, ReturnType<typeof spawn>>()
+
+/** Kill the sidecar ffmpeg job for a project (best-effort). */
+export function cancelSidecarJob(projectDir: string): void {
+  activeProcs.get(projectDir)?.kill()
+  activeProcs.delete(projectDir)
+}
+
+// Serializes sidecar jobs per project directory. Commands like extract-audio
+// wipe and rewrite every WAV in the project's audio dir on each call — if two
+// invocations for the same project ever overlap (retry/relaunch while one is
+// still running), the second's cleanup can delete files the first is still
+// about to hand off to a caller, producing a stale-file-list ENOENT.
+const projectLocks = new Map<string, Promise<unknown>>()
+
+async function withProjectLock<T>(key: string | undefined, fn: () => Promise<T>): Promise<T> {
+  if (!key) return fn()
+  const prior = projectLocks.get(key) ?? Promise.resolve()
+  const run = prior.catch(() => undefined).then(fn)
+  projectLocks.set(key, run.catch(() => undefined))
+  return run
+}
+
 /** Run a `--job`-style command: write the job JSON to a temp file, stream progress. */
 async function runJobCommand(
   command: string,
   job: unknown,
   onProgress?: (evt: SidecarEvent) => void
 ): Promise<SidecarEvent> {
-  const workdir = await mkdtemp(join(tmpdir(), 'noey-job-'))
-  const jobFile = join(workdir, 'job.json')
-  try {
-    await writeFile(jobFile, JSON.stringify(job), 'utf-8')
-    return await runSidecar([command, '--job', jobFile], onProgress)
-  } finally {
-    await rm(workdir, { recursive: true, force: true })
-  }
+  const projectDir = (job as { projectDir?: string } | null)?.projectDir
+  return withProjectLock(projectDir, async () => {
+    const workdir = await mkdtemp(join(tmpdir(), 'noey-job-'))
+    const jobFile = join(workdir, 'job.json')
+    try {
+      await writeFile(jobFile, JSON.stringify(job), 'utf-8')
+      return await runSidecar([command, '--job', jobFile], onProgress, projectDir)
+    } finally {
+      await rm(workdir, { recursive: true, force: true })
+    }
+  })
 }
 
 /** Register sidecar IPC handlers (call once from app.whenReady). */
@@ -144,7 +176,8 @@ export function registerSidecarIpc(): void {
     ['sidecar:renderSilent', 'render-silent'],
     ['sidecar:renderFinal', 'render-final'],
     ['sidecar:extractAudio', 'extract-audio'],
-    ['sidecar:renderTimeline', 'render-timeline']
+    ['sidecar:renderTimeline', 'render-timeline'],
+    ['sidecar:renderAiPreview', 'render-ai-preview']
   ]
   for (const [channel, command] of jobChannels) {
     ipcMain.handle(channel, (evt, job: unknown) =>
@@ -153,4 +186,7 @@ export function registerSidecarIpc(): void {
       })
     )
   }
+  ipcMain.handle('sidecar:cancel', (_evt, projectDir: string) => {
+    cancelSidecarJob(projectDir)
+  })
 }

@@ -24,7 +24,10 @@ from packages.llm.config import model_params
 from packages.llm.usage import (
     UsageLimitExceeded,
     check_limit,
+    extract_stream_usage_from_chunks,
+    extract_usage_tokens,
     get_usage_ctx,
+    merge_provider_usage,
     record_usage,
 )
 
@@ -314,8 +317,7 @@ async def acompletion(
 
     elapsed_ms = round((time.monotonic() - t0) * 1000)
     usage = getattr(resp, "usage", None)
-    input_tokens: int = int(getattr(usage, "prompt_tokens", 0) or 0)
-    output_tokens: int = int(getattr(usage, "completion_tokens", 0) or 0)
+    input_tokens, output_tokens = extract_usage_tokens(usage)
     content = ""
     try:
         content = resp.choices[0].message.content or ""
@@ -367,6 +369,9 @@ async def acompletion_stream_thinking(
         kwargs["system"] = system
     if params.get("api_key") and not kwargs.get("api_key"):
         kwargs["api_key"] = params["api_key"]
+    stream_opts = dict(kwargs.get("stream_options") or {})
+    stream_opts["include_usage"] = True
+    kwargs["stream_options"] = stream_opts
 
     ctx = get_usage_ctx()
     if ctx is not None:
@@ -401,6 +406,7 @@ async def acompletion_stream_thinking(
         timeout_sec=timeout_sec,
         max_attempts=max_attempts,
         stream_thinking=True,
+        stream_include_usage=True,
         vision_image_blocks=stats["image_blocks"] or None,
         approx_request_kb=stats["approx_request_kb"],
     )
@@ -408,6 +414,7 @@ async def acompletion_stream_thinking(
     t0 = time.monotonic()
     attempt = 0
     resp: Any = None
+    all_chunks: list[Any] = []
 
     for attempt in range(1, max_attempts + 1):
         attempt_t0 = time.monotonic()
@@ -420,7 +427,7 @@ async def acompletion_stream_thinking(
                 stream_thinking=True,
             )
 
-            all_chunks: list[Any] = []
+            all_chunks = []
             thinking_chars = 0
             thinking_buf: list[str] = []
             last_thinking_log = time.monotonic()
@@ -501,14 +508,32 @@ async def acompletion_stream_thinking(
         raise RuntimeError("acompletion_stream_thinking finished without a response")
 
     elapsed_ms = round((time.monotonic() - t0) * 1000)
-    usage = getattr(resp, "usage", None)
-    input_tokens: int = int(getattr(usage, "prompt_tokens", 0) or 0)
-    output_tokens: int = int(getattr(usage, "completion_tokens", 0) or 0)
+    chunk_usage = extract_stream_usage_from_chunks(all_chunks)
+    built_usage = extract_usage_tokens(getattr(resp, "usage", None))
+    input_tokens, output_tokens = merge_provider_usage(chunk_usage, built_usage)
+    if input_tokens == 0 and output_tokens > 0:
+        log.warning(
+            "llm_stream_usage_missing_prompt",
+            model=kwargs.get("model"),
+            output_tokens=output_tokens,
+            chunk_count=len(all_chunks),
+            built_input=built_usage[0],
+            chunk_input=chunk_usage[0],
+        )
     content = ""
     try:
         content = resp.choices[0].message.content or ""
     except Exception:
         pass
+
+    usage_obj = getattr(resp, "usage", None)
+    if usage_obj is not None and (input_tokens or output_tokens):
+        try:
+            usage_obj.prompt_tokens = input_tokens
+            usage_obj.completion_tokens = output_tokens
+            usage_obj.total_tokens = input_tokens + output_tokens
+        except Exception:  # noqa: BLE001
+            pass
 
     log.info(
         "llm_acompletion_done",
@@ -517,6 +542,8 @@ async def acompletion_stream_thinking(
         attempts_used=attempt,
         input_tokens=input_tokens or None,
         output_tokens=output_tokens or None,
+        chunk_input_tokens=chunk_usage[0] or None,
+        chunk_output_tokens=chunk_usage[1] or None,
         response_chars=len(content),
         stream_thinking=True,
         response_preview=content[:120].replace("\n", " "),

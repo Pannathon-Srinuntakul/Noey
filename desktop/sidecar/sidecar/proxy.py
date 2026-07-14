@@ -24,7 +24,7 @@ from sidecar.bootstrap import ensure_backend_on_path
 
 ensure_backend_on_path()
 
-from packages.video.ffmpeg_bin import media_duration, run_ffmpeg  # noqa: E402
+from packages.video.ffmpeg_bin import hwaccel_input_kwargs, media_duration, run_ffmpeg, video_encode_kwargs  # noqa: E402
 
 
 class ExtractProxyJob(BaseModel):
@@ -32,15 +32,13 @@ class ExtractProxyJob(BaseModel):
     keepAudio: bool = False
 
 
-def _encode_proxy(src: Path, dest: Path, *, keep_audio: bool = False) -> None:
+def encode_proxy(src: Path, dest: Path, *, keep_audio: bool = False) -> None:
     import ffmpeg
 
-    inp = ffmpeg.input(str(src))
+    inp = ffmpeg.input(str(src), **hwaccel_input_kwargs())
     v = inp.video.filter("scale", -2, 480).filter("fps", fps=12)
     kwargs: dict[str, Any] = {
-        "vcodec": "libx264",
-        "preset": "veryfast",
-        "crf": 28,
+        **video_encode_kwargs(crf=28, preset="veryfast"),
         "movflags": "+faststart",
     }
     if keep_audio:
@@ -71,7 +69,7 @@ def run_extract_proxy(job: ExtractProxyJob, emit) -> dict[str, Any]:
               "message": clip_file.name})
 
         dest = proxy_dir / f"{clip_id}.mp4"
-        _encode_proxy(clip_file, dest, keep_audio=job.keepAudio)
+        encode_proxy(clip_file, dest, keep_audio=job.keepAudio)
         manifest.append({
             "clip_id": clip_id,
             "file": dest.name,

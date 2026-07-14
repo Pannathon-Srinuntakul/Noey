@@ -25,6 +25,16 @@ import {
   buildDubBrief,
   dubTargetDurationSec
 } from '../lib/dubBrief'
+import {
+  CAPTION_BORDER_COLORS,
+  CAPTION_COLORS,
+  CAPTION_FONTS,
+  CAPTION_MODES,
+  CAPTION_SIZE_MAX,
+  CAPTION_SIZE_MIN,
+  CAPTION_STYLE_DEFAULT,
+  type CaptionStyle
+} from '../lib/captionStyle'
 
 interface UploadItem extends PickedVideoFile {
   id: string
@@ -39,6 +49,54 @@ function clipOrderLabel(index: number, total: number): string {
   if (index === 0) return `คลิป ${index + 1} · เปิด`
   if (index === total - 1) return `คลิป ${index + 1} · ปิด`
   return `คลิป ${index + 1}`
+}
+
+/** Grabs one frame ~10% into the clip as a JPEG data URL — used for the
+ * caption style preview so it shows the real footage instead of a placeholder. */
+function captureVideoThumbnail(file: File, maxH: number): Promise<string | null> {
+  return new Promise((resolve) => {
+    const objectUrl = URL.createObjectURL(file)
+    const video = document.createElement('video')
+    video.preload = 'auto'
+    video.muted = true
+    video.playsInline = true
+    video.src = objectUrl
+    let settled = false
+
+    const finish = (result: string | null): void => {
+      if (settled) return
+      settled = true
+      URL.revokeObjectURL(objectUrl)
+      resolve(result)
+    }
+
+    const capture = (): void => {
+      const w = video.videoWidth
+      const h = video.videoHeight
+      if (!w || !h) return finish(null)
+      const canvas = document.createElement('canvas')
+      const scale = maxH / h
+      canvas.width = Math.max(1, Math.round(w * scale))
+      canvas.height = maxH
+      const ctx = canvas.getContext('2d')
+      if (!ctx) return finish(null)
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+      finish(canvas.toDataURL('image/jpeg', 0.82))
+    }
+
+    const seekToPreview = (): void => {
+      const t =
+        Number.isFinite(video.duration) && video.duration > 0
+          ? Math.min(0.5, video.duration * 0.1)
+          : 0
+      if (t === 0) return capture()
+      video.currentTime = t
+    }
+
+    video.addEventListener('loadeddata', seekToPreview, { once: true })
+    video.addEventListener('seeked', capture, { once: true })
+    video.addEventListener('error', () => finish(null), { once: true })
+  })
 }
 
 function moveUploadItem(items: UploadItem[], from: number, to: number): UploadItem[] {
@@ -249,6 +307,9 @@ export default function NewProjectSidebar({ onCreated }: Props): React.JSX.Eleme
   const [scriptCustomSec, setScriptCustomSec] = useState('')
   const [scriptNote, setScriptNote] = useState('')
   const [talkingBrief, setTalkingBrief] = useState('')
+  const [captionEnabled, setCaptionEnabled] = useState(true)
+  const [captionStyle, setCaptionStyle] = useState<CaptionStyle>(CAPTION_STYLE_DEFAULT)
+  const [previewThumb, setPreviewThumb] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -256,6 +317,18 @@ export default function NewProjectSidebar({ onCreated }: Props): React.JSX.Eleme
     useSensor(PointerSensor),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   )
+
+  // Real footage thumbnail for the caption style preview — first picked clip.
+  const firstFile = files[0]
+  useEffect(() => {
+    let cancelled = false
+    Promise.resolve(firstFile ? captureVideoThumbnail(firstFile.file, 320) : null).then((url) => {
+      if (!cancelled) setPreviewThumb(url)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [firstFile])
 
   const pickFiles = async (): Promise<void> => {
     const picked = await pickVideoFiles()
@@ -287,6 +360,8 @@ export default function NewProjectSidebar({ onCreated }: Props): React.JSX.Eleme
     setScriptCustomSec('')
     setScriptNote('')
     setTalkingBrief('')
+    setCaptionEnabled(true)
+    setCaptionStyle(CAPTION_STYLE_DEFAULT)
   }
 
   const submit = async (): Promise<void> => {
@@ -324,7 +399,8 @@ export default function NewProjectSidebar({ onCreated }: Props): React.JSX.Eleme
           brief,
           userScript: userScriptFinal,
           scriptStyles,
-          targetDurationSec: finalTargetDurationSec
+          targetDurationSec: finalTargetDurationSec,
+          captionStyle: mode === 'talking_head' && captionEnabled ? captionStyle : undefined
         })
         onCreated(updated)
       }
@@ -342,7 +418,11 @@ export default function NewProjectSidebar({ onCreated }: Props): React.JSX.Eleme
         <h2 className="text-sm font-semibold uppercase tracking-widest text-amber-200/70">
           อัปโหลดวิดีโอ
         </h2>
-        <p className="-mt-2 text-[11px] text-amber-200/45">คลิปต้นฉบับสูงสุด 20 นาทีต่อไฟล์</p>
+        <p className="-mt-2 text-[11px] text-amber-200/45">
+          {mode === 'dub_first'
+            ? 'คลิปต้นฉบับสูงสุด 20 นาทีต่อไฟล์ · รวมทุกไฟล์ไม่เกิน 20 นาที'
+            : 'รวมทุกไฟล์ในโปรเจกต์ไม่เกิน 2 ชั่วโมง'}
+        </p>
 
         {files.length === 0 ? (
           <button
@@ -655,6 +735,177 @@ export default function NewProjectSidebar({ onCreated }: Props): React.JSX.Eleme
                 className="w-full rounded-lg border border-amber-500/30 bg-black/20 px-3 py-2 text-xs text-zinc-100 outline-none focus:border-amber-400"
               />
             </div>
+
+            <div className="space-y-1.5 border-t border-amber-500/15 pt-3">
+              <label className="flex cursor-pointer items-center gap-2.5">
+                <input
+                  type="checkbox"
+                  checked={captionEnabled}
+                  onChange={(e) => setCaptionEnabled(e.target.checked)}
+                  className="accent-amber-500"
+                />
+                <span className="text-sm font-medium text-amber-100/90">ใส่ Caption</span>
+              </label>
+              <p className="text-xs leading-relaxed text-amber-300/50">
+                เบิร์นซับลงคลิปอัตโนมัติ — แก้ข้อความ/timing ได้ทีหลังใน editor
+              </p>
+            </div>
+
+            {captionEnabled && (
+              <>
+                <div className="space-y-1.5">
+                  <span className="text-xs font-medium text-amber-100/85">Font</span>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {CAPTION_FONTS.map(({ value, label, cssFamily }) => (
+                      <button
+                        key={value}
+                        type="button"
+                        aria-pressed={captionStyle.font === value}
+                        onClick={() => setCaptionStyle((prev) => ({ ...prev, font: value }))}
+                        className={`flex flex-col items-start gap-0.5 rounded-lg px-2.5 py-2 text-left transition-all ${
+                          captionStyle.font === value
+                            ? 'bg-amber-500 text-black'
+                            : 'border border-amber-500/30 text-amber-100/80 hover:border-amber-400/50 hover:text-amber-100'
+                        }`}
+                      >
+                        <span
+                          style={{ fontFamily: cssFamily }}
+                          className="truncate text-base font-bold leading-none"
+                        >
+                          สวัสดี Aa
+                        </span>
+                        <span className="text-[10px] font-medium opacity-70">{label}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <span className="text-xs font-medium text-amber-100/85">Animation</span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {CAPTION_MODES.map(({ value, label }) => (
+                      <button
+                        key={value}
+                        type="button"
+                        aria-pressed={captionStyle.mode === value}
+                        onClick={() => setCaptionStyle((prev) => ({ ...prev, mode: value }))}
+                        className={`rounded-lg px-2.5 py-1.5 text-xs font-medium transition-all ${
+                          captionStyle.mode === value
+                            ? 'bg-amber-500 text-black'
+                            : 'border border-amber-500/30 text-amber-100/80 hover:border-amber-400/50 hover:text-amber-100'
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <span className="text-xs font-medium text-amber-100/85">สีตัวอักษร</span>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {CAPTION_COLORS.map((hex) => (
+                      <button
+                        key={hex}
+                        type="button"
+                        aria-pressed={captionStyle.color === hex}
+                        title={hex}
+                        onClick={() => setCaptionStyle((prev) => ({ ...prev, color: hex }))}
+                        style={{ backgroundColor: hex }}
+                        className={`h-7 w-7 rounded-full border-2 transition-all ${
+                          captionStyle.color === hex
+                            ? 'border-amber-300 ring-2 ring-amber-300/50'
+                            : 'border-white/20 hover:border-white/50'
+                        }`}
+                      />
+                    ))}
+                    <input
+                      type="color"
+                      value={captionStyle.color}
+                      onChange={(e) =>
+                        setCaptionStyle((prev) => ({ ...prev, color: e.target.value }))
+                      }
+                      title="เลือกสีเอง"
+                      className="h-7 w-7 cursor-pointer rounded-full border-2 border-white/20 bg-transparent p-0"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <span className="text-xs font-medium text-amber-100/85">สีขอบตัวอักษร</span>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {CAPTION_BORDER_COLORS.map((hex) => (
+                      <button
+                        key={hex}
+                        type="button"
+                        aria-pressed={captionStyle.border_color === hex}
+                        title={hex}
+                        onClick={() => setCaptionStyle((prev) => ({ ...prev, border_color: hex }))}
+                        style={{ backgroundColor: hex }}
+                        className={`h-7 w-7 rounded-full border-2 transition-all ${
+                          captionStyle.border_color === hex
+                            ? 'border-amber-300 ring-2 ring-amber-300/50'
+                            : 'border-white/20 hover:border-white/50'
+                        }`}
+                      />
+                    ))}
+                    <input
+                      type="color"
+                      value={captionStyle.border_color}
+                      onChange={(e) =>
+                        setCaptionStyle((prev) => ({ ...prev, border_color: e.target.value }))
+                      }
+                      title="เลือกสีเอง"
+                      className="h-7 w-7 cursor-pointer rounded-full border-2 border-white/20 bg-transparent p-0"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <div className="flex items-baseline justify-between">
+                    <span className="text-xs font-medium text-amber-100/85">ขนาดตัวอักษร</span>
+                    <span className="text-[10px] text-amber-300/50">{captionStyle.size}px</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={CAPTION_SIZE_MIN}
+                    max={CAPTION_SIZE_MAX}
+                    value={captionStyle.size}
+                    onChange={(e) =>
+                      setCaptionStyle((prev) => ({ ...prev, size: Number(e.target.value) }))
+                    }
+                    className="w-full accent-amber-500"
+                  />
+                  <div className="flex justify-center rounded-xl border border-white/10 bg-black/30 py-3">
+                    <div
+                      className="relative flex aspect-[9/16] w-36 items-end justify-center overflow-hidden rounded-md bg-linear-to-b from-zinc-600 to-zinc-800 bg-cover bg-center p-2"
+                      style={previewThumb ? { backgroundImage: `url(${previewThumb})` } : undefined}
+                      title="ตัวอย่างขนาดเทียบกับเฟรมวิดีโอ 9:16"
+                    >
+                      {!previewThumb && (
+                        <Film
+                          size={28}
+                          className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-white/15"
+                        />
+                      )}
+                      <span
+                        style={{
+                          fontFamily: CAPTION_FONTS.find((f) => f.value === captionStyle.font)
+                            ?.cssFamily,
+                          color: captionStyle.color,
+                          fontSize: `${Math.round((captionStyle.size / 1920) * 256)}px`,
+                          WebkitTextStroke: `${Math.max(1, Math.round((4 / 1920) * 256))}px ${captionStyle.border_color}`,
+                          paintOrder: 'stroke fill'
+                        }}
+                        className="relative text-center font-bold leading-tight"
+                      >
+                        สวัสดีค่ะ
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
           </div>
         )}
 

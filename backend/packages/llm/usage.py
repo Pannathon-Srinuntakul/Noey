@@ -83,6 +83,88 @@ def estimate_cost_usd(model: str, input_tokens: int, output_tokens: int) -> floa
     return (input_tokens * in_price + output_tokens * out_price) / 1_000_000
 
 
+def _usage_from_stream_chunk(chunk: Any) -> Any | None:
+    """Return a provider ``usage`` object attached to one streaming chunk."""
+    if chunk is None:
+        return None
+    if isinstance(chunk, dict):
+        usage = chunk.get("usage")
+        if usage is not None:
+            return usage
+        hidden = chunk.get("_hidden_params")
+        if isinstance(hidden, dict):
+            return hidden.get("usage")
+        return None
+    usage = getattr(chunk, "usage", None)
+    if usage is not None:
+        return usage
+    hidden = getattr(chunk, "_hidden_params", None)
+    if isinstance(hidden, dict):
+        return hidden.get("usage")
+    return None
+
+
+def extract_stream_usage_from_chunks(chunks: Any) -> tuple[int, int]:
+    """Best provider-reported usage from streaming chunks (no local estimates).
+
+    Gemini often reports ``promptTokenCount`` only on the final stream chunk;
+    scan all chunks and keep the usage object with the highest prompt count,
+    falling back to the highest total when prompt is still zero.
+    """
+    best_with_prompt: Any | None = None
+    best_prompt = 0
+    best_any: Any | None = None
+    best_total = 0
+
+    for chunk in chunks or []:
+        usage = _usage_from_stream_chunk(chunk)
+        if usage is None:
+            continue
+        prompt = int(getattr(usage, "prompt_tokens", 0) or 0)
+        total = int(getattr(usage, "total_tokens", 0) or 0)
+        if total > best_total:
+            best_total = total
+            best_any = usage
+        if prompt > best_prompt:
+            best_prompt = prompt
+            best_with_prompt = usage
+
+    chosen = best_with_prompt or best_any
+    if chosen is None:
+        return 0, 0
+    return extract_usage_tokens(chosen)
+
+
+def extract_usage_tokens(usage: Any) -> tuple[int, int]:
+    """Normalize LiteLLM usage → (input_tokens, output_tokens).
+
+    Some providers (notably Gemini with thinking) report ``completion_tokens``
+    as visible output only while ``total_tokens - prompt_tokens`` includes
+    thinking/reasoning billed as output. Prefer the provider total when it
+    exceeds prompt + completion.
+    """
+    if usage is None:
+        return 0, 0
+    inp = int(getattr(usage, "prompt_tokens", 0) or 0)
+    out = int(getattr(usage, "completion_tokens", 0) or 0)
+    total = int(getattr(usage, "total_tokens", 0) or 0)
+    if total > 0 and inp + out < total:
+        out = max(out, total - inp)
+    return inp, out
+
+
+def merge_provider_usage(
+    *pairs: tuple[int, int],
+) -> tuple[int, int]:
+    """Merge multiple provider-reported (input, output) pairs — never estimate."""
+    best_in = 0
+    best_out = 0
+    for inp, out in pairs:
+        best_in = max(best_in, inp)
+        best_out = max(best_out, out)
+    return best_in, best_out
+
+
 # ---------------------------------------------------------------------------
 # Custom exception
 # ---------------------------------------------------------------------------

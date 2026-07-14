@@ -111,7 +111,7 @@ class Settings(BaseSettings):
     # --- LLM plan limits (tokens per DAILY window, 0 = unlimited) ---
     # The window is a rolling UTC calendar day — see packages/llm/usage.py:_period_start.
     # Env var names keep the "_monthly_" spelling for backward compatibility only.
-    plan_free_monthly_tokens: int = 1_000_000       # default plan for new creators
+    plan_free_monthly_tokens: int = 0                # 0 = unlimited (personal system, single owner)
     plan_starter_monthly_tokens: int = 2_000_000
     plan_pro_monthly_tokens: int = 10_000_000
     plan_enterprise_monthly_tokens: int = 0  # 0 = unlimited

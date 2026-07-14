@@ -8,6 +8,7 @@ from __future__ import annotations
 import types
 import asyncio
 from datetime import datetime, timedelta, timezone
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -19,7 +20,10 @@ from packages.llm.usage import (
     UsageLimitExceeded,
     _period_start,
     estimate_cost_usd,
+    extract_stream_usage_from_chunks,
+    extract_usage_tokens,
     get_usage_ctx,
+    merge_provider_usage,
     reset_usage_ctx,
     set_usage_ctx,
     sum_tokens_since,
@@ -93,6 +97,100 @@ def test_cost_known_model():
     cost = estimate_cost_usd("anthropic/claude-haiku-4-5-20251001", 1_000_000, 1_000_000)
     # input: 0.80 + output: 4.00 = $4.80
     assert abs(cost - 4.80) < 0.001
+
+
+def test_extract_usage_tokens_uses_total_when_thinking_not_in_completion():
+    usage = types.SimpleNamespace(prompt_tokens=10_000, completion_tokens=500, total_tokens=15_000)
+    inp, out = extract_usage_tokens(usage)
+    assert inp == 10_000
+    assert out == 5_000
+
+
+def test_extract_usage_tokens_normal_when_total_matches():
+    usage = types.SimpleNamespace(prompt_tokens=100, completion_tokens=50, total_tokens=150)
+    inp, out = extract_usage_tokens(usage)
+    assert inp == 100
+    assert out == 50
+
+
+def test_extract_stream_usage_from_chunks_uses_max_prompt():
+    partial = types.SimpleNamespace(
+        usage=types.SimpleNamespace(prompt_tokens=0, completion_tokens=500, total_tokens=500),
+    )
+    final = types.SimpleNamespace(
+        usage=types.SimpleNamespace(prompt_tokens=48_450, completion_tokens=2_063, total_tokens=50_513),
+    )
+    inp, out = extract_stream_usage_from_chunks([partial, final])
+    assert inp == 48_450
+    assert out == 2_063
+
+
+def test_extract_stream_usage_from_chunks_thinking_via_total():
+    final = types.SimpleNamespace(
+        usage=types.SimpleNamespace(prompt_tokens=10_000, completion_tokens=500, total_tokens=15_000),
+    )
+    inp, out = extract_stream_usage_from_chunks([final])
+    assert inp == 10_000
+    assert out == 5_000
+
+
+def test_merge_provider_usage_never_drops_higher_input():
+    merged = merge_provider_usage((0, 2_063), (48_450, 2_000))
+    assert merged == (48_450, 2_063)
+
+
+@pytest.mark.asyncio
+async def test_stream_thinking_requests_include_usage(monkeypatch):
+    captured: dict[str, Any] = {}
+
+    async def fake_acompletion(**kwargs):
+        captured.update(kwargs)
+
+        async def _gen():
+            yield types.SimpleNamespace(
+                choices=[types.SimpleNamespace(delta=types.SimpleNamespace(content="ok"))],
+                usage=types.SimpleNamespace(
+                    prompt_tokens=0,
+                    completion_tokens=10,
+                    total_tokens=10,
+                ),
+            )
+            yield types.SimpleNamespace(
+                choices=[types.SimpleNamespace(delta=types.SimpleNamespace())],
+                usage=types.SimpleNamespace(
+                    prompt_tokens=1_000,
+                    completion_tokens=200,
+                    total_tokens=1_200,
+                ),
+            )
+
+        return _gen()
+
+    def fake_builder(chunks, messages=None):
+        return types.SimpleNamespace(
+            choices=[types.SimpleNamespace(message=types.SimpleNamespace(content="ok"))],
+            usage=types.SimpleNamespace(prompt_tokens=0, completion_tokens=200, total_tokens=200),
+        )
+
+    monkeypatch.setattr(gw.litellm, "acompletion", fake_acompletion)
+    monkeypatch.setattr(gw.litellm, "stream_chunk_builder", fake_builder)
+
+    with patch("packages.llm.gateway.check_limit", new=AsyncMock()):
+        with patch("packages.llm.gateway.record_usage", new=AsyncMock()) as fake_record:
+            token = set_usage_ctx(_ctx())
+            try:
+                await gw.acompletion_stream_thinking(
+                    [{"role": "user", "content": "hi"}],
+                    project_uid="proj-1",
+                    model="gemini/gemini-3.1-pro-preview",
+                )
+                await asyncio.sleep(0)
+            finally:
+                reset_usage_ctx(token)
+
+    assert captured.get("stream_options") == {"include_usage": True}
+    fake_record.assert_awaited_once()
+    assert fake_record.await_args.args[2:] == (1_000, 200)
 
 
 def test_cost_unknown_model_uses_default():

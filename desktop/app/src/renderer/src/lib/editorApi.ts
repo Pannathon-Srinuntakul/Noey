@@ -9,9 +9,12 @@
  */
 
 import { ApiError } from './api'
+import type { CaptionLine } from './captionLines'
 import { dubSegmentsFromEditCuts, type EditCutIn } from './dubSegments'
 import type { DubEditScript, DubTimeline } from './videosLocalApi'
 import type { LocalClip } from '../../../preload'
+
+export type { CaptionLine } from './captionLines'
 
 export interface EditTimelineSource {
   id: string
@@ -43,8 +46,20 @@ export interface EditorContext {
   editTarget: 'timeline' | 'edit_script'
   editScript?: DubEditScript | null
   timeline?: DubTimeline | null
+  /** Initial burned-caption lines (talking_head only) — undefined when the
+   * project has no caption_style/words, empty array when captions are
+   * enabled but not yet grouped/edited. */
+  captionLines?: CaptionLine[]
   /** Persist + re-render; useProjectPipeline owns the flow. */
-  onSave: (cuts: SaveCutPayload[]) => Promise<void>
+  onSave: (cuts: SaveCutPayload[], captionLines?: CaptionLine[]) => Promise<void>
+  /** dub_first only: AI-assisted re-edit of the live (unsaved) cuts. Returns
+   * the revised cut list — preview only, does NOT save/render; the caller
+   * still hits Save to commit. Undefined outside dub_first pre-render editing. */
+  onAiReedit?: (
+    cuts: SaveCutPayload[],
+    selectedLineIds: number[],
+    instruction: string
+  ) => Promise<EditCut[]>
 }
 
 let ctx: EditorContext | null = null
@@ -56,6 +71,11 @@ export function configureEditorApi(next: EditorContext): void {
 function requireCtx(): EditorContext {
   if (!ctx) throw new Error('editorApi not configured')
   return ctx
+}
+
+/** Initial caption lines for the currently-configured project, if any. */
+export function initialCaptionLines(): CaptionLine[] | undefined {
+  return ctx?.captionLines
 }
 
 /** Mirror of routers/videos.py get_edit_timeline (videos.py:605) for local data. */
@@ -76,21 +96,26 @@ export function editTimelineFromContext(c: EditorContext): EditTimeline {
       label: String(t.label ?? '')
     }))
   } else {
-    const segs = [...(c.editScript?.segments ?? [])].sort(
-      (a, b) => Number(a.order ?? 0) - Number(b.order ?? 0)
-    )
-    cuts = segs.map((s, i) => ({
-      id: `cut${i}`,
-      source: String(s.sourceClip ?? 'clip0'),
-      in: Number(s.sourceIn ?? 0),
-      out: Number(s.sourceOut ?? 0),
-      label: String(s.voiceoverLineId ?? i + 1),
-      voiceoverLineId: s.voiceoverLineId != null ? Number(s.voiceoverLineId) : null,
-      voiceoverScript: (s.voiceoverScript as string | undefined) ?? null
-    }))
+    cuts = editCutsFromDubSegments(c.editScript?.segments ?? [])
   }
 
   return { mode: 'dub_first', editTarget: c.editTarget, sources, cuts }
+}
+
+/** Edit Script segments (server/AI shape, sorted by `order`) → editor `EditCut[]`.
+ * Inverse of dubSegmentsFromEditCuts — shared by the initial editor load and by
+ * AI re-edit results, which return the same segment shape. */
+export function editCutsFromDubSegments(segments: Record<string, unknown>[]): EditCut[] {
+  const segs = [...segments].sort((a, b) => Number(a.order ?? 0) - Number(b.order ?? 0))
+  return segs.map((s, i) => ({
+    id: `cut${i}`,
+    source: String(s.sourceClip ?? 'clip0'),
+    in: Number(s.sourceIn ?? 0),
+    out: Number(s.sourceOut ?? 0),
+    label: String(s.voiceoverLineId ?? i + 1),
+    voiceoverLineId: s.voiceoverLineId != null ? Number(s.voiceoverLineId) : null,
+    voiceoverScript: (s.voiceoverScript as string | undefined) ?? null
+  }))
 }
 
 /** Manual cuts → edit_script JSON (shared shape with the server). */
@@ -120,11 +145,23 @@ export const editorApi = {
 
   saveEditTimeline: async (
     _uid: string,
-    cuts: SaveCutPayload[]
+    cuts: SaveCutPayload[],
+    captionLines?: CaptionLine[]
   ): Promise<{ project_uid: string; job_id: string }> => {
     const c = requireCtx()
-    await c.onSave(cuts)
+    await c.onSave(cuts, captionLines)
     return { project_uid: c.localUid, job_id: '' }
+  },
+
+  requestAiReedit: async (
+    _uid: string,
+    cuts: SaveCutPayload[],
+    selectedLineIds: number[],
+    instruction: string
+  ): Promise<EditCut[]> => {
+    const c = requireCtx()
+    if (!c.onAiReedit) throw new Error('AI re-edit ใช้ได้เฉพาะโหมด dub_first ก่อน render')
+    return c.onAiReedit(cuts, selectedLineIds, instruction)
   }
 }
 

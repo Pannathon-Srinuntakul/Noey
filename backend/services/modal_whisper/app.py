@@ -106,9 +106,32 @@ class WhisperService:
             os.unlink(wav_path)
 
 
+def _clean_text(text: str) -> str:
+    """Strip lone UTF-16 surrogate code points that leak out of faster-whisper's
+    native BPE decode for Thai script under low-confidence conditions — these
+    can't be encoded as UTF-8 at all and show up as corrupted/missing glyphs
+    downstream. Mirrors packages/video/transcribe.py's clean_transcript_text
+    (duplicated here since this function runs inside the Modal container,
+    which doesn't import backend packages). Only safe on standalone display
+    text, not on individual word tokens — see _drop_corrupted_words."""
+    if not text:
+        return text
+    return text.encode("utf-8", "surrogatepass").decode("utf-8", "ignore")
+
+
+def _drop_corrupted_words(words: list) -> list:
+    """Drop whole word tokens containing a lone surrogate instead of
+    partial-stripping them — partial stripping changes a token's character
+    count, which desyncs the caller's grapheme-merge word-boundary logic for
+    every token after it. Mirrors packages/video/transcribe.py's
+    drop_corrupted_words."""
+    return [w for w in words if not any(0xD800 <= ord(c) <= 0xDFFF for c in str(w.get("word", "")))]
+
+
 def _tighten(seg: dict) -> dict:
     """Inline tighten without importing backend packages."""
-    words = list(seg.get("words") or [])
+    words = _drop_corrupted_words(seg.get("words") or [])
+    seg = {**seg, "text": _clean_text(seg.get("text", "")), "words": words}
     start, end = float(seg["start"]), float(seg["end"])
     if not words:
         return {**seg, "start": round(start, 3), "end": round(end, 3)}

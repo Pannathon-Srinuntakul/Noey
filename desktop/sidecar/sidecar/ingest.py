@@ -31,7 +31,10 @@ from packages.video.scene import (  # noqa: E402
     dub_clip_exceeds_upload_limit,
     dub_project_exceeds_total_limit,
 )
-from packages.video.timeline import TALKING_HEAD_MAX_TOTAL_SEC  # noqa: E402
+from packages.video.timeline import (  # noqa: E402
+    TALKING_HEAD_MAX_TOTAL_SEC,
+    talking_head_exceeds_total_limit,
+)
 
 
 class IngestJob(BaseModel):
@@ -56,11 +59,14 @@ def run_ingest(job: IngestJob, emit) -> dict[str, Any]:
               "message": src.name})
 
         dur = media_duration(src)
-        # This cap applies to every mode, not just dub_first — the message used
-        # to hardcode "dub_first" even when the clip was talking_head.
-        if dub_clip_exceeds_upload_limit(dur):
+        if job.mode == "dub_first" and dub_clip_exceeds_upload_limit(dur):
             raise ValueError(
                 f"คลิป {src.name} ยาว {dur:.0f}s เกินลิมิตต่อคลิป {DUB_MAX_CLIP_SEC}s"
+            )
+        if job.mode == "talking_head" and talking_head_exceeds_total_limit(dur):
+            raise ValueError(
+                f"คลิป {src.name} ยาว {dur / 3600:.1f} ชม. — talking head รองรับสูงสุด "
+                f"{TALKING_HEAD_MAX_TOTAL_SEC // 3600} ชั่วโมงต่อโปรเจกต์ (รวมทุกไฟล์)"
             )
         total_dur_sec += dur
 
@@ -106,7 +112,7 @@ def run_ingest(job: IngestJob, emit) -> dict[str, Any]:
                 f"คลิปทั้งหมดรวมกันยาว {total_dur_sec:.0f}s — โหมด Dub First รองรับสูงสุด "
                 f"{DUB_FIRST_MAX_TOTAL_SEC // 60} นาทีต่อโปรเจกต์ กรุณาลดจำนวน/ความยาวคลิป"
             )
-    elif total_dur_sec > TALKING_HEAD_MAX_TOTAL_SEC:
+    elif talking_head_exceeds_total_limit(total_dur_sec):
         raise ValueError(
             f"คลิปทั้งหมดรวมกันยาว {total_dur_sec / 3600:.1f} ชม. — รองรับสูงสุด "
             f"{TALKING_HEAD_MAX_TOTAL_SEC // 3600} ชั่วโมงต่อโปรเจกต์ กรุณาลดจำนวน/ความยาวคลิป"

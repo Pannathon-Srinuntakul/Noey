@@ -29,7 +29,7 @@ import { readApiError } from './errors'
 export { formatUserError } from './errors'
 
 // Local: Vite proxies /api → localhost:8000. Railway: set VITE_API_URL to the API service URL.
-const BASE = import.meta.env.VITE_API_URL ?? '/api'
+export const BASE = import.meta.env.VITE_API_URL ?? '/api'
 
 // Token getter — set by AuthContext; avoids circular import.
 let _getToken: (() => string | null) | null = null

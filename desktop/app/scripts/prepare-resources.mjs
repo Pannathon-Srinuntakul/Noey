@@ -60,6 +60,13 @@ if (existsSync(join(pkgDest, 'llm'))) {
   throw new Error('packages/llm must not be staged into the desktop app')
 }
 
+// ── 2b. bundled caption fonts ─────────────────────────────────────────────────
+log('staging caption fonts…')
+const fontsSrc = join(backendDir, 'data', 'fonts')
+const fontsDest = join(stagingDir, 'backend', 'data', 'fonts')
+mkdirSync(fontsDest, { recursive: true })
+cpSync(fontsSrc, fontsDest, { recursive: true })
+
 // ── 3. ffmpeg per platform ───────────────────────────────────────────────────
 const exeSuffix = process.platform === 'win32' ? '.exe' : ''
 const ffmpegBin = join(ffmpegVendorDir, `ffmpeg${exeSuffix}`)

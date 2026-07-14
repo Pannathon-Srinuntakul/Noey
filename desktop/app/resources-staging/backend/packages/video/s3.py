@@ -258,3 +258,25 @@ async def push_project_files(project_uid: str) -> None:
     out = output_dir(project_uid)
     if out.is_dir():
         await push_outputs(project_uid, out)
+
+
+# ── static releases (desktop app installers, not project-scoped) ────────────
+
+def _release_key(filename: str) -> str:
+    return f"releases/desktop/{filename}"
+
+
+async def release_presigned_url(filename: str, expires: int = 3600) -> str | None:
+    """Presigned download URL for a release asset, or None when S3 disabled or missing."""
+    if not _s3_enabled():
+        return None
+    key = _release_key(filename)
+    if not await asyncio.to_thread(_sync_output_exists, key):
+        return None
+    return await asyncio.to_thread(_sync_presigned_url, key, expires)
+
+
+def upload_release_file(local_path: pathlib.Path, filename: str) -> None:
+    """Upload a release asset (e.g. the desktop installer). Sync — run from a script."""
+    client = _client()
+    client.upload_file(str(local_path), _bucket(), _release_key(filename))

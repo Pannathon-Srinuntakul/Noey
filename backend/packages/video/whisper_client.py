@@ -48,7 +48,9 @@ MODAL_CHUNK_WHEN_SEC = 240.0    # chunk when WAV longer than 4 min (5-min upload
 MODAL_CHUNK_WHEN_MB = 28.0      # chunk when WAV exceeds ~28 MB (16 kHz mono ≈ 4 min)
 
 # (phase, clip_index, clip_total) — phase: "clip_modal" | "clip_local" | "retry"
+# | "whisper_done" | "review"
 ProgressFn = Callable[[str, int, int], Awaitable[None]]
+ThinkingFn = Callable[[str], Awaitable[None]]
 # return True to abort (partial result is discarded by the caller)
 AbortFn = Callable[[], Awaitable[bool]]
 
@@ -204,6 +206,9 @@ async def review_clip_video(
     video_path: pathlib.Path,
     segments: list[dict[str, Any]],
     brief: str,
+    *,
+    project_uid: str = "",
+    on_thinking: ThinkingFn | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Gemini review of ONE clip's whole video against its Whisper segments.
 
@@ -218,13 +223,12 @@ async def review_clip_video(
     import json
 
     from packages.core.settings import get_settings
-    from packages.llm.config import call_kwargs
+    from packages.llm.config import talking_vision_call_kwargs
     from packages.llm.files import delete_gemini_files, gemini_video_block, upload_gemini_file
-    from packages.llm.gateway import acompletion
+    from packages.llm.gateway import acompletion_stream_thinking
     from packages.video.timeline import build_silence_gap_candidates, build_speech_cuts
 
     s = get_settings()
-    model = f"gemini/{s.talking_vision_model}"
 
     local_speech_cuts = build_speech_cuts(segments)
     gaps = build_silence_gap_candidates(local_speech_cuts)
@@ -241,10 +245,11 @@ async def review_clip_video(
                 ],
             }
         ]
-        extra = call_kwargs(model=model)
-        extra["timeout"] = s.talking_vision_timeout_sec
-        resp = await acompletion(
+        extra = talking_vision_call_kwargs()
+        resp = await acompletion_stream_thinking(
             messages,
+            project_uid=project_uid or video_path.stem,
+            on_thinking=on_thinking,
             response_format={
                 "type": "json_object",
                 "response_schema": GEMINI_REFINE_SCHEMA,
@@ -269,7 +274,9 @@ async def run_transcription(
     *,
     video_files: list[pathlib.Path | None] | None = None,
     brief: str = "",
+    project_uid: str = "",
     on_progress: ProgressFn | None = None,
+    on_thinking: ThinkingFn | None = None,
     should_abort: AbortFn | None = None,
 ) -> dict[str, Any] | None:
     """Transcribe WAVs (Modal if configured, else local faster-whisper), then run
@@ -350,12 +357,16 @@ async def run_transcription(
                     "text": str(seg.get("text", "")).strip(),
                     "words": seg.get("words", []),
                 })
-                local.append({
-                    "start": tight["start"],
-                    "end": tight["end"],
-                    "text": tight["text"],
-                    "words": tight.get("words", []),
-                })
+                # Split BEFORE review (not after) so Gemini gets independently
+                # reviewable chunks instead of one keep/cut verdict for an
+                # entire gapless hallucinated run — see split_segment_on_word_gaps.
+                for part in split_segment_on_word_gaps(tight):
+                    local.append({
+                        "start": part["start"],
+                        "end": part["end"],
+                        "text": part["text"],
+                        "words": part.get("words", []),
+                    })
             per_clip.append((local, offset))
             _append_with_offset(collected, local, offset)
             offset += clip_dur
@@ -406,12 +417,16 @@ async def run_transcription(
                         for w in (seg.words or [])
                     ],
                 })
-                local.append({
-                    "start": tight["start"],
-                    "end": tight["end"],
-                    "text": tight["text"],
-                    "words": tight["words"],
-                })
+                # Split BEFORE review (not after) so Gemini gets independently
+                # reviewable chunks instead of one keep/cut verdict for an
+                # entire gapless hallucinated run — see split_segment_on_word_gaps.
+                for part in split_segment_on_word_gaps(tight):
+                    local.append({
+                        "start": part["start"],
+                        "end": part["end"],
+                        "text": part["text"],
+                        "words": part.get("words", []),
+                    })
                 raw_count += 1
             per_clip.append((local, offset))
             _append_with_offset(collected, local, offset)
@@ -469,15 +484,28 @@ async def run_transcription(
     # in parallel across clips. Additive + never blocking: any per-clip failure
     # logs and falls back to that clip's unreviewed segments with no gaps kept.
     review_on = bool(_s.gemini_refine_enabled and _s.gemini_api_key)
+    clip_total = len(per_clip)
+
+    if review_on and on_progress:
+        await _progress("whisper_done", 0, clip_total)
 
     async def _review_clip(
+        clip_idx: int,
         video: pathlib.Path | None,
         local: list[dict[str, Any]],
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         if not review_on or not local or video is None:
             return local, []
+        if on_progress:
+            await _progress("review", clip_idx, clip_total)
         try:
-            reviewed, kept_gaps = await review_clip_video(video, local, brief)
+            reviewed, kept_gaps = await review_clip_video(
+                video,
+                local,
+                brief,
+                project_uid=project_uid,
+                on_thinking=on_thinking,
+            )
             log.info(
                 "gemini_review_done", video=video.name, before=len(local), after=len(reviewed),
                 gaps_kept=len(kept_gaps), model=_s.talking_vision_model,
@@ -487,9 +515,17 @@ async def run_transcription(
             log.warning("gemini_review_failed", video=video.name, error=str(exc)[:300])
             return local, []
 
-    review_results = await asyncio.gather(
-        *(_review_clip(videos[i] if i < len(videos) else None, local) for i, (local, _off) in enumerate(per_clip))
-    )
+    review_jobs = [
+        _review_clip(i, videos[i] if i < len(videos) else None, local)
+        for i, (local, _off) in enumerate(per_clip)
+    ]
+    # Stream thinking to the UI one clip at a time — parallel calls would interleave.
+    if on_thinking is not None:
+        review_results = []
+        for job in review_jobs:
+            review_results.append(await job)
+    else:
+        review_results = await asyncio.gather(*review_jobs)
 
     reviewed_segments: list[dict[str, Any]] = []
     silence_gaps: list[dict[str, Any]] = []
@@ -502,8 +538,11 @@ async def run_transcription(
             })
     all_segments = reviewed_segments
 
-    # Split segments whose words straddle long internal silence (Whisper
-    # sometimes merges speech across a 60s pause into one segment).
+    # Safety-net re-split post-review (the real split now happens per-clip
+    # BEFORE review — see _collect_segments_modal/_collect_segments — so
+    # Gemini gets to judge each chunk independently). Cheap no-op in the
+    # common case; only fires if something after review reintroduced a long
+    # gapless run.
     before_split = len(all_segments)
     all_segments = [
         part for seg in all_segments for part in split_segment_on_word_gaps(seg)

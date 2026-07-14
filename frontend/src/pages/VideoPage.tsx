@@ -34,7 +34,7 @@ import {
   XCircle,
 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { api, storedPathBasename, type DubEditScript, type VideoProjectOut } from '../api'
+import { api, BASE, storedPathBasename, type DubEditScript, type VideoProjectOut } from '../api'
 import { useAuth } from '../auth/AuthContext'
 import { formatUserError } from '../errors'
 import { ConfirmModal } from '../hud/ConfirmModal'
@@ -422,8 +422,9 @@ function fallbackMessage(progress: number, mode = 'talking_head'): string {
     return 'เสร็จแล้ว'
   }
   if (progress < 55) return 'กำลังเตรียมวิดีโอ…'
-  if (progress < 72) return 'กำลังถอดเสียง…'
-  if (progress < 82) return 'AI กำลังวางแผนตัด…'
+  if (progress < 42) return 'กำลังถอดเสียง…'
+  if (progress < 60) return 'AI กำลังดูวิดีโอ…'
+  if (progress < 82) return 'กำลังประกอบไทม์ไลน์…'
   if (progress < 100) return 'กำลังสร้างคลิปสำเร็จรูป…'
   return 'เสร็จแล้ว'
 }
@@ -1616,6 +1617,12 @@ export default function VideoPage() {
         <span className="ml-1 rounded-full border border-amber-500/40 px-2 py-0.5 text-[10px] font-semibold text-amber-400">
           MVP · talking_head + dub_first
         </span>
+        <a
+          href={`${BASE}/releases/desktop/windows`}
+          className="ml-auto flex items-center gap-1.5 rounded-lg border border-amber-500/40 px-3 py-1.5 text-xs font-medium text-amber-200 hover:bg-amber-500/10"
+        >
+          <Download size={13} /> ดาวน์โหลดแอป (Windows)
+        </a>
       </header>
 
       <div className="scroll-ghost flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4 lg:flex-row lg:gap-6 lg:overflow-hidden lg:p-6">
@@ -1623,7 +1630,11 @@ export default function VideoPage() {
           <h2 className="mb-1 shrink-0 text-sm font-semibold text-amber-200/70 uppercase tracking-widest">
             อัปโหลดวิดีโอ
           </h2>
-          <p className="mb-3 shrink-0 text-[11px] text-amber-200/45">คลิปต้นฉบับสูงสุด 10 นาทีต่อไฟล์</p>
+          <p className="mb-3 shrink-0 text-[11px] text-amber-200/45">
+            {videoMode === 'dub_first'
+              ? 'คลิปต้นฉบับสูงสุด 20 นาทีต่อไฟล์ · รวมทุกไฟล์ไม่เกิน 20 นาที'
+              : 'รวมทุกไฟล์ในโปรเจกต์ไม่เกิน 2 ชั่วโมง'}
+          </p>
 
           <div className="scroll-ghost pr-1 lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
             <div className="flex flex-col gap-4 pb-2">

@@ -14,11 +14,13 @@ GET   /videos/{uid}/local-timeline     — fetch the planned timeline.json
 PUT   /videos/{uid}/local-timeline     — sync locally-edited timeline.json (never renders)
 PATCH /videos/{uid}/local-status       — desktop reports render progress/completion
 PUT   /videos/{uid}/local-edit-script  — sync locally-edited edit_script.json to the server record
+POST  /videos/{uid}/reedit-dub-scenes  — dub: upload live-editor preview + instruction → arq reedit_dub_scenes_local → {job_id}
 """
 
 from __future__ import annotations
 
 import json
+from typing import Literal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
@@ -52,12 +54,21 @@ class LocalClipMeta(BaseModel):
     fps: int = 30
 
 
+class CaptionStyleIn(BaseModel):
+    font: Literal["kanit", "prompt", "sarabun", "anuphan"] = "kanit"
+    mode: Literal["static", "word_pop", "typewriter"] = "static"
+    color: str = "#FFFFFF"
+    border_color: str = "#000000"
+    size: int = Field(default=72, ge=24, le=140)
+
+
 class LocalProjectIn(BaseModel):
     mode: str = "dub_first"
     brief: str | None = None
     user_script: str | None = None
     target_duration_sec: int | None = Field(default=None, ge=15, le=600)
     clips: list[LocalClipMeta] = Field(min_length=1)
+    caption_style: CaptionStyleIn | None = None
 
 
 class LocalProjectOut(BaseModel):
@@ -88,6 +99,11 @@ class ProxyManifestEntry(BaseModel):
 class PlanDubIn(BaseModel):
     voDurationSec: float = Field(gt=0)
     clipDurations: list[float] = Field(min_length=1)
+
+
+class ReeditManifestIn(BaseModel):
+    selectedLineIds: list[int] = Field(default_factory=list)
+    instruction: str = Field(min_length=1, max_length=2000)
 
 
 class LocalStatusIn(BaseModel):
@@ -129,6 +145,7 @@ async def create_local_project(
         # of this column. Always "full" — see plan_core.build_talking_head_timeline.
         duration_mode="full",
         local_meta={"clips": [c.model_dump() for c in body.clips]},
+        caption_style=body.caption_style.model_dump() if body.caption_style else None,
         source_files=[],
     )
     session.add(proj)
@@ -502,3 +519,72 @@ async def put_local_edit_script(
     await session.commit()
     await push_project_files(uid)
     return {"uid": uid, "segments": len(edit_script["segments"])}
+
+
+@router.post("/{uid}/reedit-dub-scenes", response_model=AnalyzeFramesOut, status_code=202)
+async def reedit_dub_scenes(
+    uid: str,
+    auth: CurrentUser,
+    session: AsyncSession = Depends(db_session),
+    preview: UploadFile = File(...),
+    manifest: str = Form(...),
+) -> AnalyzeFramesOut:
+    """dub_first: AI-assisted re-edit of the current edit script.
+
+    `preview` is a freshly-encoded silent proxy of the LIVE (possibly unsaved)
+    editor state — reflects exactly what the user is looking at right now.
+    Raw source clip proxies are reused as-is from the initial analyze step
+    (proxy_manifest.json on disk); no re-upload needed for those.
+    """
+    proj = await _get_local_project(session, uid, auth.user_id)
+    if proj.mode != "dub_first":
+        raise HTTPException(400, "reedit-dub-scenes ใช้ได้เฉพาะโหมด dub_first")
+    if proj.status not in ("pending", "error", "waiting_vo", "done"):
+        raise HTTPException(400, "โปรเจกต์กำลังประมวลผลอยู่")
+    if not proj.edit_script_path:
+        raise HTTPException(400, "ยังไม่มี edit script — ต้อง analyze ก่อน")
+
+    try:
+        body = ReeditManifestIn.model_validate(json.loads(manifest))
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise HTTPException(422, f"manifest ไม่ถูกต้อง: {exc}") from exc
+
+    root = data_root()
+    output_dir = root / "video_outputs" / uid
+    proxy_manifest_file = output_dir / "proxy" / "proxy_manifest.json"
+    if not proxy_manifest_file.is_file():
+        raise HTTPException(400, "ไม่พบ proxy ของคลิปต้นฉบับ — กรุณา analyze ใหม่อีกครั้ง")
+
+    reedit_dir = output_dir / "ai_reedit"
+    reedit_dir.mkdir(parents=True, exist_ok=True)
+    preview_path = reedit_dir / "edited_preview.mp4"
+    preview_path.write_bytes(await preview.read())
+    (reedit_dir / "reedit_request.json").write_text(
+        json.dumps(body.model_dump(), ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    await push_project_files(uid)  # preview MP4 + request JSON only
+
+    job_id = f"vlocal_{uid[:8]}"
+    await session.execute(text("SET search_path TO core, public"))
+    existing = await session.get(Job, job_id)
+    if existing:
+        existing.status = "queued"
+        existing.progress = 2
+        existing.result = {"step": "queued", "message": "รับคำสั่งแก้ไขแล้ว รอ AI ประมวลผล…"}
+        existing.error = None
+    else:
+        session.add(Job(
+            id=job_id,
+            tenant_id=auth.tenant_id,
+            type="video_edit",
+            status="queued",
+            progress=2,
+            result={"step": "queued", "message": "รับคำสั่งแก้ไขแล้ว รอ AI ประมวลผล…"},
+        ))
+    await bind_tenant_search_path(session, auth.tenant_slug)
+    proj.status = "processing"
+    proj.job_id = job_id
+    await session.commit()
+
+    await _enqueue(job_id, "reedit_dub_scenes_local", project_uid=uid, tenant_slug=auth.tenant_slug)
+    return AnalyzeFramesOut(job_id=job_id)

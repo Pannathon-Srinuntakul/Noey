@@ -83,6 +83,36 @@ export function me(baseUrl: string, accessToken: string): Promise<Me> {
   })
 }
 
+export interface UsageByFeature {
+  feature: string
+  input_tokens: number
+  output_tokens: number
+  total_tokens: number
+}
+
+export interface Usage {
+  user_id: number
+  plan: string
+  period_start: string
+  used_tokens: number
+  input_tokens: number
+  output_tokens: number
+  limit_tokens: number
+  unlimited: boolean
+  remaining_tokens: number | null
+  usage_pct: number | null
+  by_feature: UsageByFeature[]
+  reset_at: string | null
+  // estimated_cost_usd exists on the backend response but is deliberately
+  // left off this type — cost is never shown in this app.
+}
+
+export function getUsage(baseUrl: string, accessToken: string): Promise<Usage> {
+  return request<Usage>(baseUrl, '/usage/me', {
+    headers: { Authorization: `Bearer ${accessToken}` }
+  })
+}
+
 /**
  * Restore a stored session: reuse the access token if still valid, otherwise
  * try the refresh token. Returns the (possibly renewed) pair, or null when

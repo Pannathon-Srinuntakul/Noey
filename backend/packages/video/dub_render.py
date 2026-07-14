@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from packages.core.logging import get_logger
-from packages.video.ffmpeg_bin import run_ffmpeg
+from packages.video.ffmpeg_bin import hwaccel_input_kwargs, run_ffmpeg, video_encode_kwargs
 
 log = get_logger(__name__)
 
@@ -52,12 +52,12 @@ def trim_one_segment(
     # Frame-accurate trim via video filter + reset PTS (avoids keyframe-stutter from vcodec=copy).
     # Re-encode to h264/yuv420p so concat timestamps are always consistent.
     run_ffmpeg(
-        ffmpeg_lib.input(str(src))
+        ffmpeg_lib.input(str(src), **hwaccel_input_kwargs())
         .video
         .filter("trim", start=src_in, end=src_out)
         .filter("setpts", "PTS-STARTPTS")
         .output(str(clip_out),
-                vcodec="libx264", preset="fast", crf=18,
+                **video_encode_kwargs(),
                 pix_fmt="yuv420p",
                 **{"an": None})
         .overwrite_output(),

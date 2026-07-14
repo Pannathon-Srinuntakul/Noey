@@ -60,6 +60,11 @@ def model_supports_effort(model: str) -> bool:
     ))
 
 
+def model_supports_gemini_thinking(model: str) -> bool:
+    """True when LiteLLM maps reasoning_effort → Gemini thinking/thinking_level."""
+    return "gemini" in model.lower()
+
+
 def _api_key_for_model(model: str, settings: object) -> str | None:
     m = model.lower()
     if "anthropic" in m:
@@ -72,8 +77,10 @@ def _api_key_for_model(model: str, settings: object) -> str | None:
 
 
 def _with_effort(params: dict, model: str, effort: str | None) -> dict:
-    """Attach reasoning_effort when the model supports Claude 4.6 adaptive thinking."""
-    if effort and model_supports_effort(model):
+    """Attach reasoning_effort for Claude adaptive thinking or Gemini thinking_level."""
+    if not effort:
+        return params
+    if model_supports_effort(model) or model_supports_gemini_thinking(model):
         params["reasoning_effort"] = effort
     return params
 
@@ -118,6 +125,15 @@ def vision_call_kwargs() -> dict:
     effort = s.llm_vision_effort or "medium"
     extra = call_kwargs(model=model, effort=effort)
     extra["timeout"] = int(s.llm_vision_timeout_sec)
+    return extra
+
+
+def talking_vision_call_kwargs() -> dict:
+    """Gemini per-clip talking_head video review (multimodal + thinking stream)."""
+    s = get_settings()
+    model = f"gemini/{s.talking_vision_model}"
+    extra = call_kwargs(model=model, effort="medium")
+    extra["timeout"] = int(s.talking_vision_timeout_sec)
     return extra
 
 

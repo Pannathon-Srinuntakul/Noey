@@ -45,7 +45,7 @@ export const STEP_LABELS: Record<ProjectStep, string> = {
   planning: 'กำลังวางแผน timeline',
   final_rendering: 'กำลัง render วิดีโอสุดท้าย',
   extracting_audio: 'กำลังแยกเสียงจากคลิป',
-  transcribing: 'ถอดเสียง + AI วางแผน',
+  transcribing: 'ถอดเสียง + AI ตรวจวิดีโอ',
   rendering: 'กำลัง render วิดีโอ',
   done: 'เสร็จแล้ว',
   error: 'เกิดข้อผิดพลาด'

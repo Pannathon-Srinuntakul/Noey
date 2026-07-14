@@ -41,6 +41,26 @@ def test_call_kwargs_haiku_no_effort(monkeypatch):
     assert "reasoning_effort" not in extra
 
 
+def test_talking_vision_call_kwargs(monkeypatch):
+    from packages.core.settings import get_settings
+    from packages.llm.config import talking_vision_call_kwargs
+
+    get_settings.cache_clear()
+    monkeypatch.setenv("TALKING_VISION_MODEL", "gemini-3.1-pro-preview")
+    monkeypatch.setenv("TALKING_VISION_TIMEOUT_SEC", "1200")
+    get_settings.cache_clear()
+
+    extra = talking_vision_call_kwargs()
+    assert extra["model"] == "gemini/gemini-3.1-pro-preview"
+    assert extra["reasoning_effort"] == "medium"
+    assert extra["timeout"] == 1200
+
+
+def test_call_kwargs_gemini_gets_effort():
+    extra = call_kwargs(model="gemini/gemini-3.1-pro-preview", effort="medium")
+    assert extra["reasoning_effort"] == "medium"
+
+
 def test_vision_call_kwargs(monkeypatch):
     from packages.core.settings import get_settings
 

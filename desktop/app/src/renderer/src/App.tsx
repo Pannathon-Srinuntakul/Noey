@@ -1,16 +1,17 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Film, Loader2 } from 'lucide-react'
+import { Film, Loader2, Settings } from 'lucide-react'
 import type { LocalProject } from '../../preload'
 import { ApiError, login, me, restoreSession, type Me } from './lib/api'
 import type { ApiSession } from './lib/videosLocalApi'
 import NewProjectSidebar from './components/NewProjectSidebar'
 import ProjectCard from './components/ProjectCard'
+import SettingsPage from './pages/SettingsPage'
 
 // Backend URL is baked in at build time — users never see or set it.
 // Override for local dev/self-hosting: VITE_BACKEND_URL=... npm run build
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL ?? 'https://noey-api-production.up.railway.app'
 
-interface Session {
+export interface Session {
   baseUrl: string
   accessToken: string
   refreshToken: string
@@ -117,6 +118,7 @@ function Workspace({
 }): React.JSX.Element {
   const [projects, setProjects] = useState<LocalProject[]>([])
   const [loadingList, setLoadingList] = useState(true)
+  const [view, setView] = useState<'projects' | 'settings'>('projects')
 
   const apiSession: ApiSession = {
     baseUrl: session.baseUrl,
@@ -167,6 +169,13 @@ function Workspace({
             {session.profile.email} · {session.profile.tenant_slug}
           </span>
           <button
+            onClick={() => setView(view === 'settings' ? 'projects' : 'settings')}
+            className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-zinc-300 hover:border-white/25 hover:text-white"
+            title="การใช้งาน AI"
+          >
+            <Settings size={14} />
+          </button>
+          <button
             onClick={onLogout}
             className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-zinc-300 hover:border-white/25 hover:text-white"
           >
@@ -174,7 +183,13 @@ function Workspace({
           </button>
         </div>
       </header>
-      <div className="scroll-ghost flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4 md:flex-row md:gap-6 md:overflow-hidden md:p-6">
+      {view === 'settings' && <SettingsPage session={session} onBack={() => setView('projects')} />}
+      {/* Kept mounted (just hidden) instead of swapped out — unmounting this
+          tree would reset every ProjectCard's in-flight pipeline state and
+          re-trigger already-running/finished AI jobs from scratch on return. */}
+      <div
+        className={`scroll-ghost flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4 md:flex-row md:gap-6 md:overflow-hidden md:p-6 ${view === 'settings' ? 'hidden' : ''}`}
+      >
         <NewProjectSidebar onCreated={handleCreated} />
 
         <div className="flex min-w-0 flex-col gap-4 md:min-h-0 md:flex-1 md:overflow-y-auto">

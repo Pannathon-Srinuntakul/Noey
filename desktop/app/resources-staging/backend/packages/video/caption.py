@@ -103,7 +103,7 @@ def build_ass_karaoke(
     output_duration: float = 0.0,  # noqa: ARG001 — reserved for future use
     style: dict | None = None,
 ) -> str:
-    """Build ASS file content with \\kf karaoke timing.
+    """Build ASS file content with \\kf karaoke timing (fill-highlight style).
 
     remapped_words: [{word, start, end}] in output timeline.
     Returns full ASS file as string.
@@ -115,7 +115,7 @@ def build_ass_karaoke(
         return header
 
     wpl = int(s.get("words_per_line", 3))
-    groups = [remapped_words[i : i + wpl] for i in range(0, len(remapped_words), wpl)]
+    groups = _group_words(remapped_words, wpl)
 
     dialogue_lines: list[str] = []
     for group in groups:
@@ -130,8 +130,195 @@ def build_ass_karaoke(
             text += f"{{\\kf{dur_cs}}}{w['word'].strip()} "
         text = text.rstrip()
 
-        dialogue_lines.append(
-            f"Dialogue: 0,{_ass_time(start)},{_ass_time(end)},Default,,0,0,0,,{text}"
-        )
+        dialogue_lines.append(_dialogue(start, end, text))
 
     return header + "\n".join(dialogue_lines) + "\n"
+
+
+# ── static / word_pop / typewriter caption modes ─────────────────────────────
+# (talking_head desktop feature — deliberately NOT the \kf fill-highlight style
+# above, which the desktop app's users found unreadable/undesired.)
+
+
+def _dialogue(start: float, end: float, text: str) -> str:
+    return f"Dialogue: 0,{_ass_time(start)},{_ass_time(end)},Default,,0,0,0,,{text}"
+
+
+def _group_words(remapped_words: list[dict], words_per_line: int) -> list[list[dict]]:
+    return [
+        remapped_words[i : i + words_per_line]
+        for i in range(0, len(remapped_words), words_per_line)
+    ]
+
+
+def redistribute_line_words(text: str, start: float, end: float) -> list[dict]:
+    """Evenly interpolate per-word timestamps across [start, end].
+
+    Used when a caption line's text was hand-edited (or has no matching
+    original Whisper words), so original per-word timing no longer applies.
+    """
+    words = text.split()
+    n = len(words)
+    if n == 0 or end <= start:
+        return []
+    step = (end - start) / n
+    return [
+        {"word": w, "start": round(start + i * step, 3), "end": round(start + (i + 1) * step, 3)}
+        for i, w in enumerate(words)
+    ]
+
+
+def _groups_from_caption_lines(
+    caption_lines: list[dict],
+    remapped_words: list[dict],
+) -> list[list[dict]]:
+    """Build word-groups from user-edited caption lines.
+
+    Prefers original per-word timing (matched by falling inside the line's
+    [start, end] window and matching word count) so untouched lines keep
+    exact Whisper timing; falls back to even redistribution for edited or
+    manually-timed lines.
+    """
+    groups: list[list[dict]] = []
+    for line in caption_lines:
+        start = float(line["start"])
+        end = float(line["end"])
+        text = str(line.get("text", "")).strip()
+        if not text or end <= start:
+            continue
+        target_words = text.split()
+        matched = [
+            w for w in remapped_words if w["start"] >= start - 0.01 and w["end"] <= end + 0.01
+        ]
+        if matched and len(matched) == len(target_words):
+            groups.append(matched)
+        else:
+            groups.append(redistribute_line_words(text, start, end))
+    return groups
+
+
+def _build_static_lines(groups: list[list[dict]]) -> list[str]:
+    """Whole phrase appears at once and holds — plain, no animation."""
+    lines: list[str] = []
+    for group in groups:
+        start = group[0]["start"]
+        end = group[-1]["end"]
+        if end <= start:
+            continue
+        text = " ".join(w["word"].strip() for w in group)
+        lines.append(_dialogue(start, end, text))
+    return lines
+
+
+def _build_word_pop_lines(groups: list[list[dict]]) -> list[str]:
+    """Words appear one at a time, cumulative within the phrase."""
+    lines: list[str] = []
+    for group in groups:
+        n = len(group)
+        chunk_end = group[-1]["end"]
+        for i in range(n):
+            seg_start = group[i]["start"]
+            seg_end = group[i + 1]["start"] if i + 1 < n else chunk_end
+            if seg_end <= seg_start:
+                continue
+            text = " ".join(w["word"].strip() for w in group[: i + 1])
+            lines.append(_dialogue(seg_start, seg_end, text))
+    return lines
+
+
+def _build_typewriter_lines(groups: list[list[dict]]) -> list[str]:
+    """Characters reveal progressively within each word, cumulative across the phrase."""
+    lines: list[str] = []
+    for group in groups:
+        chunk_end = group[-1]["end"]
+        revealed_words: list[str] = []
+        for gi, w in enumerate(group):
+            word_text = w["word"].strip()
+            n_chars = len(word_text)
+            if n_chars == 0:
+                continue
+            w_start, w_end = w["start"], w["end"]
+            step = (w_end - w_start) / n_chars if w_end > w_start else 0.0
+            for c in range(1, n_chars + 1):
+                seg_start = w_start + (c - 1) * step
+                if c < n_chars:
+                    seg_end = w_start + c * step
+                else:
+                    seg_end = group[gi + 1]["start"] if gi + 1 < len(group) else chunk_end
+                if seg_end <= seg_start:
+                    continue
+                partial = word_text[:c]
+                text = " ".join([*revealed_words, partial])
+                lines.append(_dialogue(seg_start, seg_end, text))
+            revealed_words.append(word_text)
+    return lines
+
+
+_MODE_BUILDERS = {
+    "static": _build_static_lines,
+    "word_pop": _build_word_pop_lines,
+    "typewriter": _build_typewriter_lines,
+}
+
+
+def build_ass_captions(
+    remapped_words: list[dict],
+    output_duration: float = 0.0,  # noqa: ARG001 — reserved for future use
+    style: dict | None = None,
+    mode: str = "static",
+    caption_lines: list[dict] | None = None,
+) -> str:
+    """Build ASS captions in one of 3 non-karaoke reveal styles.
+
+    remapped_words: [{word, start, end}] in output timeline — used for
+      auto-grouping (no caption_lines) or as the source of exact per-word
+      timing when caption_lines lines haven't been hand-edited.
+    caption_lines: user-edited override — [{id, text, start, end}] in output
+      timeline. When given, these define the line boundaries/text instead of
+      auto-grouping remapped_words.
+    """
+    s = {**_STYLE_DEFAULT, **(style or {})}
+    header = _ass_header(s)
+
+    if caption_lines is not None:
+        groups = _groups_from_caption_lines(caption_lines, remapped_words)
+    else:
+        if not remapped_words:
+            return header
+        wpl = int(s.get("words_per_line", 3))
+        groups = _group_words(remapped_words, wpl)
+
+    if not groups:
+        return header
+
+    builder = _MODE_BUILDERS.get(mode, _build_static_lines)
+    dialogue_lines = builder(groups)
+    if not dialogue_lines:
+        return header
+    return header + "\n".join(dialogue_lines) + "\n"
+
+
+def _hex_to_ass_color(hex_str: str) -> str:
+    """'#RRGGBB' -> ASS '&H00BBGGRR' (opaque, BGR byte order)."""
+    h = (hex_str or "").lstrip("#")
+    if len(h) != 6:
+        h = "FFFFFF"
+    r, g, b = h[0:2], h[2:4], h[4:6]
+    return f"&H00{b}{g}{r}".upper()
+
+
+def resolve_caption_style(caption_style: dict | None) -> tuple[dict, str]:
+    """Convert the UI-facing {font, mode, color} shape into
+    (style dict for build_ass_captions, mode string)."""
+    from packages.video.fonts import font_face
+
+    cs = caption_style or {}
+    mode = str(cs.get("mode", "static"))
+    font_key = str(cs.get("font", "kanit"))
+    color_hex = str(cs.get("color", "#FFFFFF"))
+
+    style = {
+        "fontname": font_face(font_key),
+        "primary": _hex_to_ass_color(color_hex),
+    }
+    return style, mode

@@ -31,6 +31,10 @@ totalEstimatedSec = sum of all segment durationSec = the actual silent-video len
 Classify every frame before using it: hook / product-display / close-up / on-body-demo / full-body-OOTD / back-view / reaction / cta-closing. Mark each USE or REJECT against the reject rules below.
 </shot_types>
 
+<compare>
+Passing USE is not the same as being the BEST choice. Sample frames are taken on a fixed time grid, so several frames often land within the same real-world moment or the same scene segment (same pose, same angle, same action, just a fraction of a second apart). Do not settle for the first frame that merely passes USE — look across all candidate frames near that moment/segment and pick the single strongest one, comparing: sharpest focus (not blurry/motion-smeared), best framing (subject/product fully in frame, not cut off or off-center), clearest product/logo visibility, most natural and confident expression, best lighting. If two candidate frames show essentially the same content, always prefer the objectively clearer/better-composed one over a mediocre one you happened to check first.
+</compare>
+
 <reject_safety>
 HARD REJECT — never use a frame or trim that shows or leads into: putting on OR taking off pants/skirts/shorts/trousers; holding bottoms open at the waist (fly open, waistband spread, stepping in); pulling clothing up/down before fully worn; ANY visible underwear (panties/briefs/boxers/bra-only); partial undress or wardrobe change.
 Even if the still looks fine — if the creator is mid dress/undress the trim WILL expose underwear. Skip it.
@@ -475,7 +479,7 @@ async def generate_dub_edit_script_video(
         user_msg_content.append({"type": "text", "text": DUB_EDIT_REMINDER})
 
         messages = [{"role": "user", "content": user_msg_content}]
-        extra = call_kwargs(model=model)
+        extra = call_kwargs(model=model, effort="medium")
         extra["timeout"] = settings.dub_vision_timeout_sec
         # Gemini does not reliably follow a JSON shape from prose instructions
         # alone (observed in production: it invented its own top-level keys
@@ -504,6 +508,188 @@ async def generate_dub_edit_script_video(
         clip_durations = {clip_id: duration for clip_id, _path, duration in clip_videos}
         edit_script = clamp_dub_segments_to_clip_durations(edit_script, clip_durations)
         return normalize_dub_edit_script(edit_script, sample_frames=None)
+    finally:
+        await delete_gemini_files(file_ids)
+
+
+DUB_REEDIT_SYSTEM_VIDEO = """<role>
+You are a TikTok affiliate video editor revising an EXISTING Edit Script at the creator's request. Do ALL reasoning in English. Write voiceoverScript values in Thai.
+</role>
+
+<video_model>
+This pipeline renders a SILENT video from cuts only — the creator records voiceover AFTER watching it. durationSec IS the speaking time for that line.
+</video_model>
+
+<inputs>
+You receive, in this order: the CURRENT edit script JSON (source of truth for continuity — every line/cut that already exists), an `=== edited_preview ===` video (the current silent video exactly as assembled right now, in edit-script order), one or more `=== clipN ===` raw source videos (the original unedited footage, for pulling in alternate moments), and a free-form instruction from the creator (Thai or English).
+</inputs>
+
+<scope>
+The instruction message will tell you whether specific voiceoverLineIds are SELECTED or whether the scope is the WHOLE script (no selection):
+- SELECTED lines: only touch those lines' content. Return ONLY the replacement segment(s) for those lines (not the rest of the script).
+- WHOLE script (no selection given): the instruction may address anything. You may revise any line(s) needed to satisfy it, but you MUST return every other line byte-identical to the current edit script — never regenerate from scratch, never touch a line the instruction doesn't imply changing.
+</scope>
+
+<shot_types>
+Classify any newly chosen frame/moment: hook / product-display / close-up / on-body-demo / full-body-OOTD / back-view / reaction / cta-closing. Mark USE or REJECT against the reject rules below.
+</shot_types>
+
+<compare>
+When choosing a replacement moment and multiple candidates show essentially the same content, compare them for focus, framing, product/logo visibility, and expression — pick the objectively best one, not just the first that passes USE.
+</compare>
+
+<reject_safety>
+HARD REJECT — never use a frame or trim that shows or leads into: putting on OR taking off pants/skirts/shorts/trousers; holding bottoms open at the waist (fly open, waistband spread, stepping in); pulling clothing up/down before fully worn; ANY visible underwear (panties/briefs/boxers/bra-only); partial undress or wardrobe change.
+Even if the still looks fine — if the creator is mid dress/undress the trim WILL expose underwear. Skip it.
+EXTRA: light-colored bottoms (white/cream/beige/light pink) with hands near the waistband, or a loose/open/unzipped waistband → reject that frame AND every frame within ±5s. Do not gamble.
+</reject_safety>
+
+<reject_prep>
+Skip any frame where the creator is: fixing hair, adjusting or smoothing the outfit, reaching for or touching the camera, setting up, looking off-camera/down/to the side, mid-step into a pose, or not yet ready. Use only settled, intentional, camera-ready moments.
+EXCEPTION — back-view product shot: turned-away-from-camera with hands at hair/head is NOT automatically "fixing hair" if the garment's back design is clearly visible and the pose is settled — classify as back-view and USE it.
+</reject_prep>
+
+<editing_style>
+Per revised line, set visual intent: "single-shot" (one cut, 2–4s max) or "multi-angle" (2–3 cuts sharing the line, hard max 3, never 4+). Important shots must play COMPLETE within their cut — never cut mid-action.
+If the instruction asks for multi-angle, pick frames ≥30s apart when possible so the angle genuinely changes; never reuse a frame consecutively.
+</editing_style>
+
+<task>
+Interpret the instruction and apply the correct operation(s) to the selected/implied line(s) — infer from the instruction alone, never ask for clarification, never expose a fixed menu of operations to the user:
+- DELETE a line entirely → return an empty segments array (or omit that line's segments in whole-script mode).
+- RETIME to a different moment (same clip or, if the instruction says so, elsewhere in the clip) → new sourceIn/sourceOut/matchedFrameTime, obeying reject rules.
+- SHORTEN/LENGTHEN a cut's duration → adjust sourceOut and durationSec, keep the visual action complete.
+- SPLIT into multi-angle → 2-3 cuts under one voiceoverLineId, each a genuinely different angle/distance.
+- REWRITE voiceoverScript wording only → keep sourceIn/sourceOut/matchedFrameTime unchanged, change only the Thai text.
+Combine operations freely when the instruction implies it (e.g. "shorten this and make the wording punchier" = both a duration change and a script rewrite on the same segment).
+</task>
+
+<anchor>
+- Every segment MUST include matchedFrameTime: the exact timestamp (seconds) in the RAW clip you chose (not the edited_preview's timeline).
+- sourceIn must be within ±0.35s of matchedFrameTime.
+- durationSec = sourceOut - sourceIn.
+- cutStyle options: "jump_cut" | "standard" | "zoom_in" | "zoom_out" — default to "jump_cut".
+- HARD BOUND: sourceIn/sourceOut must be real timestamps within that clip's given duration — never invent or extrapolate past the actual footage.
+</anchor>
+
+<grouping>
+All cuts under one revised line share voiceoverLineId (reuse the ORIGINAL voiceoverLineId being revised — do not invent a new one for an existing line). voiceoverScript goes on the first cut of each line only.
+Hard limit: at most 3 segments per voiceoverLineId.
+</grouping>
+
+<output_format>
+Return ONLY a valid JSON object, no prose or markdown.
+{
+  "mode": "dub_first",
+  "segments": [
+    {
+      "order": 1, "voiceoverLineId": 3,
+      "sourceClip": "clip0", "sourceIn": 22.0, "sourceOut": 24.5, "durationSec": 2.5,
+      "matchedFrameTime": 22.0, "visualDescription": "หยิบสินค้าขึ้นมาอีกมุม",
+      "cutStyle": "jump_cut", "voiceoverScript": "เนื้อสัมผัสเบาสบาย"
+    }
+  ]
+}
+</output_format>"""
+
+
+def build_dub_reedit_user_text(
+    *,
+    current_segments: list[dict[str, Any]],
+    selected_line_ids: list[int],
+    instruction: str,
+) -> str:
+    """Assemble the leading text block of the AI re-edit request."""
+    scope_block = (
+        f"<scope_selected_line_ids>{json.dumps(selected_line_ids)}</scope_selected_line_ids>"
+        if selected_line_ids
+        else "<scope_selected_line_ids>none — whole script in scope</scope_selected_line_ids>"
+    )
+    return (
+        f"<current_edit_script>\n{json.dumps({'segments': current_segments}, ensure_ascii=False)}\n</current_edit_script>\n\n"
+        f"{scope_block}\n\n"
+        f"<creator_instruction>{instruction}</creator_instruction>"
+    )
+
+
+async def generate_dub_reedit_script_video(
+    clip_videos: list[tuple[str, pathlib.Path, float]],
+    edited_preview: tuple[pathlib.Path, float],
+    *,
+    current_segments: list[dict[str, Any]],
+    selected_line_ids: list[int],
+    instruction: str,
+    project_uid: str,
+    on_thinking: Callable[[str], Awaitable[None]] | None = None,
+) -> list[dict[str, Any]]:
+    """Run the Gemini native-video AI re-edit call: current script + edited preview +
+    raw clips + instruction → replacement segment(s).
+
+    Scoped (selected_line_ids non-empty): returns ONLY the replacement segment(s)
+    for those lines. Whole-script (selected_line_ids empty): returns the FULL
+    replacement segments array (untouched lines echoed back unchanged by the model).
+    Merge into the persisted edit script is the caller's job — see
+    packages/video/timeline.py:merge_dub_reedit_segments.
+    """
+    from packages.core.settings import get_settings
+    from packages.llm.config import call_kwargs
+    from packages.llm.files import delete_gemini_files, gemini_video_block, upload_gemini_file
+    from packages.llm.gateway import acompletion_stream_thinking
+    from packages.video.timeline import clamp_dub_segments_to_clip_durations, parse_llm_json
+
+    settings = get_settings()
+    model = f"gemini/{settings.dub_vision_model}"
+
+    preview_path, _preview_duration = edited_preview
+    file_ids: list[str] = []
+    try:
+        t_upload = time.monotonic()
+        preview_file_id = await upload_gemini_file(preview_path, mime_type="video/mp4")
+        file_ids.append(preview_file_id)
+        for _clip_id, path, _duration in clip_videos:
+            file_ids.append(await upload_gemini_file(path, mime_type="video/mp4"))
+        upload_ms = round((time.monotonic() - t_upload) * 1000)
+
+        user_msg_content: list[dict[str, Any]] = [{"type": "text", "text": build_dub_reedit_user_text(
+            current_segments=current_segments,
+            selected_line_ids=selected_line_ids,
+            instruction=instruction,
+        )}]
+        user_msg_content.append({"type": "text", "text": "=== edited_preview ==="})
+        user_msg_content.append(gemini_video_block(preview_file_id))
+        for (clip_id, _path, _duration), file_id in zip(clip_videos, file_ids[1:], strict=True):
+            user_msg_content.append({"type": "text", "text": f"=== {clip_id} ==="})
+            user_msg_content.append(gemini_video_block(file_id))
+        user_msg_content.append({"type": "text", "text": DUB_EDIT_REMINDER})
+
+        messages = [{"role": "user", "content": user_msg_content}]
+        extra = call_kwargs(model=model, effort="medium")
+        extra["timeout"] = settings.dub_vision_timeout_sec
+        extra["response_format"] = {
+            "type": "json_object",
+            "response_schema": DUB_EDIT_SCHEMA_VIDEO,
+            "enforce_validation": True,
+        }
+
+        log.info(
+            "reedit_dub_video_payload",
+            project_uid=project_uid,
+            model=model,
+            clip_count=len(clip_videos),
+            selected_line_ids=selected_line_ids,
+            upload_ms=upload_ms,
+        )
+
+        resp = await acompletion_stream_thinking(
+            messages, system=DUB_REEDIT_SYSTEM_VIDEO, project_uid=project_uid,
+            on_thinking=on_thinking, **extra
+        )
+        raw = resp.choices[0].message.content or ""
+        result = parse_llm_json(raw)
+        segments = result.get("segments") or []
+        clip_durations = {clip_id: duration for clip_id, _path, duration in clip_videos}
+        clamped = clamp_dub_segments_to_clip_durations({"segments": segments}, clip_durations)
+        return clamped.get("segments") or []
     finally:
         await delete_gemini_files(file_ids)
 

@@ -27,12 +27,19 @@ import {
   Plus,
   Redo2,
   Save,
+  Sparkles,
   Trash2,
   Undo2,
   X
 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
-import { editorApi, type EditCut, type EditTimeline } from '../lib/editorApi'
+import {
+  editorApi,
+  initialCaptionLines,
+  type CaptionLine,
+  type EditCut,
+  type EditTimeline
+} from '../lib/editorApi'
 import { formatUserError } from '../lib/editorApi'
 
 const PX_PER_SEC = 36
@@ -426,6 +433,124 @@ function ShortcutsHelpModal({ isDub, onClose }: { isDub: boolean; onClose: () =>
   )
 }
 
+interface AiReeditLine {
+  id: number
+  script: string
+  cutCount: number
+}
+
+function AiReeditModal({
+  lines,
+  checked,
+  onToggle,
+  instruction,
+  onInstructionChange,
+  busy,
+  errorMsg,
+  onSubmit,
+  onClose
+}: {
+  lines: AiReeditLine[]
+  checked: Set<number>
+  onToggle: (lineId: number) => void
+  instruction: string
+  onInstructionChange: (v: string) => void
+  busy: boolean
+  errorMsg: string | null
+  onSubmit: () => void
+  onClose: () => void
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-110 flex items-center justify-center bg-black/70 p-4"
+      onClick={busy ? undefined : onClose}
+    >
+      <div
+        className="flex max-h-[85vh] w-full max-w-lg flex-col overflow-hidden rounded-xl border border-white/10 bg-zinc-900 shadow-2xl"
+        onClick={(ev) => ev.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b border-white/10 px-5 py-4">
+          <h3 className="flex items-center gap-1.5 text-sm font-semibold text-amber-100">
+            <Sparkles size={14} /> แก้ไขด้วย AI
+          </h3>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={busy}
+            className="rounded-lg p-1.5 text-amber-300/50 hover:bg-white/5 hover:text-amber-100 disabled:opacity-30"
+          >
+            <X size={16} />
+          </button>
+        </div>
+        <div className="scroll-ghost min-h-0 flex-1 overflow-y-auto px-5 py-4">
+          <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-amber-300/45">
+            เลือก scene ที่ต้องการแก้ (ไม่เลือก = ทั้งคลิป)
+          </p>
+          <ul className="mb-4 space-y-1.5">
+            {lines.map((l) => (
+              <li key={l.id}>
+                <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-white/10 bg-white/5 px-2.5 py-1.5 text-xs hover:bg-white/10">
+                  <input
+                    type="checkbox"
+                    checked={checked.has(l.id)}
+                    onChange={() => onToggle(l.id)}
+                    disabled={busy}
+                    className="mt-0.5"
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="text-amber-300/50">
+                      บรรทัด {l.id}
+                      {l.cutCount > 1 ? ` · ${l.cutCount} มุม` : ''}
+                    </span>
+                    <span className="block truncate text-amber-100/85">
+                      {l.script || '(ไม่มีบทพูด)'}
+                    </span>
+                  </span>
+                </label>
+              </li>
+            ))}
+          </ul>
+          <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-amber-300/45">
+            คำสั่งแก้ไข
+          </p>
+          <textarea
+            value={instruction}
+            onChange={(e) => onInstructionChange(e.target.value)}
+            disabled={busy}
+            placeholder="เช่น ตัด scene นี้ออก / เปลี่ยนไปใช้ช่วงอื่น / ทำเป็น multi-angle / เปลี่ยนบทพูดให้กระชับกว่านี้"
+            rows={3}
+            className="w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-xs text-amber-100 placeholder:text-amber-300/30 focus:border-amber-500/40 focus:outline-none disabled:opacity-50"
+          />
+          {errorMsg && (
+            <p className="mt-2 rounded-lg border border-red-400/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">
+              {errorMsg}
+            </p>
+          )}
+        </div>
+        <div className="flex items-center justify-end gap-2 border-t border-white/10 px-5 py-3">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={busy}
+            className="rounded-lg px-3 py-2 text-xs text-amber-300/60 hover:bg-white/5 hover:text-amber-100 disabled:opacity-30"
+          >
+            ยกเลิก
+          </button>
+          <button
+            type="button"
+            onClick={onSubmit}
+            disabled={busy || !instruction.trim()}
+            className="flex items-center gap-1.5 rounded-lg bg-amber-500 px-4 py-2 text-xs font-bold text-black shadow hover:bg-amber-400 disabled:opacity-40"
+          >
+            {busy ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+            {busy ? 'กำลังแก้ไข…' : 'ให้ AI แก้ไข'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 interface Filmstrip {
   /** Sparse — index `undefined` means that tile hasn't been generated yet (lazy). */
   thumbs: (string | undefined)[]
@@ -448,6 +573,8 @@ export function VideoTimelineEditor({ uid, mode, onClose, onSaved }: Props) {
   const [viewMode, setViewMode] = useState<'source' | 'edited'>('source')
   const [sceneCollapsed, setSceneCollapsed] = useState(false)
   const [scriptCollapsed, setScriptCollapsed] = useState(false)
+  const [captionLines, setCaptionLines] = useState<CaptionLine[] | null>(null)
+  const [captionCollapsed, setCaptionCollapsed] = useState(false)
 
   // Two <video> elements so the "next" edited-mode segment can be pre-seeked in the
   // background (hidden) and swapped in instantly — avoids the seek/reload freeze that
@@ -510,6 +637,15 @@ export function VideoTimelineEditor({ uid, mode, onClose, onSaved }: Props) {
   const [isPlaying, setIsPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
+
+  // AI re-edit (dub_first, pre-render only) — selection is by voiceoverLineId
+  // (a "scene"), not individual cut, since that's the unit the backend re-edit
+  // call operates on. Empty selection = whole-script scope.
+  const [aiPanelOpen, setAiPanelOpen] = useState(false)
+  const [aiChecked, setAiChecked] = useState<Set<number>>(new Set())
+  const [aiInstruction, setAiInstruction] = useState('')
+  const [aiBusy, setAiBusy] = useState(false)
+  const [aiError, setAiError] = useState<string | null>(null)
 
   // Undo/redo: refs hold the stacks (no re-render needed per push), historyTick
   // forces a re-render so the toolbar buttons' disabled state stays accurate.
@@ -583,6 +719,7 @@ export function VideoTimelineEditor({ uid, mode, onClose, onSaved }: Props) {
         if (cancelled) return
         setTimeline(t)
         setCuts(normalizeDubCuts(t.cuts))
+        setCaptionLines(initialCaptionLines() ?? null)
         setEditorPhase('preparing')
         // Filmstrip thumbnails are no longer generated eagerly here — that used to
         // seek through every source clip's full duration before the editor could
@@ -1905,6 +2042,16 @@ export function VideoTimelineEditor({ uid, mode, onClose, onSaved }: Props) {
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   )
 
+  function updateCaptionLine(id: string, patch: Partial<CaptionLine>): void {
+    setCaptionLines((prev) =>
+      prev ? prev.map((l) => (l.id === id ? { ...l, ...patch } : l)) : prev
+    )
+  }
+
+  function deleteCaptionLine(id: string): void {
+    setCaptionLines((prev) => (prev ? prev.filter((l) => l.id !== id) : prev))
+  }
+
   async function handleSave() {
     if (cuts.length === 0) {
       setError('ต้องมีอย่างน้อย 1 scene')
@@ -1924,13 +2071,70 @@ export function VideoTimelineEditor({ uid, mode, onClose, onSaved }: Props) {
             voiceoverScript: isDub ? (c.voiceoverScript ?? '') : undefined
           }) as EditCut
       )
-      await editorApi.saveEditTimeline(uid, payload)
+      await editorApi.saveEditTimeline(uid, payload, captionLines ?? undefined)
       onSaved()
       onClose()
     } catch (e) {
       setError(formatUserError(e))
     } finally {
       setSaving(false)
+    }
+  }
+
+  const canAiReedit = isDub && timeline?.editTarget === 'edit_script'
+
+  const aiLines: AiReeditLine[] = (() => {
+    const seen = new Map<number, AiReeditLine>()
+    for (const c of cuts) {
+      const lid = cutLineId(c)
+      const existing = seen.get(lid)
+      if (existing) existing.cutCount += 1
+      else seen.set(lid, { id: lid, script: lineScriptFor(cuts, lid), cutCount: 1 })
+    }
+    return Array.from(seen.values()).sort((a, b) => a.id - b.id)
+  })()
+
+  function toggleAiLine(lineId: number) {
+    setAiChecked((prev) => {
+      const next = new Set(prev)
+      if (next.has(lineId)) next.delete(lineId)
+      else next.add(lineId)
+      return next
+    })
+  }
+
+  async function handleAiReedit() {
+    if (!aiInstruction.trim()) return
+    setAiBusy(true)
+    setAiError(null)
+    try {
+      const payload: EditCut[] = cuts.map(
+        (c) =>
+          ({
+            source: c.source,
+            in: c.in,
+            out: c.out,
+            label: c.label,
+            voiceoverLineId: c.voiceoverLineId ?? (cutLineId(c) || null),
+            voiceoverScript: c.voiceoverScript ?? ''
+          }) as EditCut
+      )
+      const result = await editorApi.requestAiReedit(
+        uid,
+        payload,
+        Array.from(aiChecked),
+        aiInstruction.trim()
+      )
+      pushUndoSnapshot(cuts)
+      setCuts(result)
+      setSelectedId(null)
+      setAiChecked(new Set())
+      setAiInstruction('')
+      setAiPanelOpen(false)
+    } catch (e) {
+      setAiError(formatUserError(e))
+    } finally {
+      setAiBusy(false)
     }
   }
 
@@ -1972,6 +2176,17 @@ export function VideoTimelineEditor({ uid, mode, onClose, onSaved }: Props) {
           >
             <Redo2 size={16} />
           </button>
+          {canAiReedit && (
+            <button
+              type="button"
+              onClick={() => setAiPanelOpen(true)}
+              disabled={editorPhase !== 'ready' || cuts.length === 0}
+              title="แก้ไขด้วย AI"
+              className="ml-2 flex items-center gap-1.5 rounded-lg border border-amber-500/30 px-3 py-2 text-xs font-semibold text-amber-300 hover:bg-amber-500/10 disabled:opacity-30"
+            >
+              <Sparkles size={13} /> แก้ไขด้วย AI
+            </button>
+          )}
           <button
             type="button"
             onClick={handleSave}
@@ -1995,6 +2210,22 @@ export function VideoTimelineEditor({ uid, mode, onClose, onSaved }: Props) {
 
       {shortcutsOpen && (
         <ShortcutsHelpModal isDub={isDub} onClose={() => setShortcutsOpen(false)} />
+      )}
+
+      {aiPanelOpen && (
+        <AiReeditModal
+          lines={aiLines}
+          checked={aiChecked}
+          onToggle={toggleAiLine}
+          instruction={aiInstruction}
+          onInstructionChange={setAiInstruction}
+          busy={aiBusy}
+          errorMsg={aiError}
+          onSubmit={handleAiReedit}
+          onClose={() => {
+            if (!aiBusy) setAiPanelOpen(false)
+          }}
+        />
       )}
 
       {error && (
@@ -2324,6 +2555,81 @@ export function VideoTimelineEditor({ uid, mode, onClose, onSaved }: Props) {
                   className="min-h-0 flex-1 resize-none rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-amber-50 outline-none focus:border-amber-400/50"
                   placeholder="พิมพ์สคริปต์สำหรับบรรทัดนี้ (ใช้ร่วมทุกมุม)…"
                 />
+              )}
+            </div>
+          )}
+
+          {/* Caption lines — talking_head burned-in captions, collapsible */}
+          {captionLines && (
+            <div
+              className="flex shrink-0 flex-col overflow-hidden border-t border-white/10 px-5 py-2"
+              style={{ height: captionCollapsed ? 'auto' : EDITOR_SCRIPT_BAND_PX }}
+            >
+              <div className="mb-1 flex shrink-0 items-center justify-between gap-2">
+                <button
+                  type="button"
+                  onClick={() => setCaptionCollapsed((v) => !v)}
+                  className="flex items-center gap-1 text-xs font-semibold text-amber-200/60 uppercase tracking-widest hover:text-amber-100"
+                >
+                  {captionCollapsed ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                  Caption ({captionLines.length} บรรทัด)
+                </button>
+              </div>
+              {!captionCollapsed && (
+                <ul className="scroll-ghost min-h-0 flex-1 space-y-1.5 overflow-y-auto pr-1">
+                  {captionLines.map((line) => (
+                    <li
+                      key={line.id}
+                      className="flex items-start gap-2 rounded-lg border border-white/10 bg-white/5 px-2.5 py-2"
+                    >
+                      <textarea
+                        value={line.text}
+                        onChange={(e) => updateCaptionLine(line.id, { text: e.target.value })}
+                        onFocus={beginEdit}
+                        onBlur={commitEdit}
+                        rows={1}
+                        className="min-w-0 flex-1 resize-none rounded-md border border-white/10 bg-black/20 px-2 py-1 text-sm text-amber-50 outline-none focus:border-amber-400/50"
+                      />
+                      <div className="flex shrink-0 items-center gap-1 text-[11px] text-amber-300/60">
+                        <input
+                          type="number"
+                          step={0.1}
+                          value={line.start}
+                          onFocus={beginEdit}
+                          onBlur={commitEdit}
+                          onChange={(e) =>
+                            updateCaptionLine(line.id, {
+                              start: clamp(Number(e.target.value), 0, line.end)
+                            })
+                          }
+                          className="w-16 rounded border border-white/10 bg-black/20 px-1.5 py-1 text-amber-50 outline-none focus:border-amber-400/50"
+                        />
+                        <span>→</span>
+                        <input
+                          type="number"
+                          step={0.1}
+                          value={line.end}
+                          onFocus={beginEdit}
+                          onBlur={commitEdit}
+                          onChange={(e) =>
+                            updateCaptionLine(line.id, {
+                              end: Math.max(Number(e.target.value), line.start)
+                            })
+                          }
+                          className="w-16 rounded border border-white/10 bg-black/20 px-1.5 py-1 text-amber-50 outline-none focus:border-amber-400/50"
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => deleteCaptionLine(line.id)}
+                        title="ลบบรรทัดนี้ (เช่น AI หลอน/ถอดเสียงผิด)"
+                        className="shrink-0 rounded p-1 text-white/30 hover:text-red-400"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
               )}
             </div>
           )}

@@ -30,11 +30,12 @@ from packages.core.errors import format_exception_message
 from packages.db.models.core_auth import Job
 from packages.db.session import bind_tenant_search_path, get_engine, get_sessionmaker
 from packages.video.storage import data_root
-from packages.video.ffmpeg_bin import configure_ffmpeg, has_audio_stream, media_duration, probe_media, run_ffmpeg, trim_media, video_stream_info
+from packages.video.ffmpeg_bin import configure_ffmpeg, has_audio_stream, hwaccel_input_kwargs, media_duration, probe_media, run_ffmpeg, trim_media, video_encode_kwargs, video_stream_info
 from packages.video.timeline import (
     normalize_dub_edit_script,
     cuts_duration,
     filter_renderable_cuts,
+    merge_dub_reedit_segments,
 )
 
 log = get_logger(__name__)
@@ -249,14 +250,69 @@ async def _video_progress(
     message: str,
     *,
     status: str = "running",
+    thinking: str | None = None,
 ) -> None:
     """Update job progress with a human-readable step + message for the UI."""
+    result: dict[str, str] = {"step": step, "message": message}
+    if thinking:
+        result["thinking"] = thinking
     await _update_job(
         job_id,
         status,
         progress,
-        result={"step": step, "message": message},
+        result=result,
     )
+
+
+def _talking_transcribe_callbacks(
+    job_id: str,
+    *,
+    base_progress: int,
+    transcribe_span: int,
+    review_progress: int,
+) -> tuple[Any, Any]:
+    """Build on_progress + on_thinking callbacks for run_transcription."""
+    state = {"step": "transcribe", "message": "กำลังถอดเสียง…", "progress": base_progress}
+
+    async def on_progress(phase: str, idx: int, total: int) -> None:
+        if phase == "retry":
+            state.update(
+                step="transcribe",
+                message="Whisper พลาดช่วงเงียบ — ถอดเสียงรอบ 2…",
+                progress=base_progress + transcribe_span // 2,
+            )
+        elif phase == "whisper_done":
+            state.update(
+                step="transcribe",
+                message=f"ถอดเสียงเสร็จ {total} คลิป — กำลังส่งให้ AI ตรวจวิดีโอ…",
+                progress=base_progress + transcribe_span,
+            )
+        elif phase == "review":
+            state.update(
+                step="review",
+                message=f"AI กำลังดูวิดีโอคลิป {idx + 1}/{total}…",
+                progress=review_progress,
+            )
+        else:
+            span = transcribe_span
+            state.update(
+                step="transcribe",
+                message=f"กำลังถอดเสียงคลิป {idx + 1}/{total}…",
+                progress=int(base_progress + span * idx / max(total, 1)),
+            )
+        await _video_progress(job_id, state["progress"], state["step"], state["message"])
+
+    async def on_thinking(excerpt: str) -> None:
+        trimmed = excerpt[-2000:] if len(excerpt) > 2000 else excerpt
+        await _video_progress(
+            job_id,
+            state["progress"],
+            state["step"],
+            state["message"],
+            thinking=trimmed,
+        )
+
+    return on_progress, on_thinking
 
 
 async def _abort_if_cancelled(session: AsyncSession, project_uid: str, job_id: str) -> bool:
@@ -392,14 +448,24 @@ async def ingest_video(ctx: dict[str, Any], *, job_id: str, project_uid: str, te
             shutil.copy2(src, norm_out)
             norm_paths.append(str(norm_out.relative_to(root)))
 
-            from packages.video.scene import DUB_MAX_CLIP_SEC, dub_clip_exceeds_upload_limit
-
             clip_dur = media_duration(norm_out)
-            if dub_clip_exceeds_upload_limit(clip_dur):
-                raise ValueError(
-                    f"คลิป {i + 1}/{total} ยาว {int(clip_dur // 60)} น.{int(clip_dur % 60):02d} วิ "
-                    f"— สูงสุด {DUB_MAX_CLIP_SEC // 60} นาที กรุณาตัดคลิปให้สั้นลง"
-                )
+            if is_dub_first:
+                from packages.video.scene import DUB_MAX_CLIP_SEC, dub_clip_exceeds_upload_limit
+
+                if dub_clip_exceeds_upload_limit(clip_dur):
+                    raise ValueError(
+                        f"คลิป {i + 1}/{total} ยาว {int(clip_dur // 60)} น.{int(clip_dur % 60):02d} วิ "
+                        f"— สูงสุด {DUB_MAX_CLIP_SEC // 60} นาที กรุณาตัดคลิปให้สั้นลง"
+                    )
+            else:
+                from packages.video.timeline import TALKING_HEAD_MAX_TOTAL_SEC, talking_head_exceeds_total_limit
+
+                if talking_head_exceeds_total_limit(clip_dur):
+                    raise ValueError(
+                        f"คลิป {i + 1}/{total} ยาว {clip_dur / 3600:.1f} ชม. "
+                        f"— talking head รองรับสูงสุด {TALKING_HEAD_MAX_TOTAL_SEC // 3600} ชั่วโมงต่อโปรเจกต์ "
+                        "(รวมทุกไฟล์)"
+                    )
             total_dur_sec += clip_dur
 
             # Extract mono 16 kHz WAV + loudnorm for faster-whisper (talking_head only)
@@ -419,8 +485,9 @@ async def ingest_video(ctx: dict[str, Any], *, job_id: str, project_uid: str, te
                     "กรุณาลดจำนวน/ความยาวคลิป"
                 )
         else:
-            from packages.video.timeline import TALKING_HEAD_MAX_TOTAL_SEC
-            if total_dur_sec > TALKING_HEAD_MAX_TOTAL_SEC:
+            from packages.video.timeline import TALKING_HEAD_MAX_TOTAL_SEC, talking_head_exceeds_total_limit
+
+            if talking_head_exceeds_total_limit(total_dur_sec):
                 raise ValueError(
                     f"คลิปทั้งหมดรวมกันยาว {int(total_dur_sec // 3600)} ชม. "
                     f"— รองรับสูงสุด {TALKING_HEAD_MAX_TOTAL_SEC // 3600} ชั่วโมงต่อโปรเจกต์ "
@@ -515,17 +582,9 @@ async def transcribe_video(ctx: dict[str, Any], *, job_id: str, project_uid: str
         proj_for_brief = await _get_video_project(session, project_uid)
         brief = proj_for_brief.brief or ""
 
-        async def _progress(phase: str, idx: int, total: int) -> None:
-            if phase == "retry":
-                await _video_progress(job_id, 65, "transcribe", "Whisper พลาดช่วงเงียบ — ถอดเสียงรอบ 2…")
-                return
-            span = 15 if phase == "clip_modal" else 8
-            await _video_progress(
-                job_id,
-                int(60 + span * idx / max(total, 1)),
-                "transcribe",
-                f"กำลังถอดเสียงคลิป {idx + 1}/{total}…",
-            )
+        _t_progress, _t_thinking = _talking_transcribe_callbacks(
+            job_id, base_progress=60, transcribe_span=15, review_progress=68,
+        )
 
         async def _should_abort() -> bool:
             return await _abort_if_cancelled(session, project_uid, job_id)
@@ -534,7 +593,9 @@ async def transcribe_video(ctx: dict[str, Any], *, job_id: str, project_uid: str
             audio_files,
             video_files=video_files,
             brief=brief,
-            on_progress=_progress,
+            project_uid=project_uid,
+            on_progress=_t_progress,
+            on_thinking=_t_thinking,
             should_abort=_should_abort,
         )
         if transcript is None:
@@ -549,7 +610,7 @@ async def transcribe_video(ctx: dict[str, Any], *, job_id: str, project_uid: str
         await _update_video(session, project_uid, transcript_path=rel_path)
         await _video_progress(
             job_id, 70, "transcribe",
-            f"ถอดเสียงเสร็จแล้ว ({len(all_segments)} ช่วง) กำลังส่งให้ AI วางแผน…",
+            f"ถอดเสียง + AI ตรวจเสร็จ ({len(all_segments)} ช่วง) กำลังประกอบไทม์ไลน์…",
         )
 
         log.info("transcribe_done", project_uid=project_uid, segments=len(all_segments))
@@ -614,7 +675,7 @@ async def plan_edit(ctx: dict[str, Any], *, job_id: str, project_uid: str, tenan
         duration_mode = proj.duration_mode  # "full" | "auto" | "custom"
         target_sec = proj.target_duration_sec  # set only when duration_mode == "custom"
 
-        await _video_progress(job_id, 72, "plan", "กำลังวิเคราะห์ transcript…")
+        await _video_progress(job_id, 72, "plan", "กำลังประกอบไทม์ไลน์…")
 
         transcript_text = (root / proj.transcript_path).read_text(encoding="utf-8")
         transcript_data = json.loads(transcript_text)
@@ -788,6 +849,13 @@ async def render_video(ctx: dict[str, Any], *, job_id: str, project_uid: str, te
         # 1. Trim each segment to a numbered clip
         concat_list_path = output_dir / "concat.txt"
         clip_paths: list[pathlib.Path] = []
+        # Actual rendered duration of each trimmed clip (post zoom/crop too) —
+        # trim_media re-encodes to the nearest video frame, so the real output
+        # duration can differ slightly from the requested cut["out"]-cut["in"].
+        # Harmless for a few cuts, but accumulates across many and drifts
+        # burned-in captions out of sync further into a long video. Caption
+        # timing below uses these measured durations, not the requested ones.
+        actual_durations: list[float] = []
         total = len(cuts)
         log.info("render_video_cutting", project_uid=project_uid, total_cuts=total)
         for i, cut in enumerate(cuts):
@@ -840,13 +908,13 @@ async def render_video(ctx: dict[str, Any], *, job_id: str, project_uid: str, te
                     if _crop:
                         _crop_filter = build_ffmpeg_crop_filter(_crop)
                         _cropped = clips_dir / f"clip_{i:03d}_crop.mp4"
-                        _cinp = ffmpeg_lib2.input(str(clip_out))
+                        _cinp = ffmpeg_lib2.input(str(clip_out), **hwaccel_input_kwargs())
                         run_ffmpeg(
                             ffmpeg_lib2.output(
                                 _cinp.video.filter("crop", _crop["w"], _crop["h"], _crop["x"], _crop["y"]),
                                 _cinp.audio,
                                 str(_cropped),
-                                vcodec="libx264", crf=18, preset="fast", acodec="copy",
+                                **video_encode_kwargs(), acodec="copy",
                             ).overwrite_output(),
                             label=f"face_crop_{i}",
                         )
@@ -855,6 +923,7 @@ async def render_video(ctx: dict[str, Any], *, job_id: str, project_uid: str, te
                     log.warning("face_crop_failed", cut_idx=i, error=str(_fce))
 
             clip_paths.append(clip_out)
+            actual_durations.append(media_duration(clip_out))
 
         # 2. Write concat list (paths relative to concat.txt location)
         concat_list_path.write_text(
@@ -892,6 +961,7 @@ async def render_video(ctx: dict[str, Any], *, job_id: str, project_uid: str, te
         if timeline.get("karaoke") and proj.transcript_path:
             try:
                 from packages.video.caption import build_ass_karaoke, remap_words_to_output
+                from packages.video.fonts import escape_ass_filter_path, fonts_dir
 
                 _td = json.loads((root / proj.transcript_path).read_text(encoding="utf-8"))
                 _all_words = [
@@ -908,26 +978,32 @@ async def render_video(ctx: dict[str, Any], *, job_id: str, project_uid: str, te
                         _clip_abs[f"clip{_ci}"] = _off
                         _off += media_duration(_nf)
 
-                    _output_dur = sum(float(c["out"]) - float(c["in"]) for c in cuts)
-                    _remapped = remap_words_to_output(_all_words, cuts, _clip_abs)
+                    # Use each cut's ACTUAL rendered duration, not the requested
+                    # in/out, so caption timing tracks the real concatenated
+                    # video instead of drifting further out of sync per cut.
+                    _rendered_cuts = [
+                        {**c, "out": float(c["in"]) + actual_durations[_i]} for _i, c in enumerate(cuts)
+                    ]
+                    _output_dur = sum(actual_durations)
+                    _remapped = remap_words_to_output(_all_words, _rendered_cuts, _clip_abs)
                     if _remapped:
                         await _video_progress(job_id, 93, "render", "กำลังเพิ่ม caption แบบ karaoke…")
                         ass_path = captions_dir / "subtitles.ass"
                         ass_path.write_text(
                             build_ass_karaoke(_remapped, _output_dur), encoding="utf-8"
                         )
-                        # Escape drive-letter colon for ffmpeg filter on Windows
-                        _ass_filter = "ass=" + ass_path.as_posix().replace(":", r"\:")
+                        _ass_filter = (
+                            f"ass={escape_ass_filter_path(ass_path)}:"
+                            f"fontsdir={escape_ass_filter_path(fonts_dir())}"
+                        )
                         _final_captioned = output_dir / "final_captions.mp4"
                         run_ffmpeg(
-                            ffmpeg_lib.input(str(final_path))
+                            ffmpeg_lib.input(str(final_path), **hwaccel_input_kwargs())
                             .output(
                                 str(_final_captioned),
                                 vf=_ass_filter,
                                 acodec="copy",
-                                vcodec="libx264",
-                                crf=18,
-                                preset="fast",
+                                **video_encode_kwargs(),
                             )
                             .overwrite_output(),
                             label="burn_captions",
@@ -963,7 +1039,7 @@ async def render_video(ctx: dict[str, Any], *, job_id: str, project_uid: str, te
                     _png_paths.append(_png)
 
                 # Build ffmpeg overlay filter chain
-                _main_in = ffmpeg_lib.input(str(final_path))
+                _main_in = ffmpeg_lib.input(str(final_path), **hwaccel_input_kwargs())
                 _vid_stream = _main_in.video
                 _aud_stream = _main_in.audio
                 for _pi, (_popup, _png) in enumerate(zip(popups, _png_paths)):
@@ -985,7 +1061,7 @@ async def render_video(ctx: dict[str, Any], *, job_id: str, project_uid: str, te
                 run_ffmpeg(
                     ffmpeg_lib.output(
                         _vid_stream, _aud_stream, str(_final_popup),
-                        vcodec="libx264", crf=18, preset="fast", acodec="copy",
+                        **video_encode_kwargs(), acodec="copy",
                     ).overwrite_output(),
                     label="render_popups",
                 )
@@ -1003,7 +1079,7 @@ async def render_video(ctx: dict[str, Any], *, job_id: str, project_uid: str, te
                 _sticker_dir = output_dir / "stickers"
                 _sticker_dir.mkdir(exist_ok=True)
 
-                _g_main = ffmpeg_lib.input(str(final_path))
+                _g_main = ffmpeg_lib.input(str(final_path), **hwaccel_input_kwargs())
                 _g_vid = _g_main.video
                 _g_aud = _g_main.audio
                 for _gi, _g in enumerate(_graphics):
@@ -1023,7 +1099,7 @@ async def render_video(ctx: dict[str, Any], *, job_id: str, project_uid: str, te
                 run_ffmpeg(
                     ffmpeg_lib.output(
                         _g_vid, _g_aud, str(_final_stickered),
-                        vcodec="libx264", crf=18, preset="fast", acodec="copy",
+                        **video_encode_kwargs(), acodec="copy",
                     ).overwrite_output(),
                     label="render_stickers",
                 )
@@ -1098,6 +1174,7 @@ from packages.video.dub_ai import (  # noqa: E402  (prompt + LLM cores shared wi
     DUB_TIMELINE_SYSTEM as _DUB_TIMELINE_SYSTEM_IMPORTED,
     generate_dub_edit_script,
     generate_dub_edit_script_video,
+    generate_dub_reedit_script_video,
     plan_dub_timeline_cuts,
 )
 
@@ -1669,6 +1746,121 @@ async def analyze_dub_video_local(ctx: dict[str, Any], *, job_id: str, project_u
             reset_usage_ctx(_usage_token)
 
 
+# ── task: reedit_dub_scenes_local ────────────────────────────────────────────
+
+
+async def reedit_dub_scenes_local(ctx: dict[str, Any], *, job_id: str, project_uid: str, tenant_slug: str) -> dict:
+    """AI-assisted re-edit of an existing dub_first edit script (desktop only).
+
+    Reviews the CURRENT edit script + a freshly-encoded preview of the live
+    (possibly unsaved) editor state + all raw source clip proxies, against a
+    free-form creator instruction. Scoped to selected voiceoverLineIds if any
+    were marked; otherwise the whole script is in scope (see
+    packages/video/dub_ai.py:DUB_REEDIT_SYSTEM_VIDEO). Splices the result back
+    into edit_script.json rather than overwriting it wholesale — see
+    packages/video/timeline.py:merge_dub_reedit_segments.
+    """
+    log.info("task_start", task="reedit_dub_scenes_local", project_uid=project_uid)
+    await _video_progress(job_id, 20, "analyze", "กำลังเตรียมข้อมูลให้ AI…")
+    session = await _tenant_session(tenant_slug)
+    _usage_token = None
+    try:
+        if await _abort_if_cancelled(session, project_uid, job_id):
+            return {"cancelled": True}
+
+        await _pull_project_files(project_uid)
+
+        root = data_root()
+        output_dir = root / "video_outputs" / project_uid
+        proj = await _get_video_project(session, project_uid)
+        if not proj.edit_script_path:
+            raise ValueError("edit_script_path missing — run analyze first")
+        edit_script = json.loads((root / proj.edit_script_path).read_text(encoding="utf-8"))
+
+        proxy_manifest_file = output_dir / "proxy" / "proxy_manifest.json"
+        if not proxy_manifest_file.is_file():
+            raise ValueError("proxy_manifest.json missing — run analyze first")
+        proxy_records = json.loads(proxy_manifest_file.read_text(encoding="utf-8"))
+        proxy_records.sort(key=lambda r: int(r.get("order") or 0))
+        clip_videos: list[tuple[str, pathlib.Path, float]] = []
+        for rec in proxy_records:
+            proxy_path = output_dir / "proxy" / rec["file"]
+            if not proxy_path.is_file():
+                log.warning("reedit_proxy_missing", file=rec["file"], project_uid=project_uid)
+                continue
+            clip_videos.append((rec["clip_id"], proxy_path, float(rec.get("durationSec") or 0)))
+        if not clip_videos:
+            raise ValueError("No usable proxy clips found in manifest")
+
+        preview_path = output_dir / "ai_reedit" / "edited_preview.mp4"
+        if not preview_path.is_file():
+            raise ValueError("edited_preview.mp4 missing — desktop must render a live preview first")
+        request_file = output_dir / "ai_reedit" / "reedit_request.json"
+        request = json.loads(request_file.read_text(encoding="utf-8")) if request_file.is_file() else {}
+        selected_line_ids = [int(x) for x in (request.get("selectedLineIds") or [])]
+        instruction = str(request.get("instruction") or "").strip()
+        if not instruction:
+            raise ValueError("instruction missing")
+
+        tenant_id = await _get_tenant_id_by_slug(tenant_slug)
+        _usage_token = _set_video_usage_ctx(proj, tenant_id, project_uid)
+
+        await _video_progress(job_id, 74, "analyze", "กำลังแก้ไขตามคำสั่ง…")
+
+        async def _push_thinking(excerpt: str) -> None:
+            await _update_job(
+                job_id, "running", 74,
+                result={"step": "analyze", "message": "กำลังแก้ไขตามคำสั่ง…", "thinking": excerpt},
+            )
+
+        new_segments = await generate_dub_reedit_script_video(
+            clip_videos,
+            (preview_path, media_duration(preview_path)),
+            current_segments=edit_script.get("segments", []),
+            selected_line_ids=selected_line_ids,
+            instruction=instruction,
+            project_uid=project_uid,
+            on_thinking=_push_thinking,
+        )
+
+        merged = merge_dub_reedit_segments(edit_script, selected_line_ids, new_segments)
+
+        edit_script_path = output_dir / "edit_script.json"
+        edit_script_path.write_text(
+            json.dumps(merged, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        rel = str(edit_script_path.relative_to(root))
+        await _update_video(session, project_uid, edit_script_path=rel, status="waiting_vo")
+        await _push_project_files(project_uid)
+
+        segments = merged.get("segments", [])
+        await _update_job(
+            job_id, "ok", 100,
+            result={"step": "edit_script_ready", "message": "แก้ไขเรียบร้อยแล้ว", "segments": segments},
+        )
+        log.info("reedit_dub_scenes_local_done", project_uid=project_uid, segments=len(segments))
+        return {"segments": len(segments)}
+    except Exception as exc:
+        ts = await _tenant_session(tenant_slug)
+        try:
+            if await _abort_if_cancelled(ts, project_uid, job_id):
+                return {"cancelled": True}
+            await _update_video(ts, project_uid, status="error", error_msg=format_exception_message(exc))
+        finally:
+            await ts.close()
+        await _update_job(
+            job_id, "error", 0,
+            result={"step": "error", "message": format_exception_message(exc)},
+            error=format_exception_message(exc),
+        )
+        raise
+    finally:
+        await session.close()
+        if _usage_token is not None:
+            from packages.llm.usage import reset_usage_ctx
+            reset_usage_ctx(_usage_token)
+
+
 # ── task: plan_talking_local ─────────────────────────────────────────────────
 
 
@@ -1716,17 +1908,9 @@ async def plan_talking_local(ctx: dict[str, Any], *, job_id: str, project_uid: s
         if not clips_meta:
             raise ValueError("local_meta.clips missing — create the project with clip metadata")
 
-        async def _t_progress(phase: str, idx: int, total: int) -> None:
-            if phase == "retry":
-                await _video_progress(job_id, 45, "transcribe", "Whisper พลาดช่วงเงียบ — ถอดเสียงรอบ 2…")
-                return
-            span = 30 if phase == "clip_modal" else 20
-            await _video_progress(
-                job_id,
-                int(10 + span * idx / max(total, 1)),
-                "transcribe",
-                f"กำลังถอดเสียงคลิป {idx + 1}/{total}…",
-            )
+        _t_progress, _t_thinking = _talking_transcribe_callbacks(
+            job_id, base_progress=10, transcribe_span=30, review_progress=42,
+        )
 
         async def _t_abort() -> bool:
             return await _abort_if_cancelled(session, project_uid, job_id)
@@ -1735,7 +1919,9 @@ async def plan_talking_local(ctx: dict[str, Any], *, job_id: str, project_uid: s
             audio_files,
             video_files=video_files,
             brief=brief,
+            project_uid=project_uid,
             on_progress=_t_progress,
+            on_thinking=_t_thinking,
             should_abort=_t_abort,
         )
         if transcript is None:
@@ -1745,7 +1931,7 @@ async def plan_talking_local(ctx: dict[str, Any], *, job_id: str, project_uid: s
         transcript_path.write_text(json.dumps(transcript, ensure_ascii=False, indent=2), encoding="utf-8")
         await _update_video(session, project_uid, transcript_path=str(transcript_path.relative_to(root)))
 
-        await _video_progress(job_id, 60, "plan", "กำลังวิเคราะห์ transcript…")
+        await _video_progress(job_id, 60, "plan", "กำลังประกอบไทม์ไลน์…")
         segments = transcript["segments"]
         silence_gaps = transcript.get("silence_gaps", [])
 
@@ -1774,6 +1960,17 @@ async def plan_talking_local(ctx: dict[str, Any], *, job_id: str, project_uid: s
             silence_gaps=silence_gaps,
             on_progress=_p_progress,
         )
+
+        # Flattened word-level timestamps (source-timeline, absolute) so the
+        # desktop app can burn in captions locally via remap_words_to_output —
+        # dropped otherwise, since build_talking_head_timeline only keeps
+        # segment-level plain-text captions.
+        timeline["words"] = [
+            {"word": w["word"], "start": w["start"], "end": w["end"]}
+            for seg in segments
+            for w in seg.get("words", [])
+        ]
+        timeline["captionStyle"] = proj.caption_style
 
         timeline_path = output_dir / "timeline.json"
         timeline_path.write_text(json.dumps(timeline, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -1849,6 +2046,7 @@ class WorkerSettings:
         analyze_dub_first,
         analyze_dub_local,
         analyze_dub_video_local,
+        reedit_dub_scenes_local,
         plan_talking_local,
         render_dub_silent,
         plan_dub_timeline,

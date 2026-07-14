@@ -2,6 +2,8 @@
 
 from packages.video.transcribe import (
     build_transcribe_options,
+    clean_transcript_text,
+    drop_corrupted_words,
     is_hallucinated_segment,
     should_retry_transcription_without_vad,
     split_segment_on_word_gaps,
@@ -93,6 +95,86 @@ def test_common_hallucination_phrase_dropped():
 
 def test_real_phrase_not_flagged_as_hallucination():
     assert is_hallucinated_segment("ครีมตัวนี้ดีมากเลยค่ะ", **_clean_kwargs()) is False
+
+
+# ── clean_transcript_text ────────────────────────────────────────────────────────
+
+def test_clean_transcript_text_strips_lone_surrogates():
+    corrupted = "เ" + "\udc99" + "ี" + "\udc88"
+    cleaned = clean_transcript_text(corrupted)
+    assert "\udc99" not in cleaned
+    assert "\udc88" not in cleaned
+    assert "เ" in cleaned and "ี" in cleaned
+
+
+def test_clean_transcript_text_leaves_normal_thai_untouched():
+    assert clean_transcript_text("สวัสดีค่ะ") == "สวัสดีค่ะ"
+
+
+def test_clean_transcript_text_empty_string():
+    assert clean_transcript_text("") == ""
+
+
+# ── drop_corrupted_words ──────────────────────────────────────────────────────────
+
+def test_drop_corrupted_words_removes_only_corrupted_token():
+    words = [
+        {"word": "หนึ่ง", "start": 0.0, "end": 0.3},
+        {"word": "สอ" + "\udc99" + "ง", "start": 0.3, "end": 0.6},
+        {"word": "สาม", "start": 0.6, "end": 0.9},
+    ]
+    out = drop_corrupted_words(words)
+    assert [w["word"] for w in out] == ["หนึ่ง", "สาม"]
+
+
+def test_drop_corrupted_words_no_corruption_unchanged():
+    words = [{"word": "a", "start": 0.0, "end": 1.0}]
+    assert drop_corrupted_words(words) == words
+
+
+def test_drop_corrupted_words_empty_list():
+    assert drop_corrupted_words([]) == []
+
+
+def test_tighten_segment_bounds_cleans_display_text():
+    seg = {
+        "start": 0.0, "end": 1.0,
+        "text": "เ" + "\udc99" + "ี่ยว",
+        "words": [{"word": "ok", "start": 0.0, "end": 0.5}],
+    }
+    out = tighten_segment_bounds(seg)
+    assert "\udc99" not in out["text"]
+
+
+def test_tighten_segment_bounds_drops_whole_corrupted_word_not_partial_strip():
+    # Partial-stripping a corrupted word (instead of dropping it whole) used
+    # to desync merge_graphemes_to_words' character-count alignment and cut
+    # every word after it mid-syllable — this is the real regression test.
+    seg = {
+        "start": 0.0, "end": 1.0,
+        "text": "ok",
+        "words": [
+            {"word": "good", "start": 0.0, "end": 0.2},
+            {"word": "ba" + "\udc99" + "d", "start": 0.2, "end": 0.4},
+            {"word": "fine", "start": 0.4, "end": 0.6},
+        ],
+    }
+    out = tighten_segment_bounds(seg)
+    words_out = [w["word"] for w in out["words"]]
+    assert "good" in words_out
+    assert "fine" in words_out
+    assert not any("\udc99" in w for w in words_out)
+    assert len(words_out) == 2  # the corrupted token is gone entirely, not mangled
+
+
+def test_tighten_segment_bounds_all_words_corrupted_returns_empty_words():
+    seg = {
+        "start": 0.0, "end": 1.0,
+        "text": "x",
+        "words": [{"word": "a" + "\udc99", "start": 0.0, "end": 0.5}],
+    }
+    out = tighten_segment_bounds(seg)
+    assert out["words"] == []
 
 
 # ── tighten_segment_bounds ──────────────────────────────────────────────────────
@@ -232,3 +314,33 @@ def test_custom_gap_threshold():
     # gap = 1.5s: split when threshold 1.0, keep when threshold 2.0
     assert len(split_segment_on_word_gaps(seg, max_gap_sec=1.0)) == 2
     assert len(split_segment_on_word_gaps(seg, max_gap_sec=2.0)) == 1
+
+
+# ── split_segment_on_word_gaps: max-duration force-split (no gap needed) ──────
+
+def test_force_splits_long_gapless_run():
+    # Whisper hallucination signature: many words, zero gaps, spanning far
+    # longer than any single Gemini review verdict should cover.
+    words = [{"word": f"w{i}", "start": i * 1.0, "end": i * 1.0 + 1.0} for i in range(20)]
+    seg = {"start": 0.0, "end": 20.0, "text": "".join(w["word"] for w in words), "words": words}
+    out = split_segment_on_word_gaps(seg, max_duration_sec=5.0)
+    assert len(out) > 1
+    for part in out:
+        assert part["end"] - part["start"] <= 5.0 + 1e-6
+
+
+def test_no_duration_split_under_threshold():
+    words = [{"word": f"w{i}", "start": i * 1.0, "end": i * 1.0 + 1.0} for i in range(4)]
+    seg = {"start": 0.0, "end": 4.0, "text": "wwww", "words": words}
+    out = split_segment_on_word_gaps(seg, max_duration_sec=15.0)
+    assert len(out) == 1
+
+
+def test_duration_split_covers_all_words_no_loss():
+    words = [{"word": f"w{i}", "start": i * 1.0, "end": i * 1.0 + 1.0} for i in range(20)]
+    seg = {"start": 0.0, "end": 20.0, "text": "x", "words": words}
+    out = split_segment_on_word_gaps(seg, max_duration_sec=5.0)
+    total_words = sum(len(p["words"]) for p in out)
+    assert total_words == 20
+    assert out[0]["start"] == 0.0
+    assert out[-1]["end"] == 20.0

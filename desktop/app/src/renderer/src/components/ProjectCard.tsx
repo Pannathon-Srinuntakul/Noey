@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Folder, Loader2, Mic, Pencil, Trash2, XCircle } from 'lucide-react'
+import { Folder, Loader2, Mic, Pencil, Square, Trash2, XCircle } from 'lucide-react'
 import type { LocalProject } from '../../../preload'
 import { deleteRemote, type ApiSession } from '../lib/videosLocalApi'
 import { useProjectPipeline } from '../lib/useProjectPipeline'
@@ -47,27 +47,39 @@ export default function ProjectCard({
     mediaKey,
     showEditor,
     setShowEditor,
-    runAnalyze,
-    runTalkingHead,
     runFinal,
     retry,
+    stop,
+    stopping,
     openEditor
   } = useProjectPipeline(initial, session)
 
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [deleting, setDeleting] = useState(false)
-  const startedRef = useRef(false)
+  const thinkingScrollRef = useRef<HTMLDivElement>(null)
+  const stickThinkingBottomRef = useRef(true)
 
-  // Freshly-created projects (or ones that never got past import) start their
-  // pipeline automatically — matches web's "upload → starts immediately" flow.
+  const THINKING_NEAR_BOTTOM_PX = 48
+
+  const isThinkingNearBottom = (el: HTMLDivElement): boolean =>
+    el.scrollHeight - el.scrollTop - el.clientHeight <= THINKING_NEAR_BOTTOM_PX
+
+  const handleThinkingScroll = (): void => {
+    const el = thinkingScrollRef.current
+    if (!el) return
+    stickThinkingBottomRef.current = isThinkingNearBottom(el)
+  }
+
   useEffect(() => {
-    if (startedRef.current) return
-    if (step !== 'imported') return
-    startedRef.current = true
-    if (mode === 'talking_head') void runTalkingHead()
-    else void runAnalyze()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+    if (!thinking) {
+      stickThinkingBottomRef.current = true
+      return
+    }
+    if (!stickThinkingBottomRef.current) return
+    const el = thinkingScrollRef.current
+    if (!el) return
+    el.scrollTop = el.scrollHeight
+  }, [thinking])
 
   const date = new Date(project.createdAt).toLocaleString('th-TH', {
     day: 'numeric',
@@ -159,14 +171,29 @@ export default function ProjectCard({
 
       {isBusy(step) && (
         <>
-          <p className="mt-3 flex items-center gap-1.5 text-xs text-[#5b3a1a]/80">
-            <Loader2 size={12} className="animate-spin shrink-0 text-amber-600" />
-            {progressMsg || STEP_LABELS[step]}
-          </p>
+          <div className="mt-3 flex items-center justify-between gap-2">
+            <p className="flex min-w-0 flex-1 items-center gap-1.5 text-xs text-[#5b3a1a]/80">
+              <Loader2 size={12} className="animate-spin shrink-0 text-amber-600" />
+              <span className="truncate">{progressMsg || STEP_LABELS[step]}</span>
+            </p>
+            <button
+              type="button"
+              onClick={() => void stop()}
+              disabled={stopping}
+              className="flex shrink-0 items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-2 py-1 text-[10px] font-semibold text-red-700 hover:bg-red-100 disabled:opacity-50"
+            >
+              <Square size={10} fill="currentColor" />
+              {stopping ? 'กำลังหยุด…' : 'หยุด'}
+            </button>
+          </div>
           {thinking && (
             <div className="mt-2 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2">
               <p className="mb-1 text-[10px] font-medium text-zinc-400">AI กำลังคิด…</p>
-              <div className="scroll-light max-h-32 overflow-y-auto font-mono text-[10px] leading-relaxed whitespace-pre-wrap text-zinc-500">
+              <div
+                ref={thinkingScrollRef}
+                onScroll={handleThinkingScroll}
+                className="scroll-light max-h-32 overflow-y-auto font-mono text-[10px] leading-relaxed whitespace-pre-wrap text-zinc-500"
+              >
                 {thinking}
               </div>
             </div>

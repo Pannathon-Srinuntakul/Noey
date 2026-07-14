@@ -57,6 +57,7 @@ export interface LocalProject {
   voiceoverPath?: string
   timeline?: Record<string, unknown>
   error?: string
+  captionStyle?: { font: string; mode: string; color: string; border_color: string; size: number }
 }
 
 type ProgressUnsubscribe = () => void
@@ -91,7 +92,9 @@ const noey = {
     renderSilent: jobCommand('sidecar:renderSilent'),
     renderFinal: jobCommand('sidecar:renderFinal'),
     extractAudio: jobCommand('sidecar:extractAudio'),
-    renderTimeline: jobCommand('sidecar:renderTimeline')
+    renderTimeline: jobCommand('sidecar:renderTimeline'),
+    renderAiPreview: jobCommand('sidecar:renderAiPreview'),
+    cancel: (projectDir: string): Promise<void> => ipcRenderer.invoke('sidecar:cancel', projectDir)
   },
   projects: {
     list: (): Promise<LocalProject[]> => ipcRenderer.invoke('projects:list'),

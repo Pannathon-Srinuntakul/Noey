@@ -54,7 +54,37 @@ def test_ingest_rejects_overlong_clip(sample_clip: Path, tmp_path: Path, monkeyp
     pdir = tmp_path / "p"
     pdir.mkdir()
     with pytest.raises(ValueError, match="เกินลิมิต"):
-        run_ingest(IngestJob(projectDir=pdir, sources=[sample_clip]), lambda e: None)
+        run_ingest(
+            IngestJob(projectDir=pdir, sources=[sample_clip], mode="dub_first"),
+            lambda e: None,
+        )
+
+
+def test_talking_head_ignores_per_clip_dub_limit(
+    sample_clip: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """talking_head must not use dub_first's 20-min per-file cap."""
+    monkeypatch.setattr("sidecar.ingest.dub_clip_exceeds_upload_limit", lambda d: True)
+    pdir = tmp_path / "p"
+    pdir.mkdir()
+    done = run_ingest(
+        IngestJob(projectDir=pdir, sources=[sample_clip], mode="talking_head"),
+        lambda e: None,
+    )
+    assert done["event"] == "done"
+
+
+def test_talking_head_rejects_single_three_hour_clip(
+    sample_clip: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("sidecar.ingest.media_duration", lambda _p: 3 * 3600.0)
+    pdir = tmp_path / "p"
+    pdir.mkdir()
+    with pytest.raises(ValueError, match="2 ชั่วโมง"):
+        run_ingest(
+            IngestJob(projectDir=pdir, sources=[sample_clip], mode="talking_head"),
+            lambda e: None,
+        )
 
 
 @pytest.fixture()

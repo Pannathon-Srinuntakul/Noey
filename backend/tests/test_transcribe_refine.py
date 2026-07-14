@@ -17,6 +17,7 @@ from packages.video.transcribe_refine import (
     build_refine_request,
     build_silence_gap_request,
     build_talking_review_user_text,
+    redistribute_text_over_slots,
 )
 
 
@@ -51,6 +52,60 @@ def test_build_silence_gap_request_maps_in_out_to_start_end():
     ]
 
 
+# ── redistribute_text_over_slots ─────────────────────────────────────────────
+
+def test_redistribute_single_slot_spans_the_slots_own_range():
+    # "แก้แล้ว" tokenizes into 2 real words — even a single original slot can
+    # expand into multiple output words, all confined to that slot's span.
+    slots = [{"word": "old", "start": 1.0, "end": 2.0}]
+    out = redistribute_text_over_slots("แก้แล้ว", slots)
+    assert "".join(w["word"] for w in out) == "แก้แล้ว"
+    assert out[0]["start"] == 1.0
+    assert out[-1]["end"] == 2.0
+
+
+def test_redistribute_splits_on_real_thai_word_boundaries():
+    # 3 original (e.g. corrupted/grapheme-fragment) slots spanning [0.0, 3.0];
+    # corrected text is real Thai words — output must be exactly those real
+    # words, never a mid-syllable character slice (the bug the old
+    # character-count design had: "หัว" could come out as "หั" + "ว").
+    slots = [
+        {"word": "x", "start": 0.0, "end": 1.0},
+        {"word": "y", "start": 1.0, "end": 2.0},
+        {"word": "z", "start": 2.0, "end": 3.0},
+    ]
+    out = redistribute_text_over_slots("สวัสดีครับ", slots)
+    words = [w["word"] for w in out]
+    assert "".join(words) == "สวัสดีครับ"  # no characters dropped
+    assert all(w for w in words)  # no empty fragments
+
+    from pythainlp.tokenize import word_tokenize
+
+    expected = [w for w in word_tokenize("สวัสดีครับ", engine="newmm", keep_whitespace=False) if w.strip()]
+    assert words == expected  # every output word is a real tokenizer word, not a raw slice
+
+
+def test_redistribute_spans_stay_within_original_slot_range():
+    slots = [
+        {"word": "a", "start": 5.0, "end": 5.3},
+        {"word": "b", "start": 5.3, "end": 5.6},
+    ]
+    out = redistribute_text_over_slots("ไปกินข้าว", slots)
+    assert out[0]["start"] == 5.0
+    assert out[-1]["end"] == 5.6
+    for w in out:
+        assert 5.0 <= w["start"] <= 5.6
+        assert 5.0 <= w["end"] <= 5.6
+
+
+def test_redistribute_empty_text_returns_empty():
+    assert redistribute_text_over_slots("", [{"word": "a", "start": 0.0, "end": 1.0}]) == []
+
+
+def test_redistribute_no_slots_returns_empty():
+    assert redistribute_text_over_slots("hello", []) == []
+
+
 # ── apply_refine_results: timing is sacred ───────────────────────────────────
 
 def test_keep_replaces_text_only_timing_untouched():
@@ -61,7 +116,10 @@ def test_keep_replaces_text_only_timing_untouched():
     assert out[0]["text"] == "สวัสดี"          # corrected
     assert out[0]["start"] == 1.234             # untouched
     assert out[0]["end"] == 2.567               # untouched
-    assert out[0]["words"] == segs[0]["words"]  # untouched
+    # word-level TIMING is untouched; the word's own text now carries the
+    # correction too (redistribute_text_over_slots), so burned-in per-word
+    # captions show the same fix as the segment-level text does.
+    assert out[0]["words"] == [{"word": "สวัสดี", "start": 1.234, "end": 2.567}]
 
 
 def test_smuggled_timestamps_in_result_are_ignored():

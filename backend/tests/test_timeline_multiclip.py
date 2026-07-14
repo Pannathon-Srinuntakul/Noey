@@ -534,3 +534,10 @@ def test_normalize_dub_dedupes_with_sample_frames() -> None:
     anchors = [s["matchedFrameTime"] for s in out["segments"]]
     assert len(anchors) == 1
     assert anchors[0] == 10.0
+
+
+def test_talking_head_total_limit() -> None:
+    from packages.video.timeline import TALKING_HEAD_MAX_TOTAL_SEC, talking_head_exceeds_total_limit
+
+    assert not talking_head_exceeds_total_limit(TALKING_HEAD_MAX_TOTAL_SEC)
+    assert talking_head_exceeds_total_limit(TALKING_HEAD_MAX_TOTAL_SEC + 1)

@@ -22,12 +22,21 @@ export interface ClipMetaIn {
   fps: number
 }
 
+export interface CaptionStyleIn {
+  font: 'kanit' | 'prompt' | 'sarabun' | 'anuphan'
+  mode: 'static' | 'word_pop' | 'typewriter'
+  color: string
+  border_color: string
+  size: number
+}
+
 export interface CreateLocalProjectIn {
   mode?: 'dub_first' | 'talking_head'
   brief?: string | null
   user_script?: string | null
   target_duration_sec?: number | null
   clips: ClipMetaIn[]
+  caption_style?: CaptionStyleIn | null
 }
 
 export interface FrameManifestEntry {
@@ -226,6 +235,14 @@ export function planDub(
   })
 }
 
+/** Stop an in-progress server-side job (Whisper / Gemini / analyze). */
+export function cancelRemoteProject(
+  session: ApiSession,
+  remoteUid: string
+): Promise<{ uid: string; status: string }> {
+  return request(session, `/videos/${remoteUid}/cancel`, { method: 'POST' })
+}
+
 export function patchLocalStatus(
   session: ApiSession,
   remoteUid: string,
@@ -308,5 +325,22 @@ export function putLocalEditScript(
   return request(session, `/videos/${remoteUid}/local-edit-script`, {
     method: 'PUT',
     body: JSON.stringify(editScript)
+  })
+}
+
+/** dub_first: AI-assisted re-edit. `previewPath` is the freshly-rendered live-editor
+ *  silent preview (absolute path, from sidecar.renderAiPreview) — uploaded fresh
+ *  every call so the AI always reviews exactly what's on screen right now.
+ *  `selectedLineIds` empty = whole-script scope (see DUB_REEDIT_SYSTEM_VIDEO). */
+export function reeditDubScenes(
+  session: ApiSession,
+  remoteUid: string,
+  previewPath: string,
+  { selectedLineIds, instruction }: { selectedLineIds: number[]; instruction: string }
+): Promise<{ job_id: string }> {
+  return request(session, `/videos/${remoteUid}/reedit-dub-scenes`, {
+    method: 'POST',
+    formFields: { manifest: JSON.stringify({ selectedLineIds, instruction }) },
+    formFiles: [{ field: 'preview', path: previewPath, filename: 'edited_preview.mp4' }]
   })
 }
