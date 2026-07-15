@@ -6,6 +6,7 @@ import { useProjectPipeline } from '../lib/useProjectPipeline'
 import { isBusy, STEP_LABELS, type ProjectStep } from '../lib/projectFlow'
 import { VideoTimelineEditor } from './TimelineEditor'
 import DubVideoPlayer from './DubVideoPlayer'
+import { EffectsPanel } from './EffectsPanel'
 
 // Same status vocabulary/colors as web's ProjectCard (VideoPage.tsx statusLabel/statusColor),
 // mapped onto desktop's finer-grained `step` via the existing isBusy() helper.
@@ -265,6 +266,7 @@ export default function ProjectCard({
           >
             <Pencil size={12} /> แก้ไขวิดีโอ
           </button>
+          <EffectsPanel project={project} session={session} baseFile="final.mp4" />
         </div>
       )}
     </div>

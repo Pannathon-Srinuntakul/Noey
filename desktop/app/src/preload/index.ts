@@ -67,6 +67,21 @@ export interface LocalProject {
 
 type ProgressUnsubscribe = () => void
 
+// Mirrors main/library.ts (preload defines its own view, same as LocalProject).
+export interface EffectTemplate {
+  id: string
+  name: string
+  createdAt: string
+  instances: Record<string, unknown>[]
+}
+
+export interface StickerAsset {
+  id: string
+  name: string
+  kind: 'lottie' | 'image'
+  file: string
+}
+
 export interface JobCommandApi {
   run: (job: unknown) => Promise<SidecarEvent>
   onProgress: (cb: (evt: SidecarEvent) => void) => ProgressUnsubscribe
@@ -100,12 +115,15 @@ const noey = {
     renderTimeline: jobCommand('sidecar:renderTimeline'),
     renderAiPreview: jobCommand('sidecar:renderAiPreview'),
     compositeOverlay: jobCommand('sidecar:compositeOverlay'),
+    renderEffects: jobCommand('sidecar:renderEffects'),
+    proxyOne: jobCommand('sidecar:proxyOne'),
     cancel: (projectDir: string): Promise<void> => ipcRenderer.invoke('sidecar:cancel', projectDir)
   },
   // Node/Remotion sidecar — renders transparent effect overlays (see nodeSidecar.ts).
   nodeSidecar: {
     ping: (): Promise<SidecarEvent> => ipcRenderer.invoke('nodeSidecar:ping'),
-    renderOverlay: jobCommand('nodeSidecar:renderOverlay')
+    renderOverlay: jobCommand('nodeSidecar:renderOverlay'),
+    renderGeneratedOverlay: jobCommand('nodeSidecar:renderGeneratedOverlay')
   },
   projects: {
     list: (): Promise<LocalProject[]> => ipcRenderer.invoke('projects:list'),
@@ -125,6 +143,18 @@ const noey = {
     /** media:// URL for a file inside a project dir (path must be project-relative). */
     urlFor: (uid: string, relPath: string): string =>
       `media://project/${uid}/${relPath.split(/[\\/]/).map(encodeURIComponent).join('/')}`
+  },
+  // Local effects asset library (templates + stickers), reusable across projects.
+  library: {
+    listTemplates: (): Promise<EffectTemplate[]> => ipcRenderer.invoke('library:listTemplates'),
+    saveTemplate: (name: string, instances: Record<string, unknown>[]): Promise<EffectTemplate> =>
+      ipcRenderer.invoke('library:saveTemplate', name, instances),
+    deleteTemplate: (id: string): Promise<void> => ipcRenderer.invoke('library:deleteTemplate', id),
+    listStickers: (): Promise<StickerAsset[]> => ipcRenderer.invoke('library:listStickers'),
+    stickerPath: (file: string): Promise<string> => ipcRenderer.invoke('library:stickerPath', file),
+    deleteSticker: (id: string): Promise<void> => ipcRenderer.invoke('library:deleteSticker', id),
+    importSticker: (): Promise<{ asset: StickerAsset; path: string } | null> =>
+      ipcRenderer.invoke('library:importSticker')
   },
   auth: {
     save: (auth: StoredAuth): Promise<void> => ipcRenderer.invoke('auth:save', auth),

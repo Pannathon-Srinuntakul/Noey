@@ -6,6 +6,7 @@ import { registerSidecarIpc } from './sidecar'
 import { registerNodeSidecarIpc } from './nodeSidecar'
 import { registerAuthIpc } from './authStore'
 import { registerProjectsIpc } from './projects'
+import { registerLibraryIpc } from './library'
 import { registerMediaProtocol, registerMediaScheme } from './media'
 import { registerLogIpc } from './logger'
 import { registerApiProxyIpc } from './apiProxy'
@@ -88,6 +89,7 @@ app.whenReady().then(() => {
   registerNodeSidecarIpc()
   registerAuthIpc()
   registerProjectsIpc()
+  registerLibraryIpc()
 
   createWindow()
 

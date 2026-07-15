@@ -588,3 +588,148 @@ async def reedit_dub_scenes(
 
     await _enqueue(job_id, "reedit_dub_scenes_local", project_uid=uid, tenant_slug=auth.tenant_slug)
     return AnalyzeFramesOut(job_id=job_id)
+
+
+# ── effects layer (Remotion) ────────────────────────────────────────────────
+
+@router.post("/{uid}/plan-effects", response_model=AnalyzeFramesOut, status_code=202)
+async def plan_effects(
+    uid: str,
+    auth: CurrentUser,
+    session: AsyncSession = Depends(db_session),
+    proxy: UploadFile = File(...),
+    prompt: str = Form(""),
+    script: str = Form(""),
+) -> AnalyzeFramesOut:
+    """AI-assisted effects placement: receive a downscaled proxy of the finished
+    cut video + an optional instruction + an optional timed script/transcript,
+    enqueue the Gemini placement pass.
+
+    ``script`` is the voiceover/transcript with output-timeline timing (built by
+    the desktop app from the dub edit script or talking_head caption lines) —
+    it lets the AI match effects to the exact spoken words, not just the visuals.
+
+    The full-res video never leaves the user's machine — only this proxy is
+    uploaded for the AI to watch (parallel to dub's proxy upload). Effects are a
+    layer on top; the cut/timeline is untouched.
+    """
+    proj = await _get_local_project(session, uid, auth.user_id)
+    if proj.status not in ("done", "waiting_vo", "error"):
+        raise HTTPException(400, "ต้องมีวิดีโอที่ตัดเสร็จแล้วก่อนจึงจะวางเอฟเฟกต์ได้")
+
+    root = data_root()
+    effects_dir = root / "video_outputs" / uid / "effects"
+    effects_dir.mkdir(parents=True, exist_ok=True)
+    (effects_dir / "cut_proxy.mp4").write_bytes(await proxy.read())
+    (effects_dir / "prompt.txt").write_text(prompt or "", encoding="utf-8")
+    (effects_dir / "script.txt").write_text(script or "", encoding="utf-8")
+    await push_project_files(uid)  # proxy MP4 + prompt + script only
+
+    job_id = f"vlocal_{uid[:8]}"
+    await session.execute(text("SET search_path TO core, public"))
+    existing = await session.get(Job, job_id)
+    queued = {"step": "queued", "message": "รับวิดีโอแล้ว รอ AI วางเอฟเฟกต์…"}
+    if existing:
+        existing.status = "queued"
+        existing.progress = 2
+        existing.result = queued
+        existing.error = None
+    else:
+        session.add(Job(
+            id=job_id, tenant_id=auth.tenant_id, type="video_edit",
+            status="queued", progress=2, result=queued,
+        ))
+    await session.commit()
+
+    await _enqueue(job_id, "plan_effects_local", project_uid=uid, tenant_slug=auth.tenant_slug)
+    return AnalyzeFramesOut(job_id=job_id)
+
+
+@router.get("/{uid}/effects")
+async def get_effects(
+    uid: str,
+    auth: CurrentUser,
+    session: AsyncSession = Depends(db_session),
+) -> dict:
+    """Return the stored effects.json (empty doc if none yet)."""
+    from packages.video.effects import empty_effects_doc, normalize_effects_doc
+
+    await _get_local_project(session, uid, auth.user_id)
+    try:
+        f = await resolve_stored_output(uid, f"video_outputs/{uid}/effects.json")
+    except FileNotFoundError:
+        return empty_effects_doc().model_dump()
+    return normalize_effects_doc(json.loads(f.read_text(encoding="utf-8"))).model_dump()
+
+
+class EffectsIn(BaseModel):
+    version: int = 1
+    instances: list[dict] = Field(default_factory=list)
+
+
+@router.put("/{uid}/effects")
+async def put_effects(
+    uid: str,
+    auth: CurrentUser,
+    body: EffectsIn,
+    session: AsyncSession = Depends(db_session),
+) -> dict:
+    """Persist a locally-edited effects.json (manual editor sync). Never renders."""
+    from packages.video.effects import normalize_effects_doc
+
+    await _get_local_project(session, uid, auth.user_id)
+    doc = normalize_effects_doc(body.model_dump())
+    root = data_root()
+    output_dir = root / "video_outputs" / uid
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "effects.json").write_text(
+        json.dumps(doc.model_dump(), ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    await push_project_files(uid)
+    return {"uid": uid, "instances": len(doc.instances)}
+
+
+@router.post("/{uid}/generate-effect-component")
+async def generate_effect_component_route(
+    uid: str,
+    auth: CurrentUser,
+    session: AsyncSession = Depends(db_session),
+    prompt: str = Form(""),
+    reference: UploadFile | None = File(None),
+) -> dict:
+    """Ask the model for a brand-new Remotion overlay component's source, from
+    a text prompt and/or a reference image — REMOTION_EFFECTS_REQUIREMENTS.md
+    §6 extension (custom template/effect/component creation).
+
+    Returns the raw (UNTRUSTED) source text as `componentSource`. This
+    response is NOT safe to render as-is — the desktop app MUST re-validate it
+    with codegenValidate.mjs before ever bundling/executing it; nothing about
+    a 200 response here means the code is safe.
+    """
+    from packages.video.effects_codegen import generate_effect_component
+
+    await _get_local_project(session, uid, auth.user_id)
+    if not prompt.strip() and reference is None:
+        raise HTTPException(400, "ต้องมี prompt หรือรูป reference อย่างน้อยหนึ่งอย่าง")
+
+    root = data_root()
+    ref_path = None
+    if reference is not None:
+        effects_dir = root / "video_outputs" / uid / "effects"
+        effects_dir.mkdir(parents=True, exist_ok=True)
+        ref_path = effects_dir / "codegen_reference.jpg"
+        ref_path.write_bytes(await reference.read())
+
+    usage_token = set_usage_ctx(
+        UsageCtx(user_id=auth.user_id, tenant_id=auth.tenant_id, feature="video_edit", reference_id=uid)
+    )
+    try:
+        source = await generate_effect_component(
+            prompt, reference_image_path=ref_path, project_uid=uid
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    finally:
+        reset_usage_ctx(usage_token)
+
+    return {"componentSource": source}

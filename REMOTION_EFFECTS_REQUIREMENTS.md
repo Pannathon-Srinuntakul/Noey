@@ -1,10 +1,43 @@
 # AI-Assisted Effects Layer (Remotion) — Requirements (Draft)
 
-Status: **not started — draft captured from planning conversation, no code written yet**.
+Status: **built & verified (2026-07-16)** — schema, component registry (6
+overlays + punch-zoom, including a runtime-generated component path), single-pass
+render engine, Gemini AI placement (script/word-aligned, zoom-target-aware),
+desktop UI (AI generate + manual editor + custom AI-authored component
+generation), template system + local asset library + default pack (§4/§7/§7a),
+and CapCut export (§8/§9) are all implemented and verified end-to-end (live
+Gemini + live Claude calls, not mocks; live Electron click-through and CapCut
+*import* are the only manual-only checks).
+
+**§6 revised (2026-07-16):** the original "no runtime codegen" guardrail was
+reconsidered — AI CAN now author brand-new components at runtime (prompt and/or
+reference image driven), but only through a hard code-level safety gate, never
+by trusting a prompt instruction. See `desktop/node-sidecar/src/
+codegenValidate.mjs` (static AST allowlist — only react/remotion imports, no
+fs/network/eval/process/etc, checked before any bundle/execute) and `codegen.mjs`
+(throwaway-bundle render pipeline). Verified live with two independently
+AI-designed components (never before existing) rendering and compositing
+correctly. Remotion license itself already checked and resolved (LICENSE.md:
+free for individuals/orgs ≤3 employees, solo founder qualifies, no purchase
+needed unless the team grows).
+
+User guide at `EFFECTS_USER_GUIDE.md`. See `feature-remotion-effects-progress`
+memory for the exact file map and what's still open (auto-codegen fallback
+during the automatic placement pass, OS-level sandboxing beyond the AST gate).
+
 This is a new post-processing stage layered on top of the existing AI video pipeline
 (`packages/video/*`, both `talking_head` and `dub_first` modes, web + desktop app).
 See `PROJECT_REQUIREMENTS.md`, `DESKTOP_VIDEO_APP_REQUIREMENTS.md`, and
 `desktop/README.md` for the pipeline this stage builds on.
+
+**Implemented file map:** `backend/packages/video/effects.py` (schema),
+`transforms.py` (ffmpeg transforms), `effects_render.py` (single-pass composite
+engine), `effects_ai.py` + `effects_catalog.py` (Gemini placement),
+`desktop/node-sidecar/src/compositions/*` (Remotion overlay components + registry),
+`desktop/sidecar/sidecar/effects_render.py` (proxy-one + render-effects commands),
+`backend/services/api/routers/videos_local.py` (plan-effects + GET/PUT effects),
+`backend/services/worker/tasks.py::plan_effects_local`, and the desktop renderer
+`lib/effects*.ts` + `components/Effects{Panel,Editor}.tsx`.
 
 ## 1. Problem / goal
 

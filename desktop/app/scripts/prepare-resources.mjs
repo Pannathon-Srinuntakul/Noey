@@ -156,9 +156,12 @@ execSync('node -e "require(\'@remotion/renderer\').ensureBrowser()"', {
   stdio: 'inherit'
 })
 
-// Pre-bundle the Remotion compositions once so the shipped sidecar renders
-// without the bundler toolchain (@remotion/bundler + rspack/webpack ≈ 75MB) at
-// runtime — dropped via `npm prune --omit=dev` below (bundler is a devDep).
+// Pre-bundle the FIXED registry compositions once so the common case (a
+// registry component) renders without live-bundling. @remotion/bundler is now
+// a real (production) dependency, not a devDep — the AI-generated-component
+// pipeline (codegenValidate.mjs + codegen.mjs, added 2026-07-16) needs it at
+// runtime to live-bundle a validated one-off component, so it ships in the
+// installer despite the size cost. It stays out of the pre-bundled path above.
 log('pre-bundling Remotion compositions…')
 execSync('node src/prebundle.mjs', { cwd: nodeSidecarSrc, stdio: 'inherit' })
 
@@ -178,10 +181,10 @@ if (!shellFolder) {
 }
 
 // Stage src + package.json/lock + pre-bundle, then do a CLEAN production install
-// (no devDependencies) directly in the staged dir. The bundler toolchain
-// (@remotion/bundler + rspack/webpack, ~75MB+ hoisted) never lands because the
-// pre-bundle above removed the need for it. A clean `npm ci --omit=dev` yields a
-// ~62MB node_modules — far smaller than copying + pruning the fat dev install.
+// (no devDependencies) directly in the staged dir. @remotion/bundler ships now
+// (see comment above) so this install is larger than before the codegen
+// feature — that size increase is the accepted cost of the safety-gated
+// AI-component pipeline, not an oversight.
 mkdirSync(nodeSidecarDest, { recursive: true })
 cpSync(join(nodeSidecarSrc, 'package.json'), join(nodeSidecarDest, 'package.json'))
 cpSync(join(nodeSidecarSrc, 'package-lock.json'), join(nodeSidecarDest, 'package-lock.json'))

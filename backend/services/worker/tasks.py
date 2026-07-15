@@ -1746,6 +1746,91 @@ async def analyze_dub_video_local(ctx: dict[str, Any], *, job_id: str, project_u
             reset_usage_ctx(_usage_token)
 
 
+# ── task: plan_effects_local ─────────────────────────────────────────────────
+
+
+async def plan_effects_local(ctx: dict[str, Any], *, job_id: str, project_uid: str, tenant_slug: str) -> dict:
+    """AI-assisted effects placement for a local-render project.
+
+    The desktop app uploaded a downscaled proxy of the finished cut video
+    (effects/cut_proxy.mp4) plus an optional free-text instruction
+    (effects/prompt.txt) via POST /videos/{uid}/plan-effects. This task runs the
+    Gemini effects placement pass and stores effects.json; the desktop then
+    renders the overlays (Remotion) + composites locally. No cut/timeline is
+    touched — effects are a layer on top.
+    """
+    from packages.video.effects_ai import generate_effects_placement
+
+    log.info("task_start", task="plan_effects_local", project_uid=project_uid)
+    await _video_progress(job_id, 20, "effects", "กำลังส่งวิดีโอให้ AI วางเอฟเฟกต์…")
+    session = await _tenant_session(tenant_slug)
+    _usage_token = None
+    try:
+        if await _abort_if_cancelled(session, project_uid, job_id):
+            return {"cancelled": True}
+
+        await _pull_project_files(project_uid)
+
+        root = data_root()
+        output_dir = root / "video_outputs" / project_uid
+        proxy = output_dir / "effects" / "cut_proxy.mp4"
+        if not proxy.is_file():
+            raise ValueError("cut_proxy.mp4 missing — upload the cut video proxy first")
+
+        prompt_file = output_dir / "effects" / "prompt.txt"
+        user_prompt = prompt_file.read_text(encoding="utf-8") if prompt_file.is_file() else ""
+
+        # Timed voiceover/transcript lines (desktop builds this from the dub edit
+        # script or talking_head caption lines) — lets the AI match effects to the
+        # actual spoken words, not just what's visually on screen.
+        script_file = output_dir / "effects" / "script.txt"
+        script_lines = script_file.read_text(encoding="utf-8") if script_file.is_file() else ""
+
+        proj = await _get_video_project(session, project_uid)
+        tenant_id = await _get_tenant_id_by_slug(tenant_slug)
+        _usage_token = _set_video_usage_ctx(proj, tenant_id, project_uid)
+
+        async def _push_thinking(excerpt: str) -> None:
+            await _update_job(
+                job_id, "running", 74,
+                result={"step": "effects", "message": "กำลังเลือกและวางเอฟเฟกต์…", "thinking": excerpt},
+            )
+
+        await _video_progress(job_id, 74, "effects", "กำลังเลือกและวางเอฟเฟกต์…")
+        doc = await generate_effects_placement(
+            proxy,
+            brief=proj.brief or "",
+            user_prompt=user_prompt,
+            script_lines=script_lines,
+            project_uid=project_uid,
+            on_thinking=_push_thinking,
+        )
+
+        effects_path = output_dir / "effects.json"
+        effects_path.write_text(json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
+        await _push_project_files(project_uid)
+
+        count = len(doc.get("instances", []))
+        await _update_job(
+            job_id, "ok", 100,
+            result={"step": "effects_ready", "message": "วางเอฟเฟกต์เสร็จแล้ว", "instances": count, "effects": doc},
+        )
+        log.info("plan_effects_local_done", project_uid=project_uid, instances=count)
+        return {"instances": count}
+    except Exception as exc:
+        await _update_job(
+            job_id, "error", 0,
+            result={"step": "error", "message": format_exception_message(exc)},
+            error=format_exception_message(exc),
+        )
+        raise
+    finally:
+        await session.close()
+        if _usage_token is not None:
+            from packages.llm.usage import reset_usage_ctx
+            reset_usage_ctx(_usage_token)
+
+
 # ── task: reedit_dub_scenes_local ────────────────────────────────────────────
 
 
@@ -2046,6 +2131,7 @@ class WorkerSettings:
         analyze_dub_first,
         analyze_dub_local,
         analyze_dub_video_local,
+        plan_effects_local,
         reedit_dub_scenes_local,
         plan_talking_local,
         render_dub_silent,
