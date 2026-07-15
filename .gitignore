@@ -63,3 +63,5 @@ temp/
 
 # ── Docker (local volume overrides only) ───────────────────────────────────────
 docker-compose.override.yml
+
+desktop/

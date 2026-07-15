@@ -89,7 +89,7 @@ def test_render_timeline(project_dir: Path) -> None:
     assert "สวัสดีค่ะ" in srt and "00:00:00,200 --> 00:00:00,900" in srt
 
     names = set(zipfile.ZipFile(done["bundle"]).namelist())
-    assert {"final.mp4", "clips/clip_000.mp4", "clips/clip_001.mp4",
+    assert {"final.mp4", "clips/clip_001.mp4", "clips/clip_002.mp4",
             "captions/subtitles.srt", "manifest.json", "README.txt"} <= names
 
     manifest = json.loads(zipfile.ZipFile(done["bundle"]).read("manifest.json"))

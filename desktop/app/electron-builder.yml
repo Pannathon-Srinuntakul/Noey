@@ -22,6 +22,16 @@ extraResources:
     to: backend
   - from: resources-staging/ffmpeg
     to: ffmpeg
+  - from: resources-staging/node-sidecar
+    to: node-sidecar
+  # electron-builder skips `node_modules` while walking an extraResources dir, so
+  # copy it via its own explicit entry (a directly-targeted node_modules root is
+  # not subject to that walk-time skip) — without it the Remotion renderer's deps
+  # never ship and the sidecar fails with "Cannot find package '@remotion/renderer'".
+  - from: resources-staging/node-sidecar/node_modules
+    to: node-sidecar/node_modules
+    filter:
+      - '**/*'
 win:
   executableName: Noey Video Edit
   target:

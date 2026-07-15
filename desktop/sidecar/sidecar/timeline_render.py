@@ -93,7 +93,7 @@ def run_render_timeline(job: RenderTimelineJob, emit) -> dict[str, Any]:
         emit({"event": "progress", "stage": "cut", "step": i + 1, "total": total})
         source = str(cut.get("source", "clip0"))
         src = norm_for_clip(norm_files, source) if source.startswith("clip") else project_dir / source
-        clip_out = clips_dir / f"clip_{i:03d}.mp4"
+        clip_out = clips_dir / f"clip_{i + 1:03d}.mp4"
         dur = float(cut["out"]) - float(cut["in"])
         trim_media(src, clip_out, float(cut["in"]), dur)
         clip_paths.append(clip_out)

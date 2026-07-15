@@ -22,6 +22,13 @@ EDITORIAL_BLOCK_GAP = 1.0
 # (no shared/growing context across clips), so this is a practical ceiling, not
 # a technical one.
 TALKING_HEAD_MAX_TOTAL_SEC = 2 * 60 * 60
+
+
+def talking_head_exceeds_total_limit(total_duration_sec: float) -> bool:
+    """True when footage exceeds the talking_head cap (per-clip or summed project total)."""
+    return float(total_duration_sec) > TALKING_HEAD_MAX_TOTAL_SEC
+
+
 # Kept for callers passing it as an arg; no longer the primary cut boundary.
 WORD_GAP_THRESHOLD = 0.35
 # VAD speech_pad_ms≈350 pre-rolls segment.start before detected speech.
@@ -1063,3 +1070,55 @@ def annotate_dub_script_output_times(edit_script: dict[str, Any]) -> dict[str, A
     if cursor > 0:
         edit_script["totalEstimatedSec"] = int(round(cursor))
     return edit_script
+
+
+def merge_dub_reedit_segments(
+    edit_script: dict[str, Any],
+    selected_line_ids: list[int],
+    new_segments: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Splice an AI re-edit result back into the full edit script.
+
+    Scoped (selected_line_ids non-empty): drop every segment whose
+    voiceoverLineId is in the selection, insert new_segments at that position
+    (empty new_segments = the selected line(s) were deleted).
+    Whole-script (selected_line_ids empty): new_segments IS the full
+    replacement array — the model was instructed to echo back every
+    untouched line unchanged.
+
+    Either way, re-sequences `order` to match final position (the model's own
+    order values aren't trustworthy across a splice) and re-runs
+    normalize_dub_edit_script so durationSec/montage-script-fill/
+    totalEstimatedSec stay consistent — reused rather than duplicated here.
+    """
+    segs = [s for s in (edit_script.get("segments") or []) if isinstance(s, dict)]
+
+    if selected_line_ids:
+        selected = set(selected_line_ids)
+        merged: list[dict[str, Any]] = []
+        spliced = False
+        for seg in segs:
+            lid = seg.get("voiceoverLineId")
+            try:
+                lid = int(lid) if lid is not None else None
+            except (TypeError, ValueError):
+                lid = None
+            if lid in selected:
+                if not spliced:
+                    merged.extend(dict(s) for s in new_segments)
+                    spliced = True
+                continue
+            merged.append(seg)
+        if not spliced:
+            # Selected line(s) not found in the current script (stale selection) — append at the end.
+            merged.extend(dict(s) for s in new_segments)
+    else:
+        merged = [dict(s) for s in new_segments]
+
+    for i, seg in enumerate(merged, start=1):
+        seg["order"] = i
+
+    return normalize_dub_edit_script(
+        {"mode": edit_script.get("mode", "dub_first"), "segments": merged},
+        sample_frames=None,
+    )

@@ -56,6 +56,11 @@ export interface LocalProject {
   remote?: { uid: string; jobId?: string }
   voiceoverPath?: string
   timeline?: Record<string, unknown>
+  // dub_first only: the edit script the analyze step produced. Persisted so the
+  // timeline editor stays available after an app restart — without this it only
+  // lived in React state and a failed resume-fetch silently left it null forever,
+  // permanently disabling the editor button with no visible error.
+  editScript?: Record<string, unknown>
   error?: string
   captionStyle?: { font: string; mode: string; color: string; border_color: string; size: number }
 }
@@ -94,7 +99,13 @@ const noey = {
     extractAudio: jobCommand('sidecar:extractAudio'),
     renderTimeline: jobCommand('sidecar:renderTimeline'),
     renderAiPreview: jobCommand('sidecar:renderAiPreview'),
+    compositeOverlay: jobCommand('sidecar:compositeOverlay'),
     cancel: (projectDir: string): Promise<void> => ipcRenderer.invoke('sidecar:cancel', projectDir)
+  },
+  // Node/Remotion sidecar — renders transparent effect overlays (see nodeSidecar.ts).
+  nodeSidecar: {
+    ping: (): Promise<SidecarEvent> => ipcRenderer.invoke('nodeSidecar:ping'),
+    renderOverlay: jobCommand('nodeSidecar:renderOverlay')
   },
   projects: {
     list: (): Promise<LocalProject[]> => ipcRenderer.invoke('projects:list'),

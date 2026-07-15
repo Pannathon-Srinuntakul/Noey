@@ -48,6 +48,10 @@ export interface LocalProject {
   voiceoverPath?: string
   /** Planned dub timeline (from POST /videos/{uid}/plan-dub) — kept for post-VO manual edits. */
   timeline?: Record<string, unknown>
+  /** dub_first edit script from the analyze step — persisted so the timeline
+   * editor stays available after a restart instead of relying solely on
+   * in-memory state + a resume-fetch that can silently fail. */
+  editScript?: Record<string, unknown>
   error?: string
 }
 

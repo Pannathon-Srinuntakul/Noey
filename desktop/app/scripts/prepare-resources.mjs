@@ -85,6 +85,15 @@ function findFile(root, name) {
   return null
 }
 
+function findDir(root, pattern) {
+  if (!existsSync(root)) return null
+  for (const entry of readdirSync(root)) {
+    const p = join(root, entry)
+    if (statSync(p).isDirectory() && pattern.test(entry)) return p
+  }
+  return null
+}
+
 if (existsSync(ffmpegBin) && existsSync(ffprobeBin)) {
   log(`ffmpeg cached at ${ffmpegVendorDir}`)
 } else {
@@ -127,5 +136,61 @@ if (existsSync(ffmpegBin) && existsSync(ffprobeBin)) {
 
 // Stage the current platform's ffmpeg where electron-builder expects it.
 cpSync(ffmpegVendorDir, join(stagingDir, 'ffmpeg'), { recursive: true })
+
+// ── 4. Node/Remotion sidecar + bundled Chrome Headless Shell ──────────────────
+// Ships the overlay renderer so a machine with no Node/Chrome can render effects.
+// Runs via Electron's own embedded Node (ELECTRON_RUN_AS_NODE) — no separate Node
+// binary needed; only node_modules + the Chrome Headless Shell must travel.
+log('staging node-sidecar (Remotion overlay renderer)…')
+const nodeSidecarSrc = resolve(appDir, '../node-sidecar')
+const nodeSidecarDest = join(stagingDir, 'node-sidecar')
+
+if (!existsSync(join(nodeSidecarSrc, 'node_modules'))) {
+  throw new Error('node-sidecar/node_modules missing — run `npm install` in desktop/node-sidecar first')
+}
+
+// Make sure the Chrome Headless Shell is downloaded into the sidecar cache.
+log('ensuring Remotion browser (Chrome Headless Shell)…')
+execSync('node -e "require(\'@remotion/renderer\').ensureBrowser()"', {
+  cwd: nodeSidecarSrc,
+  stdio: 'inherit'
+})
+
+// Pre-bundle the Remotion compositions once so the shipped sidecar renders
+// without the bundler toolchain (@remotion/bundler + rspack/webpack ≈ 75MB) at
+// runtime — dropped via `npm prune --omit=dev` below (bundler is a devDep).
+log('pre-bundling Remotion compositions…')
+execSync('node src/prebundle.mjs', { cwd: nodeSidecarSrc, stdio: 'inherit' })
+
+// The shell is a folder (exe + its DLLs) — copy the whole thing, not just the exe.
+const shellDirName =
+  process.platform === 'win32' ? 'win64' : process.arch === 'arm64' ? 'mac-arm64' : 'mac-x64'
+const shellParent = join(
+  nodeSidecarSrc,
+  'node_modules',
+  '.remotion',
+  'chrome-headless-shell',
+  shellDirName
+)
+const shellFolder = findDir(shellParent, /^chrome-headless-shell-/)
+if (!shellFolder) {
+  throw new Error(`chrome-headless-shell not found under ${shellParent} after ensureBrowser`)
+}
+
+// Stage src + package.json/lock + pre-bundle, then do a CLEAN production install
+// (no devDependencies) directly in the staged dir. The bundler toolchain
+// (@remotion/bundler + rspack/webpack, ~75MB+ hoisted) never lands because the
+// pre-bundle above removed the need for it. A clean `npm ci --omit=dev` yields a
+// ~62MB node_modules — far smaller than copying + pruning the fat dev install.
+mkdirSync(nodeSidecarDest, { recursive: true })
+cpSync(join(nodeSidecarSrc, 'package.json'), join(nodeSidecarDest, 'package.json'))
+cpSync(join(nodeSidecarSrc, 'package-lock.json'), join(nodeSidecarDest, 'package-lock.json'))
+cpSync(join(nodeSidecarSrc, 'src'), join(nodeSidecarDest, 'src'), { recursive: true })
+cpSync(join(nodeSidecarSrc, 'bundle'), join(nodeSidecarDest, 'bundle'), { recursive: true })
+log('installing node-sidecar production deps (omit dev)…')
+execSync('npm ci --omit=dev --ignore-scripts', { cwd: nodeSidecarDest, stdio: 'inherit' })
+// Stable path the main process points REMOTION_BROWSER_EXECUTABLE at (nodeSidecar.ts).
+cpSync(shellFolder, join(nodeSidecarDest, 'chrome-headless-shell'), { recursive: true })
+log(`node-sidecar staged (shell: ${shellDirName})`)
 
 log('done — resources staged for electron-builder')

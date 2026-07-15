@@ -10,6 +10,51 @@ import re
 from typing import Any
 
 
+def _has_lone_surrogate(text: str) -> bool:
+    return any(0xD800 <= ord(c) <= 0xDFFF for c in text)
+
+
+def clean_transcript_text(text: str) -> str:
+    """Strip lone UTF-16 surrogate code points from Whisper output text.
+
+    faster-whisper's native BPE decode occasionally leaks unpaired surrogate
+    code points into Thai script output under low-confidence conditions (e.g.
+    a byte-fallback token sequence for a multi-byte Thai character that never
+    resolves to a complete one during beam search / temperature fallback).
+    These can't be encoded as UTF-8 at all (Python raises on a naive
+    ``str.encode("utf-8")``), and when they DO make it into a JSON file via
+    ``ensure_ascii=True`` somewhere upstream, they round-trip back into
+    corrupted/missing glyphs. This is not our bug to fix upstream (native
+    tokenizer internals, not this repo's code).
+
+    Only safe to use on standalone DISPLAY text (e.g. a segment's plain
+    ``text`` field, shown as-is) — NOT on individual word/grapheme tokens
+    that later get concatenated and re-split by character count
+    (:func:`merge_graphemes_to_words`): stripping characters out of the
+    MIDDLE of a token changes its length, which desyncs that count-based
+    walk and corrupts word boundaries for everything after it in the
+    segment. Use :func:`drop_corrupted_words` for word-level lists instead.
+    """
+    if not text:
+        return text
+    return text.encode("utf-8", "surrogatepass").decode("utf-8", "ignore")
+
+
+def drop_corrupted_words(words: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop whole word/grapheme tokens that contain a lone surrogate.
+
+    The corrupted character can't be recovered (the real one was lost
+    upstream in Whisper's native decode — see :func:`clean_transcript_text`),
+    so the only options are: leave the garbage in, partially strip it (which
+    breaks :func:`merge_graphemes_to_words`'s character-count alignment for
+    every token after it), or drop the whole token. Dropping loses a tiny
+    timing/text gap but keeps every other word's boundaries correct — far
+    better than the cascading "words cut off mid-syllable" that partial
+    stripping caused.
+    """
+    return [w for w in words if not _has_lone_surrogate(str(w.get("word", "")))]
+
+
 def merge_graphemes_to_words(words: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Merge Whisper Thai grapheme-level tokens into proper words using pythainlp.
 
@@ -96,6 +141,15 @@ MAX_WORD_SPAN = 1.2
 # the segment is not continuous speech (Whisper merged speech across a long pause /
 # hallucinated a word over silence). Split the segment at that gap.
 MAX_INTRA_SEGMENT_WORD_GAP = 2.0
+# A segment longer than this, even with ZERO internal gaps, gets force-split too —
+# Whisper occasionally hallucinates one continuous multi-minute "segment" over
+# noise/music/silence with no detectable pause at all (garbled, evenly-spaced fake
+# words). Gemini's per-segment review can only keep/cut a segment AS A WHOLE (it
+# never re-times anything — see transcribe_refine.py), so a giant un-split segment
+# gets exactly one keep/cut verdict for its entire span instead of being able to
+# trim the bad part. Splitting BEFORE review (see whisper_client.py) gives Gemini
+# smaller, independently-judgeable chunks.
+MAX_SEGMENT_DURATION_SEC = 15.0
 # Keep VAD tail up to this beyond last word end (Thai tone decay lives here).
 VAD_TAIL_PRESERVE_SEC = 0.45
 # Segment end further than this past last word → glitch trim, not real speech.
@@ -220,9 +274,11 @@ def tighten_segment_bounds(seg: dict[str, Any]) -> dict[str, Any]:
     words = list(seg.get("words") or [])
     start = float(seg["start"])
     end = float(seg["end"])
+    text = clean_transcript_text(str(seg.get("text", "")))
+    words = drop_corrupted_words(words)
 
     if not words:
-        return {**seg, "start": round(start, 3), "end": round(end, 3)}
+        return {**seg, "text": text, "start": round(start, 3), "end": round(end, 3), "words": words}
 
     # Merge Thai grapheme clusters into proper words before timestamp processing
     words = merge_graphemes_to_words(words)
@@ -254,6 +310,7 @@ def tighten_segment_bounds(seg: dict[str, Any]) -> dict[str, Any]:
     new_end = max(new_end, start)
     return {
         **seg,
+        "text": text,
         "start": round(start, 3),
         "end": round(new_end, 3),
         "words": fixed_words,
@@ -264,14 +321,24 @@ def split_segment_on_word_gaps(
     seg: dict[str, Any],
     *,
     max_gap_sec: float = MAX_INTRA_SEGMENT_WORD_GAP,
+    max_duration_sec: float = MAX_SEGMENT_DURATION_SEC,
 ) -> list[dict[str, Any]]:
-    """Split a Whisper segment when consecutive words are >max_gap_sec apart.
+    """Split a Whisper segment when consecutive words are >max_gap_sec apart,
+    OR when it keeps growing past max_duration_sec even with zero gaps.
 
     Whisper (especially on long clips / via Modal) sometimes emits a single
     segment whose words straddle a long silence — e.g. word "มัน" at 80.3s and
     "เกิด" at 140.85s in the same segment. Downstream `build_speech_cuts` works
     at segment level and would keep all 60s of silence. Splitting here yields
     coherent sub-segments so silence-cut and repeat-dedupe behave correctly.
+
+    The duration cap catches the OTHER Whisper failure mode: a hallucinated
+    run of evenly-spaced fake words with no gap at all, sometimes spanning
+    a minute or more of noise/music. Without this cap, that whole run stays
+    one segment and — critically — Gemini's per-clip review can only issue
+    ONE keep/cut verdict for the entire span (it never re-times anything), so
+    it has no way to trim out just the bad part. Splitting into smaller,
+    independently-reviewable chunks BEFORE review fixes that (see whisper_client.py).
 
     Returns one or more segments. A segment with <2 words is returned unchanged.
     """
@@ -283,7 +350,9 @@ def split_segment_on_word_gaps(
     for w in words[1:]:
         prev_end = float(groups[-1][-1]["end"])
         gap = float(w["start"]) - prev_end
-        if gap > max_gap_sec:
+        group_start = float(groups[-1][0]["start"])
+        too_long = float(w["end"]) - group_start > max_duration_sec
+        if gap > max_gap_sec or too_long:
             groups.append([w])
         else:
             groups[-1].append(w)

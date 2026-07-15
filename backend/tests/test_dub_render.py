@@ -105,7 +105,7 @@ def test_silent_render_pipeline(sample_clip: Path, tmp_path: Path) -> None:
     build_dub_bundle_zip(final, script, clip_paths, zip_path)
     names = set(zipfile.ZipFile(zip_path).namelist())
     assert names == {"final_silent.mp4", "script.txt",
-                     "clips/clip_000.mp4", "clips/clip_001.mp4", "clips/clip_002.mp4"}
+                     "clips/clip_001.mp4", "clips/clip_002.mp4", "clips/clip_003.mp4"}
 
 
 def test_trim_one_segment_defaults(sample_clip: Path, tmp_path: Path) -> None:

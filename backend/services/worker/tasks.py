@@ -873,7 +873,7 @@ async def render_video(ctx: dict[str, Any], *, job_id: str, project_uid: str, te
                 idx = int(cut["source"].replace("clip", ""))
                 norm_files_sorted = sorted((output_dir / "normalized").glob("norm_*.mp4"))
                 norm_file = norm_files_sorted[idx] if idx < len(norm_files_sorted) else norm_files_sorted[0]
-            clip_out = clips_dir / f"clip_{i:03d}.mp4"
+            clip_out = clips_dir / f"clip_{i + 1:03d}.mp4"
             dur = float(cut["out"]) - float(cut["in"])
             trim_media(norm_file, clip_out, float(cut["in"]), dur)
 

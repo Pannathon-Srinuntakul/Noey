@@ -47,7 +47,7 @@ def trim_one_segment(
     src = norm_for_clip(norm_files_sorted, seg.get("sourceClip", "clip0"))
     src_in = float(seg.get("sourceIn", 0.0))
     src_out = float(seg.get("sourceOut", src_in + 3.0))
-    clip_out = clips_dir / f"clip_{index:03d}.mp4"
+    clip_out = clips_dir / f"clip_{index + 1:03d}.mp4"
     log.info("render_dub_clip", idx=index + 1, total=total, src=src.name, in_=round(src_in, 2), out=round(src_out, 2))
     # Frame-accurate trim via video filter + reset PTS (avoids keyframe-stutter from vcodec=copy).
     # Re-encode to h264/yuv420p so concat timestamps are always consistent.

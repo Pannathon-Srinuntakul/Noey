@@ -3,6 +3,7 @@ import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { registerSidecarIpc } from './sidecar'
+import { registerNodeSidecarIpc } from './nodeSidecar'
 import { registerAuthIpc } from './authStore'
 import { registerProjectsIpc } from './projects'
 import { registerMediaProtocol, registerMediaScheme } from './media'
@@ -84,6 +85,7 @@ app.whenReady().then(() => {
   registerLogIpc()
   registerApiProxyIpc()
   registerSidecarIpc()
+  registerNodeSidecarIpc()
   registerAuthIpc()
   registerProjectsIpc()
 

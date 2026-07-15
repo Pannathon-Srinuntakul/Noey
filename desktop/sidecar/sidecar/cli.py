@@ -11,6 +11,7 @@ Commands (all output is JSON, one object per line, on stdout):
 - ``render-silent --job F``   → edit script → final_silent.mp4 + script.txt + dub_bundle.zip
 - ``render-final --job F``    → timeline + voiceover → final.mp4 (+ final_bundle.zip)
 - ``render-ai-preview --job F`` → live (unsaved) edit script → downscaled silent preview MP4 for an AI re-edit request
+- ``composite-overlay --job F`` → composite a transparent effects overlay (from the Node/Remotion sidecar) onto the cut video → final_fx.mp4
 
 Exit code 0 on success, 1 on any error (last line is the error event).
 """
@@ -145,6 +146,15 @@ def cmd_render_ai_preview(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_composite_overlay(args: argparse.Namespace) -> int:
+    from sidecar.dub import load_json_job
+    from sidecar.effects_render import CompositeOverlayJob, run_composite_overlay
+
+    job = load_json_job(args.job, CompositeOverlayJob)
+    emit(run_composite_overlay(job, emit))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="sidecar", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -165,6 +175,7 @@ def build_parser() -> argparse.ArgumentParser:
         ("extract-audio", cmd_extract_audio, "extract speech WAVs for server transcription"),
         ("render-timeline", cmd_render_timeline, "render talking_head video from a timeline"),
         ("render-ai-preview", cmd_render_ai_preview, "render a live-editor silent preview for an AI re-edit request"),
+        ("composite-overlay", cmd_composite_overlay, "composite a transparent effects overlay onto the cut video"),
     ):
         p = sub.add_parser(name, help=help_text)
         p.add_argument("--job", required=True, help="path to job JSON file")

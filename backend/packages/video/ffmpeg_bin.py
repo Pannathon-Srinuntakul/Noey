@@ -336,6 +336,51 @@ def apply_zoom(
     )
 
 
+def composite_overlay(
+    base_path: str | Path,
+    overlay_path: str | Path,
+    output_path: str | Path,
+    *,
+    start: float = 0.0,
+    x: int = 0,
+    y: int = 0,
+) -> None:
+    """Composite a transparent overlay (alpha video, e.g. ProRes 4444) over
+    `base_path`, enabled from `start` for the overlay's own duration, at (x, y).
+
+    Used by the effects layer spike: Remotion renders the animated overlay on a
+    transparent background; this bakes it onto the already-cut video with ffmpeg
+    so the final output is a single complete file. Base audio (if any) is
+    stream-copied; the overlay is video-only (its alpha is honoured by `overlay`).
+    """
+    import ffmpeg
+
+    end = start + media_duration(overlay_path)
+    base = ffmpeg.input(str(base_path))
+    ov = ffmpeg.input(str(overlay_path))
+    # shortest=0: keep the full base length even though the overlay is shorter.
+    v = ffmpeg.filter(
+        [base.video, ov.video],
+        "overlay",
+        x,
+        y,
+        enable=f"between(t,{start:.3f},{end:.3f})",
+    )
+    outputs: list[Any] = [v]
+    if has_audio_stream(base_path):
+        outputs.append(base.audio)
+    run_ffmpeg(
+        ffmpeg.output(
+            *outputs,
+            str(output_path),
+            **video_encode_kwargs(),
+            **({"acodec": "copy"} if has_audio_stream(base_path) else {}),
+            movflags="+faststart",
+        ).overwrite_output(),
+        label="composite_overlay",
+    )
+
+
 def normalize_loudness(
     input_path: str | Path,
     output_path: str | Path,

@@ -69,7 +69,9 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
   const [project, setProject] = useState<LocalProject>(initial)
   const [progressMsg, setProgressMsg] = useState('')
   const [thinking, setThinking] = useState('')
-  const [editScript, setEditScript] = useState<DubEditScript | null>(null)
+  const [editScript, setEditScript] = useState<DubEditScript | null>(
+    (initial.editScript as unknown as DubEditScript | undefined) ?? null
+  )
   const [error, setError] = useState<string | null>(null)
   const [mediaKey, setMediaKey] = useState(0)
   const [showEditor, setShowEditor] = useState(false)
@@ -109,6 +111,16 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     const updated = await window.noey.projects.update(project.uid, patch)
     setProject(updated)
     return updated
+  }
+
+  // Sets the in-memory edit script AND persists it to project.json — without
+  // this, the script only lived in React state and a failed resume-fetch after
+  // an app restart silently left it null forever, permanently disabling the
+  // timeline editor button with no visible error (see ProjectCard.tsx disabled
+  // check on `!editScript`).
+  const applyEditScript = (script: DubEditScript): void => {
+    setEditScript(script)
+    void patchProject({ editScript: script as unknown as Record<string, unknown> })
   }
 
   const resetAfterStop = async (): Promise<void> => {
@@ -242,7 +254,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
       )
 
       const script = await getEditScript(session, remoteUid)
-      setEditScript(script)
+      applyEditScript(script)
       await runRenderSilent(script, remoteUid)
     } catch (exc) {
       await handlePipelineError(exc)
@@ -476,7 +488,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
       )
       if (kind === 'analyzing') {
         const script = await getEditScript(session, remoteUid)
-        setEditScript(script)
+        applyEditScript(script)
         await runRenderSilent(script, remoteUid)
       } else {
         const timeline = await getLocalTimeline(session, remoteUid)
@@ -515,7 +527,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
       setProgressMsg('กำลังโหลด edit script…')
       const script = await getEditScript(session, remoteUid).catch(() => null)
       if (script) {
-        setEditScript(script)
+        applyEditScript(script)
         await runRenderSilent(script, remoteUid)
       } else {
         await fail(new Error('ไม่พบ edit script บนเซิร์ฟเวอร์ — ลองวิเคราะห์ใหม่'))
@@ -557,11 +569,22 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
   // Resume: reload edit script / timeline when reopening at review steps.
   useEffect(() => {
     const remoteUid = project.remote?.uid
+    if (mode === 'dub_first' && (step === 'waiting_vo' || step === 'done')) {
+      void window.noey.log.write(
+        'useProjectPipeline',
+        `resume-check uid=${project.uid} remoteUid=${remoteUid ?? 'MISSING'} hasEditScript=${Boolean(editScript)}`
+      )
+    }
     if (!remoteUid) return
     if (mode === 'dub_first' && !editScript && (step === 'waiting_vo' || step === 'done')) {
       getEditScript(session, remoteUid)
-        .then(setEditScript)
-        .catch(() => undefined)
+        .then(applyEditScript)
+        .catch((err) =>
+          window.noey.log.write(
+            'useProjectPipeline',
+            `resume edit-script fetch failed (uid=${remoteUid}): ${String(err)}`
+          )
+        )
     }
     if (mode === 'talking_head' && !project.timeline && (step === 'rendering' || step === 'done')) {
       getLocalTimeline(session, remoteUid)
@@ -599,7 +622,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     if (!remoteUid) throw new Error('ไม่พบ remote project')
     if (target === 'edit_script') {
       const es = editScriptFromCuts(cuts)
-      setEditScript(es)
+      applyEditScript(es)
       await putLocalEditScript(session, remoteUid, es)
       await runRenderSilent(es, remoteUid)
     } else {

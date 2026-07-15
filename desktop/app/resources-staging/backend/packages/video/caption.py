@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 _STYLE_DEFAULT: dict = {
     "fontname": "Arial",
     "fontsize": 52,
@@ -197,6 +199,28 @@ def _groups_from_caption_lines(
     return groups
 
 
+_THAI_CHAR_RE = re.compile(r"[฀-๿]")
+
+
+def _join_words(words: list[str]) -> str:
+    """Join word tokens for display — no space between two Thai-script
+    tokens (Thai writing has no inter-word spaces; Whisper only splits on
+    them internally for its own alignment), a normal space everywhere else
+    (Latin/numbers/mixed-script/punctuation) so those don't run together.
+    """
+    out = ""
+    prev_last_char = ""
+    for w in words:
+        w = w.strip()
+        if not w:
+            continue
+        if out and not (_THAI_CHAR_RE.match(prev_last_char) and _THAI_CHAR_RE.match(w[0])):
+            out += " "
+        out += w
+        prev_last_char = w[-1]
+    return out
+
+
 def _build_static_lines(groups: list[list[dict]]) -> list[str]:
     """Whole phrase appears at once and holds — plain, no animation."""
     lines: list[str] = []
@@ -205,7 +229,7 @@ def _build_static_lines(groups: list[list[dict]]) -> list[str]:
         end = group[-1]["end"]
         if end <= start:
             continue
-        text = " ".join(w["word"].strip() for w in group)
+        text = _join_words([w["word"] for w in group])
         lines.append(_dialogue(start, end, text))
     return lines
 
@@ -221,7 +245,7 @@ def _build_word_pop_lines(groups: list[list[dict]]) -> list[str]:
             seg_end = group[i + 1]["start"] if i + 1 < n else chunk_end
             if seg_end <= seg_start:
                 continue
-            text = " ".join(w["word"].strip() for w in group[: i + 1])
+            text = _join_words([w["word"] for w in group[: i + 1]])
             lines.append(_dialogue(seg_start, seg_end, text))
     return lines
 
@@ -248,7 +272,7 @@ def _build_typewriter_lines(groups: list[list[dict]]) -> list[str]:
                 if seg_end <= seg_start:
                     continue
                 partial = word_text[:c]
-                text = " ".join([*revealed_words, partial])
+                text = _join_words([*revealed_words, partial])
                 lines.append(_dialogue(seg_start, seg_end, text))
             revealed_words.append(word_text)
     return lines
@@ -308,17 +332,26 @@ def _hex_to_ass_color(hex_str: str) -> str:
 
 
 def resolve_caption_style(caption_style: dict | None) -> tuple[dict, str]:
-    """Convert the UI-facing {font, mode, color} shape into
-    (style dict for build_ass_captions, mode string)."""
+    """Convert the UI-facing {font, mode, color, border_color, size} shape
+    into (style dict for build_ass_captions, mode string)."""
     from packages.video.fonts import font_face
 
     cs = caption_style or {}
     mode = str(cs.get("mode", "static"))
     font_key = str(cs.get("font", "kanit"))
     color_hex = str(cs.get("color", "#FFFFFF"))
+    border_hex = str(cs.get("border_color", "#000000"))
+    size = cs.get("size")
 
     style = {
         "fontname": font_face(font_key),
         "primary": _hex_to_ass_color(color_hex),
+        "outline": _hex_to_ass_color(border_hex),
+        # Thicker than the karaoke-mode default (2.5px) — these modes have no
+        # semi-transparent BackColour shadow behind them, so the outline is
+        # the only thing keeping text readable over bright video backgrounds.
+        "outline_px": 4,
     }
+    if size:
+        style["fontsize"] = int(size)
     return style, mode

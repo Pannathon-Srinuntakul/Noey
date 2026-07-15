@@ -1,6 +1,6 @@
 {
   "name": "noey-video-edit",
-  "version": "0.1.0",
+  "version": "0.1.4",
   "description": "Noey Video Edit — AI dub-first video editor (local render)",
   "main": "./out/main/index.js",
   "author": "example.com",
@@ -16,7 +16,8 @@
     "build": "npm run typecheck && electron-vite build",
     "postinstall": "electron-builder install-app-deps",
     "build:unpack": "npm run prepare:resources && npm run build && electron-builder --dir",
-    "build:win": "npm run prepare:resources && npm run build && electron-builder --win && node scripts/upload-release.mjs",
+    "version:bump": "npm version patch --no-git-tag-version",
+    "build:win": "npm run version:bump && npm run prepare:resources && npm run build && electron-builder --win && node scripts/upload-release.mjs",
     "build:mac": "npm run prepare:resources && electron-vite build && electron-builder --mac",
     "build:linux": "electron-vite build && electron-builder --linux",
     "test": "vitest run",

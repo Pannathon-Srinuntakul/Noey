@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from packages.core.logging import get_logger
-from packages.video.ffmpeg_bin import run_ffmpeg
+from packages.video.ffmpeg_bin import hwaccel_input_kwargs, run_ffmpeg, video_encode_kwargs
 
 log = get_logger(__name__)
 
@@ -47,17 +47,17 @@ def trim_one_segment(
     src = norm_for_clip(norm_files_sorted, seg.get("sourceClip", "clip0"))
     src_in = float(seg.get("sourceIn", 0.0))
     src_out = float(seg.get("sourceOut", src_in + 3.0))
-    clip_out = clips_dir / f"clip_{index:03d}.mp4"
+    clip_out = clips_dir / f"clip_{index + 1:03d}.mp4"
     log.info("render_dub_clip", idx=index + 1, total=total, src=src.name, in_=round(src_in, 2), out=round(src_out, 2))
     # Frame-accurate trim via video filter + reset PTS (avoids keyframe-stutter from vcodec=copy).
     # Re-encode to h264/yuv420p so concat timestamps are always consistent.
     run_ffmpeg(
-        ffmpeg_lib.input(str(src))
+        ffmpeg_lib.input(str(src), **hwaccel_input_kwargs())
         .video
         .filter("trim", start=src_in, end=src_out)
         .filter("setpts", "PTS-STARTPTS")
         .output(str(clip_out),
-                vcodec="libx264", preset="fast", crf=18,
+                **video_encode_kwargs(),
                 pix_fmt="yuv420p",
                 **{"an": None})
         .overwrite_output(),

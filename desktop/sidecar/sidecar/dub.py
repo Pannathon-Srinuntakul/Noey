@@ -114,7 +114,7 @@ def run_render_final(job: RenderFinalJob, emit) -> dict[str, Any]:
             src = norm_files[idx] if idx < len(norm_files) else norm_files[0]
         else:
             src = project_dir / source
-        clip_out = clips_dir / f"clip_{i:03d}.mp4"
+        clip_out = clips_dir / f"clip_{i + 1:03d}.mp4"
         dur = float(cut["out"]) - float(cut["in"])
         trim_media(src, clip_out, float(cut["in"]), dur)
         clip_paths.append(clip_out)

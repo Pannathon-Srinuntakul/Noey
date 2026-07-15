@@ -177,7 +177,8 @@ export function registerSidecarIpc(): void {
     ['sidecar:renderFinal', 'render-final'],
     ['sidecar:extractAudio', 'extract-audio'],
     ['sidecar:renderTimeline', 'render-timeline'],
-    ['sidecar:renderAiPreview', 'render-ai-preview']
+    ['sidecar:renderAiPreview', 'render-ai-preview'],
+    ['sidecar:compositeOverlay', 'composite-overlay']
   ]
   for (const [channel, command] of jobChannels) {
     ipcMain.handle(channel, (evt, job: unknown) =>

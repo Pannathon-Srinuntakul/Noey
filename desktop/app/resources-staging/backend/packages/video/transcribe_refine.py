@@ -195,18 +195,65 @@ def build_talking_review_user_text(
     )
 
 
+def redistribute_text_over_slots(text: str, slots: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Tokenize Gemini's corrected ``text`` into real words and spread them
+    evenly across the segment's own time span (``slots[0].start`` to
+    ``slots[-1].end``) — used to carry the correction down into per-word
+    caption timing without ever touching the segment's overall timestamps.
+
+    MUST split on real word boundaries, not raw character counts: an earlier
+    version sliced ``text`` by character position proportional to each
+    original word's length, which cut mid-syllable whenever the slice
+    boundary landed inside a word (e.g. "หัว" → "หั" + "ว") — invisible in
+    the segment's own display text, but very visible once those slices
+    became separate "words" a caption line groups/wraps on, cutting captions
+    off mid-syllable at the wrap point. Real tokenization (pythainlp, same
+    engine :func:`packages.video.transcribe.merge_graphemes_to_words` already
+    depends on) guarantees every output "word" is a real word.
+    """
+    text = text.strip()
+    if not slots or not text:
+        return []
+
+    start = float(slots[0]["start"])
+    end = float(slots[-1]["end"])
+    if end <= start:
+        end = start + 0.01 * max(1, len(text))
+
+    try:
+        from pythainlp.tokenize import word_tokenize  # type: ignore[import-untyped]
+
+        real_words = [w for w in word_tokenize(text, engine="newmm", keep_whitespace=False) if w.strip()]
+    except ImportError:
+        real_words = text.split()
+    if not real_words:
+        real_words = [text]
+
+    n = len(real_words)
+    step = (end - start) / n
+    return [
+        {"word": w, "start": round(start + i * step, 3), "end": round(start + (i + 1) * step, 3)}
+        for i, w in enumerate(real_words)
+    ]
+
+
 def apply_refine_results(
     segments: list[dict[str, Any]],
     results: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     """Merge Gemini's ``{id, text, action}`` replies back onto Whisper segments.
 
-    Timing is sacred: ``start``/``end``/``words`` come straight from ``segments``,
-    never from ``results`` (any start/end key a result smuggles in is ignored —
-    we never read it). For each original segment (iterated in order, id = index):
+    Timing is sacred: every ``start``/``end`` (segment-level AND per-word) comes
+    straight from ``segments``, never from ``results`` (any start/end key a
+    result smuggles in is ignored — we never read it). For each original
+    segment (iterated in order, id = index):
 
     - action == "keep"           → keep it; replace the display ``text`` with
-      Gemini's corrected text when non-empty (timing untouched).
+      Gemini's corrected text when non-empty, and redistribute that corrected
+      text over the segment's existing per-word time slots (see
+      :func:`redistribute_text_over_slots`) so burned-in word-level captions
+      show Gemini's correction too, not just the SRT/manifest text — while
+      every timestamp stays exactly Whisper's.
     - action in the cut_* set     → drop the segment.
     - no matching / malformed reply → keep the segment exactly as Whisper
       produced it (never silently lose audio on a model glitch).
@@ -232,10 +279,15 @@ def apply_refine_results(
         # Any non-keep, non-cut value is treated conservatively as "keep".
         new_text = str(hit.get("text") or "").strip()
         if new_text:
-            # ONLY the display text changes. The dict spread copies every
-            # original timing field (start/end/words) untouched — Gemini's
-            # reply cannot influence timing.
-            out.append({**seg, "text": new_text})
+            original_words = seg.get("words") or []
+            new_words = (
+                redistribute_text_over_slots(new_text, original_words)
+                if original_words
+                else []
+            )
+            # Timing (start/end) is the dict spread's original value, untouched;
+            # only text and the per-word breakdown change.
+            out.append({**seg, "text": new_text, "words": new_words or original_words})
         else:
             out.append(seg)
     return out
