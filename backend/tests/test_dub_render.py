@@ -11,6 +11,7 @@ import pytest
 from packages.video.dub_render import (
     build_dub_bundle_zip,
     concat_stream_copy,
+    mix_audio_layers,
     mux_voiceover,
     norm_for_clip,
     prepare_clips_dir,
@@ -45,6 +46,20 @@ def sample_vo(tmp_path_factory: pytest.TempPathFactory) -> Path:
             ffmpeg_cmd(), "-y",
             "-f", "lavfi", "-i", "sine=frequency=880:duration=3",
             "-c:a", "aac", str(out),
+        ],
+        check=True, capture_output=True,
+    )
+    return out
+
+
+@pytest.fixture(scope="module")
+def sample_music(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    out = tmp_path_factory.mktemp("media") / "music.wav"
+    subprocess.run(
+        [
+            ffmpeg_cmd(), "-y",
+            "-f", "lavfi", "-i", "sine=frequency=220:duration=8",
+            str(out),
         ],
         check=True, capture_output=True,
     )
@@ -122,3 +137,50 @@ def test_mux_voiceover_replaces_audio(sample_clip: Path, sample_vo: Path, tmp_pa
     assert has_audio_stream(out)
     # -shortest: 6s video + 3s VO → ~3s output
     assert abs(media_duration(out) - 3.0) < 0.35
+
+
+def test_mix_audio_layers_no_music_matches_mux_voiceover(
+    sample_clip: Path, sample_vo: Path, tmp_path: Path
+) -> None:
+    out = tmp_path / "no_music.mp4"
+    mix_audio_layers(sample_clip, sample_vo, None, out)
+    assert has_audio_stream(out)
+    assert abs(media_duration(out) - 3.0) < 0.35
+
+
+def test_mix_audio_layers_with_music(
+    sample_clip: Path, sample_vo: Path, sample_music: Path, tmp_path: Path
+) -> None:
+    out = tmp_path / "with_music.mp4"
+    mix_audio_layers(sample_clip, sample_vo, sample_music, out, music_volume=0.3)
+    assert has_audio_stream(out)
+    # -shortest still bounds to the 6s video / 3s VO combo (amix duration="first" == VO).
+    assert abs(media_duration(out) - 3.0) < 0.35
+
+
+def test_mix_audio_layers_with_music_offset_and_trim(
+    sample_clip: Path, sample_vo: Path, sample_music: Path, tmp_path: Path
+) -> None:
+    out = tmp_path / "with_music_offset.mp4"
+    mix_audio_layers(
+        sample_clip, sample_vo, sample_music, out,
+        music_volume=0.3, music_offset_sec=1.0, music_trim_in_sec=2.0,
+    )
+    assert has_audio_stream(out)
+    assert abs(media_duration(out) - 3.0) < 0.35
+
+
+def test_mix_audio_layers_music_only_no_vo(
+    sample_clip: Path, sample_music: Path, tmp_path: Path
+) -> None:
+    """dub_first's VO is optional — music alone must still produce audible
+    output, bounded by the video's own (6s) length, not stretched or looped."""
+    out = tmp_path / "music_only.mp4"
+    mix_audio_layers(sample_clip, None, sample_music, out, music_volume=0.3)
+    assert has_audio_stream(out)
+    assert abs(media_duration(out) - 6.0) < 0.35
+
+
+def test_mix_audio_layers_raises_with_no_layers(sample_clip: Path, tmp_path: Path) -> None:
+    with pytest.raises(ValueError):
+        mix_audio_layers(sample_clip, None, None, tmp_path / "nope.mp4")

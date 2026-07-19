@@ -24,3 +24,25 @@ export function mediaPathForUrl(url: string, root: string): string | null {
   if (!abs.startsWith(projectRootWithSep)) return null
   return abs
 }
+
+/**
+ * Resolve a media://library/<relative/path> URL to an absolute path under the
+ * effects-library root, or null when malformed or attempting traversal.
+ * Serves the global asset library (sticker files, generated-component preview
+ * clips) to the renderer — same containment rules as the project variant.
+ */
+export function libraryPathForUrl(url: string, libraryRoot: string): string | null {
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    return null
+  }
+  if (parsed.protocol !== 'media:' || parsed.host !== 'library') return null
+  const rel = decodeURIComponent(parsed.pathname).replace(/^\/+/, '')
+  if (!rel) return null
+  const abs = normalize(join(libraryRoot, rel))
+  const rootWithSep = normalize(libraryRoot) + sep
+  if (!abs.startsWith(rootWithSep)) return null
+  return abs
+}

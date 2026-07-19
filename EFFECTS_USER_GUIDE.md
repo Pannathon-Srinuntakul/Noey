@@ -33,8 +33,37 @@ exactly when that line is spoken, not just somewhere that looks visually similar
 
 ## Where to find it
 
-Open a finished project (status **เสร็จแล้ว**). Below the video you'll see the
-**เอฟเฟกต์ (AI)** panel.
+There are two places:
+
+**Effects Studio (global)** — the **สตูดิโอ** button in the app header. This is
+where you CREATE and manage reusable assets, independent of any project:
+
+- **คอมโพเนนต์** — browse every built-in effect with a live, scrubbable preview
+  and sliders/colors to play with each setting.
+- **สติกเกอร์** — import Lottie (.json) or image stickers into your library.
+- **AI สร้างเอฟเฟกต์** — describe an effect and/or attach a reference image; the
+  AI writes a brand-new component, the app renders a short preview clip, and you
+  can name it and save it to your library for reuse in any project.
+- **เทมเพลต** — build named effect presets (pick components, set timing, live
+  preview) that projects can apply in one tap.
+
+Everything saved here is stored locally on your machine and is available to all
+projects.
+
+**Per-project effects** — open a project and press
+**เอฟเฟกต์ (AI) & สติกเกอร์** on its card. It opens a fullscreen CapCut-style
+editor: the video plays in the middle with your effects shown live on top —
+**drag any sticker/text/shape directly on the video** to position it (no
+number fields). Timing lives on the timeline strip below: drag a block to move
+it, drag its right edge to change how long it stays. The right panel edits the
+selected effect's colors/text/size and holds the add menu (templates,
+components, your saved AI effects, or generate a brand-new one). While the AI
+is arranging effects you can press **หยุด** to cancel. Press **ให้ AI จัดทั้งคลิป**
+again after a result you don't like — the AI is told your previous arrangement
+was rejected and will produce a different take. For dub-first projects the
+button appears already at the **รอ Voiceover** stage — effects you place on the
+silent cut carry over to the voiced video automatically after you attach the
+voiceover.
 
 ## Generating effects with AI
 

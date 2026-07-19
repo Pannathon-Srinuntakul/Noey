@@ -5,6 +5,7 @@ import {
   analyzeVideo,
   cancelRemoteProject,
   createLocalProject,
+  deleteMusic,
   getEditScript,
   getLocalTimeline,
   patchLocalStatus,
@@ -14,6 +15,7 @@ import {
   putLocalTimeline,
   reeditDubScenes,
   uploadAudio,
+  uploadMusic,
   type ApiSession,
   type CaptionStyleIn,
   type DubEditScript,
@@ -32,6 +34,26 @@ import { groupWordsIntoLines } from './captionLines'
 import { pickFile } from './pickFile'
 import type { ProjectMode, ProjectStep } from './projectFlow'
 import { isBusy, isTerminal, resumeStep } from './projectFlow'
+
+/** Rejects with a labeled error if `promise` doesn't settle within `ms` —
+ * used around local Electron IPC calls that should always be fast, so a
+ * wedged main process shows up as a clear timeout instead of a silent
+ * permanent hang with nothing to point at in the logs. */
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)
+    promise.then(
+      (v) => {
+        clearTimeout(timer)
+        resolve(v)
+      },
+      (err: unknown) => {
+        clearTimeout(timer)
+        reject(err instanceof Error ? err : new Error(String(err)))
+      }
+    )
+  })
+}
 
 /**
  * One project's full render pipeline (analyze → silent render → voiceover →
@@ -59,6 +81,9 @@ export interface ProjectPipeline {
   runAnalyze: () => Promise<void>
   runTalkingHead: () => Promise<void>
   runFinal: () => Promise<void>
+  pickMusic: () => Promise<LocalProject['music'] | undefined>
+  updateMusic: (patch: Partial<NonNullable<LocalProject['music']>>) => Promise<void>
+  removeMusic: () => Promise<void>
   retry: () => Promise<void>
   stop: () => Promise<void>
   stopping: boolean
@@ -106,6 +131,24 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
       abortRef.current?.abort()
     }
   }, [])
+
+  // dub_first final render only: extra sidecar job fields for the attached
+  // background music track (see TimelineEditor's audio track for editing).
+  // Omitted entirely when no music is attached — old VO-only mux, unchanged.
+  // The sidecar is a plain local process, so it gets the resolved absolute
+  // path (project.music.path itself is project-relative, for media:// use).
+  const musicJobFields = async (
+    p: LocalProject
+  ): Promise<{ musicPath?: string; musicVolume?: number; musicOffsetSec?: number; musicTrimInSec?: number }> => {
+    if (!p.music) return {}
+    const musicPath = await window.noey.projects.resolvePath(p.uid, p.music.path)
+    return {
+      musicPath,
+      musicVolume: p.music.muted ? 0 : p.music.volume,
+      musicOffsetSec: p.music.offsetSec,
+      musicTrimInSec: p.music.trimInSec
+    }
+  }
 
   const patchProject = async (patch: Partial<LocalProject>): Promise<LocalProject> => {
     const updated = await window.noey.projects.update(project.uid, patch)
@@ -155,25 +198,44 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
 
   const stop = async (): Promise<void> => {
     if (stopping || !isBusy(step)) return
+    void window.noey.log.write('useProjectPipeline', `stop: start uid=${project.uid} step=${step}`)
     setStopping(true)
     stoppedRef.current = true
     setProgressMsg('กำลังหยุด…')
     setThinking('')
-    const wasPolling = Boolean(abortRef.current)
     abortRef.current?.abort()
     try {
-      const projectDir = await window.noey.projects.dir(project.uid)
-      await window.noey.sidecar.cancel(projectDir)
-    } catch {
-      /* sidecar may not be running */
+      // These are local Electron main-process IPC calls (no server round
+      // trip) — they should return in milliseconds. If either ever hangs,
+      // the main process itself is wedged (not a network/server issue) —
+      // the timeout here logs exactly which call never returned instead of
+      // stop() (and the whole UI) freezing forever with no diagnostic trail.
+      void window.noey.log.write('useProjectPipeline', 'stop: calling projects.dir')
+      const projectDir = await withTimeout(
+        window.noey.projects.dir(project.uid),
+        10_000,
+        'projects.dir'
+      )
+      void window.noey.log.write('useProjectPipeline', `stop: got projectDir=${projectDir}`)
+      await withTimeout(window.noey.sidecar.cancel(projectDir), 10_000, 'sidecar.cancel')
+      void window.noey.log.write('useProjectPipeline', 'stop: sidecar.cancel done')
+    } catch (err) {
+      void window.noey.log.write('useProjectPipeline', `stop: cancel step failed/timed out: ${String(err)}`)
     }
     const remoteUid = project.remote?.uid
     if (remoteUid) {
       cancelRemoteProject(session, remoteUid).catch(() => undefined)
     }
-    if (!wasPolling) {
-      await resetAfterStop()
-    }
+    // Always reset here directly — previously this was skipped while a
+    // server job was being polled (wasPolling), relying entirely on the
+    // aborted pollJob() rejecting and its catch (handlePipelineError →
+    // resetAfterStop) to reset the UI instead. That's an indirect chain
+    // with more to go wrong (observed stuck on "กำลังหยุด…" indefinitely,
+    // 2026-07-19) — now that concurrent patchProject calls are safe
+    // (main/projects.ts's per-uid write lock), stop() can just reset
+    // directly and not depend on a parallel chain noticing the abort.
+    void window.noey.log.write('useProjectPipeline', 'stop: resetting UI state')
+    await resetAfterStop()
   }
 
   const fail = async (exc: unknown): Promise<void> => {
@@ -184,6 +246,79 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     if (remoteUid) {
       patchLocalStatus(session, remoteUid, 'error', message).catch(() => undefined)
     }
+  }
+
+  // ── background music (dub_first only) ─────────────────────────────────────
+  // Picked ahead of "AI ตัด" — the local path is stashed here; runAnalyze
+  // uploads it (for librosa beat detection) once the remote project exists,
+  // right before the cut-decision call, so the AI already has the beat grid.
+  // Re-mix music onto an EXISTING final_silent.mp4 — covers music picked or
+  // edited AFTER the silent cut already exists (the inline mix inside
+  // runRenderSilent only covers music attached before that render). Failure
+  // is non-fatal and silent (e.g. the silent cut doesn't exist yet — music
+  // picked before the first analyze, which runRenderSilent already handles).
+  const remixMusicOntoSilent = async (music: LocalProject['music'] | undefined): Promise<void> => {
+    void window.noey.log.write(
+      'useProjectPipeline',
+      `mixMusic start: ${music ? `path=${music.path} vol=${music.volume} offset=${music.offsetSec} trimIn=${music.trimInSec}` : 'clearing music'}`
+    )
+    const unsub = window.noey.sidecar.mixMusic.onProgress((evt: SidecarEvent) => {
+      setProgressMsg(evt.stage === 'music' ? 'กำลังใส่เพลงประกอบ…' : 'กำลังอัพเดต bundle…')
+      void window.noey.log.write('useProjectPipeline', `mixMusic progress: ${JSON.stringify(evt)}`)
+    })
+    try {
+      const projectDir = await window.noey.projects.dir(project.uid)
+      const musicPath = music ? await window.noey.projects.resolvePath(project.uid, music.path) : null
+      const done = await window.noey.sidecar.mixMusic.run({
+        projectDir,
+        musicPath,
+        musicVolume: music ? (music.muted ? 0 : music.volume) : 0.25,
+        musicOffsetSec: music?.offsetSec ?? 0,
+        musicTrimInSec: music?.trimInSec ?? 0
+      })
+      void window.noey.log.write('useProjectPipeline', `mixMusic done: ${JSON.stringify(done)}`)
+      setMediaKey((k) => k + 1)
+      setProgressMsg('')
+    } catch (err) {
+      void window.noey.log.write('useProjectPipeline', `mixMusic skipped: ${String(err)}`)
+      setProgressMsg('')
+    } finally {
+      unsub()
+    }
+  }
+
+  const pickMusic = async (): Promise<LocalProject['music'] | undefined> => {
+    const picked = await pickFile('video/*,audio/*')
+    if (!picked) return project.music
+    // Copied into the project dir (like clips) so the editor's waveform can
+    // fetch it via media:// — window.electron file objects aren't otherwise
+    // readable from the renderer's fetch/decodeAudioData.
+    const relPath = await window.noey.projects.importMusic(project.uid, picked.path)
+    const music: NonNullable<LocalProject['music']> = {
+      path: relPath,
+      volume: 0.25,
+      offsetSec: 0,
+      trimInSec: 0,
+      trimOutSec: null,
+      muted: false
+    }
+    await patchProject({ music })
+    await remixMusicOntoSilent(music)
+    return music
+  }
+
+  const updateMusic = async (patch: Partial<NonNullable<LocalProject['music']>>): Promise<void> => {
+    if (!project.music) return
+    const music = { ...project.music, ...patch }
+    await patchProject({ music })
+    await remixMusicOntoSilent(music)
+  }
+
+  const removeMusic = async (): Promise<void> => {
+    await patchProject({ music: undefined })
+    await remixMusicOntoSilent(undefined)
+    const remoteUid = project.remote?.uid
+    if (remoteUid) deleteMusic(session, remoteUid).catch(() => undefined)
   }
 
   // ── stage: analyze (frames → upload → LLM → edit script → silent render) ──
@@ -198,6 +333,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
       let remoteUid = current.remote?.uid
       if (!remoteUid) {
         const created = await createLocalProject(session, {
+          mode,
           brief: current.brief || null,
           user_script: current.userScript || null,
           target_duration_sec: current.targetDurationSec ?? null,
@@ -211,6 +347,21 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
         })
         remoteUid = created.uid
         current = await patchProject({ remote: { uid: remoteUid } })
+      }
+
+      if (current.music?.path) {
+        setProgressMsg('กำลังวิเคราะห์จังหวะเพลง…')
+        try {
+          const absMusicPath = await window.noey.projects.resolvePath(project.uid, current.music.path)
+          const beats = await uploadMusic(session, remoteUid, absMusicPath)
+          current = await patchProject({
+            music: current.music ? { ...current.music, beats: beats.beats } : current.music
+          })
+        } catch (err) {
+          // Non-fatal: cut analysis still works without beat data.
+          void window.noey.log.write('useProjectPipeline', `uploadMusic failed: ${String(err)}`)
+        }
+        if (stoppedRef.current) return
       }
 
       setProgressMsg('กำลังย่อวิดีโอให้ AI…')
@@ -266,25 +417,45 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     await patchProject({ step: 'silent_rendering' })
     const projectDir = await window.noey.projects.dir(project.uid)
     const unsub = window.noey.sidecar.renderSilent.onProgress((evt: SidecarEvent) => {
-      setProgressMsg(
+      const msg =
         evt.stage === 'cut'
           ? `กำลังตัดซีนที่ ${evt.step}/${evt.total}…`
           : evt.stage === 'concat'
             ? 'กำลังรวมคลิป…'
-            : 'กำลังสร้าง bundle…'
-      )
+            : evt.stage === 'music'
+              ? 'กำลังใส่เพลงประกอบ…'
+              : evt.stage === 'bundle'
+                ? 'กำลังสร้าง bundle…'
+                : `กำลังทำ (${String(evt.stage)})…`
+      setProgressMsg(msg)
+      void window.noey.log.write('useProjectPipeline', `renderSilent progress: ${JSON.stringify(evt)}`)
     })
+    let clipDurationsSec: number[] | undefined
     try {
-      await window.noey.sidecar.renderSilent.run({
+      const done = await window.noey.sidecar.renderSilent.run({
         projectDir,
         editScript: script,
-        brief: project.brief || null
+        brief: project.brief || null,
+        ...(await musicJobFields(project))
       })
+      clipDurationsSec = (done as { clipDurationsSec?: number[] }).clipDurationsSec
     } finally {
       unsub()
     }
-    await patchLocalStatus(session, remoteUid, 'waiting_vo')
-    await patchProject({ step: 'waiting_vo' })
+    // Real per-clip output durations (post frame-accurate re-encode) — the
+    // effects layer's cut-boundary math (buildEffectsCutPoints) uses these
+    // instead of the edit script's nominal sourceOut-sourceIn when present,
+    // so scene-cut timing doesn't drift as rounding error accumulates across
+    // segments (live report 2026-07-19).
+    if (mode === 'highlight') {
+      // No voiceover step at all — the silent cut IS the final output,
+      // mirrors talking_head's runRenderTimeline going straight to done.
+      await patchLocalStatus(session, remoteUid, 'done')
+      await patchProject({ step: 'done', clipDurationsSec })
+    } else {
+      await patchLocalStatus(session, remoteUid, 'waiting_vo')
+      await patchProject({ step: 'waiting_vo', clipDurationsSec })
+    }
     setMediaKey((k) => k + 1)
     setProgressMsg('')
   }
@@ -318,18 +489,53 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
           evt.stage === 'cut'
             ? `กำลังตัดช่วงที่ ${evt.step}/${evt.total}…`
             : evt.stage === 'mux'
-              ? 'กำลังใส่เสียงพากย์…'
-              : 'กำลังรวมคลิป…'
+              ? project.music
+                ? 'กำลังใส่เสียงพากย์ + เพลงประกอบ…'
+                : 'กำลังใส่เสียงพากย์…'
+              : evt.stage === 'concat'
+                ? 'กำลังรวมคลิป…'
+                : evt.stage === 'bundle'
+                  ? 'กำลังสร้าง bundle…'
+                  : `กำลังทำ (${String(evt.stage)})…`
         )
+        void window.noey.log.write('useProjectPipeline', `renderFinal progress: ${JSON.stringify(evt)}`)
       })
       try {
         await window.noey.sidecar.renderFinal.run({
           projectDir,
           timeline,
-          voiceoverPath: picked.path
+          voiceoverPath: picked.path,
+          ...(await musicJobFields(project))
         })
       } finally {
         unsub()
+      }
+
+      // Effects placed while waiting for the VO (on final_silent.mp4) carry
+      // over: same cuts → same timing, so re-composite the stored effects.json
+      // onto the voiced final.mp4 automatically.
+      try {
+        const { getEffectsDoc } = await import('./effectsLocalApi')
+        const { renderEffectsDoc } = await import('./effectsPipeline')
+        const fxDoc = await getEffectsDoc(session, remoteUid)
+        if (fxDoc.instances.length > 0) {
+          setProgressMsg('กำลังใส่เอฟเฟกต์เดิมลงวิดีโอที่มีเสียง…')
+          await renderEffectsDoc(
+            {
+              session,
+              localUid: project.uid,
+              remoteUid,
+              baseFile: 'final.mp4',
+              project,
+              onProgress: setProgressMsg
+            },
+            fxDoc
+          )
+        }
+      } catch (fxErr) {
+        // Effects re-apply is best-effort — the voiced final.mp4 is already
+        // good; the user can re-render effects from the editor if this fails.
+        console.error('effects re-apply failed', fxErr)
       }
 
       await patchLocalStatus(session, remoteUid, 'done')
@@ -569,14 +775,15 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
   // Resume: reload edit script / timeline when reopening at review steps.
   useEffect(() => {
     const remoteUid = project.remote?.uid
-    if (mode === 'dub_first' && (step === 'waiting_vo' || step === 'done')) {
+    const hasEditScript = mode === 'dub_first' || mode === 'highlight'
+    if (hasEditScript && (step === 'waiting_vo' || step === 'done')) {
       void window.noey.log.write(
         'useProjectPipeline',
         `resume-check uid=${project.uid} remoteUid=${remoteUid ?? 'MISSING'} hasEditScript=${Boolean(editScript)}`
       )
     }
     if (!remoteUid) return
-    if (mode === 'dub_first' && !editScript && (step === 'waiting_vo' || step === 'done')) {
+    if (hasEditScript && !editScript && (step === 'waiting_vo' || step === 'done')) {
       getEditScript(session, remoteUid)
         .then(applyEditScript)
         .catch((err) =>
@@ -649,14 +856,22 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
       const projectDir = await window.noey.projects.dir(project.uid)
       const unsub = window.noey.sidecar.renderFinal.onProgress((evt: SidecarEvent) => {
         setProgressMsg(
-          evt.stage === 'cut' ? `กำลังตัดช่วงที่ ${evt.step}/${evt.total}…` : 'กำลังประกอบวิดีโอ…'
+          evt.stage === 'cut'
+            ? `กำลังตัดช่วงที่ ${evt.step}/${evt.total}…`
+            : evt.stage === 'mux'
+              ? project.music
+                ? 'กำลังใส่เสียงพากย์ + เพลงประกอบ…'
+                : 'กำลังใส่เสียงพากย์…'
+              : 'กำลังประกอบวิดีโอ…'
         )
+        void window.noey.log.write('useProjectPipeline', `renderFinal progress: ${JSON.stringify(evt)}`)
       })
       try {
         await window.noey.sidecar.renderFinal.run({
           projectDir,
           timeline,
-          voiceoverPath: project.voiceoverPath
+          voiceoverPath: project.voiceoverPath,
+          ...(await musicJobFields(project))
         })
       } finally {
         unsub()
@@ -729,6 +944,10 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
       editScript,
       timeline,
       captionLines,
+      music: mode === 'dub_first' || mode === 'highlight' ? project.music : undefined,
+      onMusicChange: mode === 'dub_first' || mode === 'highlight' ? updateMusic : undefined,
+      onPickMusic: mode === 'dub_first' || mode === 'highlight' ? pickMusic : undefined,
+      onRemoveMusic: mode === 'dub_first' || mode === 'highlight' ? removeMusic : undefined,
       onSave: (cuts, lines) => saveEditedCuts(cuts, target, lines),
       // AI re-edit only applies to dub_first before the voiceover/final render.
       onAiReedit:
@@ -754,6 +973,9 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     runAnalyze,
     runTalkingHead,
     runFinal,
+    pickMusic,
+    updateMusic,
+    removeMusic,
     retry,
     stop,
     stopping,

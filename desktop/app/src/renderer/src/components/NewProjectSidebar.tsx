@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   DndContext,
   KeyboardSensor,
@@ -16,8 +16,19 @@ import {
   verticalListSortingStrategy
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { ChevronDown, ChevronUp, Film, GripVertical, Loader2, Upload } from 'lucide-react'
+import {
+  ChevronDown,
+  ChevronUp,
+  Film,
+  GripVertical,
+  Loader2,
+  Music2,
+  Scissors,
+  Upload,
+  X
+} from 'lucide-react'
 import type { LocalProject } from '../../../preload'
+import MusicRangePicker from './MusicRangePicker'
 import { pickVideoFiles, toPickedVideoFiles, type PickedVideoFile } from '../lib/pickVideoFiles'
 import {
   DUB_DURATION_CHIPS,
@@ -42,6 +53,13 @@ interface UploadItem extends PickedVideoFile {
 
 function toUploadItem(f: PickedVideoFile): UploadItem {
   return { ...f, id: crypto.randomUUID() }
+}
+
+function fmtMinSec(sec: number): string {
+  const s = Math.max(0, Math.round(sec))
+  const m = Math.floor(s / 60)
+  const r = s % 60
+  return `${m}:${String(r).padStart(2, '0')}`
 }
 
 function clipOrderLabel(index: number, total: number): string {
@@ -295,7 +313,7 @@ interface Props {
 
 export default function NewProjectSidebar({ onCreated }: Props): React.JSX.Element {
   const [files, setFiles] = useState<UploadItem[]>([])
-  const [mode, setMode] = useState<'talking_head' | 'dub_first'>('talking_head')
+  const [mode, setMode] = useState<'talking_head' | 'dub_first' | 'highlight'>('talking_head')
   // Independent from `mode` (edit style) — this is "how many clips → how many
   // projects", same axis the web uploader exposes. Keep it a separate state so
   // switching edit mode never resets or overrides this choice, and vice versa.
@@ -310,6 +328,19 @@ export default function NewProjectSidebar({ onCreated }: Props): React.JSX.Eleme
   const [captionEnabled, setCaptionEnabled] = useState(true)
   const [captionStyle, setCaptionStyle] = useState<CaptionStyle>(CAPTION_STYLE_DEFAULT)
   const [previewThumb, setPreviewThumb] = useState<string | null>(null)
+  const [musicFile, setMusicFile] = useState<{
+    path: string
+    name: string
+    trimInSec: number
+    trimOutSec: number
+  } | null>(null)
+  // Kept only long enough to open the range picker (needs the real File for
+  // URL.createObjectURL/decodeAudioData — musicFile itself only stores the
+  // resolved OS path + chosen range, not the File, so it stays serializable).
+  const [pendingMusicFile, setPendingMusicFile] = useState<File | null>(null)
+  // Kept across confirm so the scissors button can reopen the range editor on the
+  // SAME file without forcing the user back through the native file dialog.
+  const musicFileObjRef = useRef<File | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -362,19 +393,68 @@ export default function NewProjectSidebar({ onCreated }: Props): React.JSX.Eleme
     setTalkingBrief('')
     setCaptionEnabled(true)
     setCaptionStyle(CAPTION_STYLE_DEFAULT)
+    setMusicFile(null)
+    setPendingMusicFile(null)
+    musicFileObjRef.current = null
+  }
+
+  const pickMusicFile = (): void => {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.accept = 'video/*,audio/*'
+    input.onchange = () => {
+      const f = input.files?.[0]
+      if (f) {
+        musicFileObjRef.current = f
+        setPendingMusicFile(f)
+      }
+    }
+    input.click()
+  }
+
+  const editMusicRange = (): void => {
+    if (!musicFile) return
+    if (musicFileObjRef.current) {
+      setPendingMusicFile(musicFileObjRef.current)
+      return
+    }
+    // Ref lost (e.g. hot-reload) — fall back to re-picking the file.
+    pickMusicFile()
+  }
+
+  const confirmMusicRange = async (range: { trimInSec: number; trimOutSec: number }): Promise<void> => {
+    const f = pendingMusicFile
+    if (!f) return
+    const path =
+      window.electron.webUtils?.getPathForFile?.(f) ?? (f as unknown as { path?: string }).path
+    setPendingMusicFile(null)
+    if (!path) {
+      setError('อ่าน path ไฟล์เพลงไม่ได้')
+      return
+    }
+    setMusicFile({ path, name: f.name, ...range })
   }
 
   const submit = async (): Promise<void> => {
     if (files.length === 0) return
+    const isDubOrHighlight = mode === 'dub_first' || mode === 'highlight'
+    if (isDubOrHighlight && !scriptDuration) {
+      setError('กรุณาเลือกความยาววิดีโอที่ต้องการ')
+      return
+    }
     setBusy(true)
     setError(null)
     try {
-      const targetDurationSec =
-        mode === 'dub_first' ? dubTargetDurationSec(scriptDuration, scriptCustomSec) : null
-      const brief =
-        mode === 'dub_first'
-          ? (buildDubBrief(scriptDuration, scriptCustomSec, scriptNote, scriptStyles) ?? '')
-          : talkingBrief.trim()
+      const targetDurationSec = isDubOrHighlight
+        ? dubTargetDurationSec(
+            scriptDuration,
+            scriptCustomSec,
+            musicFile ? musicFile.trimOutSec - musicFile.trimInSec : null
+          )
+        : null
+      const brief = isDubOrHighlight
+        ? (buildDubBrief(scriptDuration, scriptCustomSec, scriptNote, scriptStyles) ?? '')
+        : talkingBrief.trim()
       const userScriptFinal = mode === 'dub_first' && scriptMode === 'own' ? userScript.trim() : ''
       const finalTargetDurationSec = targetDurationSec ?? undefined
 
@@ -393,6 +473,21 @@ export default function NewProjectSidebar({ onCreated }: Props): React.JSX.Eleme
           sources: group.map((f) => f.path),
           mode
         })
+        // Copied into the project dir before the update below — must land
+        // BEFORE onCreated() mounts the card, since that auto-fires
+        // runAnalyze() immediately, and runAnalyze only uploads music for
+        // beat-aware cutting when project.music is already set at that point.
+        const music =
+          isDubOrHighlight && musicFile
+            ? {
+                path: await window.noey.projects.importMusic(project.uid, musicFile.path),
+                volume: 0.25,
+                offsetSec: 0,
+                trimInSec: musicFile.trimInSec,
+                trimOutSec: musicFile.trimOutSec,
+                muted: false
+              }
+            : undefined
         const updated = await window.noey.projects.update(project.uid, {
           clips: ingested.clips as LocalProject['clips'],
           step: 'imported',
@@ -400,7 +495,8 @@ export default function NewProjectSidebar({ onCreated }: Props): React.JSX.Eleme
           userScript: userScriptFinal,
           scriptStyles,
           targetDurationSec: finalTargetDurationSec,
-          captionStyle: mode === 'talking_head' && captionEnabled ? captionStyle : undefined
+          captionStyle: mode === 'talking_head' && captionEnabled ? captionStyle : undefined,
+          music
         })
         onCreated(updated)
       }
@@ -477,11 +573,11 @@ export default function NewProjectSidebar({ onCreated }: Props): React.JSX.Eleme
           </div>
         )}
 
-        <div className="flex gap-2 rounded-lg border border-white/10 bg-black/15 p-1">
+        <div className="grid grid-cols-3 gap-2 rounded-lg border border-white/10 bg-black/15 p-1">
           <button
             type="button"
             onClick={() => setMode('talking_head')}
-            className={`flex-1 rounded-lg px-3 py-2.5 text-center transition-all ${
+            className={`rounded-lg px-2.5 py-2.5 text-center transition-all ${
               mode === 'talking_head'
                 ? 'bg-amber-500 text-black shadow'
                 : 'border border-white/15 text-amber-300/70 hover:border-amber-400/40 hover:text-amber-200'
@@ -497,7 +593,7 @@ export default function NewProjectSidebar({ onCreated }: Props): React.JSX.Eleme
           <button
             type="button"
             onClick={() => setMode('dub_first')}
-            className={`flex-1 rounded-lg px-3 py-2.5 text-center transition-all ${
+            className={`rounded-lg px-2.5 py-2.5 text-center transition-all ${
               mode === 'dub_first'
                 ? 'bg-purple-500 text-white shadow'
                 : 'border border-white/15 text-amber-300/70 hover:border-purple-400/40 hover:text-purple-200'
@@ -508,6 +604,22 @@ export default function NewProjectSidebar({ onCreated }: Props): React.JSX.Eleme
               className={`block text-[10px] ${mode === 'dub_first' ? 'text-white/70' : 'opacity-60'}`}
             >
               Dub First
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode('highlight')}
+            className={`rounded-lg px-2.5 py-2.5 text-center transition-all ${
+              mode === 'highlight'
+                ? 'bg-emerald-500 text-white shadow'
+                : 'border border-white/15 text-amber-300/70 hover:border-emerald-400/40 hover:text-emerald-200'
+            }`}
+          >
+            <span className="block text-sm font-semibold">🎞 ไฮไลท์ไม่พากย์</span>
+            <span
+              className={`block text-[10px] ${mode === 'highlight' ? 'text-white/70' : 'opacity-60'}`}
+            >
+              ตัดฉากเด่น ไม่มีสคริปต์
             </span>
           </button>
         </div>
@@ -569,55 +681,68 @@ export default function NewProjectSidebar({ onCreated }: Props): React.JSX.Eleme
                 >
                   {mode === 'dub_first'
                     ? `สร้าง ${files.length} โปรเจกต์ — คลิปละ 1 script + วิดีโอ`
-                    : `สร้าง ${files.length} โปรเจกต์ — คลิปละ 1 งานตัดต่อ`}
+                    : mode === 'highlight'
+                      ? `สร้าง ${files.length} โปรเจกต์ — คลิปละ 1 วิดีโอไฮไลท์`
+                      : `สร้าง ${files.length} โปรเจกต์ — คลิปละ 1 งานตัดต่อ`}
                 </p>
               </div>
             </label>
           </div>
         )}
 
-        {mode === 'dub_first' && (
+        {(mode === 'dub_first' || mode === 'highlight') && (
           <div className="flex flex-col gap-3 rounded-xl border border-purple-500/20 bg-purple-500/5 p-3">
-            <div className="flex gap-1.5 rounded-lg border border-purple-500/20 bg-black/15 p-1">
-              <button
-                type="button"
-                onClick={() => setScriptMode('generate')}
-                className={`flex-1 rounded-md py-2 text-xs font-medium transition-all ${
-                  scriptMode === 'generate'
-                    ? DUB_CHIP_ACTIVE
-                    : `${DUB_CHIP_INACTIVE} hover:bg-purple-500/15`
-                }`}
-              >
-                ✨ ให้ AI สร้าง script
-              </button>
-              <button
-                type="button"
-                onClick={() => setScriptMode('own')}
-                className={`flex-1 rounded-md py-2 text-xs font-medium transition-all ${
-                  scriptMode === 'own'
-                    ? DUB_CHIP_ACTIVE
-                    : `${DUB_CHIP_INACTIVE} hover:bg-purple-500/15`
-                }`}
-              >
-                ✏️ ใส่ script เอง
-              </button>
-            </div>
+            {mode === 'dub_first' && (
+              <div className="flex gap-1.5 rounded-lg border border-purple-500/20 bg-black/15 p-1">
+                <button
+                  type="button"
+                  onClick={() => setScriptMode('generate')}
+                  className={`flex-1 rounded-md py-2 text-xs font-medium transition-all ${
+                    scriptMode === 'generate'
+                      ? DUB_CHIP_ACTIVE
+                      : `${DUB_CHIP_INACTIVE} hover:bg-purple-500/15`
+                  }`}
+                >
+                  ✨ ให้ AI สร้าง script
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setScriptMode('own')}
+                  className={`flex-1 rounded-md py-2 text-xs font-medium transition-all ${
+                    scriptMode === 'own'
+                      ? DUB_CHIP_ACTIVE
+                      : `${DUB_CHIP_INACTIVE} hover:bg-purple-500/15`
+                  }`}
+                >
+                  ✏️ ใส่ script เอง
+                </button>
+              </div>
+            )}
 
             <div className="space-y-1.5">
               <span className={DUB_LABEL}>ความยาววิดีโอที่ต้องการ</span>
               <div className="flex flex-wrap gap-1.5">
-                {DUB_DURATION_CHIPS.map(({ value, label }) => (
-                  <button
-                    key={value}
-                    type="button"
-                    onClick={() => setScriptDuration(scriptDuration === value ? '' : value)}
-                    className={`rounded-lg px-2.5 py-1.5 text-xs font-medium transition-all ${
-                      scriptDuration === value ? DUB_CHIP_ACTIVE : DUB_CHIP_INACTIVE
-                    }`}
-                  >
-                    {label}
-                  </button>
-                ))}
+                {DUB_DURATION_CHIPS.map(({ value, label }) => {
+                  const disabled = value === 'music' && !musicFile
+                  return (
+                    <button
+                      key={value}
+                      type="button"
+                      disabled={disabled}
+                      title={disabled ? 'เลือกเพลงก่อนถึงจะใช้ตัวเลือกนี้ได้' : undefined}
+                      onClick={() => setScriptDuration(scriptDuration === value ? '' : value)}
+                      className={`rounded-lg px-2.5 py-1.5 text-xs font-medium transition-all ${
+                        disabled
+                          ? 'cursor-not-allowed opacity-40 ' + DUB_CHIP_INACTIVE
+                          : scriptDuration === value
+                            ? DUB_CHIP_ACTIVE
+                            : DUB_CHIP_INACTIVE
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  )
+                })}
               </div>
               {scriptDuration === 'custom' && (
                 <div className="flex items-center gap-2 pt-0.5">
@@ -635,7 +760,64 @@ export default function NewProjectSidebar({ onCreated }: Props): React.JSX.Eleme
               )}
             </div>
 
-            {scriptMode === 'generate' && (
+            <div className="space-y-1.5">
+              <span className={DUB_LABEL}>เพลงประกอบ (ไม่บังคับ)</span>
+              {musicFile ? (
+                <div className="flex items-center gap-2 rounded-lg border border-purple-400/35 bg-black/20 px-3 py-2">
+                  <Music2 size={14} className="shrink-0 text-purple-300/70" />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-xs text-purple-100/90">{musicFile.name}</p>
+                    <p className="text-[10px] text-purple-300/50">
+                      {fmtMinSec(musicFile.trimInSec)}–{fmtMinSec(musicFile.trimOutSec)} (
+                      {fmtMinSec(musicFile.trimOutSec - musicFile.trimInSec)})
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={editMusicRange}
+                    title="แก้ไขช่วงเพลง"
+                    className="shrink-0 rounded p-1 text-purple-300/60 hover:text-purple-100"
+                  >
+                    <Scissors size={13} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMusicFile(null)
+                      musicFileObjRef.current = null
+                      if (scriptDuration === 'music') setScriptDuration('')
+                    }}
+                    title="ลบเพลง"
+                    className="shrink-0 rounded p-0.5 text-purple-300/50 hover:text-red-400"
+                  >
+                    <X size={13} />
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={pickMusicFile}
+                  className={`flex w-full items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium ${DUB_CHIP_INACTIVE}`}
+                >
+                  <Music2 size={13} /> เลือกเพลง (หรือวิดีโอที่มีเพลง)
+                </button>
+              )}
+              <p className={DUB_HINT}>
+                AI จะพยายามตัด scene ให้ตรงจังหวะเพลง — ไม่บังคับต้องมีเสียงพากย์
+              </p>
+            </div>
+
+            {pendingMusicFile && (
+              <MusicRangePicker
+                file={pendingMusicFile}
+                initialTrimInSec={musicFile?.trimInSec}
+                initialTrimOutSec={musicFile?.trimOutSec}
+                onConfirm={(range) => void confirmMusicRange(range)}
+                onCancel={() => setPendingMusicFile(null)}
+              />
+            )}
+
+            {mode === 'dub_first' && scriptMode === 'generate' && (
               <div className="space-y-2.5">
                 <div className="space-y-1.5">
                   <div className="flex items-baseline justify-between gap-2">
@@ -685,7 +867,7 @@ export default function NewProjectSidebar({ onCreated }: Props): React.JSX.Eleme
               </div>
             )}
 
-            {scriptMode === 'own' && (
+            {mode === 'dub_first' && scriptMode === 'own' && (
               <div className="space-y-2.5">
                 <div className="space-y-1.5">
                   <span className={DUB_LABEL}>Script ที่จะพูด</span>
@@ -709,6 +891,22 @@ export default function NewProjectSidebar({ onCreated }: Props): React.JSX.Eleme
                     className={DUB_INPUT}
                   />
                 </div>
+              </div>
+            )}
+
+            {mode === 'highlight' && (
+              <div className="space-y-1.5">
+                <span className={DUB_LABEL}>บอก AI ว่าอยากให้ตัดฉากไหนเข้ามา (ไม่บังคับ)</span>
+                <textarea
+                  value={scriptNote}
+                  onChange={(e) => setScriptNote(e.target.value)}
+                  rows={4}
+                  placeholder={
+                    'เช่น ต้องมีช่วงเปิดกล่อง · เน้นโชว์สินค้าใกล้กล้องบ่อยๆ · ปิดท้ายด้วยช็อตเต็มตัว\n' +
+                    'หรือบอกช่วงที่ไม่อยากให้ตัดเข้ามา เช่น เลี่ยงช่วงที่พูดสะดุด'
+                  }
+                  className={DUB_TEXTAREA}
+                />
               </div>
             )}
           </div>
@@ -917,7 +1115,11 @@ export default function NewProjectSidebar({ onCreated }: Props): React.JSX.Eleme
 
         <button
           onClick={() => void submit()}
-          disabled={files.length === 0 || busy}
+          disabled={
+            files.length === 0 ||
+            busy ||
+            ((mode === 'dub_first' || mode === 'highlight') && !scriptDuration)
+          }
           className="flex items-center justify-center gap-2 rounded-xl bg-amber-500 py-3 text-sm font-bold text-black shadow hover:bg-amber-400 disabled:opacity-40"
         >
           {busy ? <Loader2 size={15} className="animate-spin" /> : <Film size={15} />}

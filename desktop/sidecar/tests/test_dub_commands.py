@@ -10,7 +10,14 @@ from pathlib import Path
 import pytest
 
 from sidecar.cli import main
-from sidecar.dub import RenderFinalJob, RenderSilentJob, run_render_final, run_render_silent
+from sidecar.dub import (
+    MixMusicJob,
+    RenderFinalJob,
+    RenderSilentJob,
+    run_mix_music,
+    run_render_final,
+    run_render_silent,
+)
 from sidecar.frames import ExtractFramesJob, run_extract_frames
 from sidecar.ingest import IngestJob, run_ingest
 
@@ -56,6 +63,21 @@ def test_ingest_rejects_overlong_clip(sample_clip: Path, tmp_path: Path, monkeyp
     with pytest.raises(ValueError, match="เกินลิมิต"):
         run_ingest(
             IngestJob(projectDir=pdir, sources=[sample_clip], mode="dub_first"),
+            lambda e: None,
+        )
+
+
+def test_highlight_mode_uses_dub_first_per_clip_limit(
+    sample_clip: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """highlight shares dub_first's Gemini-video upload pipeline, so it must
+    get the same per-clip cap — not silently fall through uncapped."""
+    monkeypatch.setattr("sidecar.ingest.dub_clip_exceeds_upload_limit", lambda d: True)
+    pdir = tmp_path / "p"
+    pdir.mkdir()
+    with pytest.raises(ValueError, match="เกินลิมิต"):
+        run_ingest(
+            IngestJob(projectDir=pdir, sources=[sample_clip], mode="highlight"),
             lambda e: None,
         )
 
@@ -153,6 +175,69 @@ def test_render_silent(project_dir: Path) -> None:
     assert stages.count("cut") == 2 and "concat" in stages and "bundle" in stages
 
 
+@pytest.fixture()
+def sample_music(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    from packages.video.ffmpeg_bin import ffmpeg_cmd
+
+    out = tmp_path_factory.mktemp("media") / "music.wav"
+    subprocess.run(
+        [ffmpeg_cmd(), "-y", "-f", "lavfi", "-i", "sine=frequency=220:duration=5", str(out)],
+        check=True, capture_output=True,
+    )
+    return out
+
+
+def test_render_silent_with_music_no_vo(project_dir: Path, sample_music: Path) -> None:
+    """dub_first's VO is optional — music attached before analyze must produce
+    audible output (final_silent_music.mp4) from the silent render alone."""
+    from packages.video.ffmpeg_bin import has_audio_stream
+
+    done = run_render_silent(
+        RenderSilentJob(
+            projectDir=project_dir, editScript=EDIT_SCRIPT, brief="ทดสอบ",
+            musicPath=sample_music, musicVolume=0.3,
+        ),
+        lambda e: None,
+    )
+    music_path = Path(done["finalSilentMusic"])
+    assert music_path.is_file()
+    assert has_audio_stream(music_path)
+    names = set(zipfile.ZipFile(done["zip"]).namelist())
+    assert {"final_silent.mp4", "final_with_music.mp4", "script.txt"} <= names
+
+
+def test_mix_music_onto_existing_silent_render(project_dir: Path, sample_music: Path) -> None:
+    """Music attached/edited AFTER the silent cut already exists (no re-analyze needed)."""
+    from packages.video.ffmpeg_bin import has_audio_stream
+
+    silent_done = run_render_silent(
+        RenderSilentJob(projectDir=project_dir, editScript=EDIT_SCRIPT), lambda e: None
+    )
+    assert silent_done["finalSilentMusic"] is None
+
+    mix_done = run_mix_music(
+        MixMusicJob(projectDir=project_dir, musicPath=sample_music, musicVolume=0.4),
+        lambda e: None,
+    )
+    music_path = Path(mix_done["finalSilentMusic"])
+    assert music_path.is_file()
+    assert has_audio_stream(music_path)
+    names = set(zipfile.ZipFile(mix_done["zip"]).namelist())
+    assert {"final_silent.mp4", "final_with_music.mp4"} <= names
+
+    # Removing the track (musicPath=None) clears the mixed file + drops it from the zip.
+    clear_done = run_mix_music(MixMusicJob(projectDir=project_dir, musicPath=None), lambda e: None)
+    assert clear_done["finalSilentMusic"] is None
+    assert not music_path.exists()
+    names_after = set(zipfile.ZipFile(clear_done["zip"]).namelist())
+    assert "final_with_music.mp4" not in names_after
+
+
+def test_mix_music_requires_existing_silent_render(project_dir: Path, sample_music: Path) -> None:
+    with pytest.raises(FileNotFoundError):
+        run_mix_music(MixMusicJob(projectDir=project_dir, musicPath=sample_music), lambda e: None)
+
+
 def test_render_final_muxes_voiceover(project_dir: Path, tmp_path: Path) -> None:
     from packages.video.ffmpeg_bin import ffmpeg_cmd, has_audio_stream, media_duration
 
@@ -179,6 +264,41 @@ def test_render_final_muxes_voiceover(project_dir: Path, tmp_path: Path) -> None
     # 2.5s video + 2s VO with -shortest → ~2s
     assert abs(media_duration(final) - 2.0) < 0.4
     assert Path(done["bundle"]).is_file()
+
+
+def test_render_final_mixes_music_when_attached(project_dir: Path, tmp_path: Path) -> None:
+    from packages.video.ffmpeg_bin import ffmpeg_cmd, has_audio_stream, media_duration
+
+    vo = tmp_path / "vo.m4a"
+    subprocess.run(
+        [ffmpeg_cmd(), "-y", "-f", "lavfi", "-i", "sine=frequency=880:duration=2",
+         "-c:a", "aac", str(vo)],
+        check=True, capture_output=True,
+    )
+    music = tmp_path / "music.wav"
+    subprocess.run(
+        [ffmpeg_cmd(), "-y", "-f", "lavfi", "-i", "sine=frequency=220:duration=5", str(music)],
+        check=True, capture_output=True,
+    )
+    timeline = {
+        "mode": "dub_first",
+        "timeline": [
+            {"type": "cut", "source": "clip0", "in": 0.0, "out": 1.5, "label": "opening"},
+            {"type": "cut", "source": "clip0", "in": 2.0, "out": 3.0, "label": "conclusion"},
+        ],
+    }
+    done = run_render_final(
+        RenderFinalJob(
+            projectDir=project_dir, timeline=timeline, voiceoverPath=vo,
+            musicPath=music, musicVolume=0.3,
+        ),
+        lambda e: None,
+    )
+    final = Path(done["final"])
+    assert final.is_file()
+    assert has_audio_stream(final)
+    # Same -shortest bound as the VO-only case: music must not stretch the output.
+    assert abs(media_duration(final) - 2.0) < 0.4
 
 
 def test_probe_audio_only_file(capsys: pytest.CaptureFixture, tmp_path: Path) -> None:

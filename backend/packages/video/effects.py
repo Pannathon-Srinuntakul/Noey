@@ -139,45 +139,146 @@ def normalize_effects_doc(raw: dict[str, Any] | None) -> EffectsDoc:
 EFFECTS_PLACEMENT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
-        "instances": {
+        # Re-added 2026-07-17 as a NEW, DELIBERATELY NAMED field (never
+        # "instances" — that name is retired for good, see the note it used
+        # to carry: a field the model CAN fill eventually gets filled no
+        # matter the prose, so the OLD ambiguous "instances vs customEffects"
+        # split is never coming back). `catalogPlacements` is unambiguous:
+        # it is the ONLY field for picking a component off the fixed shelf
+        # (packages/video/effects_catalog.py — mirrors registry.ts). Preferred
+        # over `customEffects` whenever the catalog covers the need — it is
+        # instant (no codegen call) and uses pre-tested, trusted components.
+        "catalogPlacements": {
             "type": "array",
             "items": {
                 "type": "object",
                 "properties": {
-                    "kind": {"type": "string", "enum": ["overlay", "transform"]},
                     "componentId": {"type": "string"},
+                    # additionalProperties=true is REQUIRED, not decorative: an
+                    # "object" with no "properties" and no additionalProperties
+                    # flag renders as a closed/empty object under Gemini's
+                    # strict response_schema enforcement — confirmed live
+                    # (2026-07-18): every catalogPlacements item came back as
+                    # literal "props": {} even with a fully-reasoned plan in
+                    # the thinking trace. This flag is what actually lets the
+                    # model attach arbitrary per-component keys.
+                    "props": {"type": "object", "additionalProperties": True},
                     "startSec": {"type": "number"},
                     "durationSec": {"type": "number"},
-                    "zOrder": {"type": "integer"},
-                    # The per-component param bag as a JSON *string*, parsed by
-                    # normalize/sanitize. Gemini structured output returns an
-                    # empty object for a schemaless `{"type":"object"}` prop
-                    # (it needs declared sub-properties, which are per-component
-                    # here) — a string field lets the model fill props freely.
-                    "propsJson": {"type": "string"},
-                    # Promoted OUT of propsJson to top-level, REQUIRED fields:
-                    # Gemini's structured-output enforcement only reaches
-                    # top-level schema properties, not keys nested inside a
-                    # string blob — focusX/focusY kept getting silently dropped
-                    # from propsJson even with an explicit prompt rule (observed
-                    # repeatedly on live calls) because there was nothing at the
-                    # schema level forcing them. Only meaningful for
-                    # kind="transform" (punch-zoom); overlay instances get an
-                    # ignored placeholder — _sanitize copies these into props.
+                },
+                "required": ["componentId", "props", "startSec", "durationSec"],
+            },
+        },
+        # Bespoke-effect briefs — the model's second, unconstrained way to add
+        # effects (no count cap): a follow-up codegen call turns each brief
+        # into a real (validated) Remotion component. Required (not optional)
+        # because Gemini structured output reliably drops optional fields; an
+        # empty array is a valid answer for a clip that only needs zoom punches.
+        "customEffects": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "brief": {"type": "string"},
+                    "startSec": {"type": "number"},
+                    "durationSec": {"type": "number"},
+                },
+                "required": ["brief", "startSec", "durationSec"],
+            },
+        },
+        # Rapid punch-zooms (the TikTok-pacing device) — pure NUMBERS applied
+        # directly to the real footage by ffmpeg (packages/video/transforms.py),
+        # never a generated component: no codegen call per zoom, so the model
+        # can call for as many quick zoom moments as the clip's pacing wants
+        # without adding cost per zoom. Required for the same reason as
+        # customEffects; an empty array is valid for a clip that doesn't need any.
+        "zoomPunches": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "startSec": {"type": "number"},
+                    "durationSec": {"type": "number"},
                     "focusX": {"type": "number"},
                     "focusY": {"type": "number"},
-                    "reason": {"type": "string"},
+                    # Short English label of WHAT is being focused (forces the
+                    # model to pick a real product detail before coordinates —
+                    # live report 2026-07-18: zooms clustered on 0.5/0.5).
+                    # Not stored on the EffectInstance; placement-only.
+                    "focusOn": {"type": "string"},
+                    "zoomTo": {"type": "number"},
+                    # "cut" = instant jump, no camera-move feel. "push" = an
+                    # eased zoom-in with a real ramp. Required, not optional,
+                    # so the model actively picks rather than defaulting to a
+                    # transition every time.
+                    "style": {"type": "string", "enum": ["cut", "push"]},
+                    # How long the transition INTO the zoomed framing takes
+                    # (seconds). Previously hardcoded (0.05 for cut, 0.4 cap
+                    # for push) — the model had zero control, which produced
+                    # pushes far snappier than real slow-push reference
+                    # footage (observed 2026-07-18: reference clips show
+                    # multi-second continuous pushes). Now model-controlled,
+                    # clamped server-side in _zoom_ramp_sec.
+                    "rampSec": {"type": "number"},
+                    # OPTIONAL hold-drift target — the framing pans from
+                    # focusX/focusY toward driftX/driftY across the hold
+                    # (2026-07-18, see transforms.py punch_zoom_filter
+                    # docstring). Required by Gemini's structured-output
+                    # (optional fields get dropped in practice — see the
+                    # "instances" field retirement note above), but the model
+                    # is told explicitly it may set both equal to
+                    # focusX/focusY for a plain static hold, which is the
+                    # common case.
+                    "driftX": {"type": "number"},
+                    "driftY": {"type": "number"},
                 },
-                # propsJson/focusX/focusY REQUIRED: Gemini's structured output
-                # reliably emits only required fields and drops optional ones,
-                # so making a field optional is equivalent to it never coming
-                # back reliably — forcing it is what actually gets it filled.
                 "required": [
-                    "kind", "componentId", "startSec", "durationSec",
-                    "propsJson", "focusX", "focusY",
+                    "startSec", "durationSec", "focusX", "focusY", "focusOn", "zoomTo",
+                    "style", "rampSec", "driftX", "driftY",
                 ],
             },
         },
+        # Scene-cut TRANSITIONS (2026-07-18) — a whip-pan sweep straddling one
+        # real cut instant, pure numbers applied to the real footage by ffmpeg
+        # (packages/video/transforms.py "whip-pan"), same no-codegen-cost
+        # reasoning as zoomPunches. Only ever placed AT a real cut boundary
+        # (see <cuts> in the prompt) — rare and optional, never one per cut.
+        "transitions": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "cutSec": {"type": "number"},
+                    "durationSec": {"type": "number"},
+                    "direction": {"type": "string", "enum": ["horizontal", "vertical"]},
+                    "intensity": {"type": "number"},
+                },
+                "required": ["cutSec", "durationSec", "direction", "intensity"],
+            },
+        },
+        # AMBIENT scene drift (2026-07-18) — a continuous, gentle zoom/pan
+        # across an ENTIRE scene span (one real cut to the next, via <cuts>),
+        # for footage that's just handheld-drifting the whole shot rather
+        # than highlighting one specific detail — pure numbers, ffmpeg
+        # (packages/video/transforms.py "scene-drift"). Distinct from
+        # zoomPunches: no target detail, no hold plateau, spans the WHOLE
+        # scene not a beat. Only meaningful (and only requested) when <cuts>
+        # is given — without real scene boundaries there's nothing to span.
+        "sceneDrifts": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "startSec": {"type": "number"},
+                    "durationSec": {"type": "number"},
+                    "zoomTo": {"type": "number"},
+                    "direction": {"type": "string", "enum": ["in", "left", "right", "up", "down"]},
+                },
+                "required": ["startSec", "durationSec", "zoomTo", "direction"],
+            },
+        },
     },
-    "required": ["instances"],
+    "required": [
+        "catalogPlacements", "customEffects", "zoomPunches", "transitions", "sceneDrifts",
+    ],
 }

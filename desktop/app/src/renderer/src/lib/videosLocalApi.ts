@@ -31,7 +31,7 @@ export interface CaptionStyleIn {
 }
 
 export interface CreateLocalProjectIn {
-  mode?: 'dub_first' | 'talking_head'
+  mode?: 'dub_first' | 'talking_head' | 'highlight'
   brief?: string | null
   user_script?: string | null
   target_duration_sec?: number | null
@@ -290,6 +290,31 @@ export async function uploadAudio(
     method: 'POST',
     formFiles
   })
+}
+
+export interface MusicBeats {
+  tempo: number
+  beats: number[]
+  durationSec: number
+}
+
+/** dub_first: upload a music track (or a video to extract audio from) so the
+ *  AI cut-decision steps can align scene changes to the beat. `localPath` is
+ *  the absolute path the user picked — the server only keeps this copy for
+ *  librosa analysis; render-time playback uses the local file directly. */
+export function uploadMusic(
+  session: ApiSession,
+  remoteUid: string,
+  localPath: string
+): Promise<MusicBeats> {
+  return request(session, `/videos/${remoteUid}/music`, {
+    method: 'POST',
+    formFiles: [{ field: 'file', path: localPath, filename: localPath.split(/[/\\]/).pop() }]
+  })
+}
+
+export async function deleteMusic(session: ApiSession, remoteUid: string): Promise<void> {
+  await request<void>(session, `/videos/${remoteUid}/music`, { method: 'DELETE' })
 }
 
 export function getLocalTimeline(session: ApiSession, remoteUid: string): Promise<DubTimeline> {

@@ -162,6 +162,12 @@ execSync('node -e "require(\'@remotion/renderer\').ensureBrowser()"', {
 // pipeline (codegenValidate.mjs + codegen.mjs, added 2026-07-16) needs it at
 // runtime to live-bundle a validated one-off component, so it ships in the
 // installer despite the size cost. It stays out of the pre-bundled path above.
+log('fetching animated-emoji assets (cached after the first run)…')
+execSync('node scripts/fetch-emoji.mjs', { cwd: nodeSidecarSrc, stdio: 'inherit' })
+
+log('fetching Thai overlay-text fonts (cached after the first run)…')
+execSync('node scripts/fetch-fonts.mjs', { cwd: nodeSidecarSrc, stdio: 'inherit' })
+
 log('pre-bundling Remotion compositions…')
 execSync('node src/prebundle.mjs', { cwd: nodeSidecarSrc, stdio: 'inherit' })
 
@@ -190,6 +196,10 @@ cpSync(join(nodeSidecarSrc, 'package.json'), join(nodeSidecarDest, 'package.json
 cpSync(join(nodeSidecarSrc, 'package-lock.json'), join(nodeSidecarDest, 'package-lock.json'))
 cpSync(join(nodeSidecarSrc, 'src'), join(nodeSidecarDest, 'src'), { recursive: true })
 cpSync(join(nodeSidecarSrc, 'bundle'), join(nodeSidecarDest, 'bundle'), { recursive: true })
+// Animated-emoji videos — the AnimatedEmoji component needs the actual .webm
+// files on disk (the npm package ships code only); nodeSidecar.ts points
+// NOEY_EMOJI_DIR here so renders work offline.
+cpSync(join(nodeSidecarSrc, 'emoji'), join(nodeSidecarDest, 'emoji'), { recursive: true })
 log('installing node-sidecar production deps (omit dev)…')
 execSync('npm ci --omit=dev --ignore-scripts', { cwd: nodeSidecarDest, stdio: 'inherit' })
 // Stable path the main process points REMOTION_BROWSER_EXECUTABLE at (nodeSidecar.ts).

@@ -22,6 +22,7 @@ import {
   HelpCircle,
   Layers,
   Loader2,
+  Music2,
   Pause,
   Play,
   Plus,
@@ -30,17 +31,24 @@ import {
   Sparkles,
   Trash2,
   Undo2,
+  Volume2,
+  VolumeX,
   X
 } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   editorApi,
   initialCaptionLines,
+  initialMusic,
   type CaptionLine,
   type EditCut,
-  type EditTimeline
+  type EditorMusic,
+  type EditTimeline,
+  type MusicPatch
 } from '../lib/editorApi'
 import { formatUserError } from '../lib/editorApi'
+import { decodeAudioPeaks } from '../lib/waveform'
+import { OverlayTitleBarSpacer } from './OverlayTitleBarSpacer'
 
 const PX_PER_SEC = 36
 const MIN_CUT_SEC = 0.2
@@ -58,6 +66,35 @@ type WorkingCut = EditCut
 
 function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v))
+}
+
+const BEAT_SNAP_THRESHOLD_SEC = 0.2
+
+/** Snap `candidate` (an output-timeline second) to the nearest beat timestamp
+ * within BEAT_SNAP_THRESHOLD_SEC, or return it unchanged if none is close
+ * enough / snapping is off. Beats are the full-track domain (from upload-time
+ * librosa analysis); `musicOffsetSec`/`musicTrimInSec` convert a beat into the
+ * output-timeline position it plays at. */
+function snapCandidateToBeat(
+  candidate: number,
+  beatsSec: number[] | null,
+  enabled: boolean,
+  musicOffsetSec: number,
+  musicTrimInSec: number
+): number {
+  if (!enabled || !beatsSec || beatsSec.length === 0) return candidate
+  let best = candidate
+  let bestDist = BEAT_SNAP_THRESHOLD_SEC
+  for (const b of beatsSec) {
+    const outputSec = b - musicTrimInSec + musicOffsetSec
+    if (outputSec < 0) continue
+    const d = Math.abs(outputSec - candidate)
+    if (d < bestDist) {
+      bestDist = d
+      best = outputSec
+    }
+  }
+  return best
 }
 
 function fmtTime(sec: number): string {
@@ -572,9 +609,16 @@ export function VideoTimelineEditor({ uid, mode, onClose, onSaved }: Props) {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [viewMode, setViewMode] = useState<'source' | 'edited'>('source')
   const [sceneCollapsed, setSceneCollapsed] = useState(false)
-  const [scriptCollapsed, setScriptCollapsed] = useState(false)
+  const [scriptCollapsed, setScriptCollapsed] = useState(true)
   const [captionLines, setCaptionLines] = useState<CaptionLine[] | null>(null)
   const [captionCollapsed, setCaptionCollapsed] = useState(false)
+  const [music, setMusic] = useState<EditorMusic | null>(null)
+  const [musicCollapsed, setMusicCollapsed] = useState(false)
+  const [musicPeaks, setMusicPeaks] = useState<number[] | null>(null)
+  const [musicDurationSec, setMusicDurationSec] = useState(0)
+  // Magnetic snap-to-beat while trimming dub scene cuts (see EditedCutBlock).
+  const [snapToBeatEnabled, setSnapToBeatEnabled] = useState(true)
+  const [musicBusy, setMusicBusy] = useState(false)
 
   // Two <video> elements so the "next" edited-mode segment can be pre-seeked in the
   // background (hidden) and swapped in instantly — avoids the seek/reload freeze that
@@ -604,6 +648,10 @@ export function VideoTimelineEditor({ uid, mode, onClose, onSaved }: Props) {
   // video events for the whole pending-swap window, same idea as isScrubbingRef.
   const isSourceSwapPendingRef = useRef(false)
   const currentTimeRef = useRef(0)
+  const musicAudioRef = useRef<HTMLAudioElement>(null)
+  // Live drag override for the music block, mirrors MusicTrack's own `draft` so
+  // the audio preview reacts to a move/trim drag before it's committed.
+  const [musicDraft, setMusicDraft] = useState<MusicPatch | null>(null)
   const [lanePadPx, setLanePadPx] = useState(0)
   const [videoDuration, setVideoDuration] = useState(0)
   const previewCache = useRef<Map<string, { src: string; cleanup: () => void }>>(new Map())
@@ -653,6 +701,14 @@ export function VideoTimelineEditor({ uid, mode, onClose, onSaved }: Props) {
   const redoStack = useRef<WorkingCut[][]>([])
   const editSnapshot = useRef<WorkingCut[] | null>(null)
   const [, setHistoryTick] = useState(0)
+
+  // cut id → 1-based position in the real play order ("ลำดับเล่นจริง") — the
+  // source-mode ruler's cut blocks show this instead of the voiceover line id
+  // (cut.label), so the number always matches the sequence chip below it.
+  const playOrderMap = useMemo(
+    () => new Map(cuts.map((c, i) => [c.id, i + 1])),
+    [cuts]
+  )
 
   function pushUndoSnapshot(prev: WorkingCut[]) {
     undoStack.current.push(prev)
@@ -720,6 +776,7 @@ export function VideoTimelineEditor({ uid, mode, onClose, onSaved }: Props) {
         setTimeline(t)
         setCuts(normalizeDubCuts(t.cuts))
         setCaptionLines(initialCaptionLines() ?? null)
+        setMusic(initialMusic() ?? null)
         setEditorPhase('preparing')
         // Filmstrip thumbnails are no longer generated eagerly here — that used to
         // seek through every source clip's full duration before the editor could
@@ -733,6 +790,14 @@ export function VideoTimelineEditor({ uid, mode, onClose, onSaved }: Props) {
           playRangeRef.current = { in: firstCut.in, out: firstCut.out }
           setPrepareHint('กำลังโหลดตัวอย่างเล่น…')
           await loadPreviewFor(firstCut.source)
+          if (cancelled) return
+          // Wait for the first scene's own thumbnail window before letting the
+          // user in — only this bounded window, never the whole clip (that used
+          // to be the eager-load freeze this effect's comment above describes).
+          setPrepareHint('กำลังโหลดภาพตัวอย่าง…')
+          const firstSourceDuration =
+            t.sources.find((s) => s.id === firstCut.source)?.durationSec ?? firstCut.out
+          await fillFilmstripRange(firstCut.source, firstSourceDuration, firstCut.in, firstCut.out)
         }
         if (!cancelled) setEditorPhase('ready')
       })
@@ -803,6 +868,7 @@ export function VideoTimelineEditor({ uid, mode, onClose, onSaved }: Props) {
         currentTimeRef.current = t
         syncScrollFromTime(t)
         syncFocusToPlayhead(t)
+        syncMusicAudio(t, true)
         if (timeLabelRef.current) {
           timeLabelRef.current.textContent = `${fmtTime(t)} / ${fmtTime(totalForLabel)}`
         }
@@ -1118,6 +1184,7 @@ export function VideoTimelineEditor({ uid, mode, onClose, onSaved }: Props) {
     updateTimeLabel(t)
     if (seekVideo) seekActiveTime(t)
     syncFocusToPlayhead(t)
+    syncMusicAudio(t, false)
   }
 
   /** Highlight the scene under the playhead (edited sequence or source lane). */
@@ -1170,6 +1237,7 @@ export function VideoTimelineEditor({ uid, mode, onClose, onSaved }: Props) {
     setCurrentTime(sec)
     updateTimeLabel(sec)
     if (seekVideo) seekActiveTime(sec)
+    syncMusicAudio(sec, false)
   }
 
   function isTimelineEditBlockInteraction(target: HTMLElement): boolean {
@@ -1370,7 +1438,148 @@ export function VideoTimelineEditor({ uid, mode, onClose, onSaved }: Props) {
     window.addEventListener('pointercancel', onUp)
   }
 
-  const isDub = mode === 'dub_first'
+  // Decode the attached music file client-side into a peak array for the
+  // waveform canvas below (shared with the wizard's MusicRangePicker).
+  useEffect(() => {
+    if (!music?.path) {
+      setMusicPeaks(null)
+      setMusicDurationSec(0)
+      return
+    }
+    let cancelled = false
+    const src = window.noey.media.urlFor(uid, music.path)
+    void decodeAudioPeaks(src)
+      .then(({ peaks, durationSec }) => {
+        if (cancelled) return
+        setMusicPeaks(peaks)
+        setMusicDurationSec(durationSec)
+      })
+      .catch((err: unknown) => {
+        void window.noey.log.write('TimelineEditor', `music waveform decode failed: ${String(err)}`)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [music?.path, uid])
+
+  const commitMusic = async (patch: MusicPatch): Promise<void> => {
+    if (!music) return
+    const next = { ...music, ...patch }
+    setMusic(next)
+    setMusicBusy(true)
+    try {
+      await editorApi.updateMusic(patch)
+    } catch (err) {
+      setError(formatUserError(err))
+    } finally {
+      setMusicBusy(false)
+    }
+  }
+
+  // Live preview mixes the committed music state with any in-progress drag
+  // (musicDraft, set by MusicTrack.onDraftChange) so moving/trimming the block
+  // updates the audio preview immediately, not just after pointerup.
+  const effectiveMusic: EditorMusic | null = music ? { ...music, ...musicDraft } : null
+
+  // Seeks/starts/stops the hidden <audio> element to match the main preview's
+  // timeline-domain position `t`. `allowPlay=false` parks the audio at the
+  // right offset without actually playing (used while scrubbing/paused/dragging).
+  function syncMusicAudio(t: number, allowPlay: boolean): void {
+    const a = musicAudioRef.current
+    const em = effectiveMusic
+    if (!a || !em || !em.path || viewModeRef.current !== 'edited') {
+      if (a && !a.paused) a.pause()
+      return
+    }
+    const trimIn = em.trimInSec
+    const trimOut = em.trimOutSec ?? musicDurationSec
+    const blockDur = Math.max(trimOut - trimIn, 0)
+    const start = em.offsetSec
+    const end = start + blockDur
+    const inWindow = blockDur > 0 && !em.muted && t >= start && t < end
+    if (!inWindow || !allowPlay) {
+      if (!a.paused) a.pause()
+      if (inWindow) {
+        const target = trimIn + (t - start)
+        if (Number.isFinite(target) && Math.abs(a.currentTime - target) > 0.05) a.currentTime = target
+      }
+      return
+    }
+    const target = trimIn + (t - start)
+    if (Math.abs(a.currentTime - target) > 0.25) a.currentTime = target
+    if (a.paused) void a.play().catch(() => undefined)
+  }
+
+  // Track src separately: swapping <audio src> resets currentTime, so only do
+  // it when the file itself actually changes, not on every offset/trim edit.
+  useEffect(() => {
+    const a = musicAudioRef.current
+    if (!a) return
+    a.src = music?.path ? window.noey.media.urlFor(uid, music.path) : ''
+    // editorPhase dep: the <audio> element only mounts once editorPhase becomes
+    // 'ready' (conditional render below) — if music.path was already loaded
+    // before that gate flipped, this effect wouldn't otherwise re-run once the
+    // ref actually exists, leaving the element's src permanently empty.
+  }, [music?.path, uid, editorPhase])
+
+  // Volume/mute react instantly regardless of play state. editorPhase dep:
+  // same reason as the src effect above — <audio> mounts late, so without it
+  // the element keeps its default volume (1.0, i.e. loud) until the user
+  // happens to touch the slider and re-trigger this effect.
+  useEffect(() => {
+    const a = musicAudioRef.current
+    if (!a || !effectiveMusic) return
+    a.volume = effectiveMusic.muted ? 0 : effectiveMusic.volume
+  }, [effectiveMusic?.volume, effectiveMusic?.muted, editorPhase])
+
+  // Any edit to the music block's position/trim (committed or mid-drag) re-syncs
+  // the audio preview against wherever the main playhead currently sits.
+  useEffect(() => {
+    syncMusicAudio(currentTimeRef.current, isPlaying)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    effectiveMusic?.offsetSec,
+    effectiveMusic?.trimInSec,
+    effectiveMusic?.trimOutSec,
+    effectiveMusic?.muted,
+    musicDurationSec,
+    viewMode,
+    editorPhase
+  ])
+
+  // Main preview paused/stopped -> music pauses too (park at current position).
+  useEffect(() => {
+    if (!isPlaying) syncMusicAudio(currentTimeRef.current, false)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPlaying, editorPhase])
+
+  const handlePickMusic = async (): Promise<void> => {
+    setMusicBusy(true)
+    try {
+      const next = await editorApi.pickMusic()
+      setMusic(next ?? null)
+    } catch (err) {
+      setError(formatUserError(err))
+    } finally {
+      setMusicBusy(false)
+    }
+  }
+
+  const handleRemoveMusic = async (): Promise<void> => {
+    setMusicBusy(true)
+    try {
+      await editorApi.removeMusic()
+      setMusic(null)
+      setMusicPeaks(null)
+    } catch (err) {
+      setError(formatUserError(err))
+    } finally {
+      setMusicBusy(false)
+    }
+  }
+
+  const isDub = mode === 'dub_first' || mode === 'highlight'
+  const isHighlight = mode === 'highlight'
 
   /** Resolve (and cache) the playable src for a source clip — shared by preview and filmstrip generation. */
   async function ensureSourceSrc(sourceId: string): Promise<string> {
@@ -2142,6 +2351,7 @@ export function VideoTimelineEditor({ uid, mode, onClose, onSaved }: Props) {
 
   return (
     <div className="fixed inset-0 z-100 flex flex-col bg-zinc-950/98 text-amber-50">
+      <OverlayTitleBarSpacer />
       <div className="flex items-center justify-between border-b border-white/10 px-5 py-3">
         <div>
           <h2 className="text-sm font-semibold text-amber-100">แก้ไขวิดีโอ — Timeline Editor</h2>
@@ -2275,6 +2485,9 @@ export function VideoTimelineEditor({ uid, mode, onClose, onSaved }: Props) {
                 className="absolute inset-0 h-full w-full rounded-xl bg-black object-contain"
                 style={{ opacity: 0 }}
               />
+              {/* Background music preview — muted/paused unless the playhead is
+                  inside the music block's active window (see syncMusicAudio). */}
+              <audio ref={musicAudioRef} preload="auto" />
             </div>
             {selectedCut && (
               <p className="mt-1 shrink-0 text-center text-[11px] text-amber-300/50">
@@ -2397,6 +2610,7 @@ export function VideoTimelineEditor({ uid, mode, onClose, onSaved }: Props) {
                           laneDurationSec={laneDurationSec}
                           strip={filmstrips[src.id] ?? null}
                           cuts={cuts.filter((c) => c.source === src.id)}
+                          playOrderMap={playOrderMap}
                           selectedId={selectedId}
                           onHighlight={setSelectedId}
                           onSelect={(c) => void selectCut(c)}
@@ -2420,7 +2634,7 @@ export function VideoTimelineEditor({ uid, mode, onClose, onSaved }: Props) {
                       strategy={horizontalListSortingStrategy}
                     >
                       <div
-                        className="flex items-center overflow-visible"
+                        className="relative flex items-center overflow-visible"
                         style={{
                           paddingLeft: lanePadPx,
                           paddingRight: lanePadPx,
@@ -2429,22 +2643,55 @@ export function VideoTimelineEditor({ uid, mode, onClose, onSaved }: Props) {
                             lanePadPx * 2 + Math.max(computeEditedDuration(cuts) * PX_PER_SEC, 1)
                         }}
                       >
-                        {cuts.map((c) => (
-                          <EditedCutBlock
-                            key={c.id}
-                            cut={c}
-                            selected={c.id === selectedId}
-                            filmstrip={filmstrips[c.source] ?? null}
-                            sourceDurationSec={
-                              timeline.sources.find((s) => s.id === c.source)?.durationSec ?? 0
-                            }
-                            onHighlight={() => setSelectedId(c.id)}
-                            onChange={(patch) => updateCut(c.id, patch)}
-                            onDragStart={beginCutBlockEdit}
-                            onDragEnd={commitCutBlockEdit}
-                            onNeedFilmstrip={queueFilmstripRange}
-                          />
-                        ))}
+                        {snapToBeatEnabled &&
+                          effectiveMusic?.beats &&
+                          effectiveMusic.beats.length > 0 &&
+                          (() => {
+                            const editedDur = computeEditedDuration(cuts)
+                            return (
+                              <div className="pointer-events-none absolute inset-y-0 left-0 z-10">
+                                {effectiveMusic.beats.map((b, i) => {
+                                  const outputSec = b - effectiveMusic.trimInSec + effectiveMusic.offsetSec
+                                  if (outputSec < 0 || outputSec > editedDur) return null
+                                  return (
+                                    <div
+                                      key={i}
+                                      className="absolute top-0 bottom-0 w-px bg-amber-300/30"
+                                      style={{ left: lanePadPx + outputSec * PX_PER_SEC }}
+                                    />
+                                  )
+                                })}
+                              </div>
+                            )
+                          })()}
+                        {(() => {
+                          let acc = 0
+                          return cuts.map((c) => {
+                            const startOffsetSec = acc
+                            acc += Math.max(c.out - c.in, 0)
+                            return (
+                              <EditedCutBlock
+                                key={c.id}
+                                cut={c}
+                                selected={c.id === selectedId}
+                                filmstrip={filmstrips[c.source] ?? null}
+                                sourceDurationSec={
+                                  timeline.sources.find((s) => s.id === c.source)?.durationSec ?? 0
+                                }
+                                onHighlight={() => setSelectedId(c.id)}
+                                onChange={(patch) => updateCut(c.id, patch)}
+                                onDragStart={beginCutBlockEdit}
+                                onDragEnd={commitCutBlockEdit}
+                                onNeedFilmstrip={queueFilmstripRange}
+                                startOffsetSec={startOffsetSec}
+                                beatsSec={effectiveMusic?.beats ?? null}
+                                snapEnabled={snapToBeatEnabled}
+                                musicOffsetSec={effectiveMusic?.offsetSec ?? 0}
+                                musicTrimInSec={effectiveMusic?.trimInSec ?? 0}
+                              />
+                            )
+                          })
+                        })()}
                       </div>
                     </SortableContext>
                   </DndContext>
@@ -2526,7 +2773,7 @@ export function VideoTimelineEditor({ uid, mode, onClose, onSaved }: Props) {
                   className="flex items-center gap-1 text-xs font-semibold text-amber-200/60 uppercase tracking-widest hover:text-amber-100"
                 >
                   {scriptCollapsed ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-                  สคริปต์เสียงพากย์ — บรรทัด {cutLineId(selectedCut)}
+                  {isHighlight ? 'คำบรรยาย/โน้ต' : 'สคริปต์เสียงพากย์'} — บรรทัด {cutLineId(selectedCut)}
                   {cutsInLine(cuts, cutLineId(selectedCut)).length > 1 && (
                     <span className="ml-1.5 font-normal normal-case text-amber-300/45">
                       (มุม {cutIndexInLine(cuts, selectedCut)}/
@@ -2553,7 +2800,11 @@ export function VideoTimelineEditor({ uid, mode, onClose, onSaved }: Props) {
                   onFocus={beginEdit}
                   onBlur={commitEdit}
                   className="min-h-0 flex-1 resize-none rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-amber-50 outline-none focus:border-amber-400/50"
-                  placeholder="พิมพ์สคริปต์สำหรับบรรทัดนี้ (ใช้ร่วมทุกมุม)…"
+                  placeholder={
+                    isHighlight
+                      ? '(ไม่บังคับ) พิมพ์โน้ตสำหรับฉากนี้…'
+                      : 'พิมพ์สคริปต์สำหรับบรรทัดนี้ (ใช้ร่วมทุกมุม)…'
+                  }
                 />
               )}
             </div>
@@ -2633,6 +2884,96 @@ export function VideoTimelineEditor({ uid, mode, onClose, onSaved }: Props) {
               )}
             </div>
           )}
+
+          {/* Background music — dub_first only, collapsible */}
+          {isDub && (
+            <div
+              className="flex shrink-0 flex-col overflow-hidden border-t border-white/10 px-5 py-2"
+              style={{ height: musicCollapsed ? 'auto' : EDITOR_SCENE_BAND_PX }}
+            >
+              <div className="mb-1.5 flex shrink-0 items-center justify-between gap-2">
+                <button
+                  type="button"
+                  onClick={() => setMusicCollapsed((v) => !v)}
+                  className="flex items-center gap-1 text-xs font-semibold text-amber-200/60 uppercase tracking-widest hover:text-amber-100"
+                >
+                  {musicCollapsed ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                  <Music2 size={12} />
+                  เพลงประกอบ
+                </button>
+                {!musicCollapsed && music && (
+                  <div className="flex shrink-0 items-center gap-2">
+                    {music.beats && music.beats.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setSnapToBeatEnabled((v) => !v)}
+                        title="ลากขอบ scene แล้วดูดเข้าจังหวะเพลงอัตโนมัติ"
+                        className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${
+                          snapToBeatEnabled
+                            ? 'bg-amber-500/20 text-amber-200'
+                            : 'text-amber-200/40 hover:text-amber-200/70'
+                        }`}
+                      >
+                        snap จังหวะ
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => void commitMusic({ muted: !music.muted })}
+                      title={music.muted ? 'เปิดเสียงเพลง' : 'ปิดเสียงเพลง'}
+                      className="rounded p-1 text-amber-200/70 hover:text-amber-100"
+                    >
+                      {music.muted ? <VolumeX size={13} /> : <Volume2 size={13} />}
+                    </button>
+                    <input
+                      type="range"
+                      min={0}
+                      max={1}
+                      step={0.05}
+                      value={music.volume}
+                      onChange={(e) => void commitMusic({ volume: Number(e.target.value) })}
+                      className="w-20 accent-amber-400"
+                      title="ระดับเสียงเพลง"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void handleRemoveMusic()}
+                      title="ลบเพลงประกอบ"
+                      disabled={musicBusy}
+                      className="rounded p-1 text-white/30 hover:text-red-400"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                )}
+              </div>
+              {!musicCollapsed &&
+                (music ? (
+                  <MusicTrack
+                    music={music}
+                    peaks={musicPeaks}
+                    fullDurationSec={musicDurationSec}
+                    onChange={(patch) => void commitMusic(patch)}
+                    onDraftChange={setMusicDraft}
+                    onScrubStart={pauseForScrub}
+                    onScrub={(sec, commit) => {
+                      applyScrubTime(sec, commit)
+                      if (commit) resumeAfterScrub()
+                    }}
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => void handlePickMusic()}
+                    disabled={musicBusy}
+                    className="flex flex-1 items-center justify-center gap-2 rounded-lg border border-dashed border-amber-500/30 text-xs font-medium text-amber-200/70 hover:bg-amber-500/10"
+                  >
+                    {musicBusy ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />}
+                    เพิ่มเพลงประกอบ (เพลง หรือวิดีโอที่มีเพลง)
+                  </button>
+                ))}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -2644,6 +2985,7 @@ function SourceLane({
   laneDurationSec,
   strip,
   cuts,
+  playOrderMap,
   selectedId,
   onHighlight,
   onSelect,
@@ -2657,6 +2999,10 @@ function SourceLane({
   laneDurationSec: number
   strip: Filmstrip | null
   cuts: WorkingCut[]
+  /** cut id → 1-based position in the real play order ("ลำดับเล่นจริง"), so a
+   * cut block's number always matches the sequence chip below it instead of
+   * the (possibly stale/non-sequential) voiceover line id. */
+  playOrderMap: Map<string, number>
   selectedId: string | null
   onHighlight: (id: string) => void
   onSelect: (c: WorkingCut) => void
@@ -2718,6 +3064,7 @@ function SourceLane({
             sourceCuts={cuts}
             laneDurationSec={laneDurationSec}
             selected={c.id === selectedId}
+            playOrder={playOrderMap.get(c.id) ?? 0}
             onHighlight={() => onHighlight(c.id)}
             onSelect={() => onSelect(c)}
             onChange={(patch) => onChange(c.id, patch)}
@@ -2802,6 +3149,7 @@ function CutBlock({
   sourceCuts,
   laneDurationSec,
   selected,
+  playOrder,
   onHighlight,
   onSelect,
   onChange,
@@ -2812,6 +3160,9 @@ function CutBlock({
   sourceCuts: EditCut[]
   laneDurationSec: number
   selected: boolean
+  /** 1-based position in the real play order — matches the "ลำดับเล่นจริง" chip
+   * below, unlike cut.label (a voiceover line id, not necessarily sequential). */
+  playOrder: number
   onHighlight: () => void
   onSelect: () => void
   onChange: (patch: Partial<WorkingCut>) => void
@@ -2921,7 +3272,7 @@ function CutBlock({
           />
         </>
       )}
-      <p className="truncate pt-3">{cut.label || 'scene'}</p>
+      <p className="truncate pt-3">{playOrder || cut.label || 'scene'}</p>
     </div>
   )
 }
@@ -2939,7 +3290,12 @@ function EditedCutBlock({
   onChange,
   onDragStart,
   onDragEnd,
-  onNeedFilmstrip
+  onNeedFilmstrip,
+  startOffsetSec = 0,
+  beatsSec = null,
+  snapEnabled = false,
+  musicOffsetSec = 0,
+  musicTrimInSec = 0
 }: {
   cut: WorkingCut
   selected: boolean
@@ -2950,6 +3306,14 @@ function EditedCutBlock({
   onDragStart: () => void
   onDragEnd: () => void
   onNeedFilmstrip: (sourceId: string, durationSec: number, startSec: number, endSec: number) => void
+  /** This cut's start position on the output/edited timeline (sum of all prior
+   * cuts' durations) — trimming this cut's edge only ever moves the boundary
+   * at startOffsetSec + durationSec (see snapCandidateToBeat usage below). */
+  startOffsetSec?: number
+  beatsSec?: number[] | null
+  snapEnabled?: boolean
+  musicOffsetSec?: number
+  musicTrimInSec?: number
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: cut.id
@@ -2979,6 +3343,32 @@ function EditedCutBlock({
 
   function onTrimDown(e: React.PointerEvent, edge: TrimEdge) {
     onHighlight()
+    // Only this cut's END lands on a new output-timeline position when trimmed
+    // (its start is fixed by prior cuts' cumulative duration) — snap whichever
+    // edge is being dragged so the resulting duration puts that end on-beat.
+    const snappingOnChange = (patch: Partial<WorkingCut>): void => {
+      if (!snapEnabled || !beatsSec || beatsSec.length === 0) {
+        onChange(patch)
+        return
+      }
+      if (patch.out !== undefined) {
+        const candidateEnd = startOffsetSec + (patch.out - cut.in)
+        const snappedEnd = snapCandidateToBeat(
+          candidateEnd, beatsSec, true, musicOffsetSec, musicTrimInSec
+        )
+        onChange({ out: cut.in + (snappedEnd - startOffsetSec) })
+        return
+      }
+      if (patch.in !== undefined) {
+        const candidateEnd = startOffsetSec + (cut.out - patch.in)
+        const snappedEnd = snapCandidateToBeat(
+          candidateEnd, beatsSec, true, musicOffsetSec, musicTrimInSec
+        )
+        onChange({ in: cut.out - (snappedEnd - startOffsetSec) })
+        return
+      }
+      onChange(patch)
+    }
     bindTrimDrag({
       e,
       edge,
@@ -2986,7 +3376,7 @@ function EditedCutBlock({
       startOut: cut.out,
       minIn: 0,
       maxOut,
-      onChange,
+      onChange: snappingOnChange,
       onDragStart,
       onDragEnd
     })
@@ -3031,7 +3421,9 @@ function EditedCutBlock({
               )}
             </div>
           ) : (
-            <div className="absolute inset-0 bg-zinc-800" />
+            <div className="absolute inset-0 flex items-center justify-center bg-zinc-800">
+              <span className="text-[8px] text-amber-300/30">โหลด…</span>
+            </div>
           )}
         </div>
         <div className="pointer-events-none absolute inset-0 bg-linear-to-t from-black/60 via-black/5 to-transparent" />
@@ -3122,5 +3514,190 @@ function SequenceItem({
         <Trash2 size={12} />
       </button>
     </li>
+  )
+}
+
+const MUSIC_MIN_SEC = 0.3
+
+/** Background-music audio track — waveform canvas, drag the block to change
+ * offsetSec, drag either edge to trim. Mirrors bindTrimDrag's window-level
+ * pointer pattern above (reliable once the pointer leaves the small handle). */
+function MusicTrack({
+  music,
+  peaks,
+  fullDurationSec,
+  onChange,
+  onDraftChange,
+  onScrubStart,
+  onScrub
+}: {
+  music: EditorMusic
+  peaks: number[] | null
+  fullDurationSec: number
+  onChange: (patch: MusicPatch) => void
+  /** Fired on every drag move (and null on release) purely for the parent's
+   * live audio preview — not persisted, unlike onChange. */
+  onDraftChange?: (patch: MusicPatch | null) => void
+  /** Click/drag anywhere on the waveform's empty background (not the music
+   * block itself) moves the shared playhead, so dragging can audition any
+   * point in the track. `commit` is false while dragging (live preview only,
+   * mirrors the main timeline's drag-to-scroll) and true on release (seeks
+   * the video too). */
+  onScrubStart?: () => void
+  onScrub?: (sec: number, commit: boolean) => void
+}) {
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const laneRef = useRef<HTMLDivElement>(null)
+  // Transient drag override — only committed (persisted via onChange) on
+  // pointerup, so dragging doesn't write project.json on every mousemove.
+  const [draft, setDraft] = useState<MusicPatch | null>(null)
+  const offsetSec = draft?.offsetSec ?? music.offsetSec
+  const trimInSec = draft?.trimInSec ?? music.trimInSec
+  const trimOut = draft?.trimOutSec ?? music.trimOutSec ?? fullDurationSec
+  const blockDurationSec = Math.max(trimOut - trimInSec, MUSIC_MIN_SEC)
+  const left = offsetSec * PX_PER_SEC
+  const width = Math.max(blockDurationSec * PX_PER_SEC, 24)
+  const laneWidthPx = Math.max(left + width + 200, 400)
+
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas || !peaks || peaks.length === 0 || fullDurationSec <= 0) return
+    const dpr = window.devicePixelRatio || 1
+    canvas.width = width * dpr
+    canvas.height = 40 * dpr
+    const g = canvas.getContext('2d')
+    if (!g) return
+    g.scale(dpr, dpr)
+    g.clearRect(0, 0, width, 40)
+    const startFrac = trimInSec / fullDurationSec
+    const endFrac = trimOut / fullDurationSec
+    const i0 = Math.floor(startFrac * peaks.length)
+    const i1 = Math.max(i0 + 1, Math.ceil(endFrac * peaks.length))
+    const slice = peaks.slice(i0, i1)
+    const barW = Math.max(width / Math.max(slice.length, 1), 1)
+    g.fillStyle = 'rgba(251, 191, 36, 0.55)'
+    slice.forEach((p, i) => {
+      const h = Math.max(p * 36, 1.5)
+      g.fillRect(i * barW, (40 - h) / 2, Math.max(barW - 0.5, 0.5), h)
+    })
+  }, [peaks, width, fullDurationSec, trimInSec, trimOut])
+
+  const onMoveDown = (e: React.PointerEvent): void => {
+    e.stopPropagation()
+    e.preventDefault()
+    const startX = e.clientX
+    const startOffset = music.offsetSec
+    let last: MusicPatch = {}
+    const onMove = (ev: PointerEvent): void => {
+      const deltaSec = (ev.clientX - startX) / PX_PER_SEC
+      last = { offsetSec: Math.max(startOffset + deltaSec, 0) }
+      setDraft(last)
+      onDraftChange?.(last)
+    }
+    const onUp = (): void => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
+      setDraft(null)
+      onDraftChange?.(null)
+      if (last.offsetSec !== undefined) onChange(last)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onUp)
+  }
+
+  const onTrimDown = (e: React.PointerEvent, edge: 'left' | 'right'): void => {
+    e.stopPropagation()
+    e.preventDefault()
+    const startX = e.clientX
+    const startTrimIn = music.trimInSec
+    const startTrimOut = music.trimOutSec ?? fullDurationSec
+    const startOffset = music.offsetSec
+    let last: MusicPatch = {}
+    const onMove = (ev: PointerEvent): void => {
+      const deltaSec = (ev.clientX - startX) / PX_PER_SEC
+      if (edge === 'left') {
+        const nextIn = clamp(startTrimIn + deltaSec, 0, startTrimOut - MUSIC_MIN_SEC)
+        const applied = nextIn - startTrimIn
+        last = { trimInSec: nextIn, offsetSec: Math.max(startOffset + applied, 0) }
+      } else {
+        const nextOut = clamp(startTrimOut + deltaSec, startTrimIn + MUSIC_MIN_SEC, fullDurationSec)
+        last = { trimOutSec: nextOut }
+      }
+      setDraft(last)
+      onDraftChange?.(last)
+    }
+    const onUp = (): void => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
+      setDraft(null)
+      onDraftChange?.(null)
+      if (Object.keys(last).length > 0) onChange(last)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onUp)
+  }
+
+  const seekSecFromClientX = (clientX: number): number => {
+    const el = laneRef.current
+    if (!el) return 0
+    const rect = el.getBoundingClientRect()
+    return Math.max(0, (clientX - rect.left) / PX_PER_SEC)
+  }
+
+  const onLanePointerDown = (e: React.PointerEvent): void => {
+    e.stopPropagation()
+    onScrubStart?.()
+    onScrub?.(seekSecFromClientX(e.clientX), false)
+    const onMove = (ev: PointerEvent): void => {
+      onScrub?.(seekSecFromClientX(ev.clientX), false)
+    }
+    const onUp = (ev: PointerEvent): void => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
+      onScrub?.(seekSecFromClientX(ev.clientX), true)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onUp)
+  }
+
+  return (
+    <div className="scroll-ghost min-h-0 flex-1 overflow-x-auto">
+      <div
+        ref={laneRef}
+        className="relative h-10 cursor-text"
+        style={{ width: laneWidthPx }}
+        onPointerDown={onLanePointerDown}
+        title="ลากเพื่อฟังช่วงที่ต้องการ"
+      >
+        <div
+          className="absolute top-0 flex h-10 cursor-grab items-center overflow-hidden rounded-md border border-amber-500/40 bg-amber-500/10 active:cursor-grabbing"
+          style={{ left, width }}
+          onPointerDown={onMoveDown}
+          title="ลากเพื่อเลื่อนตำแหน่งเพลง"
+        >
+          <canvas ref={canvasRef} className="pointer-events-none h-10 w-full" style={{ width, height: 40 }} />
+          <button
+            type="button"
+            data-cut-resize-handle
+            onPointerDown={(e) => onTrimDown(e, 'left')}
+            title="ลากเพื่อตัดต้นเพลง"
+            className="absolute left-0 top-0 h-full w-2 cursor-ew-resize touch-none bg-amber-300/40 hover:bg-amber-300/70"
+          />
+          <button
+            type="button"
+            data-cut-resize-handle
+            onPointerDown={(e) => onTrimDown(e, 'right')}
+            title="ลากเพื่อตัดท้ายเพลง"
+            className="absolute right-0 top-0 h-full w-2 cursor-ew-resize touch-none bg-amber-300/40 hover:bg-amber-300/70"
+          />
+        </div>
+      </div>
+    </div>
   )
 }

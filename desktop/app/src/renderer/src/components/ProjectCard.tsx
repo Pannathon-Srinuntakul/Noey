@@ -1,19 +1,20 @@
 import { useEffect, useRef, useState } from 'react'
-import { Folder, Loader2, Mic, Pencil, Square, Trash2, XCircle } from 'lucide-react'
+import { Folder, Loader2, Mic, Pencil, Sparkles, Square, Trash2, XCircle } from 'lucide-react'
 import type { LocalProject } from '../../../preload'
 import { deleteRemote, type ApiSession } from '../lib/videosLocalApi'
 import { useProjectPipeline } from '../lib/useProjectPipeline'
 import { isBusy, STEP_LABELS, type ProjectStep } from '../lib/projectFlow'
 import { VideoTimelineEditor } from './TimelineEditor'
 import DubVideoPlayer from './DubVideoPlayer'
-import { EffectsPanel } from './EffectsPanel'
+import EffectsCanvasEditor from './EffectsCanvasEditor'
 
 // Same status vocabulary/colors as web's ProjectCard (VideoPage.tsx statusLabel/statusColor),
 // mapped onto desktop's finer-grained `step` via the existing isBusy() helper.
 function statusLabel(step: ProjectStep): string {
   if (step === 'error') return 'ผิดพลาด'
   if (step === 'done') return 'เสร็จแล้ว'
-  if (step === 'waiting_vo') return 'รอ Voiceover'
+  // Cut (+ optional effects) is ready — VO is optional (in-app or elsewhere).
+  if (step === 'waiting_vo') return 'คลิปพร้อม'
   if (isBusy(step)) return 'กำลังทำ'
   return 'รอเริ่ม'
 }
@@ -21,7 +22,7 @@ function statusLabel(step: ProjectStep): string {
 function statusColor(step: ProjectStep): string {
   if (step === 'error') return 'text-red-600'
   if (step === 'done') return 'text-green-700'
-  if (step === 'waiting_vo') return 'text-purple-600'
+  if (step === 'waiting_vo') return 'text-green-700'
   if (isBusy(step)) return 'text-blue-600'
   return 'text-amber-600'
 }
@@ -57,8 +58,60 @@ export default function ProjectCard({
 
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  /** When set, the fullscreen effects editor is open on this cut file
+   * (final.mp4 at done; final_silent.mp4 while dub_first waits for the VO). */
+  const [effectsBase, setEffectsBase] = useState<string | null>(null)
+  /** waiting_vo card preview: prefer baked effects when present. */
+  const [voPreviewFile, setVoPreviewFile] = useState('final_silent.mp4')
+  /** waiting_vo effects-editor entry point: the pre-effects cut to composite
+   * onto — prefer the music-mixed silent cut over the plain silent one so
+   * attached music survives baking (never final_fx.mp4 — that's already-baked
+   * output, re-editing effects must start from the clean cut again). */
+  const [effectsEditBase, setEffectsEditBase] = useState('final_silent.mp4')
   const thinkingScrollRef = useRef<HTMLDivElement>(null)
   const stickThinkingBottomRef = useRef(true)
+
+  // Preview cascade: baked effects > silent cut + music (no VO needed) > plain
+  // silent cut — VO is optional, so whichever's the richest available output
+  // is what the card shows. Re-probe when leaving the effects editor
+  // (effectsBase → null) or mediaKey bumps (e.g. after a music re-mix).
+  useEffect(() => {
+    // highlight mode never produces final.mp4 (no VO-mux stage exists) — its
+    // "done" step is really the same file-priority situation waiting_vo is in
+    // for the other modes, so it needs the same cascade probe.
+    const needsCascade = step === 'waiting_vo' || (step === 'done' && mode === 'highlight')
+    if (!needsCascade || effectsBase) return
+    let cancelled = false
+    const exists = async (rel: string): Promise<boolean> => {
+      try {
+        const r = await fetch(window.noey.media.urlFor(project.uid, rel), {
+          headers: { Range: 'bytes=0-0' }
+        })
+        return r.status === 206 || r.status === 200
+      } catch {
+        return false
+      }
+    }
+    void (async () => {
+      const hasMusic = await exists('final_silent_music.mp4')
+      void window.noey.log.write(
+        'ProjectCard',
+        `cascade probe uid=${project.uid} step=${step} mode=${mode} hasMusic=${hasMusic}`
+      )
+      if (!cancelled) setEffectsEditBase(hasMusic ? 'final_silent_music.mp4' : 'final_silent.mp4')
+      for (const candidate of ['final_fx.mp4', 'final_silent_music.mp4', 'final_silent.mp4']) {
+        if (cancelled) return
+        if (candidate === 'final_silent.mp4' || (candidate === 'final_silent_music.mp4' ? hasMusic : await exists(candidate))) {
+          void window.noey.log.write('ProjectCard', `cascade picked ${candidate} (uid=${project.uid})`)
+          if (!cancelled) setVoPreviewFile(candidate)
+          return
+        }
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [project.uid, step, mediaKey, effectsBase, mode])
 
   const THINKING_NEAR_BOTTOM_PX = 48
 
@@ -113,6 +166,17 @@ export default function ProjectCard({
     )
   }
 
+  if (effectsBase) {
+    return (
+      <EffectsCanvasEditor
+        project={project}
+        session={session}
+        baseFile={effectsBase}
+        onClose={() => setEffectsBase(null)}
+      />
+    )
+  }
+
   return (
     <div className="rounded-xl border border-[#5b3a1a]/20 bg-[#fffdf7] p-4 shadow-sm">
       <div className="flex flex-wrap items-start justify-between gap-2">
@@ -120,7 +184,11 @@ export default function ProjectCard({
           <p className="text-xs text-[#5b3a1a]/50">{date}</p>
           <p className="mt-0.5 truncate font-medium text-[#5b3a1a]">{project.name}</p>
           <p className="mt-0.5 text-[10px] whitespace-nowrap text-[#5b3a1a]/45">
-            {mode === 'talking_head' ? 'Talking Head Edit' : 'Dub First Edit'}
+            {mode === 'talking_head'
+              ? 'Talking Head Edit'
+              : mode === 'highlight'
+                ? 'Highlight Edit'
+                : 'Dub First Edit'}
             {project.targetDurationSec ? ` · ~${project.targetDurationSec} วิ` : ''}
           </p>
         </div>
@@ -205,17 +273,27 @@ export default function ProjectCard({
       {step === 'waiting_vo' && (
         <div className="mt-3 space-y-3">
           <DubVideoPlayer
-            key={mediaKey}
+            key={`${mediaKey}-${voPreviewFile}`}
             mediaKey={mediaKey}
-            src={window.noey.media.urlFor(project.uid, 'final_silent.mp4')}
+            src={window.noey.media.urlFor(project.uid, voPreviewFile)}
             editScript={editScript}
           />
+          {voPreviewFile === 'final_fx.mp4' && (
+            <p className="text-[10px] text-[#5b3a1a]/55">
+              กำลังพรีวิวคลิปพร้อมเอฟเฟกต์ — เสียงพากย์ใส่ในแอปหรือเอาไฟล์ไปใส่เองก็ได้
+            </p>
+          )}
+          {voPreviewFile === 'final_silent_music.mp4' && (
+            <p className="text-[10px] text-[#5b3a1a]/55">
+              กำลังพรีวิวคลิปพร้อมเพลงประกอบ — เสียงพากย์ใส่ในแอปหรือเอาไฟล์ไปใส่เองก็ได้
+            </p>
+          )}
           <button
             type="button"
-            onClick={() => void runFinal()}
-            className="flex w-full items-center justify-center gap-2 rounded-lg bg-purple-600 px-3 py-2.5 text-xs font-semibold text-white shadow hover:bg-purple-700"
+            onClick={() => setEffectsBase(effectsEditBase)}
+            className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-amber-500/40 bg-amber-50 px-3 py-2 text-xs font-medium text-[#5b3a1a] hover:bg-amber-100"
           >
-            <Mic size={13} /> เลือกไฟล์เสียงพากย์
+            <Sparkles size={12} className="text-amber-600" /> เอฟเฟกต์ (AI) &amp; สติกเกอร์
           </button>
           <button
             type="button"
@@ -224,6 +302,13 @@ export default function ProjectCard({
             className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-[#5b3a1a]/30 px-3 py-2 text-xs font-medium text-[#5b3a1a] hover:bg-amber-50 disabled:opacity-40"
           >
             <Pencil size={12} /> แก้ไขวิดีโอ (timeline editor)
+          </button>
+          <button
+            type="button"
+            onClick={() => void runFinal()}
+            className="flex w-full items-center justify-center gap-2 rounded-lg border border-[#5b3a1a]/30 px-3 py-2 text-xs font-medium text-[#5b3a1a] hover:bg-amber-50"
+          >
+            <Mic size={13} /> ใส่เสียงพากย์ (ถ้าต้องการ)
           </button>
         </div>
       )}
@@ -254,9 +339,12 @@ export default function ProjectCard({
       {step === 'done' && (
         <div className="mt-3 space-y-2">
           <DubVideoPlayer
-            key={mediaKey}
+            key={`${mediaKey}-${mode === 'highlight' ? voPreviewFile : 'final.mp4'}`}
             mediaKey={mediaKey}
-            src={window.noey.media.urlFor(project.uid, 'final.mp4')}
+            src={window.noey.media.urlFor(
+              project.uid,
+              mode === 'highlight' ? voPreviewFile : 'final.mp4'
+            )}
             editScript={editScript}
           />
           <button
@@ -266,7 +354,12 @@ export default function ProjectCard({
           >
             <Pencil size={12} /> แก้ไขวิดีโอ
           </button>
-          <EffectsPanel project={project} session={session} baseFile="final.mp4" />
+          <button
+            onClick={() => setEffectsBase(mode === 'highlight' ? effectsEditBase : 'final.mp4')}
+            className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-[#5b3a1a]/30 px-3 py-2 text-xs font-medium text-[#5b3a1a] hover:bg-amber-50"
+          >
+            <Sparkles size={12} className="text-amber-600" /> เอฟเฟกต์ (AI) &amp; สติกเกอร์
+          </button>
         </div>
       )}
     </div>

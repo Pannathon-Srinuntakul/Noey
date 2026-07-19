@@ -1,8 +1,9 @@
-import { protocol } from 'electron'
+import { app, protocol } from 'electron'
 import { createReadStream } from 'fs'
 import { stat } from 'fs/promises'
+import { join } from 'path'
 import { Readable } from 'stream'
-import { mediaPathForUrl } from './mediaPath'
+import { libraryPathForUrl, mediaPathForUrl } from './mediaPath'
 import { projectsRoot } from './projects'
 
 /**
@@ -38,6 +39,27 @@ export function registerMediaScheme(): void {
   ])
 }
 
+const MIME_BY_EXT: Record<string, string> = {
+  '.mp4': 'video/mp4',
+  '.mov': 'video/quicktime',
+  '.webm': 'video/webm',
+  '.mkv': 'video/x-matroska',
+  '.mp3': 'audio/mpeg',
+  '.wav': 'audio/wav',
+  '.m4a': 'audio/mp4',
+  '.aac': 'audio/aac',
+  '.ogg': 'audio/ogg',
+  '.flac': 'audio/flac'
+}
+
+/** Chromium's <video> tag sniffs MP4 well enough without a Content-Type, but
+ * <audio> with non-container formats (mp3/wav/...) needs an explicit one or
+ * it silently refuses to play — no error, just stays paused forever. */
+function mimeTypeFor(path: string): string {
+  const ext = path.slice(path.lastIndexOf('.')).toLowerCase()
+  return MIME_BY_EXT[ext] ?? 'application/octet-stream'
+}
+
 function parseRange(
   rangeHeader: string | null,
   size: number
@@ -62,7 +84,9 @@ function parseRange(
 /** Call inside app.whenReady(). */
 export function registerMediaProtocol(): void {
   protocol.handle('media', async (request) => {
-    const abs = mediaPathForUrl(request.url, projectsRoot())
+    const abs =
+      mediaPathForUrl(request.url, projectsRoot()) ??
+      libraryPathForUrl(request.url, join(app.getPath('userData'), 'effects-library'))
     if (!abs) return new Response('not found', { status: 404 })
 
     let size: number
@@ -72,12 +96,17 @@ export function registerMediaProtocol(): void {
       return new Response('not found', { status: 404 })
     }
 
+    const contentType = mimeTypeFor(abs)
     const range = parseRange(request.headers.get('range'), size)
     if (!range) {
       const body = Readable.toWeb(createReadStream(abs)) as ReadableStream
       return new Response(body, {
         status: 200,
-        headers: { 'Content-Length': String(size), 'Accept-Ranges': 'bytes' }
+        headers: {
+          'Content-Length': String(size),
+          'Accept-Ranges': 'bytes',
+          'Content-Type': contentType
+        }
       })
     }
 
@@ -88,7 +117,8 @@ export function registerMediaProtocol(): void {
       headers: {
         'Content-Range': `bytes ${start}-${end}/${size}`,
         'Content-Length': String(end - start + 1),
-        'Accept-Ranges': 'bytes'
+        'Accept-Ranges': 'bytes',
+        'Content-Type': contentType
       }
     })
   })

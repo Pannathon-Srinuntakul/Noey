@@ -15,11 +15,14 @@ PUT   /videos/{uid}/local-timeline     — sync locally-edited timeline.json (ne
 PATCH /videos/{uid}/local-status       — desktop reports render progress/completion
 PUT   /videos/{uid}/local-edit-script  — sync locally-edited edit_script.json to the server record
 POST  /videos/{uid}/reedit-dub-scenes  — dub: upload live-editor preview + instruction → arq reedit_dub_scenes_local → {job_id}
+POST  /videos/{uid}/music              — dub: upload music/video → extract audio + librosa beat detection (sync)
+DELETE /videos/{uid}/music             — dub: clear the attached music track
 """
 
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -32,7 +35,7 @@ from packages.db.models.core_auth import Job
 from packages.db.models.video_project import VideoProject
 from packages.db.session import bind_tenant_search_path
 from packages.llm.usage import UsageCtx, reset_usage_ctx, set_usage_ctx
-from packages.video.s3 import push_project_files, resolve_stored_output
+from packages.video.s3 import delete_output_file, push_project_files, resolve_stored_output
 from packages.video.storage import data_root
 from packages.video.timeline import cuts_duration, normalize_dub_edit_script
 from services.api.deps import CurrentUser, db_session
@@ -128,8 +131,8 @@ async def create_local_project(
     body: LocalProjectIn,
     session: AsyncSession = Depends(db_session),
 ) -> LocalProjectOut:
-    if body.mode not in ("dub_first", "talking_head"):
-        raise HTTPException(400, "local-render รองรับเฉพาะโหมด dub_first / talking_head")
+    if body.mode not in ("dub_first", "talking_head", "highlight"):
+        raise HTTPException(400, "local-render รองรับเฉพาะโหมด dub_first / talking_head / highlight")
 
     proj = VideoProject(
         user_id=auth.user_id,
@@ -164,8 +167,8 @@ async def analyze_frames(
     manifest: str = Form(...),
 ) -> AnalyzeFramesOut:
     proj = await _get_local_project(session, uid, auth.user_id)
-    if proj.mode != "dub_first":
-        raise HTTPException(400, "analyze-frames ใช้ได้เฉพาะโหมด dub_first")
+    if proj.mode not in ("dub_first", "highlight"):
+        raise HTTPException(400, "analyze-frames ใช้ได้เฉพาะโหมด dub_first / highlight")
     if proj.status not in ("pending", "error", "waiting_vo", "done"):
         raise HTTPException(400, "โปรเจกต์กำลังประมวลผลอยู่")
 
@@ -233,8 +236,8 @@ async def analyze_video(
 ) -> AnalyzeFramesOut:
     """dub_first: receive per-clip proxy MP4s (Gemini native-video path)."""
     proj = await _get_local_project(session, uid, auth.user_id)
-    if proj.mode != "dub_first":
-        raise HTTPException(400, "analyze-video ใช้ได้เฉพาะโหมด dub_first")
+    if proj.mode not in ("dub_first", "highlight"):
+        raise HTTPException(400, "analyze-video ใช้ได้เฉพาะโหมด dub_first / highlight")
     if proj.status not in ("pending", "error", "waiting_vo", "done"):
         raise HTTPException(400, "โปรเจกต์กำลังประมวลผลอยู่")
 
@@ -316,7 +319,7 @@ async def plan_dub(
     )
     try:
         render_cuts = await plan_dub_timeline_cuts(
-            edit_script, body.voDurationSec, body.clipDurations
+            edit_script, body.voDurationSec, body.clipDurations, music_beats=proj.music_beats
         )
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
@@ -521,6 +524,97 @@ async def put_local_edit_script(
     return {"uid": uid, "segments": len(edit_script["segments"])}
 
 
+_MUSIC_VIDEO_SUFFIXES = {".mp4", ".mov", ".webm", ".mkv"}
+_MUSIC_AUDIO_SUFFIXES = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"}
+
+
+class MusicBeatsOut(BaseModel):
+    tempo: float
+    beats: list[float]
+    durationSec: float
+
+
+@router.post("/{uid}/music", response_model=MusicBeatsOut, status_code=201)
+async def upload_music(
+    uid: str,
+    auth: CurrentUser,
+    session: AsyncSession = Depends(db_session),
+    file: UploadFile = File(...),
+) -> MusicBeatsOut:
+    """dub_first: upload a music track (or a video to extract audio from) so the
+    AI cut-decision steps can align scene changes to the beat (see dub_ai.py).
+
+    This copy is for server-side librosa analysis ONLY — playback/mixing at
+    render time uses the desktop-local file path, never this one (see plan).
+    ffmpeg extraction and librosa beat-tracking are both blocking, CPU-bound
+    calls — run off the event loop via asyncio.to_thread (same convention as
+    packages/video/s3.py), or they freeze the ENTIRE server (every other
+    request on this process) for however long they take, which is much worse
+    than the couple seconds a warm librosa/numba JIT cache takes — cold-start
+    numba compilation on the first call in a process's lifetime can take
+    30s+ on its own.
+    """
+    proj = await _get_local_project(session, uid, auth.user_id)
+    if proj.mode not in ("dub_first", "highlight"):
+        raise HTTPException(400, "เพลงประกอบใช้ได้เฉพาะโหมด dub_first / highlight")
+
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in _MUSIC_VIDEO_SUFFIXES and suffix not in _MUSIC_AUDIO_SUFFIXES:
+        raise HTTPException(422, f"ไฟล์ประเภทนี้ไม่รองรับ ({suffix or 'ไม่ทราบนามสกุล'})")
+
+    root = data_root()
+    music_dir = root / "video_outputs" / uid / "music"
+    music_dir.mkdir(parents=True, exist_ok=True)
+    for stale in music_dir.iterdir():
+        stale.unlink(missing_ok=True)
+
+    raw_path = music_dir / f"upload{suffix}"
+    raw_path.write_bytes(await file.read())
+
+    import asyncio
+
+    from packages.video.beat_analysis import detect_beats, extract_audio_for_analysis
+
+    if suffix in _MUSIC_VIDEO_SUFFIXES:
+        analysis_path = music_dir / "track.wav"
+        await asyncio.to_thread(extract_audio_for_analysis, raw_path, analysis_path)
+    else:
+        analysis_path = raw_path
+
+    try:
+        beats = await asyncio.to_thread(detect_beats, analysis_path)
+    except Exception as exc:
+        raise HTTPException(422, f"วิเคราะห์จังหวะเพลงไม่สำเร็จ: {exc}") from exc
+
+    proj.music_path = str(raw_path.relative_to(root))
+    proj.music_beats = beats
+    await session.commit()
+    await push_project_files(uid)
+
+    log.info("dub_music_uploaded", uid=uid, tempo=beats["tempo"], beats=len(beats["beats"]))
+    return MusicBeatsOut(**beats)
+
+
+@router.delete("/{uid}/music", status_code=204)
+async def delete_music(
+    uid: str,
+    auth: CurrentUser,
+    session: AsyncSession = Depends(db_session),
+) -> None:
+    proj = await _get_local_project(session, uid, auth.user_id)
+    proj.music_path = None
+    proj.music_beats = None
+    await session.commit()
+
+    root = data_root()
+    music_dir = root / "video_outputs" / uid / "music"
+    if music_dir.is_dir():
+        for f in music_dir.iterdir():
+            f.unlink(missing_ok=True)
+        music_dir.rmdir()
+    log.info("dub_music_deleted", uid=uid)
+
+
 @router.post("/{uid}/reedit-dub-scenes", response_model=AnalyzeFramesOut, status_code=202)
 async def reedit_dub_scenes(
     uid: str,
@@ -537,8 +631,8 @@ async def reedit_dub_scenes(
     (proxy_manifest.json on disk); no re-upload needed for those.
     """
     proj = await _get_local_project(session, uid, auth.user_id)
-    if proj.mode != "dub_first":
-        raise HTTPException(400, "reedit-dub-scenes ใช้ได้เฉพาะโหมด dub_first")
+    if proj.mode not in ("dub_first", "highlight"):
+        raise HTTPException(400, "reedit-dub-scenes ใช้ได้เฉพาะโหมด dub_first / highlight")
     if proj.status not in ("pending", "error", "waiting_vo", "done"):
         raise HTTPException(400, "โปรเจกต์กำลังประมวลผลอยู่")
     if not proj.edit_script_path:
@@ -600,6 +694,11 @@ async def plan_effects(
     proxy: UploadFile = File(...),
     prompt: str = Form(""),
     script: str = Form(""),
+    style_uid: str = Form(""),
+    cuts: str = Form(""),
+    use_previous: bool = Form(False),
+    reference: UploadFile | None = File(None),
+    image_asset: UploadFile | None = File(None),
 ) -> AnalyzeFramesOut:
     """AI-assisted effects placement: receive a downscaled proxy of the finished
     cut video + an optional instruction + an optional timed script/transcript,
@@ -608,6 +707,29 @@ async def plan_effects(
     ``script`` is the voiceover/transcript with output-timeline timing (built by
     the desktop app from the dub edit script or talking_head caption lines) —
     it lets the AI match effects to the exact spoken words, not just the visuals.
+
+    ``cuts`` — an OPTIONAL JSON array of real scene-cut timestamps (output-
+    timeline seconds, e.g. ``"[3.2, 9.5, 14.0]"``), built by the desktop app
+    from the same edit script/timeline (see effectsCuts.ts buildEffectsCutPoints).
+    Lets the AI place a whip-pan `transitions` sweep or an ambient `sceneDrifts`
+    span AT a real cut boundary instead of an invented one — omitted (or
+    unparseable), both features are always empty, same as before this existed.
+
+    ``use_previous`` — when true and an effects.json already exists for this
+    project, the AI is shown it as `<previous_attempt>` and asked to produce a
+    different take (the "แก้ไข AI" edit button). When false (the default — the
+    fresh "ให้ AI จัดทั้งคลิป" button), any existing effects.json is ignored
+    entirely, giving a genuinely clean-slate placement pass.
+
+    ``reference`` — an OPTIONAL video/image the user attached purely as style
+    inspiration (the AI is told never to copy its literal content). ``image_asset``
+    — an OPTIONAL image the user wants placed IN the clip as a sticker/popup; the
+    AI only sees an ephemeral copy for vision judgment and never gets a real file
+    path, so ANY instance it places using it comes back with a
+    ``"__PENDING_ASSET__"`` sentinel in ``imagePath`` — the caller (desktop app)
+    must substitute the real local file path (the one the user actually picked)
+    and persist the corrected doc via the existing ``PUT /{uid}/effects``
+    before rendering.
 
     The full-res video never leaves the user's machine — only this proxy is
     uploaded for the AI to watch (parallel to dub's proxy upload). Effects are a
@@ -623,12 +745,90 @@ async def plan_effects(
     (effects_dir / "cut_proxy.mp4").write_bytes(await proxy.read())
     (effects_dir / "prompt.txt").write_text(prompt or "", encoding="utf-8")
     (effects_dir / "script.txt").write_text(script or "", encoding="utf-8")
-    await push_project_files(uid)  # proxy MP4 + prompt + script only
+
+    # Real scene-cut boundaries (see docstring) — cleared each run so a
+    # de-selected/stale value never silently lingers. Only written when the
+    # payload actually parses to a non-empty list of numbers; anything else
+    # (missing, malformed, empty) leaves transitions/sceneDrifts disabled,
+    # never raises — this is a nice-to-have enhancement, not a hard input.
+    cuts_file = effects_dir / "cuts.json"
+    cuts_file.unlink(missing_ok=True)
+    if cuts.strip():
+        try:
+            parsed_cuts = json.loads(cuts)
+            if isinstance(parsed_cuts, list) and parsed_cuts:
+                cuts_file.write_text(
+                    json.dumps([float(c) for c in parsed_cuts if isinstance(c, (int, float))]),
+                    encoding="utf-8",
+                )
+        except (json.JSONDecodeError, TypeError, ValueError):
+            log.warning("plan_effects_cuts_unparseable", uid=uid, cuts_raw=cuts[:200])
+
+    # A chosen saved STYLE (packages/db/models/effect_style.py) — its distilled
+    # prose is written to style.txt so plan_effects_local can splice it as the
+    # authoritative <style> block. Cleared each run; a de-selected style this
+    # time must not silently reuse last run's. Only ready styles carry prose.
+    #
+    # Also delete the S3 object when clearing: push_outputs never removes
+    # orphans, so a later worker pull would resurrect last run's style.txt
+    # (live report 2026-07-18: user picked drift style but AI followed a
+    # stale zoom-hold style.txt from a prior attempt on the same project).
+    style_file = effects_dir / "style.txt"
+    style_file.unlink(missing_ok=True)
+    await delete_output_file(uid, "effects/style.txt")
+    chosen_style_uid = style_uid.strip()
+    if chosen_style_uid:
+        from packages.db.models.effect_style import EffectStyle
+
+        style = await session.get(EffectStyle, chosen_style_uid)
+        if style is None or style.user_id != auth.user_id:
+            raise HTTPException(404, "ไม่พบสไตล์ที่เลือก")
+        if style.system_prompt:
+            style_file.write_text(style.system_prompt, encoding="utf-8")
+            log.info(
+                "plan_effects_style_selected",
+                uid=uid,
+                style_uid=chosen_style_uid,
+                style_name=style.name,
+                prompt_chars=len(style.system_prompt),
+            )
+        else:
+            log.warning(
+                "plan_effects_style_empty_prompt",
+                uid=uid,
+                style_uid=chosen_style_uid,
+                style_name=style.name,
+            )
+    else:
+        log.info("plan_effects_style_none", uid=uid)
+
+    # Reference/asset are OPTIONAL and named by their real extension (the AI
+    # call needs a real suffix to guess mime type) — any stale file from a
+    # previous run is removed first so an omitted param this time doesn't
+    # silently reuse last run's attachment.
+    for stale in effects_dir.glob("reference.*"):
+        stale.unlink(missing_ok=True)
+        await delete_output_file(uid, f"effects/{stale.name}")
+    for stale in effects_dir.glob("image_asset.*"):
+        stale.unlink(missing_ok=True)
+        await delete_output_file(uid, f"effects/{stale.name}")
+    if reference is not None:
+        suffix = Path(reference.filename or "").suffix or ".mp4"
+        (effects_dir / f"reference{suffix}").write_bytes(await reference.read())
+    if image_asset is not None:
+        suffix = Path(image_asset.filename or "").suffix or ".jpg"
+        (effects_dir / f"image_asset{suffix}").write_bytes(await image_asset.read())
+
+    await push_project_files(uid)  # proxy MP4 + prompt + script + optional reference/asset
 
     job_id = f"vlocal_{uid[:8]}"
     await session.execute(text("SET search_path TO core, public"))
     existing = await session.get(Job, job_id)
-    queued = {"step": "queued", "message": "รับวิดีโอแล้ว รอ AI วางเอฟเฟกต์…"}
+    queued = {
+        "step": "queued",
+        "message": "รับวิดีโอแล้ว รอ AI วางเอฟเฟกต์…",
+        "style_uid": chosen_style_uid or None,
+    }
     if existing:
         existing.status = "queued"
         existing.progress = 2
@@ -641,7 +841,17 @@ async def plan_effects(
         ))
     await session.commit()
 
-    await _enqueue(job_id, "plan_effects_local", project_uid=uid, tenant_slug=auth.tenant_slug)
+    # style_uid travels with the job so the worker can re-apply from DB AFTER
+    # s3_pull (belt-and-suspenders against a stale style.txt resurrected from
+    # an older outputs/ prefix).
+    await _enqueue(
+        job_id,
+        "plan_effects_local",
+        project_uid=uid,
+        tenant_slug=auth.tenant_slug,
+        style_uid=chosen_style_uid,
+        use_previous=use_previous,
+    )
     return AnalyzeFramesOut(job_id=job_id)
 
 
@@ -687,6 +897,53 @@ async def put_effects(
     )
     await push_project_files(uid)
     return {"uid": uid, "instances": len(doc.instances)}
+
+
+@router.post("/effects/generate-component")
+async def generate_effect_component_global(
+    auth: CurrentUser,
+    prompt: str = Form(""),
+    reference: UploadFile | None = File(None),
+) -> dict:
+    """Project-independent variant of the codegen route below, for the desktop
+    Effects Studio (global component library): same model call, same UNTRUSTED
+    output contract — the desktop side must still validate with
+    codegenValidate.mjs before ever rendering. No project row is touched; the
+    reference image goes to a per-user scratch file, not a project dir.
+    """
+    import tempfile
+
+    from packages.video.effects_codegen import generate_effect_component
+
+    if not prompt.strip() and reference is None:
+        raise HTTPException(400, "ต้องมี prompt หรือรูป reference อย่างน้อยหนึ่งอย่าง")
+
+    ref_path = None
+    if reference is not None:
+        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+            tmp.write(await reference.read())
+            ref_path = Path(tmp.name)
+
+    usage_token = set_usage_ctx(
+        UsageCtx(
+            user_id=auth.user_id,
+            tenant_id=auth.tenant_id,
+            feature="video_edit",
+            reference_id="effects_studio",
+        )
+    )
+    try:
+        source = await generate_effect_component(
+            prompt, reference_image_path=ref_path, project_uid="effects_studio"
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    finally:
+        reset_usage_ctx(usage_token)
+        if ref_path is not None:
+            ref_path.unlink(missing_ok=True)
+
+    return {"componentSource": source}
 
 
 @router.post("/{uid}/generate-effect-component")

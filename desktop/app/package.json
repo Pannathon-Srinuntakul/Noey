@@ -1,6 +1,6 @@
 {
   "name": "noey-video-edit",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Noey Video Edit — AI dub-first video editor (local render)",
   "main": "./out/main/index.js",
   "author": "example.com",
@@ -34,7 +34,14 @@
     "@fontsource/noto-sans-thai": "^5.2.8",
     "@fontsource/prompt": "^5.2.8",
     "@fontsource/sarabun": "^5.2.8",
-    "lucide-react": "^1.23.0"
+    "@remotion/fonts": "^4.0.489",
+    "@remotion/layout-utils": "^4.0.489",
+    "@remotion/light-leaks": "^4.0.489",
+    "@remotion/lottie": "^4.0.489",
+    "@remotion/player": "^4.0.489",
+    "@remotion/shapes": "^4.0.489",
+    "lucide-react": "^1.23.0",
+    "remotion": "^4.0.489"
   },
   "devDependencies": {
     "@aws-sdk/client-s3": "^3.1084.0",
@@ -54,8 +61,8 @@
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.4.24",
     "prettier": "^3.7.4",
-    "react": "^19.2.1",
-    "react-dom": "^19.2.1",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
     "tailwindcss": "^4.3.2",
     "typescript": "^5.9.3",
     "vite": "^7.2.6",

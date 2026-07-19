@@ -8,6 +8,7 @@ from packages.db.models.app_setting import AppSetting
 from packages.db.models.core_auth import Job, Membership, Tenant, User
 from packages.db.models.creator import Creator
 from packages.db.models.custom_table import CustomTableMeta
+from packages.db.models.effect_style import EffectStyle
 from packages.db.models.llm_usage import LlmUsageLog
 from packages.db.models.market import MarketTrend
 from packages.db.models.product import Product
@@ -36,6 +37,7 @@ __all__ = [
     "ScrapeRun",
     "AppSetting",
     "CustomTableMeta",
+    "EffectStyle",
     "LlmUsageLog",
     "Tenant",
     "User",

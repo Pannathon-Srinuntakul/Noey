@@ -5,6 +5,7 @@ import { app, ipcMain } from 'electron'
 import { writeFile, mkdtemp, rm } from 'fs/promises'
 import { existsSync } from 'fs'
 import { tmpdir } from 'os'
+import { appendLog } from './logger'
 
 /** One JSON-lines event emitted by the Python sidecar on stdout. */
 export interface SidecarEvent {
@@ -125,7 +126,12 @@ const activeProcs = new Map<string, ReturnType<typeof spawn>>()
 
 /** Kill the sidecar ffmpeg job for a project (best-effort). */
 export function cancelSidecarJob(projectDir: string): void {
-  activeProcs.get(projectDir)?.kill()
+  const proc = activeProcs.get(projectDir)
+  void appendLog(
+    'sidecar',
+    `cancelSidecarJob projectDir=${projectDir} activeProc=${proc ? proc.pid : 'none'}`
+  )
+  proc?.kill()
   activeProcs.delete(projectDir)
 }
 
@@ -175,6 +181,7 @@ export function registerSidecarIpc(): void {
     ['sidecar:extractProxy', 'extract-proxy'],
     ['sidecar:renderSilent', 'render-silent'],
     ['sidecar:renderFinal', 'render-final'],
+    ['sidecar:mixMusic', 'mix-music'],
     ['sidecar:extractAudio', 'extract-audio'],
     ['sidecar:renderTimeline', 'render-timeline'],
     ['sidecar:renderAiPreview', 'render-ai-preview'],

@@ -3,7 +3,12 @@
   "include": [
     "src/renderer/src/env.d.ts",
     "src/renderer/src/**/*",
-    "src/renderer/src/**/*.tsx"
+    "src/renderer/src/**/*.tsx",
+    "../node-sidecar/src/compositions/**/*"
+  ],
+  "exclude": [
+    "../node-sidecar/src/compositions/Root.tsx",
+    "../node-sidecar/src/compositions/index.ts"
   ],
   "compilerOptions": {
     "composite": true,
@@ -13,6 +18,12 @@
     "paths": {
       "@renderer/*": [
         "src/renderer/src/*"
+      ],
+      "@fx/*": [
+        "../node-sidecar/src/compositions/*"
+      ],
+      "@fx-fonts/*": [
+        "../node-sidecar/public/fonts/*"
       ]
     }
   }

@@ -135,13 +135,30 @@ def write_dub_script_txt(segments: list[dict[str, Any]], brief: str | None, path
     path.write_text("\n".join(script_lines), encoding="utf-8")
 
 
-def build_dub_bundle_zip(final_path: Path, script_path: Path, clip_paths: list[Path], zip_path: Path) -> None:
-    """final_silent.mp4 + script.txt + per-scene clips → dub_bundle.zip."""
+def build_dub_bundle_zip(
+    final_path: Path,
+    script_path: Path,
+    clip_paths: list[Path],
+    zip_path: Path,
+    *,
+    music_mixed_path: Path | None = None,
+) -> None:
+    """final_silent.mp4 + script.txt + per-scene clips → dub_bundle.zip.
+
+    ``music_mixed_path`` — when a music track is attached, the mix_audio_layers
+    output (video + music, no VO — see mix_audio_layers) is included as
+    final_with_music.mp4 alongside the untouched silent file, so the bundle
+    carries audible output even for a project that never gets a voiceover.
+    Always written mode="w" (fresh), so repeated calls (e.g. after re-mixing
+    music post-hoc) never leave stale/duplicate entries.
+    """
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.write(final_path, "final_silent.mp4")
         zf.write(script_path, "script.txt")
         for cp in clip_paths:
             zf.write(cp, f"clips/{cp.name}")
+        if music_mixed_path is not None and music_mixed_path.is_file():
+            zf.write(music_mixed_path, "final_with_music.mp4")
 
 
 def mux_voiceover(video_in: Path, vo_path: Path, out_path: Path) -> None:
@@ -162,4 +179,75 @@ def mux_voiceover(video_in: Path, vo_path: Path, out_path: Path) -> None:
         .global_args("-shortest")
         .overwrite_output(),
         label="render_vo_replace",
+    )
+
+
+def _music_stream(ffmpeg_lib, music_path: Path, *, volume: float, offset_sec: float, trim_in_sec: float):
+    """Shared music-input filter chain (trim → offset delay → volume) for both
+    mix_audio_layers branches below."""
+    music_kwargs = {"ss": trim_in_sec} if trim_in_sec > 0 else {}
+    stream = ffmpeg_lib.input(str(music_path), **music_kwargs).audio
+    if offset_sec > 0:
+        delay_ms = int(round(offset_sec * 1000))
+        stream = stream.filter("adelay", delays=f"{delay_ms}|{delay_ms}")
+    return stream.filter("volume", volume)
+
+
+def mix_audio_layers(
+    video_in: Path,
+    vo_path: Path | None,
+    music_path: Path | None,
+    out_path: Path,
+    *,
+    music_volume: float = 0.25,
+    music_offset_sec: float = 0.0,
+    music_trim_in_sec: float = 0.0,
+) -> None:
+    """VO and/or background music mixed onto the (silent) video, video stream-
+    copied. ``vo_path`` is optional — dub_first's voiceover step is itself
+    optional (creator can finish on the AI's silent cut alone), so a project
+    with only music attached and no VO must still get audible output.
+    ``music_offset_sec``/``music_trim_in_sec`` come from the desktop
+    TimelineEditor's audio-track drag/trim; the editable layers themselves live
+    only in the desktop-local project state, never in this render step.
+
+    - vo + no music → identical to mux_voiceover (kept as the fast path).
+    - vo + music → both layers amix'd, VO always full volume, output length
+      bounded by the VO (amix duration="first") then by the video (-shortest).
+    - music only (no vo) → music alone mapped in, output length bounded by the
+      video's own length (-shortest) — no VO to match, nothing to rescale.
+    - neither → programming error; callers must not reach this without at
+      least one audio layer to mix.
+    """
+    if music_path is None and vo_path is None:
+        raise ValueError("mix_audio_layers needs at least one of vo_path/music_path")
+    if music_path is None:
+        assert vo_path is not None
+        mux_voiceover(video_in, vo_path, out_path)
+        return
+
+    import ffmpeg as ffmpeg_lib
+
+    video_stream = ffmpeg_lib.input(str(video_in)).video
+    music_stream = _music_stream(
+        ffmpeg_lib, music_path,
+        volume=music_volume, offset_sec=music_offset_sec, trim_in_sec=music_trim_in_sec,
+    )
+
+    if vo_path is None:
+        audio_out = music_stream
+    else:
+        vo_stream = ffmpeg_lib.input(str(vo_path)).audio
+        audio_out = ffmpeg_lib.filter(
+            [vo_stream, music_stream], "amix", inputs=2, duration="first", dropout_transition=0
+        )
+
+    run_ffmpeg(
+        ffmpeg_lib.output(
+            video_stream, audio_out, str(out_path),
+            vcodec="copy", acodec="aac", audio_bitrate="192k", shortest=None,
+        )
+        .global_args("-shortest")
+        .overwrite_output(),
+        label="render_music_mix",
     )

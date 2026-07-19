@@ -54,6 +54,24 @@ class Settings(BaseSettings):
     dub_vision_model: str = "gemini-3.1-pro-preview"
     dub_vision_timeout_sec: int = 1200  # video inference is slower than Files-API frames
 
+    # --- AI-assisted effects layer (Remotion) placement pass ---
+    # Watches the already-cut video and places effect instances (overlays +
+    # transforms) from the component catalog. Same pro/video tier as the dub
+    # vision call — it is a reasoning-heavy "where do effects belong" judgment,
+    # not a cheap text task. Override via EFFECTS_VISION_MODEL.
+    effects_vision_model: str = "gemini-3.1-pro-preview"
+    effects_vision_timeout_sec: int = 900
+
+    # --- AI-generated effect components (custom template/effect creation) ---
+    # A code-generation call, not video-watching — Claude (strong at code,
+    # vision-capable for an optional reference image) rather than Gemini.
+    # Output is UNTRUSTED and re-validated by a static allowlist AST check on
+    # the desktop before ever being bundled/executed — see
+    # desktop/node-sidecar/src/codegenValidate.mjs. Override via
+    # EFFECTS_CODEGEN_MODEL.
+    effects_codegen_model: str = "anthropic/claude-sonnet-4-6"
+    effects_codegen_timeout_sec: int = 180
+
     # --- Auth (JWT) ---
     jwt_secret: str = "dev_change_me_in_production"
     jwt_algorithm: str = "HS256"

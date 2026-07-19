@@ -17,6 +17,39 @@ from packages.core.logging import get_logger
 
 log = get_logger(__name__)
 
+# Cap how many beat timestamps enter the prompt — a 3-4 min track at ~120bpm has
+# ~400-500 beats; the model only needs enough density to judge nearby beats, not
+# the full list, and a huge list wastes context for no benefit.
+_MAX_PROMPT_BEATS = 240
+
+
+def format_music_block(music_beats: dict[str, Any] | None) -> str:
+    """Render detect_beats() output (packages/video/beat_analysis.py) into a
+    prompt data block. Empty string when no music is attached — callers append
+    conditionally so prompts for music-less projects are byte-identical to before."""
+    if not music_beats:
+        return ""
+    beats = music_beats.get("beats") or []
+    if not beats:
+        return ""
+    tempo = music_beats.get("tempo", 0)
+    beats_str = ", ".join(f"{float(b):.2f}" for b in beats[:_MAX_PROMPT_BEATS])
+    return f"<music>\ntempo_bpm: {tempo}\nbeat_timestamps_sec: [{beats_str}]\n</music>"
+
+
+def _line_count_hint(target_duration_sec: int) -> str:
+    """Suggested line count scaled to an explicit target duration, instead of
+    the fixed "12-18 lines" figure that only makes sense at the default
+    ~45-60s length — a short target (e.g. a highlight cut matched to a
+    trimmed music clip) needs proportionally fewer lines, or the model ends
+    up squeezing every cut well below <editing_style>'s 1.5-3.5s range just
+    to hit an unscaled line count (live report 2026-07-19: 19s target
+    produced only ~1.9s multi-angle cuts)."""
+    lo = max(3, round(target_duration_sec / 5))
+    hi = max(lo + 2, round(target_duration_sec / 3.5))
+    return f"{lo}-{hi}"
+
+
 DUB_EDIT_SYSTEM = """<role>
 You are a TikTok affiliate video editor. Produce an Edit Script JSON.
 Do ALL reasoning, cataloging, and verification in English. Write voiceoverScript values in Thai.
@@ -48,12 +81,16 @@ EXCEPTION — back-view product shot: a frame with the creator turned away from 
 </reject_prep>
 
 <editing_style>
-Per line, set visual intent: "single-shot" (hook, calm CTA only — or any line whose footage truly offers only one usable angle; one cut, 2–4s max) or "multi-angle" (product intro, features/demo, OOTD, full-look — default here; 2–3 cuts sharing the line, hard max 3, never 4+).
+Per line, set visual intent: "single-shot" (hook, calm CTA only — or any line whose footage truly offers only one usable angle; one cut, 2–4s max) or "multi-angle" (product intro, features/demo, OOTD, full-look — default here; as many cuts as the footage genuinely supports, no fixed cap — let the count follow how many genuinely distinct usable angles actually exist for that moment).
 Aim for multi-angle on ≥60% of lines. Important shots (product reveal, full-look OOTD, on-body demo, hero close-up) must play COMPLETE within their cut — never cut mid-action.
 Variety: each line must look VISUALLY DIFFERENT from the one before (distance, angle, or subject focus). Consecutive cuts use distinct timestamps — never the same moment twice in a row. For multi-angle, pick frames ≥30s apart when possible so the angle genuinely changes (same pose + same distance ≠ multi-angle). Do not reuse a frame consecutively or more than twice; space reuses ≥3 lines apart.
-Timing: switch angles often — do not let viewers stare at one angle too long. Distribute multi-angle cuts across the line's durationSec instead of holding one (each cut 1.5–3.5s, 2–4s OK for a hero moment; never 5–8s when other strong frames exist). Weight by moment: key reveal / full-body OOTD 2.5–3.5s, normal commentary 2.0–2.5s, quick flash/reaction 1.5–2.0s.
+Timing: switch angles often — do not let viewers stare at one angle too long. Multi-angle is a quick flash between angles, not a series of held shots — each cut 0.5–1.5s.
 Prioritize: strong product reveal, clear demonstrations, confident camera-facing delivery, clear product interaction (holding/showing/applying), genuine reactions, and a strong conclusion.
 </editing_style>
+
+<music_sync>
+If a <music> block is present below, a background track will play under the final video. When a scene-change cut boundary (the start of a new segment, or a new cut within a multi-angle line) can naturally land within ~0.15s of one of the listed beat_timestamps_sec without breaking any rule above (safety, no-prep, shot completeness, variety, timing), prefer that placement. This is a soft preference, not every cut needs to hit a beat, and never force an awkward or premature cut just to chase one. If no <music> block is present, ignore this section entirely.
+</music_sync>
 
 <anchor>
 - Every segment MUST include matchedFrameTime: the exact timestamp (seconds) of the sample frame you chose.
@@ -73,11 +110,11 @@ Source: full user_script → keep wording exactly, split into scenes of 3–8s e
 
 <grouping>
 All cuts under one line share voiceoverLineId (integer, 1-indexed). voiceoverScript on the first cut of each line only; omit on subsequent cuts of the same line.
-Hard limit: at most 3 segments per voiceoverLineId (single-shot = 1; multi-angle = 2–3).
+No fixed segment cap per voiceoverLineId — single-shot is 1 cut; multi-angle uses as many cuts as genuinely add value.
 </grouping>
 
 <verify>
-Before returning, confirm in English: durationSec sum ≥45s (prefer ≥50s); ≥10 segments / 12–18 lines; ≥60% of lines are multi-angle; last line is a CTA; no two adjacent lines look the same; zero reject_safety violations remain.
+Before returning, confirm in English: durationSec sum ≥45s (prefer ≥50s) UNLESS an explicit shorter target_duration_sec was requested, in which case durationSec sum should match THAT target instead (line/segment counts scale down with it too — do not force 12-18 lines onto a short target, that count only applies at the default ~45-60s length); ≥10 segments / 12–18 lines when no explicit target was requested; ≥60% of lines are multi-angle; last line is a CTA; no two adjacent lines look the same; zero reject_safety violations remain.
 </verify>
 
 <output_format>
@@ -142,16 +179,20 @@ EXCEPTION — back-view product shot: a frame with the creator turned away from 
 </reject_prep>
 
 <editing_style>
-Per line, set visual intent: "single-shot" (hook, calm CTA only — or any line whose footage truly offers only one usable angle; one cut, 2–4s max) or "multi-angle" (product intro, features/demo, OOTD, full-look — default here; 2–3 cuts sharing the line, hard max 3, never 4+).
+Per line, set visual intent: "single-shot" (hook, calm CTA only — or any line whose footage truly offers only one usable angle; one cut, 2–4s max) or "multi-angle" (product intro, features/demo, OOTD, full-look — default here; as many cuts as the footage genuinely supports, no fixed cap — let the count follow how many genuinely distinct usable angles actually exist for that moment).
 Aim for multi-angle on ≥60% of lines. Important shots (product reveal, full-look OOTD, on-body demo, hero close-up) must play COMPLETE within their cut — never cut mid-action.
 Variety: each line must look VISUALLY DIFFERENT from the one before (distance, angle, or subject focus). Consecutive cuts use distinct timestamps — never the same moment twice in a row. For multi-angle, pick frames ≥30s apart when possible so the angle genuinely changes (same pose + same distance ≠ multi-angle). Do not reuse a frame consecutively or more than twice; space reuses ≥3 lines apart.
-Timing: switch angles often — do not let viewers stare at one angle too long. Distribute multi-angle cuts across the line's durationSec instead of holding one (each cut 1.5–3.5s, 2–4s OK for a hero moment; never 5–8s when other strong frames exist). Weight by moment: key reveal / full-body OOTD 2.5–3.5s, normal commentary 2.0–2.5s, quick flash/reaction 1.5–2.0s.
+Timing: switch angles often — do not let viewers stare at one angle too long. Multi-angle is a quick flash between angles, not a series of held shots — each cut 0.5–1.5s.
 Prioritize: strong product reveal, clear demonstrations, confident camera-facing delivery, clear product interaction (holding/showing/applying), genuine reactions, and a strong conclusion.
 </editing_style>
 
 <video_multi_angle_reminder>
 This has been observed failing in practice: lines rendered as one long single-shot hold instead of 2-3 varied cuts, even when the clip clearly shows multiple distinct angles/distances for that moment. Re-check every line against <editing_style> before finalizing: if the clip offers more than one usable angle for a line's topic, you MUST split it into multi-angle cuts (2-3 shorter cuts), not one continuous hold. A single cut running longer than ~4s is only acceptable when the footage genuinely offers no second usable angle for that moment.
 </video_multi_angle_reminder>
+
+<music_sync>
+If a <music> block is present in the context above, a background track will play under the final video. When a scene-change cut boundary (the start of a new segment, or a new cut within a multi-angle line) can naturally land within ~0.15s of one of the listed beat_timestamps_sec without breaking any rule above (safety, no-prep, shot completeness, variety, timing, coverage), prefer that placement. This is a soft preference, not every cut needs to hit a beat, and never force an awkward or premature cut just to chase one. If no <music> block was given, ignore this section entirely.
+</music_sync>
 
 <anchor>
 - Every segment MUST include matchedFrameTime: the exact timestamp (seconds) in the video you chose for this cut.
@@ -175,11 +216,11 @@ Source: full user_script → keep wording exactly, split into scenes of 3–8s e
 
 <grouping>
 All cuts under one line share voiceoverLineId (integer, 1-indexed). voiceoverScript on the first cut of each line only; omit on subsequent cuts of the same line.
-Hard limit: at most 3 segments per voiceoverLineId (single-shot = 1; multi-angle = 2–3).
+No fixed segment cap per voiceoverLineId — single-shot is 1 cut; multi-angle uses as many cuts as genuinely add value.
 </grouping>
 
 <verify>
-Before returning, confirm in English: you watched every clip to its FULL given duration, not just the first portion; every sourceIn/sourceOut is within its clip's real given duration (never beyond it); durationSec sum ≥45s (prefer ≥50s) UNLESS real footage is shorter, in which case a shorter honest script is correct; ≥10 segments / 12–18 lines when footage supports it; ≥60% of lines are multi-angle (re-check any single-shot line against <video_multi_angle_reminder>); last line is a CTA; no two adjacent lines look the same; the chosen matchedFrameTime values are spread across each clip's duration, not bunched only near the start; zero reject_safety violations remain.
+Before returning, confirm in English: you watched every clip to its FULL given duration, not just the first portion; every sourceIn/sourceOut is within its clip's real given duration (never beyond it); durationSec sum ≥45s (prefer ≥50s) UNLESS real footage is shorter OR an explicit shorter target_duration_sec was requested — in either case durationSec sum should match that real constraint instead (line/segment counts scale down with it too; do not force 12-18 lines onto a short target, that count only applies at the default ~45-60s length); ≥10 segments / 12–18 lines when footage supports it AND no explicit shorter target was requested; ≥60% of lines are multi-angle (re-check any single-shot line against <video_multi_angle_reminder>); last line is a CTA; no two adjacent lines look the same; the chosen matchedFrameTime values are spread across each clip's duration, not bunched only near the start; zero reject_safety violations remain.
 </verify>
 
 <output_format>
@@ -211,6 +252,100 @@ Return ONLY a valid JSON object, no prose or markdown. totalEstimatedSec = sum o
 </output_format>"""
 
 
+DUB_EDIT_SYSTEM_VIDEO_NO_VO = """<role>
+You are a TikTok editor producing an Edit Script JSON for a cut-only highlight reel — NO voiceover, NO narration script. The final video plays with only background music (if provided) plus user-added captions/stickers layered in separately afterward.
+Do ALL reasoning in English.
+</role>
+
+<video_model>
+This pipeline renders a SILENT video from your cuts only. There is no voiceover track at all — durationSec is purely how long that cut plays on screen, not "speaking time." Pace cuts for a highlight-reel rhythm (music-driven if a <music> block is given), not for a line of dialogue.
+</video_model>
+
+<coverage>
+Watch EVERY clip in FULL, start to finish, before selecting any cuts. Each clip's exact duration is given below — treat that as the range you must review, not a suggestion. The strongest shots are often NOT at the start; a clip can open with setup/prep and only reach its best product reveal, demo, or reaction near the middle or end. Never stop scanning early because you feel you already have "enough" material — finish watching every clip fully, THEN choose the best moments from anywhere across the whole timeline, including the final seconds.
+This applies whether or not a target duration is set. The target only controls how much of the best material to keep in the final script — it never limits which part of the footage you are allowed to look at or use. Do not cluster all cuts in the first portion of a clip; if strong footage exists later, use it.
+A clip is NOT one uniform scene — it is made of multiple distinct scene segments over time, each showing a different angle, action, or moment (e.g. one stretch shows the product held up, a later stretch shows it being applied, a later stretch shows a different angle of the same demo). Do NOT collapse the clip down to only its single most impressive scene. Evaluate EACH distinct scene segment on its own merit and pick that segment's best usable moment — every scene that has a usable moment should contribute a cut, not just the overall-strongest one. Only skip a scene entirely if nothing in it is usable (fails reject_safety / reject_prep, or is out of focus / low quality throughout) — never skip a scene just because a different scene elsewhere looks better.
+</coverage>
+
+<shot_types>
+Classify each shot as you watch the video: hook / product-display / close-up / on-body-demo / full-body-OOTD / back-view / reaction / cta-closing. Mark each USE or REJECT against the reject rules below.
+</shot_types>
+
+<reject_safety>
+HARD REJECT — never use a frame or trim that shows or leads into: putting on OR taking off pants/skirts/shorts/trousers; holding bottoms open at the waist (fly open, waistband spread, stepping in); pulling clothing up/down before fully worn; ANY visible underwear (panties/briefs/boxers/bra-only); partial undress or wardrobe change.
+Even if the still looks fine — if the creator is mid dress/undress the trim WILL expose underwear. Skip it.
+EXTRA: light-colored bottoms (white/cream/beige/light pink) with hands near the waistband, or a loose/open/unzipped waistband → reject that frame AND every frame within ±5s. Do not gamble.
+Outfit must be fully ON and fastened. "เตรียมชุด" voiceover → finished look only.
+</reject_safety>
+
+<reject_prep>
+Skip any frame where the creator is: fixing hair, adjusting or smoothing the outfit, reaching for or touching the camera, setting up, looking off-camera/down/to the side, mid-step into a pose, or not yet ready. Use only settled, intentional, camera-ready moments — never a trim that starts before that ready moment.
+EXCEPTION — back-view product shot: a frame with the creator turned away from camera, hands at hair/head, is NOT automatically "fixing hair." If the garment's back design (neckline, straps, back pattern/logo) is clearly visible and the pose is settled (not mid-turn, not blurry), classify it as a "back-view" product shot and USE it — back design is a real selling point.
+</reject_prep>
+
+<editing_style>
+Per line, set visual intent: "single-shot" (hook, calm CTA only — or any line whose footage truly offers only one usable angle; one cut, 2–4s max) or "multi-angle" (product intro, features/demo, OOTD, full-look — default here; as many cuts as the footage genuinely supports, no fixed cap — let the count follow how many genuinely distinct usable angles actually exist for that moment).
+Aim for multi-angle on ≥60% of lines. Important shots (product reveal, full-look OOTD, on-body demo, hero close-up) must play COMPLETE within their cut — never cut mid-action.
+Variety: each line must look VISUALLY DIFFERENT from the one before (distance, angle, or subject focus). Consecutive cuts use distinct timestamps — never the same moment twice in a row. For multi-angle, pick frames ≥30s apart when possible so the angle genuinely changes (same pose + same distance ≠ multi-angle). Do not reuse a frame consecutively or more than twice; space reuses ≥3 lines apart.
+Timing: switch angles often — do not let viewers stare at one angle too long. Multi-angle is a quick flash between angles, not a series of held shots — each cut 0.5–1.5s.
+Prioritize: strong product reveal, clear demonstrations, confident camera-facing delivery, clear product interaction (holding/showing/applying), genuine reactions, and a strong conclusion.
+</editing_style>
+
+<video_multi_angle_reminder>
+This has been observed failing in practice: lines rendered as one long single-shot hold instead of 2-3 varied cuts, even when the clip clearly shows multiple distinct angles/distances for that moment. Re-check every line against <editing_style> before finalizing: if the clip offers more than one usable angle for a line's topic, you MUST split it into multi-angle cuts (2-3 shorter cuts), not one continuous hold. A single cut running longer than ~4s is only acceptable when the footage genuinely offers no second usable angle for that moment.
+</video_multi_angle_reminder>
+
+<music_sync>
+If a <music> block is present in the context above, a background track will play under the final video. When a scene-change cut boundary (the start of a new segment, or a new cut within a multi-angle line) can naturally land within ~0.15s of one of the listed beat_timestamps_sec without breaking any rule above (safety, no-prep, shot completeness, variety, timing, coverage), prefer that placement. This is a soft preference, not every cut needs to hit a beat, and never force an awkward or premature cut just to chase one. If no <music> block was given, ignore this section entirely.
+</music_sync>
+
+<anchor>
+- Every segment MUST include matchedFrameTime: the exact timestamp (seconds) in the video you chose for this cut.
+- sourceIn must be within ±0.35s of matchedFrameTime — do NOT start the trim earlier to include prep.
+- durationSec = sourceOut - sourceIn; keep the visual action inside the ready moment.
+- cutStyle options: "jump_cut" | "standard" | "zoom_in" | "zoom_out" — default to "jump_cut"
+- Multiple clips arrive as separately labeled videos (e.g. "=== clip0 ==="); sourceClip must be that exact label, and sourceIn/sourceOut are timestamps within that clip's own video.
+- HARD BOUND: sourceIn and sourceOut MUST be real timestamps that exist within that clip's given duration (see <clips> below) — sourceOut can never exceed the clip's duration, and sourceIn can never be negative. Never invent or extrapolate a timestamp past the end of the actual footage.
+- PRECISION: you sample the video at 1 frame/second, so a pose that only appears briefly (e.g. a quick turn to show the back) is hard to timestamp exactly — the second you pick may land a moment before or after the pose is fully visible. Prefer moments that are HELD for at least ~1 second (the creator pauses in that pose) over a fleeting transition; if a described moment (e.g. "back-view") is only visible for a fraction of a second, either find a held instance of it elsewhere in the clip or do not write a line claiming that visual — a claim in the script that isn't reliably backed by the timestamp you give will render as a mismatch.
+</anchor>
+
+<visual_description>
+Every segment MUST include visualDescription: a short concrete phrase (Thai or English) naming what's actually on screen — subject, action, framing (e.g. "close-up product label", "on-body demo, side angle"). This is the ONLY per-scene context the downstream effects/caption AI will have, since there is no spoken script — be specific, not vague ("nice shot").
+Do NOT include a voiceoverScript field on any segment, even though the schema still lists it as available — this mode has no narration at all; leave it out entirely rather than writing filler Thai lines.
+</visual_description>
+
+<grouping>
+All cuts under one line share voiceoverLineId (integer, 1-indexed) — a "beat"/scene group sharing one topic/moment.
+No fixed segment cap per voiceoverLineId — single-shot is 1 cut; multi-angle uses as many cuts as genuinely add value.
+</grouping>
+
+<verify>
+Before returning, confirm in English: you watched every clip to its FULL given duration, not just the first portion; every sourceIn/sourceOut is within its clip's real given duration (never beyond it); durationSec sum ≥45s (prefer ≥50s) UNLESS real footage is shorter OR an explicit shorter target_duration_sec was requested — in either case durationSec sum should match that real constraint instead (line/segment counts scale down with it too; do not force 12-18 lines onto a short target, that count only applies at the default ~45-60s length); ≥10 segments / 12–18 lines when footage supports it AND no explicit shorter target was requested; ≥60% of lines are multi-angle (re-check any single-shot line against <video_multi_angle_reminder>); the last line is a strong closing shot (CTA framing optional — no spoken words to deliver one); no two adjacent lines look the same; the chosen matchedFrameTime values are spread across each clip's duration, not bunched only near the start; zero reject_safety violations remain.
+</verify>
+
+<output_format>
+Return ONLY a valid JSON object, no prose or markdown. totalEstimatedSec = sum of all durationSec.
+{
+  "mode": "highlight",
+  "totalEstimatedSec": 32,
+  "segments": [
+    {
+      "order": 1, "voiceoverLineId": 1,
+      "sourceClip": "clip0", "sourceIn": 5.2, "sourceOut": 8.0, "durationSec": 2.8,
+      "matchedFrameTime": 5.2, "visualDescription": "ถือสินค้าใกล้กล้อง โลโก้ชัด",
+      "cutStyle": "jump_cut"
+    },
+    {
+      "order": 2, "voiceoverLineId": 2,
+      "sourceClip": "clip0", "sourceIn": 12.0, "sourceOut": 14.0, "durationSec": 2.0,
+      "matchedFrameTime": 12.0, "visualDescription": "close-up เนื้อสินค้า",
+      "cutStyle": "jump_cut"
+    }
+  ]
+}
+</output_format>"""
+
+
 DUB_TIMELINE_SYSTEM = """<role>
 You are a TikTok video editor producing a Timeline JSON for ffmpeg rendering.
 </role>
@@ -228,6 +363,7 @@ map each Edit Script segment to a position on the output timeline.
 - "in" and "out" are source file timestamps — use sourceIn/sourceOut from the Edit Script
 - "label": "opening" for the first cut, "conclusion" for the last cut, "speech" for all others
 - Preserve every visual cut from the Edit Script — do not merge multiple angles into one long hold
+- If a <music> block is given: this is the FINAL pass that fixes real output-timeline cut positions (0, cut1_duration, cut1_duration+cut2_duration, ...). After the proportional distribution above, you may nudge individual cut boundaries earlier/later by a small amount (a fraction of a second, never enough to visibly break a shot) so they land closer to a nearby beat_timestamps_sec value. Not every boundary needs a beat — use judgment, this is a soft preference. Total duration must still equal voDurationSec exactly and cut order/count must not change. Ignore this rule entirely if no <music> block is given.
 </rules>
 
 <forbidden>
@@ -253,10 +389,11 @@ def build_dub_edit_user_text(
     target_duration_sec: int | None,
     frame_descs: str,
     frame_count: int,
+    music_beats: dict[str, Any] | None = None,
 ) -> str:
     """Assemble the leading text block of the Vision edit-script request."""
     duration_hint = (
-        f"Target video length: ~{target_duration_sec} seconds. totalEstimatedSec = sum of ALL segment durationSec = actual rendered video length. Plan 12–18 lines with multi-angle middle sections so all cuts total ~{target_duration_sec}s — add more lines if needed. "
+        f"Target video length: ~{target_duration_sec} seconds. totalEstimatedSec = sum of ALL segment durationSec = actual rendered video length. Aim for roughly {_line_count_hint(target_duration_sec)} lines (scaled to this target — do NOT default to 12-18 lines, that count is only for the ~45-60s default length and would squeeze every cut far below the 1.5-3.5s range) with multi-angle middle sections so all cuts total ~{target_duration_sec}s. "
         if target_duration_sec
         else "No target set — minimum 45s, target 50–60s (standard TikTok affiliate length). totalEstimatedSec = sum of ALL segment durationSec = actual rendered video length. 45s is a hard floor — plan 12–18 lines (≥10 segments), prefer multi-angle on product/demo/OOTD lines, and keep adding until the sum reaches 45s+. "
     )
@@ -266,8 +403,11 @@ def build_dub_edit_user_text(
         f"<user_script>{user_script or '(ไม่ระบุ — generate จากวิดีโอ)'}</user_script>\n"
         f"</creator_input>"
     )
+    music_block = format_music_block(music_beats)
+    music_section = f"{music_block}\n\n" if music_block else ""
     return (
         f"{creator_input}\n\n"
+        f"{music_section}"
         f"<frame_timestamps count=\"{frame_count}\">\n{frame_descs}\n</frame_timestamps>\n\n"
         "<instruction>"
         f"{duration_hint}"
@@ -288,6 +428,8 @@ async def generate_dub_edit_script(
     user_script: str,
     target_duration_sec: int | None,
     project_uid: str,
+    music_beats: dict[str, Any] | None = None,
+    system: str = DUB_EDIT_SYSTEM,
     on_thinking: Callable[[str], Awaitable[None]] | None = None,
 ) -> dict[str, Any]:
     """Run the single-step Claude Vision call: frames → normalized Edit Script dict."""
@@ -307,6 +449,7 @@ async def generate_dub_edit_script(
         target_duration_sec=target_duration_sec,
         frame_descs=frame_descs,
         frame_count=len(frames),
+        music_beats=music_beats,
     )}]
     user_msg_content.extend(vision_content)
     user_msg_content.append({"type": "text", "text": DUB_EDIT_REMINDER})
@@ -327,7 +470,7 @@ async def generate_dub_edit_script(
 
     try:
         resp = await acompletion_stream_thinking(
-            messages, system=DUB_EDIT_SYSTEM, project_uid=project_uid,
+            messages, system=system, project_uid=project_uid,
             on_thinking=on_thinking, **vx
         )
         raw = resp.choices[0].message.content or ""
@@ -363,7 +506,7 @@ DUB_EDIT_SCHEMA_VIDEO: dict[str, Any] = {
                 },
                 "required": [
                     "order", "voiceoverLineId", "sourceClip", "sourceIn", "sourceOut",
-                    "matchedFrameTime", "cutStyle",
+                    "matchedFrameTime", "cutStyle", "visualDescription",
                 ],
             },
         },
@@ -377,14 +520,16 @@ def build_dub_edit_context_text_video(
     brief: str,
     user_script: str,
     clip_durations: list[tuple[str, float]],
+    music_beats: dict[str, Any] | None = None,
 ) -> str:
     """Assemble the text block that comes BEFORE the video content.
 
     Per Gemini's own prompt-design guidance for long videos: data context goes
     first, specific instructions go last (after the model has "seen" the data).
-    This block is just data — creator brief/script + real per-clip durations —
-    no directives. See build_dub_edit_instruction_text_video for the directives,
-    which are sent AFTER the video blocks.
+    This block is just data — creator brief/script + real per-clip durations +
+    optional music beat grid — no directives. See
+    build_dub_edit_instruction_text_video for the directives, which are sent
+    AFTER the video blocks.
     """
     creator_input = (
         f"<creator_input>\n"
@@ -393,7 +538,9 @@ def build_dub_edit_context_text_video(
         f"</creator_input>"
     )
     clips_block = "\n".join(f"{clip_id}: {dur:.1f}s" for clip_id, dur in clip_durations)
-    return f"{creator_input}\n\n<clips>\n{clips_block}\n</clips>"
+    music_block = format_music_block(music_beats)
+    music_section = f"\n\n{music_block}" if music_block else ""
+    return f"{creator_input}\n\n<clips>\n{clips_block}\n</clips>{music_section}"
 
 
 def build_dub_edit_instruction_text_video(
@@ -410,7 +557,7 @@ def build_dub_edit_instruction_text_video(
     """
     total_footage = sum(dur for _clip_id, dur in clip_durations)
     duration_hint = (
-        f"Target video length: ~{target_duration_sec} seconds. totalEstimatedSec = sum of ALL segment durationSec = actual rendered video length. Plan 12–18 lines with multi-angle middle sections so all cuts total ~{target_duration_sec}s — add more lines if needed, but NEVER by inventing timestamps beyond a clip's real duration (see <clips> above). "
+        f"Target video length: ~{target_duration_sec} seconds. totalEstimatedSec = sum of ALL segment durationSec = actual rendered video length. Aim for roughly {_line_count_hint(target_duration_sec)} lines (scaled to this target — do NOT default to 12-18 lines, that count is only for the ~45-60s default length and would squeeze every cut far below the 1.5-3.5s range) with multi-angle middle sections so all cuts total ~{target_duration_sec}s, NEVER by inventing timestamps beyond a clip's real duration (see <clips> above). "
         if target_duration_sec
         else f"No target set — minimum 45s, target 50–60s (standard TikTok affiliate length), but this floor is secondary to authenticity: total available footage across all clips is {total_footage:.1f}s. totalEstimatedSec = sum of ALL segment durationSec = actual rendered video length. Plan 12–18 lines (≥10 segments), prefer multi-angle on product/demo/OOTD lines, and add lines until the sum reaches 45s+ ONLY using real distinct moments — if real usable footage runs out sooner, stop there rather than inventing or reusing beyond the reuse limits. "
     )
@@ -432,9 +579,14 @@ async def generate_dub_edit_script_video(
     user_script: str,
     target_duration_sec: int | None,
     project_uid: str,
+    music_beats: dict[str, Any] | None = None,
+    system: str = DUB_EDIT_SYSTEM_VIDEO,
     on_thinking: Callable[[str], Awaitable[None]] | None = None,
 ) -> dict[str, Any]:
     """Run the Gemini native-video edit-script call: proxy clips → normalized Edit Script dict.
+
+    ``system`` — defaults to the standard dub_first prompt; callers pass
+    ``DUB_EDIT_SYSTEM_VIDEO_NO_VO`` for the no-voiceover "highlight" mode.
 
     Each clip is uploaded to the Gemini Files API and referenced by URI (not
     inline base64 — see packages/llm/files.py). sample_frames=None deliberately
@@ -468,6 +620,7 @@ async def generate_dub_edit_script_video(
             brief=brief,
             user_script=user_script,
             clip_durations=clip_durations,
+            music_beats=music_beats,
         )}]
         for (clip_id, _path, _duration), file_id in zip(clip_videos, file_ids, strict=True):
             user_msg_content.append({"type": "text", "text": f"=== {clip_id} ==="})
@@ -500,7 +653,7 @@ async def generate_dub_edit_script_video(
         )
 
         resp = await acompletion_stream_thinking(
-            messages, system=DUB_EDIT_SYSTEM_VIDEO, project_uid=project_uid,
+            messages, system=system, project_uid=project_uid,
             on_thinking=on_thinking, **extra
         )
         raw = resp.choices[0].message.content or ""
@@ -550,9 +703,17 @@ EXCEPTION — back-view product shot: turned-away-from-camera with hands at hair
 </reject_prep>
 
 <editing_style>
-Per revised line, set visual intent: "single-shot" (one cut, 2–4s max) or "multi-angle" (2–3 cuts sharing the line, hard max 3, never 4+). Important shots must play COMPLETE within their cut — never cut mid-action.
+Per revised line, set visual intent: "single-shot" (one cut, 2–4s max) or "multi-angle" (as many cuts as the footage genuinely supports, no fixed cap; each cut 0.5–1.5s — a quick flash between angles, not a held shot). Important shots must play COMPLETE within their cut — never cut mid-action.
 If the instruction asks for multi-angle, pick frames ≥30s apart when possible so the angle genuinely changes; never reuse a frame consecutively.
 </editing_style>
+
+<music_sync>
+If a <music> block is present below, a background track plays under the final video. When a revised segment's cut boundary can naturally land within ~0.15s of one of the listed beat_timestamps_sec without breaking any rule above, prefer that placement. Soft preference only — never force an awkward or premature cut just to chase a beat, and never let it override what the creator's instruction actually asked for. If no <music> block is present, ignore this section.
+</music_sync>
+
+<duration>
+If a <target_duration> block is present below, the creator originally asked for roughly that total video length (or it was set to match their background music). When RETIMING/SHORTENING/LENGTHENING a cut changes its durationSec, keep the overall total close to that target — a couple seconds of drift from a natural edit is fine, but don't let the total creep far off just because a longer/shorter replacement moment was available. This is a soft constraint: the creator's explicit instruction (e.g. "make this line longer") always wins over holding the target. If no <target_duration> block is present, ignore this section.
+</duration>
 
 <task>
 Interpret the instruction and apply the correct operation(s) to the selected/implied line(s) — infer from the instruction alone, never ask for clarification, never expose a fixed menu of operations to the user:
@@ -574,7 +735,7 @@ Combine operations freely when the instruction implies it (e.g. "shorten this an
 
 <grouping>
 All cuts under one revised line share voiceoverLineId (reuse the ORIGINAL voiceoverLineId being revised — do not invent a new one for an existing line). voiceoverScript goes on the first cut of each line only.
-Hard limit: at most 3 segments per voiceoverLineId.
+No fixed segment cap per voiceoverLineId — single-shot is 1 cut; multi-angle uses as many cuts as genuinely add value.
 </grouping>
 
 <output_format>
@@ -598,6 +759,8 @@ def build_dub_reedit_user_text(
     current_segments: list[dict[str, Any]],
     selected_line_ids: list[int],
     instruction: str,
+    music_beats: dict[str, Any] | None = None,
+    target_duration_sec: int | None = None,
 ) -> str:
     """Assemble the leading text block of the AI re-edit request."""
     scope_block = (
@@ -605,10 +768,20 @@ def build_dub_reedit_user_text(
         if selected_line_ids
         else "<scope_selected_line_ids>none — whole script in scope</scope_selected_line_ids>"
     )
+    music_block = format_music_block(music_beats)
+    current_total = sum(float(s.get("durationSec") or 0) for s in current_segments)
+    duration_block = (
+        f"<target_duration>Current total ~{current_total:.1f}s. "
+        f"Original target ~{target_duration_sec}s.</target_duration>"
+        if target_duration_sec
+        else ""
+    )
     return (
         f"<current_edit_script>\n{json.dumps({'segments': current_segments}, ensure_ascii=False)}\n</current_edit_script>\n\n"
         f"{scope_block}\n\n"
-        f"<creator_instruction>{instruction}</creator_instruction>"
+        + (f"{music_block}\n\n" if music_block else "")
+        + (f"{duration_block}\n\n" if duration_block else "")
+        + f"<creator_instruction>{instruction}</creator_instruction>"
     )
 
 
@@ -620,6 +793,8 @@ async def generate_dub_reedit_script_video(
     selected_line_ids: list[int],
     instruction: str,
     project_uid: str,
+    music_beats: dict[str, Any] | None = None,
+    target_duration_sec: int | None = None,
     on_thinking: Callable[[str], Awaitable[None]] | None = None,
 ) -> list[dict[str, Any]]:
     """Run the Gemini native-video AI re-edit call: current script + edited preview +
@@ -654,6 +829,8 @@ async def generate_dub_reedit_script_video(
             current_segments=current_segments,
             selected_line_ids=selected_line_ids,
             instruction=instruction,
+            music_beats=music_beats,
+            target_duration_sec=target_duration_sec,
         )}]
         user_msg_content.append({"type": "text", "text": "=== edited_preview ==="})
         user_msg_content.append(gemini_video_block(preview_file_id))
@@ -694,13 +871,25 @@ async def generate_dub_reedit_script_video(
         await delete_gemini_files(file_ids)
 
 
-def build_dub_timeline_prompt(edit_script: dict[str, Any], vo_duration: float) -> str:
+def build_dub_timeline_prompt(
+    edit_script: dict[str, Any],
+    vo_duration: float,
+    music_beats: dict[str, Any] | None = None,
+) -> str:
     """Assemble the text prompt for the dub timeline planning call."""
+    beats = (music_beats or {}).get("beats") or []
+    # Only beats that can actually land inside the final video are relevant here.
+    beats_in_range = [b for b in beats if b <= vo_duration]
+    music_block = format_music_block(
+        {**music_beats, "beats": beats_in_range} if beats_in_range else None
+    )
+    music_section = f"\n\n{music_block}" if music_block else ""
     return (
         f"<voiceover>\n"
         f"<voDurationSec>{round(vo_duration, 2)}</voDurationSec>\n"
         f"</voiceover>\n\n"
-        f"<edit_script>\n{json.dumps(edit_script, ensure_ascii=False)}\n</edit_script>\n\n"
+        f"<edit_script>\n{json.dumps(edit_script, ensure_ascii=False)}\n</edit_script>"
+        f"{music_section}\n\n"
         f"<instruction>Map each segment to a timeline cut. "
         f"Total cut duration MUST NOT exceed {round(vo_duration, 2)} seconds.</instruction>"
     )
@@ -710,6 +899,7 @@ async def plan_dub_timeline_cuts(
     edit_script: dict[str, Any],
     vo_duration: float,
     clip_durations: list[float],
+    music_beats: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Claude text call mapping Edit Script segments to render cuts.
 
@@ -725,7 +915,10 @@ async def plan_dub_timeline_cuts(
         parse_llm_json,
     )
 
-    raw = await complete(build_dub_timeline_prompt(edit_script, vo_duration), system=DUB_TIMELINE_SYSTEM)
+    raw = await complete(
+        build_dub_timeline_prompt(edit_script, vo_duration, music_beats),
+        system=DUB_TIMELINE_SYSTEM,
+    )
     parsed = parse_llm_json(raw)
     raw_cuts = parsed.get("timeline", [])
     if not raw_cuts:

@@ -39,10 +39,16 @@ async function runFetch(job: ApiFetchJob): Promise<ApiFetchResult> {
     }
   }
 
+  // Without a timeout, a request in flight when the backend restarts (uvicorn
+  // --reload) or drops the connection can hang forever — fetch() gives no
+  // guarantee of ever rejecting on its own for a stalled/reset connection on
+  // Windows. 60s is generous for any of this app's endpoints (uploads
+  // included) while still eventually freeing a permanently-stuck UI.
   const res = await fetch(job.url, {
     method: job.method ?? 'GET',
     headers,
-    body
+    body,
+    signal: AbortSignal.timeout(60_000)
   })
   return {
     ok: res.ok,

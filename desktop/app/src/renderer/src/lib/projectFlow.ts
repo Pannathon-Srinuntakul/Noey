@@ -1,6 +1,6 @@
 /** Wizard step machine (dub_first + talking_head) — resumable from project.json. */
 
-export type ProjectMode = 'dub_first' | 'talking_head'
+export type ProjectMode = 'dub_first' | 'talking_head' | 'highlight'
 
 export type ProjectStep =
   | 'imported'
@@ -33,15 +33,21 @@ export const TH_STEP_ORDER: ProjectStep[] = [
   'done'
 ]
 
+// highlight mode: same AI cut-selection as dub_first, but no voiceover wait —
+// renders straight from the silent cut to done (mirrors talking_head's shape).
+export const HL_STEP_ORDER: ProjectStep[] = ['imported', 'analyzing', 'silent_rendering', 'done']
+
 export function stepOrderFor(mode: ProjectMode | undefined): ProjectStep[] {
-  return mode === 'talking_head' ? TH_STEP_ORDER : STEP_ORDER
+  if (mode === 'talking_head') return TH_STEP_ORDER
+  if (mode === 'highlight') return HL_STEP_ORDER
+  return STEP_ORDER
 }
 
 export const STEP_LABELS: Record<ProjectStep, string> = {
   imported: 'นำเข้าคลิปแล้ว',
   analyzing: 'AI กำลังวิเคราะห์',
   silent_rendering: 'กำลังตัดวิดีโอ (เงียบ)',
-  waiting_vo: 'รออัดเสียงพากย์',
+  waiting_vo: 'คลิปพร้อม — ใส่เสียงพากย์ได้ถ้าต้องการ',
   planning: 'กำลังวางแผน timeline',
   final_rendering: 'กำลัง render วิดีโอสุดท้าย',
   extracting_audio: 'กำลังแยกเสียงจากคลิป',

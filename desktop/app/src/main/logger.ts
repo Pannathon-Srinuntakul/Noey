@@ -13,7 +13,10 @@ function logFile(): string {
   return join(logDir(), 'app.log')
 }
 
-async function appendLog(scope: string, message: string): Promise<void> {
+/** Callable directly from other main-process modules (no IPC round trip
+ * needed — they already run in this process) for diagnostic logging around
+ * IPC handlers that should be fast, so a wedged main process leaves a trail. */
+export async function appendLog(scope: string, message: string): Promise<void> {
   await mkdir(logDir(), { recursive: true })
   const line = `[${new Date().toISOString()}] [${scope}] ${message}\n`
   await appendFile(logFile(), line, 'utf-8')

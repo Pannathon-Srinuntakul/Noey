@@ -11,9 +11,11 @@ const DUB_SCRIPT_GRADIENT = 'bg-linear-to-t from-black/95 via-black/75 to-transp
 
 function DubMediaTabBar({
   tab,
+  label,
   onChange
 }: {
   tab: 'video' | 'script'
+  label: string
   onChange: (tab: 'video' | 'script') => void
 }): React.JSX.Element {
   return (
@@ -39,7 +41,7 @@ function DubMediaTabBar({
               : 'text-white/65 hover:bg-white/10 hover:text-white'
           }`}
         >
-          <FileText size={11} /> Script
+          <FileText size={11} /> {label}
         </button>
       </div>
     </div>
@@ -233,7 +235,14 @@ export default function DubVideoPlayer({ src, mediaKey, editScript }: Props): Re
   const [scriptOverlayOpen, setScriptOverlayOpen] = useState(false)
   const [hintExpanded, setHintExpanded] = useState(false)
 
-  const lines: VoLine[] = editScript ? groupScriptLines(editScript) : []
+  const scriptLines: VoLine[] = editScript ? groupScriptLines(editScript) : []
+  // highlight mode (no voiceover) never has real script text — fall back to
+  // the AI's per-scene visualDescription so the tab shows something useful
+  // instead of a blank "Script" panel, and relabel it accordingly.
+  const hasRealScript = scriptLines.some((l) => l.script)
+  const lines: VoLine[] = scriptLines.map((l) => ({ ...l, script: l.script || l.visualDescription }))
+  const hasContent = lines.some((l) => l.script)
+  const tabLabel = hasRealScript ? 'Script' : 'โน้ตฉาก'
   const active = lines.find((l) => currentTime >= l.outputIn && currentTime < l.outputOut) ?? null
 
   useEffect(() => {
@@ -267,7 +276,7 @@ export default function DubVideoPlayer({ src, mediaKey, editScript }: Props): Re
 
   return (
     <div className="relative aspect-9/16 w-full overflow-hidden rounded-lg bg-black">
-      {lines.length > 0 && <DubMediaTabBar tab={tab} onChange={setTab} />}
+      {hasContent && <DubMediaTabBar tab={tab} label={tabLabel} onChange={setTab} />}
 
       {tab === 'video' ? (
         <>
@@ -293,14 +302,14 @@ export default function DubVideoPlayer({ src, mediaKey, editScript }: Props): Re
               else segmentRefs.current.delete(lineId)
             }}
           />
-          {!scriptOverlayOpen && lines.length > 0 && !hintExpanded && (
+          {!scriptOverlayOpen && hasContent && !hintExpanded && (
             <button
               type="button"
               onClick={() => (active ? setHintExpanded(true) : openScriptOverlay())}
               className={`absolute bottom-12 right-2 z-5 flex items-center gap-1.5 rounded-full border border-white/10 px-3 py-1.5 text-[11px] font-medium text-white shadow-lg ${DUB_SCRIPT_GLASS} hover:bg-black/80`}
             >
               <FileText size={12} />
-              {active ? `บรรทัด ${active.lineId}` : `Script ${lines.length}`}
+              {active ? `บรรทัด ${active.lineId}` : `${tabLabel} ${lines.length}`}
             </button>
           )}
           {!scriptOverlayOpen && active && (

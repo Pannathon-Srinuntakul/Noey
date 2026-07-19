@@ -59,7 +59,9 @@ def run_ingest(job: IngestJob, emit) -> dict[str, Any]:
               "message": src.name})
 
         dur = media_duration(src)
-        if job.mode == "dub_first" and dub_clip_exceeds_upload_limit(dur):
+        # highlight shares dub_first's Gemini-video upload pipeline (same
+        # proxy-clip limits apply) — see analyze-video/analyze_dub_video_local.
+        if job.mode in ("dub_first", "highlight") and dub_clip_exceeds_upload_limit(dur):
             raise ValueError(
                 f"คลิป {src.name} ยาว {dur:.0f}s เกินลิมิตต่อคลิป {DUB_MAX_CLIP_SEC}s"
             )
@@ -106,7 +108,7 @@ def run_ingest(job: IngestJob, emit) -> dict[str, Any]:
 
     # Total across ALL clips, any clip count — the per-clip cap above doesn't
     # stop many short clips adding up to hours of footage in one project.
-    if job.mode == "dub_first":
+    if job.mode in ("dub_first", "highlight"):
         if dub_project_exceeds_total_limit(total_dur_sec):
             raise ValueError(
                 f"คลิปทั้งหมดรวมกันยาว {total_dur_sec:.0f}s — โหมด Dub First รองรับสูงสุด "

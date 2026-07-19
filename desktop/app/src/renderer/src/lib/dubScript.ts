@@ -5,6 +5,10 @@ import type { DubEditScript } from './videosLocalApi'
 export interface VoLine {
   lineId: number
   script: string
+  /** AI-generated per-scene description (see dub_ai.py's `visualDescription`
+   * schema field) — the only per-scene context available when `script` is
+   * empty (e.g. highlight mode, or any dub_first line with no VO text). */
+  visualDescription: string
   cutCount: number
   outputIn: number
   outputOut: number
@@ -35,6 +39,7 @@ export function groupScriptLines(editScript: DubEditScript): VoLine[] {
     lines.push({
       lineId,
       script: String(seg.voiceoverScript ?? '').trim(),
+      visualDescription: String(seg.visualDescription ?? '').trim(),
       cutCount: 1,
       outputIn,
       outputOut

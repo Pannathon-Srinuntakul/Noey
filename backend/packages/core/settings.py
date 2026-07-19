@@ -63,14 +63,15 @@ class Settings(BaseSettings):
     effects_vision_timeout_sec: int = 900
 
     # --- AI-generated effect components (custom template/effect creation) ---
-    # A code-generation call, not video-watching — Claude (strong at code,
-    # vision-capable for an optional reference image) rather than Gemini.
-    # Output is UNTRUSTED and re-validated by a static allowlist AST check on
-    # the desktop before ever being bundled/executed — see
-    # desktop/node-sidecar/src/codegenValidate.mjs. Override via
-    # EFFECTS_CODEGEN_MODEL.
-    effects_codegen_model: str = "anthropic/claude-sonnet-4-6"
-    effects_codegen_timeout_sec: int = 180
+    # Code-generation call (not video-watching). Output is UNTRUSTED and
+    # re-validated by desktop/node-sidecar/src/codegenValidate.mjs before
+    # bundling. Override via EFFECTS_CODEGEN_MODEL.
+    # Gemini 3.1 Pro (not Flash): Flash habitually imported framer-motion /
+    # ignored Remotion-only constraints on real runs; Pro follows the
+    # allowlist more reliably. One clip can still trigger many concurrent
+    # codegen calls — expect higher cost/latency than Flash.
+    effects_codegen_model: str = "gemini/gemini-3.1-pro-preview"
+    effects_codegen_timeout_sec: int = 300
 
     # --- Auth (JWT) ---
     jwt_secret: str = "dev_change_me_in_production"

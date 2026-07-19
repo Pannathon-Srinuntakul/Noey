@@ -121,12 +121,17 @@ async def acompletion(
     """
     extra = dict(extra)
     system = extra.pop("system", None)
+    # Gemini (and OpenAI-compat) only honor system via messages[role=system].
+    # A top-level litellm `system=` kwarg is Anthropic-shaped and is silently
+    # dropped for Gemini — observed as ~30 input_tokens on a 12k-char system
+    # prompt (effects codegen wrote random React/HTML instead of Remotion).
+    # Always inject as a system message so every provider sees it.
     msgs = list(messages)
+    if system:
+        msgs = [{"role": "system", "content": system}, *msgs]
 
     params = model_params()
     kwargs: dict[str, Any] = {**params, "messages": msgs, "stream": stream, **extra}
-    if system:
-        kwargs["system"] = system
     if params.get("api_key") and not kwargs.get("api_key"):
         kwargs["api_key"] = params["api_key"]
     if tools:
@@ -361,12 +366,13 @@ async def acompletion_stream_thinking(
     """
     extra = dict(extra)
     system = extra.pop("system", None)
+    # See acompletion(): Gemini ignores top-level `system=`; inject as message.
     msgs = list(messages)
+    if system:
+        msgs = [{"role": "system", "content": system}, *msgs]
 
     params = model_params()
     kwargs: dict[str, Any] = {**params, "messages": msgs, "stream": True, **extra}
-    if system:
-        kwargs["system"] = system
     if params.get("api_key") and not kwargs.get("api_key"):
         kwargs["api_key"] = params["api_key"]
     stream_opts = dict(kwargs.get("stream_options") or {})

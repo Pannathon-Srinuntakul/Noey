@@ -1171,6 +1171,8 @@ async def render_video(ctx: dict[str, Any], *, job_id: str, project_uid: str, te
 
 from packages.video.dub_ai import (  # noqa: E402  (prompt + LLM cores shared with local-render API)
     DUB_EDIT_SYSTEM as _DUB_EDIT_SYSTEM_IMPORTED,
+    DUB_EDIT_SYSTEM_VIDEO,
+    DUB_EDIT_SYSTEM_VIDEO_NO_VO,
     DUB_TIMELINE_SYSTEM as _DUB_TIMELINE_SYSTEM_IMPORTED,
     generate_dub_edit_script,
     generate_dub_edit_script_video,
@@ -1607,6 +1609,7 @@ async def analyze_dub_local(ctx: dict[str, Any], *, job_id: str, project_uid: st
             user_script=proj.user_script or "",
             target_duration_sec=getattr(proj, "target_duration_sec", None),
             project_uid=project_uid,
+            music_beats=proj.music_beats,
             on_thinking=_push_thinking,
         )
 
@@ -1706,8 +1709,19 @@ async def analyze_dub_video_local(ctx: dict[str, Any], *, job_id: str, project_u
             user_script=proj.user_script or "",
             target_duration_sec=getattr(proj, "target_duration_sec", None),
             project_uid=project_uid,
+            music_beats=proj.music_beats,
+            system=DUB_EDIT_SYSTEM_VIDEO_NO_VO if proj.mode == "highlight" else DUB_EDIT_SYSTEM_VIDEO,
             on_thinking=_push_thinking,
         )
+
+        # Belt-and-suspenders: the no-VO prompt instructs the model to omit
+        # voiceoverScript, but the schema still technically allows it (live
+        # report 2026-07-19: model added real Thai narration to a highlight
+        # project anyway on one run) — strip it server-side so "highlight"
+        # never leaks a script regardless of what the model decided to do.
+        if proj.mode == "highlight":
+            for seg in edit_script.get("segments", []):
+                seg.pop("voiceoverScript", None)
 
         edit_script_path = output_dir / "edit_script.json"
         edit_script_path.write_text(
@@ -1749,7 +1763,15 @@ async def analyze_dub_video_local(ctx: dict[str, Any], *, job_id: str, project_u
 # ── task: plan_effects_local ─────────────────────────────────────────────────
 
 
-async def plan_effects_local(ctx: dict[str, Any], *, job_id: str, project_uid: str, tenant_slug: str) -> dict:
+async def plan_effects_local(
+    ctx: dict[str, Any],
+    *,
+    job_id: str,
+    project_uid: str,
+    tenant_slug: str,
+    style_uid: str = "",
+    use_previous: bool = False,
+) -> dict:
     """AI-assisted effects placement for a local-render project.
 
     The desktop app uploaded a downscaled proxy of the finished cut video
@@ -1758,10 +1780,23 @@ async def plan_effects_local(ctx: dict[str, Any], *, job_id: str, project_uid: s
     Gemini effects placement pass and stores effects.json; the desktop then
     renders the overlays (Remotion) + composites locally. No cut/timeline is
     touched — effects are a layer on top.
+
+    ``style_uid`` — the EffectStyle the desktop selected for THIS run. Re-applied
+    from the DB after S3 pull so a stale ``effects/style.txt`` from a previous
+    attempt cannot silently override the user's choice.
+
+    ``use_previous`` — whether to feed a pre-existing effects.json to the model
+    as ``<previous_attempt>`` (the "แก้ไข AI" edit flow). False (the fresh-start
+    "ให้ AI จัดทั้งคลิป" flow) always ignores any existing effects.json.
     """
     from packages.video.effects_ai import generate_effects_placement
 
-    log.info("task_start", task="plan_effects_local", project_uid=project_uid)
+    log.info(
+        "task_start",
+        task="plan_effects_local",
+        project_uid=project_uid,
+        style_uid=style_uid or None,
+    )
     await _video_progress(job_id, 20, "effects", "กำลังส่งวิดีโอให้ AI วางเอฟเฟกต์…")
     session = await _tenant_session(tenant_slug)
     _usage_token = None
@@ -1786,6 +1821,57 @@ async def plan_effects_local(ctx: dict[str, Any], *, job_id: str, project_uid: s
         script_file = output_dir / "effects" / "script.txt"
         script_lines = script_file.read_text(encoding="utf-8") if script_file.is_file() else ""
 
+        # Style: DB wins over whatever S3 pull dropped into style.txt. A prior
+        # run's zoom-hold prose used to resurrect here when the user had cleared
+        # or changed the selection (push never deletes S3 orphans).
+        style_file = output_dir / "effects" / "style.txt"
+        style_prompt = ""
+        chosen = (style_uid or "").strip()
+        if chosen:
+            from packages.db.models.effect_style import EffectStyle
+
+            style = await session.get(EffectStyle, chosen)
+            if style is not None and style.system_prompt:
+                style_file.parent.mkdir(parents=True, exist_ok=True)
+                style_file.write_text(style.system_prompt, encoding="utf-8")
+                style_prompt = style.system_prompt
+                log.info(
+                    "effects_style_applied",
+                    project_uid=project_uid,
+                    style_uid=chosen,
+                    style_name=style.name,
+                    prompt_chars=len(style_prompt),
+                )
+            else:
+                style_file.unlink(missing_ok=True)
+                log.warning(
+                    "effects_style_uid_unresolved",
+                    project_uid=project_uid,
+                    style_uid=chosen,
+                )
+        else:
+            style_file.unlink(missing_ok=True)
+            log.info("effects_style_cleared", project_uid=project_uid)
+
+        # Optional style-reference video/image and image-to-place-as-sticker —
+        # named by real extension (glob since we don't know the suffix upfront).
+        reference_path = next((output_dir / "effects").glob("reference.*"), None)
+        image_asset_path = next((output_dir / "effects").glob("image_asset.*"), None)
+
+        # Real scene-cut timestamps (output-timeline seconds) the desktop client
+        # derives from its own edit script/timeline — lets the AI place a
+        # `transitions` whip-pan sweep AT an actual cut boundary. Optional; a
+        # project with no cuts.json simply never gets transitions placed.
+        cuts_file = output_dir / "effects" / "cuts.json"
+        cut_points_sec: list[float] | None = None
+        if cuts_file.is_file():
+            try:
+                raw_cuts = json.loads(cuts_file.read_text(encoding="utf-8"))
+                if isinstance(raw_cuts, list):
+                    cut_points_sec = [float(c) for c in raw_cuts if isinstance(c, (int, float))]
+            except (OSError, json.JSONDecodeError, TypeError, ValueError):
+                cut_points_sec = None
+
         proj = await _get_video_project(session, project_uid)
         tenant_id = await _get_tenant_id_by_slug(tenant_slug)
         _usage_token = _set_video_usage_ctx(proj, tenant_id, project_uid)
@@ -1796,6 +1882,20 @@ async def plan_effects_local(ctx: dict[str, Any], *, job_id: str, project_uid: s
                 result={"step": "effects", "message": "กำลังเลือกและวางเอฟเฟกต์…", "thinking": excerpt},
             )
 
+        # A pre-existing effects.json means this COULD be a regenerate — but
+        # only feed it to the model as <previous_attempt> when the client
+        # explicitly asked for the edit flow (use_previous). The fresh-start
+        # flow must stay a genuinely clean slate even if a prior attempt is
+        # still sitting on disk.
+        previous_doc: dict | None = None
+        if use_previous:
+            prev_path = output_dir / "effects.json"
+            if prev_path.is_file():
+                try:
+                    previous_doc = json.loads(prev_path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
+                    previous_doc = None
+
         await _video_progress(job_id, 74, "effects", "กำลังเลือกและวางเอฟเฟกต์…")
         doc = await generate_effects_placement(
             proxy,
@@ -1803,6 +1903,11 @@ async def plan_effects_local(ctx: dict[str, Any], *, job_id: str, project_uid: s
             user_prompt=user_prompt,
             script_lines=script_lines,
             project_uid=project_uid,
+            previous_doc=previous_doc,
+            reference_path=reference_path,
+            image_asset_path=image_asset_path,
+            cut_points_sec=cut_points_sec,
+            style_prompt=style_prompt,
             on_thinking=_push_thinking,
         )
 
@@ -1818,6 +1923,84 @@ async def plan_effects_local(ctx: dict[str, Any], *, job_id: str, project_uid: s
         log.info("plan_effects_local_done", project_uid=project_uid, instances=count)
         return {"instances": count}
     except Exception as exc:
+        await _update_job(
+            job_id, "error", 0,
+            result={"step": "error", "message": format_exception_message(exc)},
+            error=format_exception_message(exc),
+        )
+        raise
+    finally:
+        await session.close()
+        if _usage_token is not None:
+            from packages.llm.usage import reset_usage_ctx
+            reset_usage_ctx(_usage_token)
+
+
+# ── task: distill_style_local ────────────────────────────────────────────────
+
+
+async def distill_style_local(ctx: dict[str, Any], *, job_id: str, style_uid: str, tenant_slug: str) -> dict:
+    """Distil a saved EffectStyle's reference clip + description into reusable
+    style-guide prose (packages/video/effects_style.py), store it on the row.
+
+    Enqueued by POST /effect-styles (create) and /effect-styles/{uid}/regenerate
+    (see ``_enqueue`` in videos.py — it always forwards ``job_id`` as a task
+    kwarg, so every task fn must declare it even when, as here, it's derivable
+    from other args; every other *_local task follows this same convention).
+    The desktop polls this same Job id for completion.
+    """
+    from packages.db.models.effect_style import EffectStyle
+    from packages.video.effects_style import distill_style_prompt
+
+    log.info("task_start", task="distill_style_local", style_uid=style_uid)
+    await _update_job(job_id, "running", 20, result={"step": "style", "message": "กำลังวิเคราะห์สไตล์…"})
+    session = await _tenant_session(tenant_slug)
+    _usage_token = None
+    try:
+        style = await session.get(EffectStyle, style_uid)
+        if style is None:
+            raise ValueError(f"effect style not found: {style_uid}")
+
+        ref_path = None
+        if style.reference_clip_path:
+            candidate = data_root() / style.reference_clip_path
+            if candidate.is_file():
+                ref_path = candidate
+
+        tenant_id = await _get_tenant_id_by_slug(tenant_slug)
+        _usage_token = _set_video_usage_ctx(style, tenant_id, style_uid)
+
+        async def _push_thinking(excerpt: str) -> None:
+            await _update_job(
+                job_id, "running", 60,
+                result={"step": "style", "message": "กำลังวิเคราะห์สไตล์…", "thinking": excerpt},
+            )
+
+        guide = await distill_style_prompt(
+            ref_path, style.description or "",
+            project_uid=style_uid, on_thinking=_push_thinking,
+        )
+
+        style.system_prompt = guide
+        style.status = "ready"
+        style.error_msg = None
+        await session.commit()
+
+        await _update_job(
+            job_id, "ok", 100,
+            result={"step": "style_ready", "message": "วิเคราะห์สไตล์เสร็จแล้ว", "style_uid": style_uid},
+        )
+        log.info("distill_style_local_done", style_uid=style_uid, chars=len(guide))
+        return {"style_uid": style_uid}
+    except Exception as exc:
+        try:
+            style = await session.get(EffectStyle, style_uid)
+            if style is not None:
+                style.status = "error"
+                style.error_msg = format_exception_message(exc)
+                await session.commit()
+        except Exception:  # noqa: BLE001 — best-effort status write
+            pass
         await _update_job(
             job_id, "error", 0,
             result={"step": "error", "message": format_exception_message(exc)},
@@ -1905,6 +2088,8 @@ async def reedit_dub_scenes_local(ctx: dict[str, Any], *, job_id: str, project_u
             selected_line_ids=selected_line_ids,
             instruction=instruction,
             project_uid=project_uid,
+            music_beats=proj.music_beats,
+            target_duration_sec=getattr(proj, "target_duration_sec", None),
             on_thinking=_push_thinking,
         )
 
@@ -2132,6 +2317,7 @@ class WorkerSettings:
         analyze_dub_local,
         analyze_dub_video_local,
         plan_effects_local,
+        distill_style_local,
         reedit_dub_scenes_local,
         plan_talking_local,
         render_dub_silent,

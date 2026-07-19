@@ -10,6 +10,7 @@ Commands (all output is JSON, one object per line, on stdout):
 - ``extract-proxy --job F``   → downscaled no-audio proxy MP4s + proxy_manifest.json
 - ``render-silent --job F``   → edit script → final_silent.mp4 + script.txt + dub_bundle.zip
 - ``render-final --job F``    → timeline + voiceover → final.mp4 (+ final_bundle.zip)
+- ``mix-music --job F``       → re-mix music onto an existing final_silent.mp4 (VO optional, none needed here)
 - ``render-ai-preview --job F`` → live (unsaved) edit script → downscaled silent preview MP4 for an AI re-edit request
 - ``composite-overlay --job F`` → composite a transparent effects overlay (from the Node/Remotion sidecar) onto the cut video → final_fx.mp4
 - ``render-effects --job F``   → bake a full effects.json (overlays + transforms) onto the cut video → final_fx.mp4
@@ -120,6 +121,14 @@ def cmd_render_final(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_mix_music(args: argparse.Namespace) -> int:
+    from sidecar.dub import MixMusicJob, load_json_job, run_mix_music
+
+    job = load_json_job(args.job, MixMusicJob)
+    emit(run_mix_music(job, emit))
+    return 0
+
+
 def cmd_extract_audio(args: argparse.Namespace) -> int:
     from sidecar.audio import ExtractAudioJob, run_extract_audio
     from sidecar.dub import load_json_job
@@ -191,6 +200,7 @@ def build_parser() -> argparse.ArgumentParser:
         ("extract-proxy", cmd_extract_proxy, "encode downscaled no-audio proxy MP4s for Gemini video analysis"),
         ("render-silent", cmd_render_silent, "render silent dub video from an edit script"),
         ("render-final", cmd_render_final, "render final video from timeline + voiceover"),
+        ("mix-music", cmd_mix_music, "re-mix music onto an existing final_silent.mp4 (VO optional)"),
         ("extract-audio", cmd_extract_audio, "extract speech WAVs for server transcription"),
         ("render-timeline", cmd_render_timeline, "render talking_head video from a timeline"),
         ("render-ai-preview", cmd_render_ai_preview, "render a live-editor silent preview for an AI re-edit request"),

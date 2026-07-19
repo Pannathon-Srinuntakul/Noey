@@ -47,6 +47,29 @@ async def test_system_prompt_prepended(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_acompletion_system_kwarg_becomes_message(monkeypatch):
+    """Gemini only reads role=system messages — top-level system= is dropped.
+    acompletion(system=...) must inject into messages so Gemini sees the prompt."""
+    captured = {}
+
+    async def fake_acompletion(**kwargs):
+        captured.update(kwargs)
+        return _fake_response("ok")
+
+    monkeypatch.setattr(gw.litellm, "acompletion", fake_acompletion)
+    await gw.acompletion(
+        [{"role": "user", "content": "write a component"}],
+        system="export const GeneratedEffect only",
+    )
+    assert "system" not in captured  # not the Anthropic-only top-level kwarg
+    assert captured["messages"][0] == {
+        "role": "system",
+        "content": "export const GeneratedEffect only",
+    }
+    assert captured["messages"][1]["role"] == "user"
+
+
+@pytest.mark.asyncio
 async def test_tools_unsupported_falls_back(monkeypatch):
     calls = []
 

@@ -99,12 +99,38 @@ def test_roundtrip_json_preserves_camelcase() -> None:
     assert again.instances[0].props == {"color": "#FFD400", "scale": 1.3}
 
 
-def test_placement_schema_shape() -> None:
-    props = EFFECTS_PLACEMENT_SCHEMA["properties"]["instances"]["items"]
-    # propsJson is required so Gemini reliably emits the param bag (it drops
-    # optional fields); it is a JSON string parsed downstream.
-    assert set(props["required"]) == {
-        "kind", "componentId", "startSec", "durationSec", "propsJson", "focusX", "focusY",
+def test_placement_schema_has_no_fixed_catalog_field() -> None:
+    # "instances" (the old fixed-catalog-matching field) was removed outright
+    # on 2026-07-17 — a prose "leave it empty" rule was proven not to work
+    # (Gemini kept filling it instead of customEffects/zoomPunches on live
+    # calls). Making it schema-impossible is the only fix that actually holds.
+    assert "instances" not in EFFECTS_PLACEMENT_SCHEMA["properties"]
+
+
+def test_placement_schema_has_custom_and_zoom_arrays() -> None:
+    props = EFFECTS_PLACEMENT_SCHEMA["properties"]
+    assert set(EFFECTS_PLACEMENT_SCHEMA["required"]) == {
+        "catalogPlacements", "customEffects", "zoomPunches", "transitions", "sceneDrifts",
     }
-    assert props["properties"]["propsJson"]["type"] == "string"
-    assert props["properties"]["kind"]["enum"] == ["overlay", "transform"]
+
+    catalog = props["catalogPlacements"]["items"]
+    assert set(catalog["required"]) == {"componentId", "props", "startSec", "durationSec"}
+
+    custom = props["customEffects"]["items"]
+    assert set(custom["required"]) == {"brief", "startSec", "durationSec"}
+
+    zoom = props["zoomPunches"]["items"]
+    assert set(zoom["required"]) == {
+        "startSec", "durationSec", "focusX", "focusY", "focusOn", "zoomTo", "style",
+        "rampSec", "driftX", "driftY",
+    }
+    assert zoom["properties"]["style"]["enum"] == ["cut", "push"]
+    assert "focusOn" in zoom["properties"]
+
+    transitions = props["transitions"]["items"]
+    assert set(transitions["required"]) == {"cutSec", "durationSec", "direction", "intensity"}
+    assert transitions["properties"]["direction"]["enum"] == ["horizontal", "vertical"]
+
+    drifts = props["sceneDrifts"]["items"]
+    assert set(drifts["required"]) == {"startSec", "durationSec", "zoomTo", "direction"}
+    assert drifts["properties"]["direction"]["enum"] == ["in", "left", "right", "up", "down"]

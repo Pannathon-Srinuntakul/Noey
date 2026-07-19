@@ -17,7 +17,7 @@ def test_dub_edit_system_video_matches_claude_rules() -> None:
     assert s.endswith("</output_format>")
     # Editorial rules must be byte-identical to the Claude+frames prompt.
     assert 'cutStyle options: "jump_cut" | "standard" | "zoom_in" | "zoom_out" — default to "jump_cut"' in s
-    assert "Hard limit: at most 3 segments per voiceoverLineId" in s
+    assert "No fixed segment cap per voiceoverLineId" in s
     assert "Total duration is a 45s hard floor (target 50–60s)" in s
     assert 'สั่งได้เลยที่ TikTok Shop' in s
     assert "zero reject_safety violations remain" in s

@@ -18,6 +18,7 @@ export const DUB_DURATION_CHIPS = [
   { value: '60', label: '60 วิ' },
   { value: '90', label: '90 วิ' },
   { value: 'auto', label: 'AI เลือก' },
+  { value: 'music', label: 'ตามความยาวเพลง' },
   { value: 'custom', label: 'กำหนดเอง' }
 ] as const
 
@@ -34,6 +35,7 @@ export function buildDubBrief(
     parts.push(`สไตล์: ${styles.map((s) => DUB_SCRIPT_STYLE_LABELS[s] ?? s).join(', ')}`)
   }
   if (scriptDuration === 'auto') parts.push('ความยาว: ให้ AI ประเมิน')
+  else if (scriptDuration === 'music') parts.push('ความยาวเป้าหมาย: ตามความยาวเพลงประกอบ')
   else if (scriptDuration === 'custom' && scriptCustomSec)
     parts.push(`ความยาวเป้าหมาย: ~${scriptCustomSec} วิ`)
   else if (scriptDuration && scriptDuration !== 'custom')
@@ -42,13 +44,20 @@ export function buildDubBrief(
   return parts.join(' · ') || undefined
 }
 
-/** Mirrors web's submit-time target_duration_sec derivation for dub_first. */
+/** Mirrors web's submit-time target_duration_sec derivation for dub_first.
+ * `musicDurationSec` — the attached music's trimmed length (trimOutSec -
+ * trimInSec), only used when scriptDuration === 'music'; clamped to the same
+ * 15-600s bound the server enforces (`LocalProjectIn.target_duration_sec`). */
 export function dubTargetDurationSec(
   scriptDuration: string,
-  scriptCustomSec: string
+  scriptCustomSec: string,
+  musicDurationSec: number | null = null
 ): number | null {
+  if (scriptDuration === 'music' && musicDurationSec) {
+    return Math.round(Math.min(Math.max(musicDurationSec, 15), 600))
+  }
   if (scriptDuration === 'custom' && scriptCustomSec) return parseInt(scriptCustomSec, 10)
-  if (scriptDuration && scriptDuration !== 'auto' && scriptDuration !== 'custom') {
+  if (scriptDuration && scriptDuration !== 'auto' && scriptDuration !== 'custom' && scriptDuration !== 'music') {
     return parseInt(scriptDuration, 10)
   }
   return null

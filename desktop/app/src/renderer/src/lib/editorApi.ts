@@ -12,7 +12,10 @@ import { ApiError } from './api'
 import type { CaptionLine } from './captionLines'
 import { dubSegmentsFromEditCuts, type EditCutIn } from './dubSegments'
 import type { DubEditScript, DubTimeline } from './videosLocalApi'
-import type { LocalClip } from '../../../preload'
+import type { LocalClip, LocalProject } from '../../../preload'
+
+export type EditorMusic = NonNullable<LocalProject['music']>
+export type MusicPatch = Partial<EditorMusic>
 
 export type { CaptionLine } from './captionLines'
 
@@ -50,6 +53,12 @@ export interface EditorContext {
    * project has no caption_style/words, empty array when captions are
    * enabled but not yet grouped/edited. */
   captionLines?: CaptionLine[]
+  /** dub_first only: the attached background music track, if any (see the
+   * editor's audio track — waveform + drag/trim/volume/mute). */
+  music?: EditorMusic
+  onMusicChange?: (patch: MusicPatch) => Promise<void>
+  onPickMusic?: () => Promise<EditorMusic | undefined>
+  onRemoveMusic?: () => Promise<void>
   /** Persist + re-render; useProjectPipeline owns the flow. */
   onSave: (cuts: SaveCutPayload[], captionLines?: CaptionLine[]) => Promise<void>
   /** dub_first only: AI-assisted re-edit of the live (unsaved) cuts. Returns
@@ -76,6 +85,11 @@ function requireCtx(): EditorContext {
 /** Initial caption lines for the currently-configured project, if any. */
 export function initialCaptionLines(): CaptionLine[] | undefined {
   return ctx?.captionLines
+}
+
+/** Initial background-music state for the currently-configured project, if any. */
+export function initialMusic(): EditorMusic | undefined {
+  return ctx?.music
 }
 
 /** Mirror of routers/videos.py get_edit_timeline (videos.py:605) for local data. */
@@ -160,8 +174,23 @@ export const editorApi = {
     instruction: string
   ): Promise<EditCut[]> => {
     const c = requireCtx()
-    if (!c.onAiReedit) throw new Error('AI re-edit ใช้ได้เฉพาะโหมด dub_first ก่อน render')
+    if (!c.onAiReedit) throw new Error('AI re-edit ใช้ได้เฉพาะก่อน render (dub_first / highlight)')
     return c.onAiReedit(cuts, selectedLineIds, instruction)
+  },
+
+  updateMusic: async (patch: MusicPatch): Promise<void> => {
+    const c = requireCtx()
+    await c.onMusicChange?.(patch)
+  },
+
+  pickMusic: async (): Promise<EditorMusic | undefined> => {
+    const c = requireCtx()
+    return c.onPickMusic?.()
+  },
+
+  removeMusic: async (): Promise<void> => {
+    const c = requireCtx()
+    await c.onRemoveMusic?.()
   }
 }
 

@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Film, Loader2, Settings } from 'lucide-react'
+import { Film, Loader2, Settings, Sparkles } from 'lucide-react'
 import type { LocalProject } from '../../preload'
 import { ApiError, login, me, restoreSession, type Me } from './lib/api'
 import type { ApiSession } from './lib/videosLocalApi'
 import NewProjectSidebar from './components/NewProjectSidebar'
 import ProjectCard from './components/ProjectCard'
 import SettingsPage from './pages/SettingsPage'
+import EffectsStudioPage from './pages/EffectsStudioPage'
 
 // Backend URL is baked in at build time — users never see or set it.
 // Override for local dev/self-hosting: VITE_BACKEND_URL=... npm run build
@@ -118,7 +119,7 @@ function Workspace({
 }): React.JSX.Element {
   const [projects, setProjects] = useState<LocalProject[]>([])
   const [loadingList, setLoadingList] = useState(true)
-  const [view, setView] = useState<'projects' | 'settings'>('projects')
+  const [view, setView] = useState<'projects' | 'settings' | 'studio'>('projects')
 
   const apiSession: ApiSession = {
     baseUrl: session.baseUrl,
@@ -161,13 +162,24 @@ function Workspace({
           <Film size={18} className="text-amber-400" />
           <h1 className="font-bold tracking-wide text-amber-100">AI Video Editor</h1>
           <span className="rounded-full border border-amber-500/40 px-2 py-0.5 text-[10px] font-semibold text-amber-400">
-            MVP · talking_head + dub_first
+            MVP · talking_head + dub_first + highlight
           </span>
         </div>
         <div className="flex items-center gap-3 text-sm text-zinc-400">
           <span>
             {session.profile.email} · {session.profile.tenant_slug}
           </span>
+          <button
+            onClick={() => setView(view === 'studio' ? 'projects' : 'studio')}
+            className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs ${
+              view === 'studio'
+                ? 'border-amber-500/60 text-amber-300'
+                : 'border-white/10 text-zinc-300 hover:border-white/25 hover:text-white'
+            }`}
+            title="สตูดิโอเอฟเฟกต์ — สร้าง/จัดการเอฟเฟกต์ สติกเกอร์ เทมเพลต"
+          >
+            <Sparkles size={14} /> สตูดิโอ
+          </button>
           <button
             onClick={() => setView(view === 'settings' ? 'projects' : 'settings')}
             className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-zinc-300 hover:border-white/25 hover:text-white"
@@ -184,11 +196,14 @@ function Workspace({
         </div>
       </header>
       {view === 'settings' && <SettingsPage session={session} onBack={() => setView('projects')} />}
+      {view === 'studio' && (
+        <EffectsStudioPage session={session} onBack={() => setView('projects')} />
+      )}
       {/* Kept mounted (just hidden) instead of swapped out — unmounting this
           tree would reset every ProjectCard's in-flight pipeline state and
           re-trigger already-running/finished AI jobs from scratch on return. */}
       <div
-        className={`scroll-ghost flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4 md:flex-row md:gap-6 md:overflow-hidden md:p-6 ${view === 'settings' ? 'hidden' : ''}`}
+        className={`scroll-ghost flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4 md:flex-row md:gap-6 md:overflow-hidden md:p-6 ${view !== 'projects' ? 'hidden' : ''}`}
       >
         <NewProjectSidebar onCreated={handleCreated} />
 

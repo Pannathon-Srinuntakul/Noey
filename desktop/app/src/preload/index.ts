@@ -33,7 +33,7 @@ export interface LocalClip {
 export interface LocalProject {
   uid: string
   name: string
-  mode?: 'dub_first' | 'talking_head'
+  mode?: 'dub_first' | 'talking_head' | 'highlight'
   step:
     | 'imported'
     | 'analyzing'
@@ -55,12 +55,30 @@ export interface LocalProject {
   targetDurationSec?: number
   remote?: { uid: string; jobId?: string }
   voiceoverPath?: string
+  // dub_first background music — desktop-local file, mix params from the
+  // TimelineEditor audio track, applied at render time by the sidecar.
+  music?: {
+    path: string
+    volume: number
+    offsetSec: number
+    trimInSec: number
+    trimOutSec: number | null
+    muted: boolean
+    // Beat timestamps (sec, full-track domain) from the server's librosa pass at
+    // upload time — used client-side for magnetic snap-to-beat while trimming
+    // dub scene cuts in TimelineEditor. Absent for tracks uploaded before this.
+    beats?: number[]
+  }
   timeline?: Record<string, unknown>
   // dub_first only: the edit script the analyze step produced. Persisted so the
   // timeline editor stays available after an app restart — without this it only
   // lived in React state and a failed resume-fetch silently left it null forever,
   // permanently disabling the editor button with no visible error.
   editScript?: Record<string, unknown>
+  // Real per-clip output durations from the silent render (same order as
+  // editScript.segments) — see main/projects.ts for why buildEffectsCutPoints
+  // needs these instead of the edit script's nominal duration math.
+  clipDurationsSec?: number[]
   error?: string
   captionStyle?: { font: string; mode: string; color: string; border_color: string; size: number }
 }
@@ -80,6 +98,15 @@ export interface StickerAsset {
   name: string
   kind: 'lottie' | 'image'
   file: string
+}
+
+export interface GeneratedComponent {
+  id: string
+  name: string
+  prompt: string
+  createdAt: string
+  sourceFile: string
+  previewFile: string | null
 }
 
 export interface JobCommandApi {
@@ -111,6 +138,7 @@ const noey = {
     extractProxy: jobCommand('sidecar:extractProxy'),
     renderSilent: jobCommand('sidecar:renderSilent'),
     renderFinal: jobCommand('sidecar:renderFinal'),
+    mixMusic: jobCommand('sidecar:mixMusic'),
     extractAudio: jobCommand('sidecar:extractAudio'),
     renderTimeline: jobCommand('sidecar:renderTimeline'),
     renderAiPreview: jobCommand('sidecar:renderAiPreview'),
@@ -137,12 +165,19 @@ const noey = {
     resolvePath: (uid: string, relPath: string): Promise<string> =>
       ipcRenderer.invoke('projects:resolvePath', uid, relPath),
     openFolder: (uid: string, relPath?: string): Promise<void> =>
-      ipcRenderer.invoke('projects:openFolder', uid, relPath)
+      ipcRenderer.invoke('projects:openFolder', uid, relPath),
+    /** Copy a user-picked music/video file into the project dir; returns the
+     * project-relative path (servable via media://, resolvable for the sidecar). */
+    importMusic: (uid: string, srcPath: string): Promise<string> =>
+      ipcRenderer.invoke('projects:importMusic', uid, srcPath)
   },
   media: {
     /** media:// URL for a file inside a project dir (path must be project-relative). */
     urlFor: (uid: string, relPath: string): string =>
-      `media://project/${uid}/${relPath.split(/[\\/]/).map(encodeURIComponent).join('/')}`
+      `media://project/${uid}/${relPath.split(/[\\/]/).map(encodeURIComponent).join('/')}`,
+    /** media:// URL for a file inside the effects-library dir (library-relative). */
+    urlForLibrary: (relPath: string): string =>
+      `media://library/${relPath.split(/[\\/]/).map(encodeURIComponent).join('/')}`
   },
   // Local effects asset library (templates + stickers), reusable across projects.
   library: {
@@ -154,7 +189,26 @@ const noey = {
     stickerPath: (file: string): Promise<string> => ipcRenderer.invoke('library:stickerPath', file),
     deleteSticker: (id: string): Promise<void> => ipcRenderer.invoke('library:deleteSticker', id),
     importSticker: (): Promise<{ asset: StickerAsset; path: string } | null> =>
-      ipcRenderer.invoke('library:importSticker')
+      ipcRenderer.invoke('library:importSticker'),
+    scratchDir: (): Promise<string> => ipcRenderer.invoke('library:scratchDir'),
+    listGenerated: (): Promise<GeneratedComponent[]> => ipcRenderer.invoke('library:listGenerated'),
+    saveGenerated: (
+      name: string,
+      prompt: string,
+      source: string,
+      previewSrcPath?: string
+    ): Promise<GeneratedComponent> =>
+      ipcRenderer.invoke('library:saveGenerated', name, prompt, source, previewSrcPath),
+    deleteGenerated: (id: string): Promise<void> => ipcRenderer.invoke('library:deleteGenerated', id),
+    generatedSource: (id: string): Promise<string | null> =>
+      ipcRenderer.invoke('library:generatedSource', id),
+    generatedPreviewPath: (previewFile: string): Promise<string> =>
+      ipcRenderer.invoke('library:generatedPreviewPath', previewFile),
+    /** Pick one file via native dialog, get back its real local path (no
+     * copy into the library) — for one-off attachments like an AI
+     * effects-planning reference video/image. Null if the user cancels. */
+    pickFile: (opts: { title: string; extensions: string[] }): Promise<string | null> =>
+      ipcRenderer.invoke('library:pickFile', opts)
   },
   auth: {
     save: (auth: StoredAuth): Promise<void> => ipcRenderer.invoke('auth:save', auth),
