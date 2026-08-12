@@ -30,13 +30,9 @@ export default defineConfig(
     }
   },
   {
-    // Ported from frontend/src/hud/VideoTimelineEditor.tsx and
-    // frontend/src/pages/VideoPage.tsx — keep the source close to the
-    // original (frontend lint conventions) for future syncs.
-    files: [
-      'src/renderer/src/components/TimelineEditor.tsx',
-      'src/renderer/src/components/DubVideoPlayer.tsx'
-    ],
+    // Ported from frontend/src/hud/VideoTimelineEditor.tsx — keep the source
+    // close to the original (frontend lint conventions) for future syncs.
+    files: ['src/renderer/src/components/TimelineEditor.tsx'],
     rules: {
       '@typescript-eslint/explicit-function-return-type': 'off',
       'react-hooks/exhaustive-deps': 'off',

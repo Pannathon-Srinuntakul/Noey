@@ -2,10 +2,11 @@
 
 Status: **implemented for both modes** (2026-07-03) — dub_first AND
 talking_head run fully local-render (only frame JPEGs / speech WAVs upload;
-LLM + Whisper stay server-side via `packages/llm` / Modal), manual timeline
-editor, web dashboard local-awareness, and Windows packaging (PyInstaller
-sidecar + bundled ffmpeg + NSIS installer). Both modes verified end-to-end
-against the real backend + real LLM/Whisper with real creator clips.
+LLM stays server-side via `packages/llm`, transcription via ElevenLabs Scribe
+in `packages/video/elevenlabs_stt.py`), manual timeline editor, web dashboard
+local-awareness, and Windows packaging (PyInstaller sidecar + bundled ffmpeg +
+NSIS installer). Both modes verified end-to-end against the real backend with
+real creator clips.
 See `desktop/README.md` for flows and commands.
 Decisions resolved at implementation: **Electron** (electron-vite, React + TS
 — no Rust toolchain on the dev machine ruled out Tauri) and **Python sidecar**
@@ -51,7 +52,7 @@ The desktop app:
 | ffmpeg encode/render | `services/worker/tasks.py` (`ingest_video`), arq queue | Local, inside desktop app process |
 | Raw clip storage | `backend/data/video_uploads/<project_uid>/` (+ optional S3 sync) | User's local disk |
 | Rendered output storage | `backend/data/video_outputs/<project_uid>/` (+ optional S3 sync) | User's local disk |
-| Transcription (Whisper) | `services/whisper` / `services/modal_whisper` | Unchanged — stays server-side (cloud) |
+| Transcription | `packages/video/elevenlabs_stt.py` (ElevenLabs Scribe) | Unchanged — stays server-side; only speech WAVs leave the machine |
 | AI cut/highlight planning, style profile (Vision) | `packages/video/timeline.py`, `style_profile.py` via `packages/llm` | Unchanged — desktop app calls backend, backend calls LLM gateway |
 | Auth | Shared browser session | Independent login, own JWT, same credentials |
 | Project metadata / status | `models/video_project.py` | Unchanged — still source of truth, synced from desktop app |
@@ -87,9 +88,9 @@ The desktop app:
 - ffmpeg itself is cross-platform; only the bundled binary differs per OS.
 - `face_tracker.py`: verify its dependency (e.g. dlib/opencv) has working wheels on
   macOS (including Apple Silicon), not just Windows.
-- If Whisper is ever run locally instead of via the cloud worker, CUDA (Windows) vs.
-  Metal (macOS) support diverges — out of scope for now since transcription stays
-  server-side.
+- Transcription is a hosted API call (ElevenLabs Scribe), so it carries no
+  per-platform GPU story at all — the local-model CUDA-vs-Metal problem the
+  Whisper path would have had is gone.
 
 ## 7. Known trade-offs / open questions
 

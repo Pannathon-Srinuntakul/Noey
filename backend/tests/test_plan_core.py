@@ -1,10 +1,10 @@
 """Extracted talking_head planning core — behavior guard after tasks.py refactor.
 
-There is only one behavior now (Gemini review happens upstream, per-clip, inside
-whisper_client.run_transcription before segments/silence_gaps ever reach this
-module) — build_talking_head_timeline itself makes no LLM calls and no longer
-branches on duration_mode; that field is accepted only for backward DB
-compatibility with legacy rows.
+There is only one behavior now: segments and silence_gaps are settled upstream
+by elevenlabs_stt.run_transcription before they reach this module —
+build_talking_head_timeline itself makes no LLM calls and no longer branches on
+duration_mode; that field is accepted only for backward DB compatibility with
+legacy rows.
 """
 
 from __future__ import annotations
@@ -106,8 +106,11 @@ async def test_silence_gaps_merged_in_as_kept_cuts() -> None:
 
 
 @pytest.mark.asyncio
-async def test_empty_transcript_raises() -> None:
-    with pytest.raises(ValueError, match="no speech segments"):
+async def test_empty_transcript_raises_in_the_users_language() -> None:
+    """A no-speech clip in ตัดช่วงเงียบ is a real user mistake, not a bug — the
+    message has to say what happened AND the way out, in Thai, because it is
+    surfaced verbatim on the project card."""
+    with pytest.raises(ValueError, match="ไม่มีเสียงพูดให้ตัด"):
         await plan_core.build_talking_head_timeline(
             [],
             duration_mode="full",

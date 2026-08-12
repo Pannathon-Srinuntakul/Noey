@@ -10,7 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from packages.core.settings import get_settings
 from packages.db.models.core_auth import PLAN_VALUES, User
 from packages.db.models.llm_usage import LlmUsageLog
-from packages.llm.usage import _period_start, estimate_cost_usd
+from packages.db.models.stt_usage import SttUsageLog
+from packages.video.stt_pricing import credits_for, is_rate_known
+from packages.llm.usage import _period_start, build_usage_tasks, estimate_cost_usd
 from services.api.deps import CurrentUser, core_session
 
 router = APIRouter(prefix="/usage", tags=["usage"])
@@ -82,6 +84,12 @@ async def get_my_usage(
         for r in feature_rows
     ]
 
+    # Grouped view for the desktop settings screen, which shows shares rather
+    # than token counts.
+    by_task = build_usage_tasks(
+        {r.feature: int(r.input) + int(r.output) for r in feature_rows}
+    )
+
     return {
         "user_id": auth.user_id,
         "plan": plan,
@@ -94,8 +102,59 @@ async def get_my_usage(
         "remaining_tokens": max(0, limit - total_tokens) if limit > 0 else None,
         "usage_pct": round(total_tokens / limit * 100, 1) if limit > 0 else None,
         "by_feature": by_feature,
+        "by_task": by_task,
         "estimated_cost_usd": await _estimate_period_cost_async(auth.user_id, since, db),
         "reset_at": user.usage_reset_at.isoformat() if user.usage_reset_at else None,
+    }
+
+
+# ── GET /usage/stt ────────────────────────────────────────────────────────────
+
+@router.get("/stt")
+async def get_stt_usage(
+    auth: CurrentUser,
+    db: Annotated[AsyncSession, Depends(core_session)],
+) -> dict:
+    """This user's speech-to-text minutes for the current period.
+
+    Read from our own ``stt_usage_logs``, never from ElevenLabs. The API key is
+    a single shared account that every user transcribes through, so its account
+    totals are everybody's usage added together — returning that here would
+    show one user what the others have spent.
+    """
+    await db.execute(text("SET search_path TO core, public"))
+    user = (
+        await db.execute(select(User).where(User.id == auth.user_id))
+    ).scalar_one_or_none()
+    since = _period_start(user.usage_reset_at if user else None)
+
+    # Grouped by model because the credit rate differs ~12.5x between them —
+    # summing seconds alone cannot be priced (packages/video/stt_pricing.py).
+    rows = (
+        await db.execute(
+            select(
+                SttUsageLog.model,
+                func.coalesce(func.sum(SttUsageLog.audio_sec), 0.0).label("secs"),
+            )
+            .where(SttUsageLog.user_id == auth.user_id)
+            .where(SttUsageLog.created_at >= since)
+            .group_by(SttUsageLog.model)
+        )
+    ).all()
+
+    total_sec = sum(float(r.secs) for r in rows)
+    credits = sum(credits_for(float(r.secs), r.model or "") for r in rows)
+    estimated = any(not is_rate_known(r.model or "") for r in rows)
+
+    return {
+        "minutes": round(total_sec / 60.0, 2),
+        # This user's share of the shared account, in ElevenLabs' own unit.
+        "credits": credits,
+        # True when some rows used a model with no measured rate, so `credits`
+        # is an upper-bound guess rather than a figure.
+        "credits_estimated": estimated,
+        "period_start": since.isoformat(),
+        "period": "utc_day",
     }
 
 

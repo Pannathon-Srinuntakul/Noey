@@ -163,7 +163,7 @@ allow_origins=["https://your-web.up.railway.app"]
 | ส่วน | Railway |
 |------|---------|
 | **FFmpeg** | เพิ่มใน `backend/Dockerfile`: `RUN apt-get install -y ffmpeg` |
-| **faster-whisper** | รันบน worker ได้ — CPU ช้า, ใช้ RAM ~2GB+ |
+| **ถอดเสียง** | ElevenLabs Scribe (HTTP API) — ไม่ต้องใช้ GPU/RAM บน worker เลย ตั้ง `ELEVENLABS_API_KEY` พอ |
 | **Remotion** | service แยก (Node) — RAM 2–4GB+, แพง |
 | **ไฟล์วิดีโอ** | อย่าเก็บ local disk ถาวร — ใช้ **Railway Volume** (ชั่วคราว) หรือ **Cloudflare R2 / S3** (แนะนำ) |
 

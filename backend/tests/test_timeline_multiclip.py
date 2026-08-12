@@ -309,7 +309,12 @@ def test_normalize_dub_backward_compat_single_cut() -> None:
     assert segs[1]["voiceoverLineOutputIn"] == 3.0
 
 
-def test_anchor_dub_segments_snaps_loose_trim() -> None:
+def test_anchor_dub_segments_snaps_only_out_of_scene_trims() -> None:
+    """Snapping is a rescue for a trim that landed OUTSIDE its matched scene —
+    a sourceIn already inside the scene window is the model's own (denser)
+    judgment and must be left alone; sample frames are sparse, so yanking an
+    in-scene trim onto one would move good cuts (the `scene_start <= src_in <=
+    scene_end` guard in anchor_dub_segments_to_frames)."""
     frames = [
         {"clip_id": "clip0", "time": 12.0, "scene_start": 10.0, "scene_end": 20.0},
         {"clip_id": "clip0", "time": 28.0, "scene_start": 25.0, "scene_end": 35.0},
@@ -317,6 +322,7 @@ def test_anchor_dub_segments_snaps_loose_trim() -> None:
     script = {
         "segments": [
             {
+                # In-scene trim (10.2 is inside [10, 20]) — untouched.
                 "order": 1,
                 "sourceClip": "clip0",
                 "sourceIn": 10.2,
@@ -325,18 +331,22 @@ def test_anchor_dub_segments_snaps_loose_trim() -> None:
                 "voiceoverScript": "hook",
             },
             {
+                # Out-of-scene trim: matched to the 28.0 frame (scene [25, 35])
+                # but trimmed at 22.0 — pulled to the anchor.
                 "order": 2,
                 "sourceClip": "clip0",
-                "sourceIn": 28.0,
-                "sourceOut": 30.0,
+                "sourceIn": 22.0,
+                "sourceOut": 24.0,
                 "durationSec": 2.0,
+                "matchedFrameTime": 28.0,
             },
         ],
     }
     out = anchor_dub_segments_to_frames(script, frames)
-    assert out["segments"][0]["sourceIn"] == 12.0
-    assert out["segments"][0]["sourceOut"] == 15.0
+    assert out["segments"][0]["sourceIn"] == 10.2
+    assert out["segments"][0]["sourceOut"] == 13.2
     assert out["segments"][1]["sourceIn"] == 28.0
+    assert out["segments"][1]["sourceOut"] == 30.0
 
 
 def test_clamp_dub_segments_drops_segment_starting_past_clip_end() -> None:

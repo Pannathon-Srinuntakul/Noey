@@ -169,6 +169,37 @@ async def delete_project(project_uid: str) -> None:
     log.info("s3_delete_project", project_uid=project_uid)
 
 
+def _sync_delete_object(key: str) -> bool:
+    """Delete one object. Returns True if a delete was attempted."""
+    from botocore.exceptions import ClientError
+
+    try:
+        _client().delete_object(Bucket=_bucket(), Key=key)
+        return True
+    except ClientError as exc:
+        code = exc.response.get("Error", {}).get("Code", "")
+        if code in ("404", "NoSuchKey", "NotFound"):
+            return False
+        raise
+
+
+async def delete_output_file(project_uid: str, relative_path: str) -> None:
+    """Delete one file under the project's outputs/ prefix. No-op when S3 off.
+
+    Needed when a local file is intentionally removed (e.g. effects/style.txt
+    after the user de-selects a style) — ``push_outputs`` only uploads existing
+    files and never deletes orphans, so a later ``pull_outputs`` would otherwise
+    resurrect the stale object.
+    """
+    if not _s3_enabled():
+        return
+    rel = relative_path.replace("\\", "/").lstrip("/")
+    key = f"videos/{project_uid}/outputs/{rel}"
+    deleted = await asyncio.to_thread(_sync_delete_object, key)
+    if deleted:
+        log.info("s3_delete_output_file", project_uid=project_uid, key=key)
+
+
 def _output_key(project_uid: str, filename: str) -> str:
     return f"videos/{project_uid}/outputs/{filename}"
 

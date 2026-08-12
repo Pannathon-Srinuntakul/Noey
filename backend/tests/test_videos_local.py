@@ -90,11 +90,12 @@ def test_local_project_in_accepts_talking_head() -> None:
     assert body.mode == "talking_head"
 
 
-def test_global_codegen_route_registered() -> None:
-    # Effects Studio (global library) codegen — no project uid; must not be
-    # swallowed by the /{uid}/... parameterized routes.
+def test_component_codegen_routes_are_gone() -> None:
+    # The AI-writes-a-Remotion-component escape hatch was removed 2026-08-12
+    # along with the whole overlay half; nothing may re-register it silently.
     from services.api.routers import videos_local
 
     paths = {route.path for route in videos_local.router.routes}
-    assert "/videos/effects/generate-component" in paths
-    assert "/videos/{uid}/generate-effect-component" in paths
+    assert "/videos/effects/generate-component" not in paths
+    assert "/videos/{uid}/generate-effect-component" not in paths
+    assert "/videos/{uid}/plan-effects" in paths  # the motion pass stays

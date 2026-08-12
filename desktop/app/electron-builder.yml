@@ -25,16 +25,6 @@ extraResources:
     to: backend
   - from: resources-staging/ffmpeg
     to: ffmpeg
-  - from: resources-staging/node-sidecar
-    to: node-sidecar
-  # electron-builder skips `node_modules` while walking an extraResources dir, so
-  # copy it via its own explicit entry (a directly-targeted node_modules root is
-  # not subject to that walk-time skip) — without it the Remotion renderer's deps
-  # never ship and the sidecar fails with "Cannot find package '@remotion/renderer'".
-  - from: resources-staging/node-sidecar/node_modules
-    to: node-sidecar/node_modules
-    filter:
-      - '**/*'
 win:
   executableName: Noey Video Edit
   target:
@@ -42,6 +32,11 @@ win:
       arch: [x64]
 nsis:
   artifactName: ${name}-${version}-setup.${ext}
+  # Without these the wizard, the header and Add/Remove Programs all show the
+  # stock Electron icon instead of the app's (HANDOFF-LOGO §5).
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
+  installerHeaderIcon: build/icon.ico
   shortcutName: ${productName}
   uninstallDisplayName: ${productName}
   # Full wizard: license → install mode/path (default C:\Program Files) → install.

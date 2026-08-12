@@ -226,7 +226,11 @@ def whip_pan_filter(
     # Directional sweep: focus point slides hard from one edge toward the
     # other across the window, biased by `direction`, so the zoom reads as a
     # pan rather than a plain push.
-    sweep = f"(0.5+0.5*sign({mid}-ot)*({tri}))"
+    # ffmpeg's expression language has no sign()/sgn() (confirmed live
+    # 2026-08-12: "Unknown function in 'sign(...)'" killed the whole render
+    # with "Nothing was written into output file") — build the same ±1 from
+    # gte(): 2*gte(mid, ot) - 1.
+    sweep = f"(0.5+0.5*(2*gte({mid},ot)-1)*({tri}))"
     if direction == "vertical":
         x = "(iw-iw/zoom)/2"
         y = f"(ih-ih/zoom)*{sweep}"

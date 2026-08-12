@@ -1,4 +1,4 @@
-"""Tests for the effects render engine's filtergraph builder + the per-clip
+"""Tests for the effects render engine's transform filtergraph builder + the per-clip
 punch-zoom pre-concat bake (real ffmpeg over lavfi-generated clips, mirrors
 test_dub_render.py's convention).
 """
@@ -25,7 +25,7 @@ def _doc(*insts: EffectInstance) -> EffectsDoc:
 
 
 def test_empty_doc_yields_passthrough() -> None:
-    graph, label = build_effects_filtergraph(_doc(), [], width=1080, height=1920, fps=30)
+    graph, label = build_effects_filtergraph(_doc(), width=1080, height=1920, fps=30)
     assert graph == ""
     assert label == "0:v"
 
@@ -34,7 +34,7 @@ def test_transform_only_chain() -> None:
     doc = _doc(
         EffectInstance(id="z", kind="transform", componentId="punch-zoom", startSec=0.5, durationSec=2.0)
     )
-    graph, label = build_effects_filtergraph(doc, [], width=1080, height=1920, fps=30)
+    graph, label = build_effects_filtergraph(doc, width=1080, height=1920, fps=30)
     assert "[0:v]scale=w=iw*4:h=ih*4,zoompan" in graph
     assert label == "t0"  # single transform → final label t0
 
@@ -43,41 +43,7 @@ def test_unknown_transform_skipped() -> None:
     doc = _doc(
         EffectInstance(id="x", kind="transform", componentId="nope", startSec=0, durationSec=1)
     )
-    graph, label = build_effects_filtergraph(doc, [], width=100, height=100, fps=30)
-    assert graph == ""
-    assert label == "0:v"
-
-
-def test_overlay_is_shifted_and_gated() -> None:
-    doc = _doc(
-        EffectInstance(id="ov", kind="overlay", componentId="sticker-badge", startSec=1.0, durationSec=2.5)
-    )
-    graph, label = build_effects_filtergraph(doc, [("ov", 1)], width=1080, height=1920, fps=30)
-    # frame 0 of the overlay input is delayed to its startSec
-    assert "[1:v]setpts=PTS-STARTPTS+1.0/TB[ov1]" in graph
-    # composited only within its window
-    assert "enable='between(t,1.0,3.5)'" in graph
-    assert label == "c1"
-
-
-def test_transform_then_overlay_order() -> None:
-    doc = _doc(
-        EffectInstance(id="z", kind="transform", componentId="punch-zoom", startSec=0.0, durationSec=2.0),
-        EffectInstance(id="ov", kind="overlay", componentId="text-reveal", startSec=0.2, durationSec=3.0),
-    )
-    graph, label = build_effects_filtergraph(doc, [("ov", 1)], width=1080, height=1920, fps=30)
-    # transform consumes 0:v → t0; overlay composites onto t0 → c1
-    assert "[0:v]scale=w=iw*4:h=ih*4,zoompan" in graph
-    assert "[t0][ov1]overlay" in graph
-    assert label == "c1"
-
-
-def test_overlay_without_input_mapping_is_ignored() -> None:
-    # overlay in the doc but no (id, index) provided → not composited
-    doc = _doc(
-        EffectInstance(id="ov", kind="overlay", componentId="sticker-badge", startSec=1.0, durationSec=1.0)
-    )
-    graph, label = build_effects_filtergraph(doc, [], width=100, height=100, fps=30)
+    graph, label = build_effects_filtergraph(doc, width=100, height=100, fps=30)
     assert graph == ""
     assert label == "0:v"
 
@@ -204,7 +170,7 @@ def test_render_effects_bakes_zoom_per_clip_then_composites(clips_dir: Path, tmp
     doc = EffectsDoc(instances=[_zoom("z1", start=3.0, dur=1.0)])
     out = tmp_path / "final_fx.mp4"
     render_effects(
-        final_silent, out, doc, {},
+        final_silent, out, doc,
         clips_dir=clips_dir, clip_durations_sec=CLIP_DURATIONS,
     )
     assert out.is_file()
@@ -218,7 +184,7 @@ def test_render_effects_without_clips_dir_falls_back_to_post_concat(tmp_path: Pa
     out = tmp_path / "final_fx.mp4"
     # No clips_dir/clip_durations_sec — regression guard: today's post-concat
     # behavior must still work unchanged.
-    render_effects(final_silent, out, doc, {})
+    render_effects(final_silent, out, doc)
     assert out.is_file()
     assert abs(media_duration(out) - 4.0) < 0.35
 
@@ -240,5 +206,5 @@ def test_render_effects_transitions_unaffected_by_zoom_bake(clips_dir: Path, tmp
     )
     doc = EffectsDoc(instances=[_zoom("z1", start=3.0, dur=1.0), drift])
     out = tmp_path / "final_fx.mp4"
-    render_effects(final_silent, out, doc, {}, clips_dir=clips_dir, clip_durations_sec=CLIP_DURATIONS)
+    render_effects(final_silent, out, doc, clips_dir=clips_dir, clip_durations_sec=CLIP_DURATIONS)
     assert out.is_file()

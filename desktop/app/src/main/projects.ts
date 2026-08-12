@@ -1,9 +1,10 @@
-import { app, ipcMain, shell } from 'electron'
-import { join, normalize, relative, sep } from 'path'
+import { app, dialog, ipcMain, shell } from 'electron'
+import { dirname, join, normalize, relative, sep } from 'path'
 import { copyFile, mkdir, readdir, readFile, writeFile, rm, stat } from 'fs/promises'
 import { randomUUID } from 'crypto'
 import { isSafeUid } from './uid'
 import { appendLog } from './logger'
+import { prefsSync } from './prefs'
 
 /**
  * Local project registry — one directory per project under
@@ -27,6 +28,9 @@ export interface LocalProject {
   name: string
   mode?: 'dub_first' | 'talking_head' | 'highlight'
   step:
+    /** Sources are being copied/transcoded in the background (see the
+     * renderer's ProjectStep — this union mirrors it). */
+    | 'importing'
     | 'imported'
     | 'analyzing'
     | 'silent_rendering'
@@ -45,8 +49,27 @@ export interface LocalProject {
   userScript?: string
   scriptStyles?: string[]
   targetDurationSec?: number
+  /** Saved cut-style (EffectStyle kind="cut") uid chosen at creation; threads
+   * into the analyze/reedit API calls as form field `style_uid`. */
+  /** Set while step==='importing': the source files the pipeline still has to
+   * copy/transcode, and the music the user picked in the wizard. The wizard
+   * hands these over instead of doing the work itself, so a slow HEVC import
+   * runs in the background with its own progress + error like any other
+   * stage. Cleared once the import lands. */
+  pendingSources?: string[]
+  pendingMusic?: { path: string; trimInSec: number; trimOutSec: number }
+  cutStyleUid?: string
+  /** Saved zoom style (kind='effects') to auto-apply after the cut renders; absent = none. */
+  zoomStyleUid?: string
+  /** Whether the AI cuts against the music's beat grid. Only meaningful with
+   * `music`; absent on projects created before the wizard exposed it. */
+  beatSync?: boolean
   remote?: { uid: string; jobId?: string }
   voiceoverPath?: string
+  /** Recorded per-line takes, keyed by `voiceoverLineId`. The assembled
+   * `voiceoverPath` is rebuilt from these, so re-recording one line never
+   * requires re-recording the rest. */
+  voiceoverTakes?: Record<string, { file: string; durationSec: number }>
   /** dub_first background music (desktop-local file — mix params edited in
    * TimelineEditor's audio track, applied at render time by the sidecar). */
   music?: {
@@ -72,8 +95,15 @@ export interface LocalProject {
   error?: string
 }
 
-export function projectsRoot(): string {
+/** Default location, used when the user has not moved the library. */
+export function defaultProjectsRoot(): string {
   return join(app.getPath('userData'), 'projects')
+}
+
+export function projectsRoot(): string {
+  // Synchronous because this sits on the path of every media:// request; the
+  // prefs file is read once at startup (see main/index.ts).
+  return prefsSync().projectsDir ?? defaultProjectsRoot()
 }
 
 export function projectDir(uid: string): string {
@@ -142,20 +172,28 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
 
 async function withProjectWriteLock<T>(uid: string, fn: () => Promise<T>): Promise<T> {
   const hadPrior = projectWriteLocks.has(uid)
-  void appendLog('projects', `writeLock: ${hadPrior ? 'queued behind prior write' : 'acquired immediately'} uid=${uid}`)
+  void appendLog(
+    'projects',
+    `writeLock: ${hadPrior ? 'queued behind prior write' : 'acquired immediately'} uid=${uid}`
+  )
   const prior = projectWriteLocks.get(uid) ?? Promise.resolve()
-  const run = prior.catch(() => undefined).then(async () => {
-    void appendLog('projects', `writeLock: running uid=${uid}`)
-    try {
-      const result = await withTimeout(fn(), 15_000, `writeLock uid=${uid}`)
-      void appendLog('projects', `writeLock: done uid=${uid}`)
-      return result
-    } catch (err) {
-      void appendLog('projects', `writeLock: failed uid=${uid}: ${String(err)}`)
-      throw err
-    }
-  })
-  projectWriteLocks.set(uid, run.catch(() => undefined))
+  const run = prior
+    .catch(() => undefined)
+    .then(async () => {
+      void appendLog('projects', `writeLock: running uid=${uid}`)
+      try {
+        const result = await withTimeout(fn(), 15_000, `writeLock uid=${uid}`)
+        void appendLog('projects', `writeLock: done uid=${uid}`)
+        return result
+      } catch (err) {
+        void appendLog('projects', `writeLock: failed uid=${uid}: ${String(err)}`)
+        throw err
+      }
+    })
+  projectWriteLocks.set(
+    uid,
+    run.catch(() => undefined)
+  )
   return run
 }
 
@@ -238,6 +276,24 @@ async function importMusicFile(uid: string, srcPath: string): Promise<string> {
   return `music/${base}`
 }
 
+/**
+ * Write bytes the renderer produced (a recorded voiceover) into the project
+ * directory, and return the absolute path so the sidecar can be pointed at it.
+ *
+ * Goes through `resolveProjectPath`, so a caller cannot write outside its own
+ * project however the relative path is spelled.
+ */
+async function writeProjectFile(uid: string, relPath: string, data: Uint8Array): Promise<string> {
+  const dest = resolveProjectPath(uid, relPath)
+  await mkdir(dirname(dest), { recursive: true })
+  await writeFile(dest, data)
+  return dest
+}
+
+async function deleteProjectFile(uid: string, relPath: string): Promise<void> {
+  await rm(resolveProjectPath(uid, relPath), { force: true })
+}
+
 /** Register project-registry IPC handlers (call once from app.whenReady). */
 export function registerProjectsIpc(): void {
   ipcMain.handle('projects:list', () => listProjects())
@@ -259,4 +315,41 @@ export function registerProjectsIpc(): void {
   ipcMain.handle('projects:openFolder', async (_e, uid: string, relPath = '.') => {
     await shell.openPath(join(projectDir(uid), relPath))
   })
+  ipcMain.handle('projects:exportFile', (_e, uid: string, relPath: string, suggestedName: string) =>
+    exportProjectFile(uid, relPath, suggestedName)
+  )
+  ipcMain.handle('projects:writeFile', (_e, uid: string, relPath: string, data: Uint8Array) =>
+    writeProjectFile(uid, relPath, data)
+  )
+  ipcMain.handle('projects:deleteFile', (_e, uid: string, relPath: string) =>
+    deleteProjectFile(uid, relPath)
+  )
+}
+
+/**
+ * Copy a rendered artifact out of the project dir to a user-chosen location.
+ *
+ * Returns the destination path, or null when the user cancels — cancelling is
+ * a normal outcome, not an error. The source is resolved through
+ * `resolveProjectPath` so a caller cannot walk outside the project dir.
+ */
+async function exportProjectFile(
+  uid: string,
+  relPath: string,
+  suggestedName: string
+): Promise<string | null> {
+  const source = resolveProjectPath(uid, relPath)
+  await stat(source) // surfaces a clear ENOENT rather than a half-done export
+
+  const ext = suggestedName.includes('.') ? suggestedName.split('.').pop()! : 'mp4'
+  const result = await dialog.showSaveDialog({
+    title: 'ส่งออกวิดีโอ',
+    defaultPath: join(app.getPath('videos'), suggestedName),
+    filters: [{ name: 'Video', extensions: [ext] }]
+  })
+  if (result.canceled || !result.filePath) return null
+
+  await copyFile(source, result.filePath)
+  await appendLog('projects', `exported ${uid}/${relPath} → ${result.filePath}`)
+  return result.filePath
 }

@@ -36,7 +36,7 @@ export const CAPTION_FONTS: { value: CaptionStyle['font']; label: string; cssFam
 ]
 
 export const CAPTION_MODES: { value: CaptionStyle['mode']; label: string }[] = [
-  { value: 'static', label: 'นิ่ง (ทีละประโยค)' },
+  { value: 'static', label: 'ทีละประโยค' },
   { value: 'word_pop', label: 'ทีละคำ' },
   { value: 'typewriter', label: 'พิมพ์ดีด' }
 ]

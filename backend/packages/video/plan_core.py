@@ -4,13 +4,13 @@ Extracted from ``services/worker/tasks.py`` so the desktop app's local-render fl
 reuses the exact same behavior, with geometry supplied as parameters instead of
 read from disk.
 
-Content decisions (keep/cut, hallucination/filler/repeat classification, which
-silence gaps matter) are made once, per clip, by Gemini watching that clip's real
-video — see ``whisper_client.run_transcription`` / ``transcribe_refine.py``. By
-the time ``segments``/``silence_gaps`` reach :func:`build_talking_head_timeline`
-those decisions are already final; this module only assembles cuts from them and
-applies mechanical (non-judgment) cleanup — no Claude/Haiku, no hardcoded
-filler/repeat/silence heuristics.
+Content decisions are settled upstream in ``elevenlabs_stt.run_transcription``:
+Scribe removes fillers and false starts itself (``no_verbatim``), low-confidence
+tokens are dropped by log-probability, and the silent spans worth keeping are the
+ones carrying a tagged audio event. By the time ``segments``/``silence_gaps``
+reach :func:`build_talking_head_timeline` those decisions are final; this module
+only assembles cuts from them and applies mechanical (non-judgment) cleanup — no
+LLM calls of any kind.
 """
 
 from __future__ import annotations
@@ -72,7 +72,14 @@ async def build_talking_head_timeline(
         source_duration=total_duration,
     )
     if not speech_cuts:
-        raise ValueError("Transcript has no speech segments to keep")
+        # A clip with no speech at all (music-only b-roll, ambient footage) is
+        # a real thing users try in ตัดช่วงเงียบ — the mode has nothing to keep
+        # because "keep the talking" is its entire definition. Say that in the
+        # user's own words + the way out, instead of an English exception.
+        raise ValueError(
+            "คลิปนี้ไม่มีเสียงพูดให้ตัด — โหมดตัดช่วงเงียบเก็บเฉพาะช่วงที่มีคนพูด "
+            "ถ้าเป็นคลิปไม่มีเสียงพูด ให้ใช้โหมดตัดฉากเด่นแทน"
+        )
 
     await _progress("กำลังประกอบไทม์ไลน์…")
     cuts = list(speech_cuts)
@@ -88,7 +95,10 @@ async def build_talking_head_timeline(
     cuts = remove_overlapping_cuts(cuts)
     log.info("cuts_ready", count=len(cuts), duration=round(cuts_duration(cuts), 1))
     if not cuts:
-        raise ValueError("No speech segments remain after removing clips shorter than 1 second")
+        raise ValueError(
+            "ช่วงที่มีเสียงพูดสั้นเกินไปทุกช่วง (ต่ำกว่า 1 วินาที) เลยไม่เหลืออะไรให้ตัด — "
+            "ลองใช้โหมดตัดฉากเด่น หรือใช้คลิปที่พูดต่อเนื่องกว่านี้"
+        )
 
     render_cuts = filter_short_cuts(localize_cuts(cuts, boundaries))
     kept_sec = cuts_duration(render_cuts)

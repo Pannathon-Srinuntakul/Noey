@@ -1,11 +1,14 @@
 """EffectStyle model — per-tenant schema.
 
-A reusable, user-authored "editing style" for the AI effects-placement pass.
-The user creates one in the central Studio by describing a look and/or uploading
-a reference clip; a distillation AI pass (packages/video/effects_style.py)
-watches/reads it ONCE and stores a natural-language style prompt here. Every
-later effects-placement run for any project can then reuse that cheap stored
-text instead of re-uploading and re-analysing a reference video each time.
+A reusable, user-authored "editing style", distilled once and reused on later
+AI runs. The table holds two kinds of style, discriminated by ``kind``:
+``"effects"`` styles steer the effects-placement pass, ``"cut"`` styles steer
+the cut stage. The user creates one in the central Studio by describing a look
+and/or uploading a reference clip; a distillation AI pass
+(packages/video/effects_style.py) watches/reads it ONCE and stores a
+natural-language style prompt here. Every later run for any project can then
+reuse that cheap stored text instead of re-uploading and re-analysing a
+reference video each time.
 
 Distinct from ``video_project.style_profile_path`` — that is the dub/cut-stage
 Style Profile JSON (packages/video/style_profile.py), a different pipeline stage.
@@ -22,6 +25,12 @@ from packages.db.base import Base
 # Distillation lifecycle
 EFFECT_STYLE_STATUS = ("pending", "ready", "error")
 
+# Which pipeline stage the style steers
+EFFECT_STYLE_KINDS = ("effects", "cut")
+
+# Platforms a cut-style reference clip may target
+CUT_STYLE_PLATFORMS = ("tiktok", "reels", "shorts", "youtube", "other")
+
 
 class EffectStyle(Base):
     __tablename__ = "effect_styles"
@@ -33,6 +42,13 @@ class EffectStyle(Base):
         BigInteger, ForeignKey("core.users.id", ondelete="CASCADE"), index=True
     )
     tenant_slug: Mapped[str] = mapped_column(String(80), nullable=False)
+
+    # Discriminator: "effects" (effects-placement pass) or "cut" (cut stage).
+    kind: Mapped[str] = mapped_column(
+        String(16), default="effects", server_default="effects", index=True
+    )
+    # Platform the reference targeted (cut styles only; informs distillation).
+    target_platform: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     # What the user typed when creating the style (kept for display/regeneration).

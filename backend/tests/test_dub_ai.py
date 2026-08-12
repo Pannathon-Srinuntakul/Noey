@@ -260,8 +260,16 @@ def test_no_vo_system_drops_script_but_keeps_shared_sections() -> None:
     assert '"mode": "highlight"' in s
     # shared, tuned sections must survive the substitution untouched
     for tag in ("<coverage>", "<shot_types>", "<reject_safety>", "<reject_prep>",
-                "<editing_style>", "<music_sync>", "<anchor>", "<visual_description>"):
+                "<music_sync>", "<anchor>", "<visual_description>"):
         assert tag in s, f"{tag} missing from no-VO variant"
+    # The <editing_style> SECTION is no longer baked into the raw const — it
+    # arrives via the __CUT_STYLE_BLOCK__ splice (apply_cut_style) on every
+    # real call. Other sections may still MENTION "<editing_style>" by name,
+    # so the section's absence is checked via its closing tag.
+    assert "__CUT_STYLE_BLOCK__" in s
+    assert "</editing_style>" not in s
+    assert "<editing_style>\n" in dub_ai.apply_cut_style(s)
+    assert "</editing_style>" in dub_ai.apply_cut_style(s)
     assert "NO voiceover" in s
     assert s != dub_ai.DUB_EDIT_SYSTEM_VIDEO
 
@@ -274,9 +282,18 @@ def test_no_vo_system_shares_reject_safety_verbatim_with_dub_first() -> None:
         end = s.index(f"</{tag}>") + len(f"</{tag}>")
         return s[start:end]
 
-    assert extract(dub_ai.DUB_EDIT_SYSTEM_VIDEO_NO_VO, "reject_safety") == extract(
-        dub_ai.DUB_EDIT_SYSTEM_VIDEO, "reject_safety"
-    )
+    section = extract(dub_ai.DUB_EDIT_SYSTEM_VIDEO, "reject_safety")
+    assert extract(dub_ai.DUB_EDIT_SYSTEM_VIDEO_NO_VO, "reject_safety") == section
+
+    # The cut-style splice must leave the safety section byte-identical, for
+    # BOTH the default prose and a saved custom style. NOTE: re-extracting by
+    # tag from SPLICED text is a trap — the custom-style precedence template
+    # itself MENTIONS "<reject_safety>" before the real section, so index()
+    # would grab a corrupt span. Substring containment of the raw-extracted
+    # section is the correct check.
+    for style_prompt in ("", "cut everything to a frantic 0.5s rhythm"):
+        for base in (dub_ai.DUB_EDIT_SYSTEM_VIDEO, dub_ai.DUB_EDIT_SYSTEM_VIDEO_NO_VO):
+            assert section in dub_ai.apply_cut_style(base, style_prompt)
 
 
 @pytest.mark.asyncio
@@ -315,4 +332,6 @@ async def test_generate_dub_edit_script_video_uses_passed_system(monkeypatch: py
         [], brief="", user_script="", target_duration_sec=None, project_uid="p1",
         system=dub_ai.DUB_EDIT_SYSTEM_VIDEO_NO_VO,
     )
-    assert captured["system"] == dub_ai.DUB_EDIT_SYSTEM_VIDEO_NO_VO
+    # The LLM sees the passed system with the default editing style spliced in
+    # (apply_cut_style with no style_prompt is behavior-preserving).
+    assert captured["system"] == dub_ai.apply_cut_style(dub_ai.DUB_EDIT_SYSTEM_VIDEO_NO_VO)

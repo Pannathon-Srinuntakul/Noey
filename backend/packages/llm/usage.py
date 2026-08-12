@@ -180,6 +180,58 @@ class UsageLimitExceeded(Exception):
 
 
 # ---------------------------------------------------------------------------
+# Task grouping
+# ---------------------------------------------------------------------------
+
+# The four buckets the desktop settings screen reports. They are groups of LLM
+# *calls*, not stages of the pipeline: one dub call writes the voiceover script
+# and picks the scenes in the same response, so those cannot be separated
+# without inventing a split. Speech-to-text is absent on purpose — ElevenLabs
+# Scribe is not token-billed and never writes a row here.
+USAGE_TASKS: tuple[str, ...] = ("cut", "effects", "style", "other")
+
+_TASK_BY_FEATURE: dict[str, str] = {
+    "video_cut": "cut",
+    "video_effects": "effects",
+    "video_style": "style",
+    "chat": "other",
+    "prompt_cron": "other",
+    # Rows written before the feature names were split. Video work was
+    # overwhelmingly cut planning back then, so they land there rather than in
+    # a bucket that pretends to know better.
+    "video": "cut",
+    "video_edit": "cut",
+}
+
+
+def task_for_feature(feature: str | None) -> str:
+    """Group a usage row's ``feature`` into one of ``USAGE_TASKS``."""
+    return _TASK_BY_FEATURE.get(feature or "", "other")
+
+
+def build_usage_tasks(per_feature: dict[str, int]) -> list[dict[str, object]]:
+    """Roll per-feature token totals up into the four reported tasks.
+
+    Always returns every task, zeros included, so the client never has to
+    decide whether a missing row means "none" or "not reported". Percentages
+    are of the period total, which is the sum of the input — a task's share of
+    "unlimited" would be meaningless, so the quota does not appear here.
+    """
+    totals: dict[str, int] = {task: 0 for task in USAGE_TASKS}
+    for feature, tokens in per_feature.items():
+        totals[task_for_feature(feature)] += tokens
+    grand = sum(totals.values())
+    return [
+        {
+            "task": task,
+            "total_tokens": tokens,
+            "pct": round(tokens / grand * 100, 1) if grand > 0 else 0.0,
+        }
+        for task, tokens in totals.items()
+    ]
+
+
+# ---------------------------------------------------------------------------
 # DB helpers (lazy import to avoid circular deps at module load time)
 # ---------------------------------------------------------------------------
 
@@ -213,6 +265,37 @@ async def sum_tokens_since(
         .where(LlmUsageLog.created_at >= since)
     )
     return int(result.scalar() or 0)
+
+
+async def record_stt_usage(ctx: UsageCtx, audio_sec: float, model: str = "") -> None:
+    """Insert one SttUsageLog row. Failures are logged but never re-raised.
+
+    Attribution lives here because the ElevenLabs key is one shared account —
+    its own totals are every user's usage combined, so they can never be shown
+    to an individual user.
+    """
+    from packages.db.models.stt_usage import SttUsageLog
+
+    if audio_sec <= 0:
+        return
+
+    try:
+        maker = get_sessionmaker()
+        async with maker() as session:
+            from sqlalchemy import text
+            await session.execute(text("SET search_path TO core, public"))
+            session.add(
+                SttUsageLog(
+                    user_id=ctx.user_id,
+                    tenant_id=ctx.tenant_id,
+                    reference_id=ctx.reference_id,
+                    audio_sec=float(audio_sec),
+                    model=model,
+                )
+            )
+            await session.commit()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("stt_usage_record_failed", error=str(exc)[:200])
 
 
 async def check_limit(ctx: UsageCtx) -> None:

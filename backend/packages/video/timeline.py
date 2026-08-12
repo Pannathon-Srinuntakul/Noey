@@ -1,4 +1,11 @@
-"""Build edit timelines from Whisper transcript."""
+"""Build edit timelines from a transcript.
+
+Segments arrive from ``elevenlabs_stt`` (Scribe), already grouped by word gap
+and carrying per-word timings. Several constants here were sized for Whisper's
+looser Thai boundaries and are now conservative rather than necessary — see
+``scripts/probe_elevenlabs.py``, which reports the real gap distribution on your
+own footage before any of them are tightened.
+"""
 
 from __future__ import annotations
 
@@ -347,13 +354,13 @@ def build_speech_cuts(
     gap_threshold: float = SEGMENT_MERGE_GAP,
     source_duration: float | None = None,
 ) -> list[dict[str, Any]]:
-    """Build keep-ranges from Whisper segment boundaries.
+    """Build keep-ranges from transcript segment boundaries.
 
-    Works at segment level, not word level.  Thai Whisper outputs individual
-    grapheme-cluster tokens whose timestamps can have large inter-character gaps
-    (e.g. 'ป'→'ั' = 0.88 s inside the same word), which the old word-level
-    splitter mistook for silence and cut mid-word.  A Whisper segment is already
-    a coherent speech unit — never split inside one.
+    Works at segment level, not word level: a segment is already a coherent
+    speech unit (``elevenlabs_stt.build_segments`` split it on a real pause), so
+    it is never split again here. This also predates Scribe — the Whisper path it
+    replaced emitted Thai as grapheme clusters with gaps up to 0.88 s *inside* a
+    word, which a word-level splitter mistook for silence and cut mid-word.
 
     Adjacent segments whose gap ≤ gap_threshold are merged into one cut.
     Word timestamps are still used for precise edge snapping.

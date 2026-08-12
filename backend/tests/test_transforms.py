@@ -128,7 +128,9 @@ def test_whip_pan_filter_vertical_biases_y_not_x() -> None:
         width=1080, height=1920, start_sec=0.0, end_sec=0.3,
     )
     assert "x='(iw-iw/zoom)/2'" in f
-    assert "y='(ih-ih/zoom)*(0.5+0.5*sign" in f
+    # 2*gte(...)-1, not sign(): ffmpeg's expr language has no sign()/sgn()
+    # (live 2026-08-12 — the whole render died on "Unknown function").
+    assert "y='(ih-ih/zoom)*(0.5+0.5*(2*gte" in f
 
 
 def test_punch_zoom_no_drift_is_static_focus() -> None:

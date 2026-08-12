@@ -90,6 +90,16 @@ export interface UsageByFeature {
   total_tokens: number
 }
 
+/** One of `packages/llm/usage.py USAGE_TASKS`. */
+export type UsageTask = 'cut' | 'effects' | 'style' | 'other'
+
+export interface UsageByTask {
+  task: UsageTask
+  total_tokens: number
+  /** Share of this period's total, already rounded by the server. */
+  pct: number
+}
+
 export interface Usage {
   user_id: number
   plan: string
@@ -102,6 +112,9 @@ export interface Usage {
   remaining_tokens: number | null
   usage_pct: number | null
   by_feature: UsageByFeature[]
+  /** Grouped view for the settings screen — always all four tasks, zeros
+   * included. Absent when talking to a backend older than this build. */
+  by_task?: UsageByTask[]
   reset_at: string | null
   // estimated_cost_usd exists on the backend response but is deliberately
   // left off this type — cost is never shown in this app.
@@ -109,6 +122,32 @@ export interface Usage {
 
 export function getUsage(baseUrl: string, accessToken: string): Promise<Usage> {
   return request<Usage>(baseUrl, '/usage/me', {
+    headers: { Authorization: `Bearer ${accessToken}` }
+  })
+}
+
+export interface SttUsage {
+  /** Audio minutes **this user** transcribed in the current period. Null only
+   * when the figure could not be fetched at all — not the same as zero. */
+  minutes: number | null
+  /** This user's share of the shared account, in ElevenLabs credits. */
+  credits?: number
+  /** True when some rows used a model with no measured rate — `credits` is
+   * then an upper bound, not a figure. */
+  credits_estimated?: boolean
+  period: string
+}
+
+/**
+ * Speech-to-text is billed by ElevenLabs per audio minute and never touches
+ * the LLM token quota, so it is a separate read with its own failure mode.
+ *
+ * The server answers from our own ledger, never from ElevenLabs: the API key
+ * is one account shared by every user of the system, so its account totals
+ * would show one user what everyone else has spent.
+ */
+export function getSttUsage(baseUrl: string, accessToken: string): Promise<SttUsage> {
+  return request<SttUsage>(baseUrl, '/usage/stt', {
     headers: { Authorization: `Bearer ${accessToken}` }
   })
 }

@@ -17,7 +17,7 @@ export const DUB_DURATION_CHIPS = [
   { value: '30', label: '30 วิ' },
   { value: '60', label: '60 วิ' },
   { value: '90', label: '90 วิ' },
-  { value: 'auto', label: 'AI เลือก' },
+  { value: 'auto', label: 'ให้ AI เลือก' },
   { value: 'music', label: 'ตามความยาวเพลง' },
   { value: 'custom', label: 'กำหนดเอง' }
 ] as const
@@ -57,7 +57,12 @@ export function dubTargetDurationSec(
     return Math.round(Math.min(Math.max(musicDurationSec, 15), 600))
   }
   if (scriptDuration === 'custom' && scriptCustomSec) return parseInt(scriptCustomSec, 10)
-  if (scriptDuration && scriptDuration !== 'auto' && scriptDuration !== 'custom' && scriptDuration !== 'music') {
+  if (
+    scriptDuration &&
+    scriptDuration !== 'auto' &&
+    scriptDuration !== 'custom' &&
+    scriptDuration !== 'music'
+  ) {
     return parseInt(scriptDuration, 10)
   }
   return null

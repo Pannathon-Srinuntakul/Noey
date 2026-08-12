@@ -13,6 +13,7 @@ worker reads it from there (desktop app + worker share the machine).
 
 from __future__ import annotations
 
+import shutil
 import uuid as _uuid
 from pathlib import Path
 
@@ -23,7 +24,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.core.logging import get_logger
 from packages.db.models.core_auth import Job
-from packages.db.models.effect_style import EffectStyle
+from packages.db.models.effect_style import (
+    CUT_STYLE_PLATFORMS,
+    EFFECT_STYLE_KINDS,
+    EffectStyle,
+)
 from packages.video.storage import data_root
 from services.api.deps import CurrentUser, db_session
 from services.api.routers.videos import _enqueue
@@ -45,6 +50,8 @@ class StyleSummary(BaseModel):
     uid: str
     name: str
     status: str
+    kind: str
+    target_platform: str | None = None
     has_reference: bool
     updated_at: str
 
@@ -80,6 +87,8 @@ def _summary(style: EffectStyle) -> StyleSummary:
         uid=style.uid,
         name=style.name,
         status=style.status,
+        kind=style.kind,
+        target_platform=style.target_platform,
         has_reference=bool(style.reference_clip_path),
         updated_at=style.updated_at.isoformat() if style.updated_at else "",
     )
@@ -124,13 +133,23 @@ async def create_style(
     session: AsyncSession = Depends(db_session),
     name: str = Form(...),
     description: str = Form(""),
+    kind: str = Form("effects"),
+    target_platform: str = Form(""),
     reference: UploadFile | None = File(None),
 ) -> StyleCreateOut:
     """Create a style (status=pending) and enqueue its distillation.
 
-    Requires a description and/or a reference clip — a style with neither has
-    nothing to distil.
+    Effects styles require a description and/or a reference clip. Cut styles
+    always require a reference *video* (cutting rhythm can't be distilled from
+    text alone) of at most 5 minutes.
     """
+    if kind not in EFFECT_STYLE_KINDS:
+        raise HTTPException(400, "kind ไม่ถูกต้อง")
+    if kind == "cut":
+        if reference is None:
+            raise HTTPException(400, "สไตล์การตัดต้องแนบคลิปอ้างอิง")
+        if target_platform and target_platform not in CUT_STYLE_PLATFORMS:
+            raise HTTPException(400, "platform ไม่ถูกต้อง")
     if not (description.strip() or reference is not None):
         raise HTTPException(400, "ต้องมีคำอธิบายสไตล์ หรือคลิปอ้างอิงอย่างน้อยหนึ่งอย่าง")
 
@@ -138,17 +157,42 @@ async def create_style(
     ref_rel: str | None = None
     if reference is not None:
         suffix = Path(reference.filename or "").suffix.lower()
-        if suffix not in _VIDEO_SUFFIXES and suffix not in _IMAGE_SUFFIXES:
+        if kind == "cut":
+            if suffix not in _VIDEO_SUFFIXES:
+                raise HTTPException(400, "สไตล์การตัดรองรับเฉพาะไฟล์วิดีโอ")
+        elif suffix not in _VIDEO_SUFFIXES and suffix not in _IMAGE_SUFFIXES:
             suffix = ".mp4"
         d = _style_dir(style_uid)
         d.mkdir(parents=True, exist_ok=True)
-        (d / f"reference{suffix}").write_bytes(await reference.read())
+        ref_path = d / f"reference{suffix}"
+        ref_path.write_bytes(await reference.read())
         ref_rel = f"effect_styles/{style_uid}/reference{suffix}"
+
+        if kind == "cut":
+            # Soft duration cap: reject clips over 20 minutes (~400k Gemini
+            # tokens — comfortably inside the 1M context; same ceiling as the
+            # dub footage bundle). If the probe itself fails, allow and let
+            # the distillation worker deal with it.
+            dur: float | None = None
+            try:
+                from packages.video.ffmpeg_bin import media_duration
+
+                dur = media_duration(ref_path)
+            except Exception as exc:  # noqa: BLE001 — soft cap, probe failure allowed
+                log.warning(
+                    "cut_style_duration_probe_failed",
+                    style_uid=style_uid, error=str(exc),
+                )
+            if dur is not None and dur > 1200:
+                shutil.rmtree(d, ignore_errors=True)
+                raise HTTPException(400, "คลิปอ้างอิงต้องยาวไม่เกิน 20 นาที")
 
     style = EffectStyle(
         uid=style_uid,
         user_id=auth.user_id,
         tenant_slug=auth.tenant_slug,
+        kind=kind,
+        target_platform=(target_platform or None) if kind == "cut" else None,
         name=name.strip() or "สไตล์ใหม่",
         description=description.strip() or None,
         reference_clip_path=ref_rel,
@@ -168,13 +212,13 @@ async def create_style(
 async def list_styles(
     auth: CurrentUser,
     session: AsyncSession = Depends(db_session),
+    kind: str | None = None,
 ) -> list[StyleSummary]:
+    stmt = select(EffectStyle).where(EffectStyle.user_id == auth.user_id)
+    if kind:
+        stmt = stmt.where(EffectStyle.kind == kind)
     rows = (
-        await session.execute(
-            select(EffectStyle)
-            .where(EffectStyle.user_id == auth.user_id)
-            .order_by(EffectStyle.updated_at.desc())
-        )
+        await session.execute(stmt.order_by(EffectStyle.updated_at.desc()))
     ).scalars().all()
     return [_summary(s) for s in rows]
 

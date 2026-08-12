@@ -3,8 +3,7 @@
   "include": [
     "src/renderer/src/env.d.ts",
     "src/renderer/src/**/*",
-    "src/renderer/src/**/*.tsx",
-    "../node-sidecar/src/compositions/**/*"
+    "src/renderer/src/**/*.tsx"
   ],
   "exclude": [
     "../node-sidecar/src/compositions/Root.tsx",
@@ -18,12 +17,6 @@
     "paths": {
       "@renderer/*": [
         "src/renderer/src/*"
-      ],
-      "@fx/*": [
-        "../node-sidecar/src/compositions/*"
-      ],
-      "@fx-fonts/*": [
-        "../node-sidecar/public/fonts/*"
       ]
     }
   }

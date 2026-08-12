@@ -65,21 +65,6 @@ services:
       redis:
         condition: service_healthy
 
-  whisper:
-    build: ./backend
-    container_name: noey_whisper
-    restart: unless-stopped
-    command: ["python", "-m", "services.whisper"]
-    env_file: .env
-    environment:
-      POSTGRES_HOST: postgres
-      REDIS_URL: redis://redis:6379/0
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-
   web:
     build:
       context: ./frontend

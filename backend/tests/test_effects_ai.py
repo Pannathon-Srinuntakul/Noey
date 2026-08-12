@@ -1,5 +1,5 @@
-"""Tests for the effects placement AI call: catalogPlacements parsing,
-reference/image-asset wiring (2026-07-17)."""
+"""Tests for the effects placement AI call — motion only (zoomPunches,
+transitions, sceneDrifts) plus the optional style-reference wiring."""
 
 from __future__ import annotations
 
@@ -43,134 +43,9 @@ def _patch_common(monkeypatch: pytest.MonkeyPatch, *, content: str, uploaded: li
 def _empty_placement(**overrides: Any) -> str:
     import json
 
-    base = {
-        "catalogPlacements": [], "customEffects": [], "zoomPunches": [],
-        "transitions": [], "sceneDrifts": [],
-    }
+    base = {"zoomPunches": [], "transitions": [], "sceneDrifts": []}
     base.update(overrides)
     return json.dumps(base, ensure_ascii=False)
-
-
-@pytest.mark.asyncio
-async def test_catalog_placement_normalizes_and_clamps(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
-    video = tmp_path / "cut.mp4"
-    video.write_bytes(b"fake")
-
-    content = _empty_placement(catalogPlacements=[
-        {
-            "componentId": "text-neon",
-            "props": {"text": "ลดราคา", "x": 5.0, "y": -1.0, "fontSize": 9999},
-            "startSec": 1.0,
-            "durationSec": 2.0,
-        }
-    ])
-    _patch_common(monkeypatch, content=content)
-
-    doc = await effects_ai.generate_effects_placement(video, project_uid="p1")
-
-    assert len(doc["instances"]) == 1
-    inst = doc["instances"][0]
-    assert inst["componentId"] == "text-neon"
-    assert inst["kind"] == "overlay"
-    assert inst["props"]["x"] == 0.97  # clamped into _POS
-    assert inst["props"]["y"] == 0.03
-    assert inst["props"]["fontSize"] == 320  # clamped to bound
-
-
-@pytest.mark.asyncio
-async def test_catalog_placement_with_empty_props_is_dropped(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
-    """Regression for a real observed run: the model picked real catalog
-    components at script-aligned timestamps but shipped every one with
-    `props: {}` — rendering nothing but bland bundled defaults, disconnected
-    from the clip. Must be dropped, not rendered half-finished."""
-    video = tmp_path / "cut.mp4"
-    video.write_bytes(b"fake")
-
-    content = _empty_placement(catalogPlacements=[
-        {"componentId": "text-neon", "props": {}, "startSec": 0.5, "durationSec": 2.5},
-        {"componentId": "callout", "props": {"x": 0.5, "y": 0.5}, "startSec": 3.5, "durationSec": 2.5},
-        {"componentId": "vibe-wash", "props": {}, "startSec": 6.0, "durationSec": 2.0},
-    ])
-    _patch_common(monkeypatch, content=content)
-
-    doc = await effects_ai.generate_effects_placement(video, project_uid="p1")
-
-    ids = {i["componentId"] for i in doc["instances"]}
-    # text-neon (missing "text") and callout (missing "label") are dropped;
-    # vibe-wash has no primary text prop to police, so empty props is fine —
-    # it's a full-frame wash that has a sensible bundled look either way.
-    assert "text-neon" not in ids
-    assert "callout" not in ids
-    assert "vibe-wash" in ids
-
-
-@pytest.mark.asyncio
-async def test_catalog_placement_drops_unknown_component_id(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
-    video = tmp_path / "cut.mp4"
-    video.write_bytes(b"fake")
-
-    content = _empty_placement(catalogPlacements=[
-        {"componentId": "made-up-thing", "props": {}, "startSec": 0, "durationSec": 1},
-        {"componentId": "punch-zoom", "props": {"zoomTo": 1.5}, "startSec": 0, "durationSec": 1},
-    ])
-    _patch_common(monkeypatch, content=content)
-
-    doc = await effects_ai.generate_effects_placement(video, project_uid="p1")
-
-    # Unknown id dropped; punch-zoom is a real catalog id but kind=transform,
-    # not placeable via catalogPlacements (that's zoomPunches' job).
-    assert doc["instances"] == []
-
-
-@pytest.mark.asyncio
-async def test_catalog_placement_image_sticker_without_asset_is_dropped(
-    monkeypatch: pytest.MonkeyPatch, tmp_path
-) -> None:
-    video = tmp_path / "cut.mp4"
-    video.write_bytes(b"fake")
-
-    content = _empty_placement(catalogPlacements=[
-        {"componentId": "image-sticker", "props": {"x": 0.5, "y": 0.5}, "startSec": 0, "durationSec": 1},
-    ])
-    _patch_common(monkeypatch, content=content)
-
-    doc = await effects_ai.generate_effects_placement(video, project_uid="p1")
-
-    # No image_asset_path was passed — nothing for the sticker to show.
-    assert doc["instances"] == []
-
-
-@pytest.mark.asyncio
-async def test_catalog_placement_image_sticker_with_asset_gets_sentinel(
-    monkeypatch: pytest.MonkeyPatch, tmp_path
-) -> None:
-    video = tmp_path / "cut.mp4"
-    video.write_bytes(b"fake")
-    asset = tmp_path / "logo.jpg"
-    asset.write_bytes(b"fake-jpg")
-
-    content = _empty_placement(catalogPlacements=[
-        {
-            "componentId": "logo-reveal",
-            "props": {"kind": "stamp", "x": 0.5, "y": 0.5, "imagePath": "/not/real.png"},
-            "startSec": 0,
-            "durationSec": 1,
-        },
-    ])
-    uploaded: list[str] = []
-    _patch_common(monkeypatch, content=content, uploaded=uploaded)
-
-    doc = await effects_ai.generate_effects_placement(
-        video, project_uid="p1", image_asset_path=asset
-    )
-
-    assert len(doc["instances"]) == 1
-    inst = doc["instances"][0]
-    assert inst["componentId"] == "logo-reveal"
-    # The model's fake path is stripped and replaced with the sentinel — never
-    # trusted verbatim, since it can't possibly be a real local file path.
-    assert inst["props"]["imagePath"] == "__PENDING_ASSET__"
-    assert "logo.jpg" in uploaded
 
 
 def test_zoom_ramp_sec_clamps_per_style() -> None:
@@ -645,7 +520,7 @@ async def test_regenerate_without_style_omits_technique_note(
     monkeypatch.setattr("packages.llm.config.call_kwargs", lambda model=None, effort=None: {"model": model})
     monkeypatch.setattr("packages.video.ffmpeg_bin.media_duration", lambda path: 20.0)
 
-    previous_doc = {"instances": [{"id": "cat_ai_0", "kind": "overlay", "componentId": "plain-caption"}]}
+    previous_doc = {"instances": [{"id": "zoom_ai_0", "kind": "transform", "componentId": "punch-zoom"}]}
 
     await effects_ai.generate_effects_placement(
         video, project_uid="p1", previous_doc=previous_doc,
@@ -696,13 +571,11 @@ async def test_scene_drift_ignored_without_cut_points(monkeypatch: pytest.Monkey
 
 
 @pytest.mark.asyncio
-async def test_reference_and_asset_blocks_included_in_message(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+async def test_reference_block_included_in_message(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     video = tmp_path / "cut.mp4"
     video.write_bytes(b"fake")
     reference = tmp_path / "ref.mp4"
     reference.write_bytes(b"fake-ref")
-    asset = tmp_path / "pic.png"
-    asset.write_bytes(b"fake-png")
 
     captured: dict[str, Any] = {}
 
@@ -734,24 +607,20 @@ async def test_reference_and_asset_blocks_included_in_message(monkeypatch: pytes
     monkeypatch.setattr("packages.video.ffmpeg_bin.media_duration", lambda path: 20.0)
 
     await effects_ai.generate_effects_placement(
-        video, project_uid="p1", reference_path=reference, image_asset_path=asset
+        video, project_uid="p1", reference_path=reference
     )
 
     content = captured["messages"][0]["content"]
     labels = [c["text"] for c in content if c.get("type") == "text"]
     assert "=== style reference (NOT the actual clip) ===" in labels
-    assert "=== image asset (may be placed as a sticker/popup) ===" in labels
     assert "=== cut video ===" in labels
-
-    # Prompt actually explains both optional sections when present.
     assert "<reference>" in captured["system"]
-    assert "<image_asset>" in captured["system"]
-    assert "__CATALOG_BLOCK__" not in captured["system"]  # substituted, not left literal
-    assert "text-neon" in captured["system"]  # catalog block actually injected
+    # No placeholder token survives into the real prompt.
+    assert "__" not in captured["system"].replace("__STYLE_PROSE__", "")
 
 
 @pytest.mark.asyncio
-async def test_no_reference_or_asset_omits_optional_sections(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+async def test_no_reference_omits_the_optional_section(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     video = tmp_path / "cut.mp4"
     video.write_bytes(b"fake")
 
@@ -785,8 +654,67 @@ async def test_no_reference_or_asset_omits_optional_sections(monkeypatch: pytest
 
     await effects_ai.generate_effects_placement(video, project_uid="p1")
 
-    # <catalog> mentions "<image_asset>" in passing prose even when the section
-    # itself is absent — check for the section's actual body text instead of
-    # the bare tag string.
-    assert "style inspiration only" not in captured["system"]
-    assert "You MAY place it via" not in captured["system"]
+    assert "<reference>" not in captured["system"]
+    assert "=== style reference" not in captured["system"]
+
+
+@pytest.mark.asyncio
+async def test_open_out_zoom_is_forced_eased_and_held(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    """zoomFrom > zoomTo is the reveal move (R8 "ซูมออกช้า"). A "cut" entry or a
+    ramp-back release would both erase it, so the parser overrides the model."""
+    video = tmp_path / "cut.mp4"
+    video.write_bytes(b"fake")
+    content = _empty_placement(zoomPunches=[{
+        "startSec": 0.0, "durationSec": 2.6, "focusOn": "logo",
+        "focusX": 0.52, "focusY": 0.34,
+        "zoomFrom": 1.9, "zoomTo": 1.0,
+        # The model asked for a hard cut; an open-out cannot be one.
+        "style": "cut", "rampSec": 1.6, "driftX": 0.52, "driftY": 0.34,
+    }])
+    _patch_common(monkeypatch, content=content)
+
+    doc = await effects_ai.generate_effects_placement(video, project_uid="p1")
+    props = doc["instances"][0]["props"]
+    assert props["zoomFrom"] == 1.9
+    assert props["zoomTo"] == 1.0
+    assert props["cut"] == "false"      # forced eased
+    assert props["hold"] == "true"      # no ramp-back re-tightening the frame
+    # Push clamp, not the 0.05-0.15 cut clamp: 1.6 requested, capped at half
+    # the 2.6s window so the ramp cannot eat the whole move.
+    assert props["rampSec"] == 1.3
+
+
+@pytest.mark.asyncio
+async def test_push_in_still_defaults_to_zoom_from_one(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    video = tmp_path / "cut.mp4"
+    video.write_bytes(b"fake")
+    content = _empty_placement(zoomPunches=[{
+        "startSec": 1.0, "durationSec": 2.0, "focusOn": "hem",
+        "focusX": 0.5, "focusY": 0.8, "zoomTo": 1.4,
+        "style": "push", "rampSec": 1.0, "driftX": 0.5, "driftY": 0.8,
+    }])
+    _patch_common(monkeypatch, content=content)
+
+    doc = await effects_ai.generate_effects_placement(video, project_uid="p1")
+    props = doc["instances"][0]["props"]
+    assert props["zoomFrom"] == 1.0
+    assert props["zoomTo"] == 1.4
+    assert props["cut"] == "false"
+
+
+@pytest.mark.asyncio
+async def test_scene_drift_can_open_out(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    video = tmp_path / "cut.mp4"
+    video.write_bytes(b"fake")
+    content = _empty_placement(sceneDrifts=[{
+        "startSec": 0.0, "durationSec": 6.0,
+        "zoomFrom": 1.4, "zoomTo": 1.0, "direction": "in",
+    }])
+    _patch_common(monkeypatch, content=content)
+
+    doc = await effects_ai.generate_effects_placement(
+        video, project_uid="p1", cut_points_sec=[6.0],
+    )
+    props = doc["instances"][0]["props"]
+    assert props["zoomFrom"] == 1.4
+    assert props["zoomTo"] == 1.0

@@ -53,25 +53,19 @@ class Settings(BaseSettings):
     # tier. override via DUB_VISION_MODEL.
     dub_vision_model: str = "gemini-3.1-pro-preview"
     dub_vision_timeout_sec: int = 1200  # video inference is slower than Files-API frames
+    # Cut-style distillation (packages/video/cut_style.py): >0 attaches
+    # video_metadata {"fps": N} to the reference upload for denser sampling.
+    # Enable ONLY after scripts/probe_gemini_fps.py confirms LiteLLM passes it
+    # through to Gemini — PySceneDetect stats carry the rhythm signal regardless.
+    cut_style_ref_fps: int = 0
 
-    # --- AI-assisted effects layer (Remotion) placement pass ---
-    # Watches the already-cut video and places effect instances (overlays +
-    # transforms) from the component catalog. Same pro/video tier as the dub
-    # vision call — it is a reasoning-heavy "where do effects belong" judgment,
-    # not a cheap text task. Override via EFFECTS_VISION_MODEL.
+    # --- AI-assisted effects layer (camera motion) placement pass ---
+    # Watches the already-cut video and places ffmpeg transforms (punch-zoom,
+    # whip-pan, scene-drift). Same pro/video tier as the dub vision call — it
+    # is a reasoning-heavy "where does motion belong" judgment, not a cheap
+    # text task. Override via EFFECTS_VISION_MODEL.
     effects_vision_model: str = "gemini-3.1-pro-preview"
     effects_vision_timeout_sec: int = 900
-
-    # --- AI-generated effect components (custom template/effect creation) ---
-    # Code-generation call (not video-watching). Output is UNTRUSTED and
-    # re-validated by desktop/node-sidecar/src/codegenValidate.mjs before
-    # bundling. Override via EFFECTS_CODEGEN_MODEL.
-    # Gemini 3.1 Pro (not Flash): Flash habitually imported framer-motion /
-    # ignored Remotion-only constraints on real runs; Pro follows the
-    # allowlist more reliably. One clip can still trigger many concurrent
-    # codegen calls — expect higher cost/latency than Flash.
-    effects_codegen_model: str = "gemini/gemini-3.1-pro-preview"
-    effects_codegen_timeout_sec: int = 300
 
     # --- Auth (JWT) ---
     jwt_secret: str = "dev_change_me_in_production"
@@ -96,9 +90,6 @@ class Settings(BaseSettings):
     # --- Video processing ---
     ffmpeg_path: str | None = None  # optional override; else auto-detect PATH / WinGet
 
-    # --- Modal Whisper service (optional — local faster-whisper used when unset) ---
-    modal_whisper_url: str | None = None  # set to Modal endpoint URL to use GPU transcription
-
     # --- S3-compatible object storage (optional — local filesystem used when unset) ---
     s3_bucket: str | None = None
     s3_endpoint_url: str | None = None   # Cloudflare R2: https://<account>.r2.cloudflarestorage.com
@@ -106,31 +97,53 @@ class Settings(BaseSettings):
     s3_secret_access_key: str | None = None
     s3_region: str = "auto"
 
-    # --- Speech-to-text (faster-whisper) ---
-    # large-v3-turbo: best quality/speed tradeoff for Thai on CPU (~4x large-v3 speed, ~93% quality).
-    # Upgrade to large-v3 + whisper_device=cuda for maximum accuracy.
-    whisper_model: str = "large-v3-turbo"
-    whisper_device: str = "cpu"          # "cpu" | "cuda"
-    whisper_compute: str = "int8"        # cpu: int8 | cuda: float16
-    whisper_language: str = "th"         # force language; "" = auto-detect (risk of drift)
-
-    # --- Gemini talking-head review pass (hybrid: Whisper owns timing, Gemini watches video) ---
-    # When enabled, after Whisper transcribes each clip, Gemini WATCHES that clip's actual video
-    # (not just audio) and corrects mis-heard Thai words, classifies each segment (keep / stutter /
-    # repeat / semantic-repeat / dead-air), and decides keep/cut for candidate silence gaps.
-    # Timestamps always come from Whisper — Gemini never sees or returns them. This is a reasoning-
-    # heavy multimodal judgment call (not a cheap text fix), so it uses the same model tier as
-    # dub_first's video review, not a flash model.
-    # Set GEMINI_REFINE_ENABLED=false to run Whisper-only, code-only cuts (needs gemini_api_key set
-    # to actually take effect either way).
-    gemini_refine_enabled: bool = True
-    talking_vision_model: str = "gemini-3.1-pro-preview"  # override via TALKING_VISION_MODEL
-    talking_vision_timeout_sec: int = 1200  # per-clip call; video inference is slow
+    # --- Speech-to-text (ElevenLabs Scribe — the only transcription path) ---
+    # Replaced faster-whisper + the Modal GPU worker + the Gemini review pass.
+    # Scribe returns frame-aligned word timestamps, so the silence cut is decided
+    # arithmetically in packages/video/elevenlabs_stt.py — no VAD, no reviewer model.
+    elevenlabs_api_key: str | None = None
+    elevenlabs_stt_model: str = "scribe_v2"
+    elevenlabs_language: str = "th"       # ISO-639-1; "" = auto-detect (risk of drift)
+    elevenlabs_stt_timeout_sec: int = 900
+    # Character-level timings let word bounds be tightened past the word envelope
+    # (leading breath / trailing tone decay). "word" halves the response size.
+    elevenlabs_timestamps_granularity: str = "character"  # "character" | "word"
+    # Model-side removal of filler words, false starts and disfluencies —
+    # replaces the stutter/repeat classification the review pass used to do.
+    elevenlabs_no_verbatim: bool = True
+    # Tags laughter/applause/etc. build_silence_gaps keeps only the silent spans
+    # that contain one of these; every other silent span is cut.
+    elevenlabs_tag_audio_events: bool = True
+    # Speaker separation — when on, words outside the dominant speaker are dropped
+    # (bystanders, TV in the background). Off by default: a single-presenter clip
+    # gains nothing and mis-clustering would delete real speech.
+    elevenlabs_diarize: bool = False
+    elevenlabs_num_speakers: int | None = None
+    # Drop words below this log-probability. Conservative default — it only
+    # catches tokens hallucinated over music/room noise. Tighten toward -1.0
+    # after scripts/probe_elevenlabs.py shows the real distribution on your clips.
+    elevenlabs_min_word_logprob: float = -2.0
+    # Strip the RIFF header and upload headerless PCM (Scribe's pcm_s16le_16 fast
+    # path). extract_speech_wav already writes 16-bit mono 16 kHz; anything else
+    # falls back to uploading the container.
+    elevenlabs_send_raw_pcm: bool = True
+    # Fixed sampling seed so re-running a project transcribes to the same words
+    # and therefore cuts at the same places. Any constant works — what matters is
+    # that it does not change between runs. Determinism is best-effort per the
+    # API docs, not a guarantee. Set to null to let the service pick each time.
+    elevenlabs_seed: int | None = 1
+    # temperature is deliberately NOT set: omitted, Scribe uses the value tuned
+    # for the model (≈0 per the docs), which is what transcription wants.
 
     # --- LLM plan limits (tokens per DAILY window, 0 = unlimited) ---
     # The window is a rolling UTC calendar day — see packages/llm/usage.py:_period_start.
     # Env var names keep the "_monthly_" spelling for backward compatibility only.
-    plan_free_monthly_tokens: int = 0                # 0 = unlimited (personal system, single owner)
+    # 10M/day while the product is in testing with a single owner (owner's call,
+    # 2026-08-12). It was 0 (unlimited), but the desktop settings screen shows
+    # usage as a share of the quota and there is no share of "unlimited".
+    # Raise it here or via PLAN_FREE_MONTHLY_TOKENS — do not hardcode the number
+    # anywhere else.
+    plan_free_monthly_tokens: int = 10_000_000
     plan_starter_monthly_tokens: int = 2_000_000
     plan_pro_monthly_tokens: int = 10_000_000
     plan_enterprise_monthly_tokens: int = 0  # 0 = unlimited

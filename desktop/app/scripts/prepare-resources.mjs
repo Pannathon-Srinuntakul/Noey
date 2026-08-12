@@ -85,15 +85,6 @@ function findFile(root, name) {
   return null
 }
 
-function findDir(root, pattern) {
-  if (!existsSync(root)) return null
-  for (const entry of readdirSync(root)) {
-    const p = join(root, entry)
-    if (statSync(p).isDirectory() && pattern.test(entry)) return p
-  }
-  return null
-}
-
 if (existsSync(ffmpegBin) && existsSync(ffprobeBin)) {
   log(`ffmpeg cached at ${ffmpegVendorDir}`)
 } else {
@@ -136,74 +127,5 @@ if (existsSync(ffmpegBin) && existsSync(ffprobeBin)) {
 
 // Stage the current platform's ffmpeg where electron-builder expects it.
 cpSync(ffmpegVendorDir, join(stagingDir, 'ffmpeg'), { recursive: true })
-
-// ── 4. Node/Remotion sidecar + bundled Chrome Headless Shell ──────────────────
-// Ships the overlay renderer so a machine with no Node/Chrome can render effects.
-// Runs via Electron's own embedded Node (ELECTRON_RUN_AS_NODE) — no separate Node
-// binary needed; only node_modules + the Chrome Headless Shell must travel.
-log('staging node-sidecar (Remotion overlay renderer)…')
-const nodeSidecarSrc = resolve(appDir, '../node-sidecar')
-const nodeSidecarDest = join(stagingDir, 'node-sidecar')
-
-if (!existsSync(join(nodeSidecarSrc, 'node_modules'))) {
-  throw new Error('node-sidecar/node_modules missing — run `npm install` in desktop/node-sidecar first')
-}
-
-// Make sure the Chrome Headless Shell is downloaded into the sidecar cache.
-log('ensuring Remotion browser (Chrome Headless Shell)…')
-execSync('node -e "require(\'@remotion/renderer\').ensureBrowser()"', {
-  cwd: nodeSidecarSrc,
-  stdio: 'inherit'
-})
-
-// Pre-bundle the FIXED registry compositions once so the common case (a
-// registry component) renders without live-bundling. @remotion/bundler is now
-// a real (production) dependency, not a devDep — the AI-generated-component
-// pipeline (codegenValidate.mjs + codegen.mjs, added 2026-07-16) needs it at
-// runtime to live-bundle a validated one-off component, so it ships in the
-// installer despite the size cost. It stays out of the pre-bundled path above.
-log('fetching animated-emoji assets (cached after the first run)…')
-execSync('node scripts/fetch-emoji.mjs', { cwd: nodeSidecarSrc, stdio: 'inherit' })
-
-log('fetching Thai overlay-text fonts (cached after the first run)…')
-execSync('node scripts/fetch-fonts.mjs', { cwd: nodeSidecarSrc, stdio: 'inherit' })
-
-log('pre-bundling Remotion compositions…')
-execSync('node src/prebundle.mjs', { cwd: nodeSidecarSrc, stdio: 'inherit' })
-
-// The shell is a folder (exe + its DLLs) — copy the whole thing, not just the exe.
-const shellDirName =
-  process.platform === 'win32' ? 'win64' : process.arch === 'arm64' ? 'mac-arm64' : 'mac-x64'
-const shellParent = join(
-  nodeSidecarSrc,
-  'node_modules',
-  '.remotion',
-  'chrome-headless-shell',
-  shellDirName
-)
-const shellFolder = findDir(shellParent, /^chrome-headless-shell-/)
-if (!shellFolder) {
-  throw new Error(`chrome-headless-shell not found under ${shellParent} after ensureBrowser`)
-}
-
-// Stage src + package.json/lock + pre-bundle, then do a CLEAN production install
-// (no devDependencies) directly in the staged dir. @remotion/bundler ships now
-// (see comment above) so this install is larger than before the codegen
-// feature — that size increase is the accepted cost of the safety-gated
-// AI-component pipeline, not an oversight.
-mkdirSync(nodeSidecarDest, { recursive: true })
-cpSync(join(nodeSidecarSrc, 'package.json'), join(nodeSidecarDest, 'package.json'))
-cpSync(join(nodeSidecarSrc, 'package-lock.json'), join(nodeSidecarDest, 'package-lock.json'))
-cpSync(join(nodeSidecarSrc, 'src'), join(nodeSidecarDest, 'src'), { recursive: true })
-cpSync(join(nodeSidecarSrc, 'bundle'), join(nodeSidecarDest, 'bundle'), { recursive: true })
-// Animated-emoji videos — the AnimatedEmoji component needs the actual .webm
-// files on disk (the npm package ships code only); nodeSidecar.ts points
-// NOEY_EMOJI_DIR here so renders work offline.
-cpSync(join(nodeSidecarSrc, 'emoji'), join(nodeSidecarDest, 'emoji'), { recursive: true })
-log('installing node-sidecar production deps (omit dev)…')
-execSync('npm ci --omit=dev --ignore-scripts', { cwd: nodeSidecarDest, stdio: 'inherit' })
-// Stable path the main process points REMOTION_BROWSER_EXECUTABLE at (nodeSidecar.ts).
-cpSync(shellFolder, join(nodeSidecarDest, 'chrome-headless-shell'), { recursive: true })
-log(`node-sidecar staged (shell: ${shellDirName})`)
 
 log('done — resources staged for electron-builder')

@@ -7,11 +7,16 @@ EFFECTS_PLACEMENT_SYSTEM (effects_ai.py, via the ``__STYLE_BLOCK__`` token) on
 every placement run — so the reference video is analysed a single time instead
 of being re-uploaded to Gemini on each run.
 
-Analysis is checklist-first: the model fills a fixed list of style axes that
-map to what our effects pipeline can actually reproduce (captions, overlays,
-hard-cut reframes, punch-zooms, scene-drift, transitions, fonts), PLUS an
-open-ended ``openObservations`` field for anything outside that list. We then
-render the JSON into plain prose for the placement prompt.
+SCOPE: camera motion only — the three ffmpeg transforms in
+``transforms.TRANSFORM_REGISTRY`` (punch-zoom, whip-pan, scene-drift). Overlay
+matters (captions, stickers, decorative effects, fonts) are deliberately NOT
+distilled: a style that described them would be steering a half of the pipeline
+this style system does not own, and every axis we cannot reproduce is an
+invitation for the model to invent one.
+
+Analysis is checklist-first: the model fills a fixed list of motion axes, PLUS
+an open-ended ``openObservations`` field for motion notes outside that list. We
+then render the JSON into plain prose for the placement prompt.
 """
 
 from __future__ import annotations
@@ -29,17 +34,18 @@ log = get_logger(__name__)
 # Cadence bands — flexible intensity labels, not hard counts.
 _CADENCE = ("almost-every-beat", "most-scenes", "some-scenes", "rare", "almost-never")
 
-# Fixed checklist of style axes our effects layer can act on. Shown to the
-# model AND mirrored in STYLE_OBSERVATION_SCHEMA so nothing important is skipped.
+# Fixed checklist of motion axes our ffmpeg transforms can act on — one axis per
+# entry in TRANSFORM_REGISTRY, no more. Shown to the model AND mirrored in
+# STYLE_OBSERVATION_SCHEMA so nothing in the list is skipped.
 STYLE_AXES_LIST: list[tuple[str, str]] = [
-    ("captionVoice", "Spoken/on-screen voice & tone (first-person vs narrator, casual vs polished, emoji habit) — do NOT quote literal caption words"),
-    ("onScreenText", "Intentional captions/labels density & placement (ignore tiny platform watermarks)"),
-    ("decorativeEffects", "Flashy overlays: neon/glow/glitch/particles/animated stickers"),
-    ("hardCutReframes", "Hard-cut changes of framing (wide ↔ mid/close across cuts) — NOT the same as a push-zoom"),
-    ("pushZoomHolds", "Synthetic push / zoom-hold onto a detail inside a shot (our punch-zoom)"),
+    ("pushZoomHolds", "Zoom onto a detail inside a shot — our punch-zoom, which can either RAMP in smoothly or SNAP straight to the tighter framing (its `cut` prop). Count both; say which one the reference favours in `notes`"),
     ("ambientDrift", "Continuous ambient handheld-style drift across a whole scene (our scene-drift)"),
     ("transitions", "Cut transitions: plain hard cuts vs whip-pan/sweep (our whip-pan)"),
-    ("fontMood", "Font mood when intentional text exists (e.g. bold geometric, friendly rounded, display serif)"),
+]
+
+# Free-text axes that shape HOW a motion is applied rather than how often.
+STYLE_TEXT_AXES: list[tuple[str, str]] = [
+    ("zoomAttack", "For the zooms counted above: mostly 'ramp' (smooth push), mostly 'cut' (snaps straight in, no ramp), or 'mixed'. Empty string if there are no zooms to judge"),
 ]
 
 _CADENCE_PROP = {
@@ -54,69 +60,80 @@ _CADENCE_PROP = {
 STYLE_OBSERVATION_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
-        "captionVoice": {"type": "string"},
-        "onScreenText": _CADENCE_PROP,
-        "decorativeEffects": _CADENCE_PROP,
-        "hardCutReframes": _CADENCE_PROP,
         "pushZoomHolds": _CADENCE_PROP,
         "ambientDrift": _CADENCE_PROP,
         "transitions": _CADENCE_PROP,
-        "fontMood": {"type": "string"},
-        # Open-ended: anything the checklist missed (color grade, pacing, music
-        # feel, product-demo habits, etc.) — short English phrases, may be [].
+        # Ramp vs snap — punch-zoom's `cut` prop, a different look at the same
+        # cadence, so it rides alongside the bands rather than inside one.
+        "zoomAttack": {"type": "string"},
+        # Open-ended, but still MOTION only: how long a hold lingers, whether
+        # motion tracks the music, whether zooms favour faces or products.
+        # Short English phrases, may be [].
         "openObservations": {
             "type": "array",
             "items": {"type": "string"},
         },
     },
     "required": [
-        "captionVoice",
-        "onScreenText",
-        "decorativeEffects",
-        "hardCutReframes",
         "pushZoomHolds",
         "ambientDrift",
         "transitions",
-        "fontMood",
+        "zoomAttack",
         "openObservations",
     ],
 }
 
 
 def _axes_block() -> str:
-    lines = [f"- `{key}` — {desc}" for key, desc in STYLE_AXES_LIST]
+    lines = [f"- `{key}` (cadence + notes) — {desc}" for key, desc in STYLE_AXES_LIST]
+    lines += [f"- `{key}` (short text) — {desc}" for key, desc in STYLE_TEXT_AXES]
     return "\n".join(lines)
 
 
 STYLE_DISTILL_SYSTEM = f"""<role>
 You are a short-form (TikTok) video-editing analyst. You are given a REFERENCE
 clip and/or a text description of an editing style. Fill the checklist JSON
-below so a DIFFERENT motion-graphics AI can later edit OTHER clips in this
-same style. Describe reusable PATTERNS only — never the reference's exact
-product, literal caption words, or one-off colors. English only.
+below so a DIFFERENT AI can later apply the same CAMERA MOTION to OTHER clips.
+Describe reusable PATTERNS only — never the reference's exact product or
+one-off content. English only.
 </role>
 
+<scope>
+CAMERA MOTION ONLY. The three axes below are the only motions our renderer can
+apply, and they are the only thing you are being asked about.
+
+Say NOTHING about captions, on-screen text, stickers, emoji, particles, glow,
+glitch, fonts, colour grade, or voice/tone — a different part of the system
+owns those, and notes about them here would be ignored at best and would
+mislead the editor at worst. If the reference is full of captions and
+stickers, that is simply not what this analysis is for.
+</scope>
+
 <style_axes_checklist>
-These axes map to what our editor can reproduce. Fill EVERY one.
+Fill EVERY axis.
 
 {_axes_block()}
 
 Cadence bands (use exactly these strings for every `cadence` field):
   {" | ".join(_CADENCE)}
 
-Also fill `openObservations`: an OPEN list of short notes for anything
-important that is NOT covered by the checklist above (may be empty []).
-Examples of open notes: color-grade mood, beat pacing vs music, how long
-holds linger, whether B-roll inserts are used, silence vs VO energy — only
-if you actually see/hear them.
+Also fill `openObservations`: an OPEN list of short notes about MOTION that the
+three axes do not capture (may be empty []). Good examples: how long a zoom
+holds before releasing, whether motion lands on the beat, whether pushes favour
+faces or products, whether motion is stronger at the hook than later.
 </style_axes_checklist>
 
-<anti_absolutes>
-Do not collapse hard-cut reframes into "camera completely static".
-Do not treat platform watermarks as intentional captions.
-Prefer an honest cadence band over words like "completely / never / zero"
-unless the band is truly almost-never for nearly the whole clip.
-</anti_absolutes>
+<honesty>
+A cadence you cannot actually observe is worse than no style at all — it will
+be followed literally. From a TEXT-ONLY description, only state a band the
+description really implies; leave the rest at the honest default and put what
+you do know in `notes`.
+A hard SNAP to a tighter framing inside the same shot still counts as
+`pushZoomHolds` — our punch-zoom renders that with no ramp. Only a genuine cut
+to different footage is not a zoom.
+Prefer an honest band over "completely / never / zero" unless it is truly
+almost-never across nearly the whole clip.
+</honesty>
 
 <output>
 Return ONLY JSON matching the schema. No markdown fences, no preamble.
@@ -132,48 +149,48 @@ def _guess_mime(path: pathlib.Path, *, default: str) -> str:
     return _IMAGE_SUFFIXES.get(path.suffix.lower()) or _VIDEO_SUFFIXES.get(path.suffix.lower()) or default
 
 
-def _band(obj: Any, default: str = "some-scenes") -> tuple[str, str]:
+def _band(obj: Any) -> tuple[str, str] | None:
+    """`(cadence, notes)` for one axis, or None when the model did not give a
+    usable band. None means "say nothing about this axis" — see
+    format_style_guide for why a default would be worse than silence."""
     if not isinstance(obj, dict):
-        return default, ""
-    cad = str(obj.get("cadence") or default).strip()
+        return None
+    cad = str(obj.get("cadence") or "").strip()
     if cad not in _CADENCE:
-        cad = default
-    notes = str(obj.get("notes") or "").strip()
-    return cad, notes
+        return None
+    return cad, str(obj.get("notes") or "").strip()
 
 
 def format_style_guide(obs: dict[str, Any]) -> str:
-    """Render checklist JSON (+ open notes) into placement-prompt prose."""
-    voice = str(obs.get("captionVoice") or "").strip() or "Match the creator's natural speaking tone."
-    text_c, text_n = _band(obs.get("onScreenText"), "some-scenes")
-    deco_c, deco_n = _band(obs.get("decorativeEffects"), "almost-never")
-    cut_c, cut_n = _band(obs.get("hardCutReframes"), "some-scenes")
-    zoom_c, zoom_n = _band(obs.get("pushZoomHolds"), "rare")
-    drift_c, drift_n = _band(obs.get("ambientDrift"), "almost-never")
-    trans_c, trans_n = _band(obs.get("transitions"), "almost-never")
-    font = str(obs.get("fontMood") or "").strip()
+    """Render the motion checklist (+ open notes) into placement-prompt prose.
+
+    An axis the model did not answer is OMITTED rather than defaulted. A
+    fabricated "cadence almost-never" reads exactly like an observed one, and
+    the placement prompt treats the style as authoritative — so a silent
+    default would quietly switch a motion off across every future render.
+    """
+    labelled = [
+        ("pushZoomHolds", "Push/zoom-holds on a detail (punch-zoom)"),
+        ("ambientDrift", "Ambient scene drift"),
+        ("transitions", "Sweep/whip transitions (else plain hard cuts)"),
+    ]
+
+    parts: list[str] = []
+    for key, label in labelled:
+        band = _band(obs.get(key))
+        if band is None:
+            continue
+        cadence, notes = band
+        parts.append(f"{label}: cadence {cadence}." + (f" {notes}" if notes else ""))
+
+    attack = str(obs.get("zoomAttack") or "").strip()
+    if attack and parts:
+        parts.append(f"Zoom attack: {attack} (ramp = smooth push, cut = snap straight in).")
+
     extras = obs.get("openObservations") or []
     if not isinstance(extras, list):
         extras = []
     extra_lines = [str(x).strip() for x in extras if str(x).strip()]
-
-    parts: list[str] = [
-        f"Voice & tone: {voice}",
-        f"On-screen text: cadence {text_c}."
-        + (f" {text_n}" if text_n else " Intentional captions only; ignore watermarks."),
-        f"Decorative effects (stickers/particles/glow/glitch): cadence {deco_c}."
-        + (f" {deco_n}" if deco_n else ""),
-        f"Hard-cut reframes (wide↔mid across cuts): cadence {cut_c}."
-        + (f" {cut_n}" if cut_n else " Do not confuse with push-zooms."),
-        f"Push/zoom-holds on a detail (punch-zoom): cadence {zoom_c}."
-        + (f" {zoom_n}" if zoom_n else ""),
-        f"Ambient scene drift: cadence {drift_c}."
-        + (f" {drift_n}" if drift_n else ""),
-        f"Sweep/whip transitions (else plain hard cuts): cadence {trans_c}."
-        + (f" {trans_n}" if trans_n else ""),
-    ]
-    if font:
-        parts.append(f"Font mood (when text is used): {font}")
     if extra_lines:
         parts.append("Also observe: " + "; ".join(extra_lines))
     return "\n".join(parts)

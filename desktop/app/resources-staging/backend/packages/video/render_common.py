@@ -36,9 +36,7 @@ def build_capcut_manifest(
     clip_paths: list[Path],
     *,
     ass_burned: bool = False,
-    graphics: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    graphics = graphics or []
     return {
         "project_uid": project_uid,
         "mode": timeline.get("mode", "talking_head"),
@@ -46,10 +44,6 @@ def build_capcut_manifest(
         "clips": [{"file": f"clips/{p.name}", "label": cuts[i].get("label", "")} for i, p in enumerate(clip_paths)],
         "captions": "captions/subtitles.srt",
         "captions_ass": "captions/subtitles.ass" if ass_burned else None,
-        "graphics": [
-            {"name": g["name"], "at": g["at"], "x": g.get("x", 0), "y": g.get("y", 0)}
-            for g in graphics
-        ],
     }
 
 
@@ -73,12 +67,10 @@ def build_capcut_bundle(
     final_path: Path,
     srt_path: Path,
     ass_burned: bool = False,
-    graphics: list[dict[str, Any]] | None = None,
 ) -> Path:
     """Write manifest.json + README.txt and zip everything → capcut_bundle.zip."""
-    graphics = graphics or []
     manifest = build_capcut_manifest(
-        project_uid, timeline, cuts, clip_paths, ass_burned=ass_burned, graphics=graphics
+        project_uid, timeline, cuts, clip_paths, ass_burned=ass_burned
     )
     manifest_path = output_dir / "manifest.json"
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -97,15 +89,4 @@ def build_capcut_bundle(
             zf.write(ass_zip, "captions/subtitles.ass")
         zf.write(manifest_path, "manifest.json")
         zf.write(readme_path, "README.txt")
-        if graphics:
-            try:
-                from packages.video.stickers import sticker_path as _sp
-                seen: set[str] = set()
-                for g in graphics:
-                    name = g["name"]
-                    if name not in seen:
-                        zf.write(_sp(name), f"stickers/{name}.png")
-                        seen.add(name)
-            except Exception:
-                pass
     return zip_path

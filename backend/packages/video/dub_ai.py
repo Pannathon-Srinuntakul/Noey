@@ -146,10 +146,75 @@ Return ONLY a valid JSON object, no prose or markdown. totalEstimatedSec = sum o
 </output_format>"""
 
 
+# ── Cut style: default prose + splice machinery ─────────────────────────────
+# The editing-STYLE guidance (pacing, shot choice, multi-angle taste) is no
+# longer baked into the video edit prompts — it lives in a swappable
+# <editing_style> block spliced via the __CUT_STYLE_BLOCK__ token, mirroring
+# effects_ai.py's __STYLE_BLOCK__. With no saved style selected, the DEFAULT
+# prose below (the exact sentences the prompts used to hardcode) is spliced,
+# so behavior is unchanged. A saved cut style (packages/video/cut_style.py,
+# EffectStyle rows with kind="cut") replaces it wholesale — invariant rules
+# (<reject_safety>, <anchor>, <output_format>, duration floors, <coverage>)
+# stay in the base prompts and always win.
+
+DEFAULT_CUT_STYLE_PROSE = """Per line, set visual intent: "single-shot" (hook, calm CTA only — or any line whose footage truly offers only one usable angle; one cut, 2–4s max) or "multi-angle" (product intro, features/demo, OOTD, full-look — default here; as many cuts as the footage genuinely supports, no fixed cap — let the count follow how many genuinely distinct usable angles actually exist for that moment).
+Aim for multi-angle on ≥60% of lines. Important shots (product reveal, full-look OOTD, on-body demo, hero close-up) must play COMPLETE within their cut — never cut mid-action.
+Variety: each line must look VISUALLY DIFFERENT from the one before (distance, angle, or subject focus). Consecutive cuts use distinct timestamps — never the same moment twice in a row. For multi-angle, pick frames ≥30s apart when possible so the angle genuinely changes (same pose + same distance ≠ multi-angle). Do not reuse a frame consecutively or more than twice; space reuses ≥3 lines apart.
+Timing: switch angles often — do not let viewers stare at one angle too long. Multi-angle is a quick flash between angles, not a series of held shots — each cut 0.5–1.5s.
+Prioritize: strong product reveal, clear demonstrations, confident camera-facing delivery, clear product interaction (holding/showing/applying), genuine reactions, and a strong conclusion.
+This has been observed failing in practice: lines rendered as one long single-shot hold instead of 2-3 varied cuts, even when the clip clearly shows multiple distinct angles/distances for that moment. Re-check every line against this <editing_style> section before finalizing: if the clip offers more than one usable angle for a line's topic, you MUST split it into multi-angle cuts (2-3 shorter cuts), not one continuous hold. A single cut running longer than ~4s is only acceptable when the footage genuinely offers no second usable angle for that moment."""
+
+DEFAULT_REEDIT_CUT_STYLE_PROSE = """Per revised line, set visual intent: "single-shot" (one cut, 2–4s max) or "multi-angle" (as many cuts as the footage genuinely supports, no fixed cap; each cut 0.5–1.5s — a quick flash between angles, not a held shot). Important shots must play COMPLETE within their cut — never cut mid-action.
+If the instruction asks for multi-angle, pick frames ≥30s apart when possible so the angle genuinely changes; never reuse a frame consecutively."""
+
+_CUT_STYLE_DEFAULT_TEMPLATE = "<editing_style>\n{prose}\n</editing_style>"
+
+_CUT_STYLE_PRESENT_TEMPLATE = """<editing_style>
+The user chose a SAVED CUT STYLE for this video. The description below was
+distilled from a reference video the user provided. It is the AUTHORITATIVE
+guide for HOW to cut: pacing, shot length, multi-angle vs held shots, hook
+treatment, pacing curve across the video, and the ending. It GOVERNS over
+every generic pacing/shot-choice instinct elsewhere in this prompt. It NEVER
+overrides <reject_safety>, <reject_prep>, <anchor>, <coverage>, <grouping>,
+<output_format>, or the duration floor/target rules — those always win.
+Never copy literal words, products, or one-off content from the reference;
+apply its PATTERNS to THIS footage.
+<style_description>
+__CUT_STYLE_PROSE__
+</style_description>
+</editing_style>"""
+
+
+def apply_cut_style(
+    system: str,
+    style_prompt: str = "",
+    *,
+    default_prose: str = DEFAULT_CUT_STYLE_PROSE,
+) -> str:
+    """Substitute __CUT_STYLE_BLOCK__ in a video edit prompt.
+
+    Empty ``style_prompt`` → the default prose (today's behavior). Non-empty →
+    the user's distilled cut style wrapped with precedence instructions.
+    Fails loud if the token is missing so the literal marker can never ship
+    inside a real prompt (mirrors the effects_ai regenerate guard).
+    """
+    if "__CUT_STYLE_BLOCK__" not in system:
+        raise ValueError("system prompt lost its __CUT_STYLE_BLOCK__ token")
+    prose = (style_prompt or "").strip()
+    block = (
+        _CUT_STYLE_PRESENT_TEMPLATE.replace("__CUT_STYLE_PROSE__", prose)
+        if prose
+        else _CUT_STYLE_DEFAULT_TEMPLATE.format(prose=default_prose)
+    )
+    return system.replace("__CUT_STYLE_BLOCK__", block)
+
+
 DUB_EDIT_SYSTEM_VIDEO = """<role>
 You are a TikTok affiliate video editor. Produce an Edit Script JSON.
 Do ALL reasoning, cataloging, and verification in English. Write voiceoverScript values in Thai.
 </role>
+
+__CUT_STYLE_BLOCK__
 
 <video_model>
 This pipeline renders a SILENT video from your cuts only — the creator records voiceover AFTER watching it.
@@ -177,18 +242,6 @@ Outfit must be fully ON and fastened. "เตรียมชุด" voiceover �
 Skip any frame where the creator is: fixing hair, adjusting or smoothing the outfit, reaching for or touching the camera, setting up, looking off-camera/down/to the side, mid-step into a pose, or not yet ready. Use only settled, intentional, camera-ready moments — never a trim that starts before that ready moment.
 EXCEPTION — back-view product shot: a frame with the creator turned away from camera, hands at hair/head, is NOT automatically "fixing hair." If the garment's back design (neckline, straps, back pattern/logo) is clearly visible and the pose is settled (not mid-turn, not blurry), classify it as a "back-view" product shot and USE it — back design is a real selling point.
 </reject_prep>
-
-<editing_style>
-Per line, set visual intent: "single-shot" (hook, calm CTA only — or any line whose footage truly offers only one usable angle; one cut, 2–4s max) or "multi-angle" (product intro, features/demo, OOTD, full-look — default here; as many cuts as the footage genuinely supports, no fixed cap — let the count follow how many genuinely distinct usable angles actually exist for that moment).
-Aim for multi-angle on ≥60% of lines. Important shots (product reveal, full-look OOTD, on-body demo, hero close-up) must play COMPLETE within their cut — never cut mid-action.
-Variety: each line must look VISUALLY DIFFERENT from the one before (distance, angle, or subject focus). Consecutive cuts use distinct timestamps — never the same moment twice in a row. For multi-angle, pick frames ≥30s apart when possible so the angle genuinely changes (same pose + same distance ≠ multi-angle). Do not reuse a frame consecutively or more than twice; space reuses ≥3 lines apart.
-Timing: switch angles often — do not let viewers stare at one angle too long. Multi-angle is a quick flash between angles, not a series of held shots — each cut 0.5–1.5s.
-Prioritize: strong product reveal, clear demonstrations, confident camera-facing delivery, clear product interaction (holding/showing/applying), genuine reactions, and a strong conclusion.
-</editing_style>
-
-<video_multi_angle_reminder>
-This has been observed failing in practice: lines rendered as one long single-shot hold instead of 2-3 varied cuts, even when the clip clearly shows multiple distinct angles/distances for that moment. Re-check every line against <editing_style> before finalizing: if the clip offers more than one usable angle for a line's topic, you MUST split it into multi-angle cuts (2-3 shorter cuts), not one continuous hold. A single cut running longer than ~4s is only acceptable when the footage genuinely offers no second usable angle for that moment.
-</video_multi_angle_reminder>
 
 <music_sync>
 If a <music> block is present in the context above, a background track will play under the final video. When a scene-change cut boundary (the start of a new segment, or a new cut within a multi-angle line) can naturally land within ~0.15s of one of the listed beat_timestamps_sec without breaking any rule above (safety, no-prep, shot completeness, variety, timing, coverage), prefer that placement. This is a soft preference, not every cut needs to hit a beat, and never force an awkward or premature cut just to chase one. If no <music> block was given, ignore this section entirely.
@@ -220,7 +273,7 @@ No fixed segment cap per voiceoverLineId — single-shot is 1 cut; multi-angle u
 </grouping>
 
 <verify>
-Before returning, confirm in English: you watched every clip to its FULL given duration, not just the first portion; every sourceIn/sourceOut is within its clip's real given duration (never beyond it); durationSec sum ≥45s (prefer ≥50s) UNLESS real footage is shorter OR an explicit shorter target_duration_sec was requested — in either case durationSec sum should match that real constraint instead (line/segment counts scale down with it too; do not force 12-18 lines onto a short target, that count only applies at the default ~45-60s length); ≥10 segments / 12–18 lines when footage supports it AND no explicit shorter target was requested; ≥60% of lines are multi-angle (re-check any single-shot line against <video_multi_angle_reminder>); last line is a CTA; no two adjacent lines look the same; the chosen matchedFrameTime values are spread across each clip's duration, not bunched only near the start; zero reject_safety violations remain.
+Before returning, confirm in English: you watched every clip to its FULL given duration, not just the first portion; every sourceIn/sourceOut is within its clip's real given duration (never beyond it); durationSec sum ≥45s (prefer ≥50s) UNLESS real footage is shorter OR an explicit shorter target_duration_sec was requested — in either case durationSec sum should match that real constraint instead (line/segment counts scale down with it too; do not force 12-18 lines onto a short target, that count only applies at the default ~45-60s length); ≥10 segments / 12–18 lines when footage supports it AND no explicit shorter target was requested; every line's cut pattern follows the <editing_style> section above (re-check each line against it before finalizing); last line is a CTA; no two adjacent lines look the same; the chosen matchedFrameTime values are spread across each clip's duration, not bunched only near the start; zero reject_safety violations remain.
 </verify>
 
 <output_format>
@@ -257,8 +310,10 @@ You are a TikTok editor producing an Edit Script JSON for a cut-only highlight r
 Do ALL reasoning in English.
 </role>
 
+__CUT_STYLE_BLOCK__
+
 <video_model>
-This pipeline renders a SILENT video from your cuts only. There is no voiceover track at all — durationSec is purely how long that cut plays on screen, not "speaking time." Pace cuts for a highlight-reel rhythm (music-driven if a <music> block is given), not for a line of dialogue.
+This pipeline renders a SILENT video from your cuts only. There is no voiceover track at all — durationSec is purely how long that cut plays on screen, not "speaking time." Pace cuts per the <editing_style> section (music-driven if a <music> block is given), not for a line of dialogue.
 </video_model>
 
 <coverage>
@@ -282,18 +337,6 @@ Outfit must be fully ON and fastened. "เตรียมชุด" voiceover �
 Skip any frame where the creator is: fixing hair, adjusting or smoothing the outfit, reaching for or touching the camera, setting up, looking off-camera/down/to the side, mid-step into a pose, or not yet ready. Use only settled, intentional, camera-ready moments — never a trim that starts before that ready moment.
 EXCEPTION — back-view product shot: a frame with the creator turned away from camera, hands at hair/head, is NOT automatically "fixing hair." If the garment's back design (neckline, straps, back pattern/logo) is clearly visible and the pose is settled (not mid-turn, not blurry), classify it as a "back-view" product shot and USE it — back design is a real selling point.
 </reject_prep>
-
-<editing_style>
-Per line, set visual intent: "single-shot" (hook, calm CTA only — or any line whose footage truly offers only one usable angle; one cut, 2–4s max) or "multi-angle" (product intro, features/demo, OOTD, full-look — default here; as many cuts as the footage genuinely supports, no fixed cap — let the count follow how many genuinely distinct usable angles actually exist for that moment).
-Aim for multi-angle on ≥60% of lines. Important shots (product reveal, full-look OOTD, on-body demo, hero close-up) must play COMPLETE within their cut — never cut mid-action.
-Variety: each line must look VISUALLY DIFFERENT from the one before (distance, angle, or subject focus). Consecutive cuts use distinct timestamps — never the same moment twice in a row. For multi-angle, pick frames ≥30s apart when possible so the angle genuinely changes (same pose + same distance ≠ multi-angle). Do not reuse a frame consecutively or more than twice; space reuses ≥3 lines apart.
-Timing: switch angles often — do not let viewers stare at one angle too long. Multi-angle is a quick flash between angles, not a series of held shots — each cut 0.5–1.5s.
-Prioritize: strong product reveal, clear demonstrations, confident camera-facing delivery, clear product interaction (holding/showing/applying), genuine reactions, and a strong conclusion.
-</editing_style>
-
-<video_multi_angle_reminder>
-This has been observed failing in practice: lines rendered as one long single-shot hold instead of 2-3 varied cuts, even when the clip clearly shows multiple distinct angles/distances for that moment. Re-check every line against <editing_style> before finalizing: if the clip offers more than one usable angle for a line's topic, you MUST split it into multi-angle cuts (2-3 shorter cuts), not one continuous hold. A single cut running longer than ~4s is only acceptable when the footage genuinely offers no second usable angle for that moment.
-</video_multi_angle_reminder>
 
 <music_sync>
 If a <music> block is present in the context above, a background track will play under the final video. When a scene-change cut boundary (the start of a new segment, or a new cut within a multi-angle line) can naturally land within ~0.15s of one of the listed beat_timestamps_sec without breaking any rule above (safety, no-prep, shot completeness, variety, timing, coverage), prefer that placement. This is a soft preference, not every cut needs to hit a beat, and never force an awkward or premature cut just to chase one. If no <music> block was given, ignore this section entirely.
@@ -320,7 +363,7 @@ No fixed segment cap per voiceoverLineId — single-shot is 1 cut; multi-angle u
 </grouping>
 
 <verify>
-Before returning, confirm in English: you watched every clip to its FULL given duration, not just the first portion; every sourceIn/sourceOut is within its clip's real given duration (never beyond it); durationSec sum ≥45s (prefer ≥50s) UNLESS real footage is shorter OR an explicit shorter target_duration_sec was requested — in either case durationSec sum should match that real constraint instead (line/segment counts scale down with it too; do not force 12-18 lines onto a short target, that count only applies at the default ~45-60s length); ≥10 segments / 12–18 lines when footage supports it AND no explicit shorter target was requested; ≥60% of lines are multi-angle (re-check any single-shot line against <video_multi_angle_reminder>); the last line is a strong closing shot (CTA framing optional — no spoken words to deliver one); no two adjacent lines look the same; the chosen matchedFrameTime values are spread across each clip's duration, not bunched only near the start; zero reject_safety violations remain.
+Before returning, confirm in English: you watched every clip to its FULL given duration, not just the first portion; every sourceIn/sourceOut is within its clip's real given duration (never beyond it); durationSec sum ≥45s (prefer ≥50s) UNLESS real footage is shorter OR an explicit shorter target_duration_sec was requested — in either case durationSec sum should match that real constraint instead (line/segment counts scale down with it too; do not force 12-18 lines onto a short target, that count only applies at the default ~45-60s length); ≥10 segments / 12–18 lines when footage supports it AND no explicit shorter target was requested; every line's cut pattern follows the <editing_style> section above (re-check each line against it before finalizing); the last line is a strong closing shot (CTA framing optional — no spoken words to deliver one); no two adjacent lines look the same; the chosen matchedFrameTime values are spread across each clip's duration, not bunched only near the start; zero reject_safety violations remain.
 </verify>
 
 <output_format>
@@ -581,12 +624,17 @@ async def generate_dub_edit_script_video(
     project_uid: str,
     music_beats: dict[str, Any] | None = None,
     system: str = DUB_EDIT_SYSTEM_VIDEO,
+    style_prompt: str = "",
     on_thinking: Callable[[str], Awaitable[None]] | None = None,
 ) -> dict[str, Any]:
     """Run the Gemini native-video edit-script call: proxy clips → normalized Edit Script dict.
 
     ``system`` — defaults to the standard dub_first prompt; callers pass
     ``DUB_EDIT_SYSTEM_VIDEO_NO_VO`` for the no-voiceover "highlight" mode.
+
+    ``style_prompt`` — distilled cut-style prose from a saved EffectStyle row
+    (kind="cut"). Empty → the hardcoded default editing style is spliced in
+    (see apply_cut_style), which reproduces the pre-style behavior.
 
     Each clip is uploaded to the Gemini Files API and referenced by URI (not
     inline base64 — see packages/llm/files.py). sample_frames=None deliberately
@@ -653,7 +701,7 @@ async def generate_dub_edit_script_video(
         )
 
         resp = await acompletion_stream_thinking(
-            messages, system=system, project_uid=project_uid,
+            messages, system=apply_cut_style(system, style_prompt), project_uid=project_uid,
             on_thinking=on_thinking, **extra
         )
         raw = resp.choices[0].message.content or ""
@@ -702,10 +750,7 @@ Skip any frame where the creator is: fixing hair, adjusting or smoothing the out
 EXCEPTION — back-view product shot: turned-away-from-camera with hands at hair/head is NOT automatically "fixing hair" if the garment's back design is clearly visible and the pose is settled — classify as back-view and USE it.
 </reject_prep>
 
-<editing_style>
-Per revised line, set visual intent: "single-shot" (one cut, 2–4s max) or "multi-angle" (as many cuts as the footage genuinely supports, no fixed cap; each cut 0.5–1.5s — a quick flash between angles, not a held shot). Important shots must play COMPLETE within their cut — never cut mid-action.
-If the instruction asks for multi-angle, pick frames ≥30s apart when possible so the angle genuinely changes; never reuse a frame consecutively.
-</editing_style>
+__CUT_STYLE_BLOCK__
 
 <music_sync>
 If a <music> block is present below, a background track plays under the final video. When a revised segment's cut boundary can naturally land within ~0.15s of one of the listed beat_timestamps_sec without breaking any rule above, prefer that placement. Soft preference only — never force an awkward or premature cut just to chase a beat, and never let it override what the creator's instruction actually asked for. If no <music> block is present, ignore this section.
@@ -795,10 +840,14 @@ async def generate_dub_reedit_script_video(
     project_uid: str,
     music_beats: dict[str, Any] | None = None,
     target_duration_sec: int | None = None,
+    style_prompt: str = "",
     on_thinking: Callable[[str], Awaitable[None]] | None = None,
 ) -> list[dict[str, Any]]:
     """Run the Gemini native-video AI re-edit call: current script + edited preview +
     raw clips + instruction → replacement segment(s).
+
+    ``style_prompt`` — same distilled cut-style prose the original analyze ran
+    with, so revised scenes keep the project's editing style.
 
     Scoped (selected_line_ids non-empty): returns ONLY the replacement segment(s)
     for those lines. Whole-script (selected_line_ids empty): returns the FULL
@@ -858,7 +907,12 @@ async def generate_dub_reedit_script_video(
         )
 
         resp = await acompletion_stream_thinking(
-            messages, system=DUB_REEDIT_SYSTEM_VIDEO, project_uid=project_uid,
+            messages,
+            system=apply_cut_style(
+                DUB_REEDIT_SYSTEM_VIDEO, style_prompt,
+                default_prose=DEFAULT_REEDIT_CUT_STYLE_PROSE,
+            ),
+            project_uid=project_uid,
             on_thinking=on_thinking, **extra
         )
         raw = resp.choices[0].message.content or ""

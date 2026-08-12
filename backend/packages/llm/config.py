@@ -128,15 +128,6 @@ def vision_call_kwargs() -> dict:
     return extra
 
 
-def talking_vision_call_kwargs() -> dict:
-    """Gemini per-clip talking_head video review (multimodal + thinking stream)."""
-    s = get_settings()
-    model = f"gemini/{s.talking_vision_model}"
-    extra = call_kwargs(model=model, effort="medium")
-    extra["timeout"] = int(s.talking_vision_timeout_sec)
-    return extra
-
-
 def anthropic_file_kwargs() -> dict:
     """Kwargs for litellm.acreate_file / afile_delete on Anthropic Files API."""
     sync_llm_env()

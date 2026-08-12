@@ -1,4 +1,4 @@
-import { spawn } from 'child_process'
+import { execFile, spawn } from 'child_process'
 import { createInterface } from 'readline'
 import { join, resolve } from 'path'
 import { app, ipcMain } from 'electron'
@@ -124,15 +124,38 @@ export function runSidecar(
 
 const activeProcs = new Map<string, ReturnType<typeof spawn>>()
 
-/** Kill the sidecar ffmpeg job for a project (best-effort). */
+/**
+ * Kill the sidecar job for a project (best-effort).
+ *
+ * The sidecar spawns ffmpeg as its OWN child, and on Windows killing a parent
+ * does not touch its children — `proc.kill()` alone left ffmpeg burning CPU
+ * and holding the output file after "หยุดงาน". Kill the whole tree there
+ * (`taskkill /T /F`); elsewhere a SIGKILL to the process group does it.
+ */
 export function cancelSidecarJob(projectDir: string): void {
   const proc = activeProcs.get(projectDir)
   void appendLog(
     'sidecar',
     `cancelSidecarJob projectDir=${projectDir} activeProc=${proc ? proc.pid : 'none'}`
   )
-  proc?.kill()
   activeProcs.delete(projectDir)
+  if (!proc?.pid) return
+  if (process.platform === 'win32') {
+    try {
+      execFile('taskkill', ['/pid', String(proc.pid), '/T', '/F'], (err) => {
+        if (err) void appendLog('sidecar', `taskkill failed pid=${proc.pid}: ${err.message}`)
+      })
+    } catch (err) {
+      void appendLog('sidecar', `taskkill spawn failed: ${String(err)}`)
+      proc.kill()
+    }
+  } else {
+    try {
+      process.kill(-proc.pid, 'SIGKILL')
+    } catch {
+      proc.kill('SIGKILL')
+    }
+  }
 }
 
 // Serializes sidecar jobs per project directory. Commands like extract-audio
@@ -146,7 +169,10 @@ async function withProjectLock<T>(key: string | undefined, fn: () => Promise<T>)
   if (!key) return fn()
   const prior = projectLocks.get(key) ?? Promise.resolve()
   const run = prior.catch(() => undefined).then(fn)
-  projectLocks.set(key, run.catch(() => undefined))
+  projectLocks.set(
+    key,
+    run.catch(() => undefined)
+  )
   return run
 }
 
@@ -185,7 +211,6 @@ export function registerSidecarIpc(): void {
     ['sidecar:extractAudio', 'extract-audio'],
     ['sidecar:renderTimeline', 'render-timeline'],
     ['sidecar:renderAiPreview', 'render-ai-preview'],
-    ['sidecar:compositeOverlay', 'composite-overlay'],
     ['sidecar:renderEffects', 'render-effects'],
     ['sidecar:proxyOne', 'proxy-one']
   ]

@@ -10,6 +10,7 @@
 
 import { ApiError } from './api'
 import type { CaptionLine } from './captionLines'
+import type { CaptionStyle } from './captionStyle'
 import { dubSegmentsFromEditCuts, type EditCutIn } from './dubSegments'
 import type { DubEditScript, DubTimeline } from './videosLocalApi'
 import type { LocalClip, LocalProject } from '../../../preload'
@@ -53,6 +54,14 @@ export interface EditorContext {
    * project has no caption_style/words, empty array when captions are
    * enabled but not yet grouped/edited. */
   captionLines?: CaptionLine[]
+  /** See initialCaptionTimeBase. */
+  captionTimeBase?: 'source' | 'output'
+  /** How those lines are burned in (font/mode/colour/size). Present whenever
+   * `captionLines` is — the editor shows it as an appearance summary and lets
+   * the user change it without starting a new project. */
+  captionStyle?: CaptionStyle
+  /** Persist a changed caption appearance. */
+  onCaptionStyleChange?: (style: CaptionStyle) => Promise<void>
   /** dub_first only: the attached background music track, if any (see the
    * editor's audio track — waveform + drag/trim/volume/mute). */
   music?: EditorMusic
@@ -61,6 +70,10 @@ export interface EditorContext {
   onRemoveMusic?: () => Promise<void>
   /** Persist + re-render; useProjectPipeline owns the flow. */
   onSave: (cuts: SaveCutPayload[], captionLines?: CaptionLine[]) => Promise<void>
+  /** Persist WITHOUT rendering — the editor's draft autosave. Losing an hour of
+   * trims to a crash is the failure this exists to prevent; rendering on every
+   * keystroke is not. */
+  onSaveDraft?: (cuts: SaveCutPayload[], captionLines?: CaptionLine[]) => Promise<void>
   /** dub_first only: AI-assisted re-edit of the live (unsaved) cuts. Returns
    * the revised cut list — preview only, does NOT save/render; the caller
    * still hits Save to commit. Undefined outside dub_first pre-render editing. */
@@ -85,6 +98,19 @@ function requireCtx(): EditorContext {
 /** Initial caption lines for the currently-configured project, if any. */
 export function initialCaptionLines(): CaptionLine[] | undefined {
   return ctx?.captionLines
+}
+
+/** Which clock `captionLines` are timed on. dub_first lines are laid out along
+ * the finished cut (OUTPUT), talking_head lines come from raw transcript words
+ * (SOURCE). Everything downstream — lane chips, the preview overlay, the
+ * per-scene matcher — has to agree with this or the lines land nowhere. */
+export function initialCaptionTimeBase(): 'source' | 'output' {
+  return ctx?.captionTimeBase ?? 'source'
+}
+
+/** Initial caption appearance for the currently-configured project, if any. */
+export function initialCaptionStyle(): CaptionStyle | undefined {
+  return ctx?.captionStyle
 }
 
 /** Initial background-music state for the currently-configured project, if any. */
@@ -176,6 +202,16 @@ export const editorApi = {
     const c = requireCtx()
     if (!c.onAiReedit) throw new Error('AI re-edit ใช้ได้เฉพาะก่อน render (dub_first / highlight)')
     return c.onAiReedit(cuts, selectedLineIds, instruction)
+  },
+
+  saveDraft: async (cuts: SaveCutPayload[], captionLines?: CaptionLine[]): Promise<void> => {
+    const c = requireCtx()
+    await c.onSaveDraft?.(cuts, captionLines)
+  },
+
+  updateCaptionStyle: async (style: CaptionStyle): Promise<void> => {
+    const c = requireCtx()
+    await c.onCaptionStyleChange?.(style)
   },
 
   updateMusic: async (patch: MusicPatch): Promise<void> => {

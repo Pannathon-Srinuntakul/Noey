@@ -1,7 +1,8 @@
 export interface PickedVideoFile {
   path: string
   name: string
-  file: File
+  // Files received over LAN have only a path, no File object.
+  file?: File
 }
 
 /** Resolve real filesystem paths for a browser FileList (from an <input> or a drop event). */

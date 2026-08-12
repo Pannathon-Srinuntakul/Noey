@@ -1,12 +1,16 @@
-import { useCallback, useEffect, useState } from 'react'
-import { Film, Loader2, Settings, Sparkles } from 'lucide-react'
-import type { LocalProject } from '../../preload'
-import { ApiError, login, me, restoreSession, type Me } from './lib/api'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { me, restoreSession, type Me } from './lib/api'
 import type { ApiSession } from './lib/videosLocalApi'
-import NewProjectSidebar from './components/NewProjectSidebar'
-import ProjectCard from './components/ProjectCard'
-import SettingsPage from './pages/SettingsPage'
-import EffectsStudioPage from './pages/EffectsStudioPage'
+import { ConfirmProvider } from './lib/confirm'
+import { JobsProvider } from './lib/jobs'
+import { PrefsProvider } from './lib/prefs'
+import { RouterProvider } from './lib/router'
+import { ToastProvider } from './lib/toast'
+import { AppShell } from './components/shell/AppShell'
+import { RouteView } from './components/shell/RouteView'
+import { TitleBar } from './components/shell/TitleBar'
+import DevUiPage from './pages/DevUiPage'
+import LoginPage from './pages/LoginPage'
 
 // Backend URL is baked in at build time — users never see or set it.
 // Override for local dev/self-hosting: VITE_BACKEND_URL=... npm run build
@@ -19,97 +23,6 @@ export interface Session {
   profile: Me
 }
 
-function LoginPage({ onLogin }: { onLogin: (s: Session) => void }): React.JSX.Element {
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
-  const [error, setError] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
-
-  useEffect(() => {
-    window.noey.auth.load().then((stored) => {
-      if (stored) setEmail(stored.email)
-    })
-  }, [])
-
-  const submit = async (e: React.FormEvent): Promise<void> => {
-    e.preventDefault()
-    setBusy(true)
-    setError(null)
-    try {
-      const pair = await login(BACKEND_URL, email, password)
-      const profile = await me(BACKEND_URL, pair.access_token)
-      await window.noey.auth.save({
-        baseUrl: BACKEND_URL,
-        email,
-        accessToken: pair.access_token,
-        refreshToken: pair.refresh_token
-      })
-      onLogin({
-        baseUrl: BACKEND_URL,
-        accessToken: pair.access_token,
-        refreshToken: pair.refresh_token,
-        profile
-      })
-    } catch (err) {
-      setError(err instanceof ApiError ? err.detail : 'เข้าสู่ระบบไม่สำเร็จ')
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return (
-    <div className="flex h-full items-center justify-center bg-[#07080d]">
-      <div className="w-full max-w-sm rounded-2xl border border-white/10 bg-white/5 p-8 shadow-2xl backdrop-blur">
-        <h1 className="mb-1 text-xl font-bold text-amber-200">Noey Video Edit</h1>
-        <p className="mb-6 text-sm text-zinc-400">เข้าสู่ระบบ</p>
-
-        <form onSubmit={submit} className="space-y-4">
-          <label className="block">
-            <span className="mb-1 block text-xs font-medium text-zinc-400">อีเมล</span>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              autoFocus
-              required
-              className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-amber-500"
-            />
-          </label>
-          <label className="block">
-            <span className="mb-1 block text-xs font-medium text-zinc-400">รหัสผ่าน</span>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-              className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-amber-500"
-            />
-          </label>
-          {error && (
-            <div className="space-y-1 rounded-lg bg-red-500/15 px-3 py-2 text-sm text-red-300">
-              <p>{error}</p>
-              <button
-                type="button"
-                className="text-xs text-red-300/60 underline hover:text-red-200"
-                onClick={() => window.noey.log.openFolder()}
-              >
-                เปิดโฟลเดอร์ log
-              </button>
-            </div>
-          )}
-          <button
-            type="submit"
-            disabled={busy}
-            className="w-full rounded-lg bg-amber-600 py-2.5 text-sm font-semibold text-white shadow hover:bg-amber-500 disabled:opacity-40"
-          >
-            {busy ? 'กำลังเข้าสู่ระบบ…' : 'เข้าสู่ระบบ'}
-          </button>
-        </form>
-      </div>
-    </div>
-  )
-}
-
 function Workspace({
   session,
   onLogout
@@ -117,147 +30,50 @@ function Workspace({
   session: Session
   onLogout: () => void
 }): React.JSX.Element {
-  const [projects, setProjects] = useState<LocalProject[]>([])
-  const [loadingList, setLoadingList] = useState(true)
-  const [view, setView] = useState<'projects' | 'settings' | 'studio'>('projects')
-
-  const apiSession: ApiSession = {
-    baseUrl: session.baseUrl,
-    accessToken: session.accessToken,
-    refreshToken: session.refreshToken,
-    onTokens: (access, refresh) => {
-      window.noey.auth.save({
-        baseUrl: session.baseUrl,
-        email: session.profile.email,
-        accessToken: access,
-        refreshToken: refresh
-      })
-    }
-  }
-
-  const load = useCallback(() => {
-    window.noey.projects.list().then((list) => {
-      setProjects(list)
-      setLoadingList(false)
-    })
-  }, [])
-
-  useEffect(load, [load])
-
-  const handleCreated = (project: LocalProject): void => {
-    setProjects((prev) => [project, ...prev])
-  }
-
-  const handleDeleted = (uid: string): void => {
-    setProjects((prev) => prev.filter((p) => p.uid !== uid))
-  }
-
-  return (
-    <div
-      className="flex h-full w-full flex-col overflow-hidden"
-      style={{ background: 'linear-gradient(160deg, #1a0e06 0%, #0d1a14 100%)' }}
-    >
-      <header className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-white/10 px-4 py-3 sm:px-6 sm:py-4">
-        <div className="flex items-center gap-3">
-          <Film size={18} className="text-amber-400" />
-          <h1 className="font-bold tracking-wide text-amber-100">AI Video Editor</h1>
-          <span className="rounded-full border border-amber-500/40 px-2 py-0.5 text-[10px] font-semibold text-amber-400">
-            MVP · talking_head + dub_first + highlight
-          </span>
-        </div>
-        <div className="flex items-center gap-3 text-sm text-zinc-400">
-          <span>
-            {session.profile.email} · {session.profile.tenant_slug}
-          </span>
-          <button
-            onClick={() => setView(view === 'studio' ? 'projects' : 'studio')}
-            className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs ${
-              view === 'studio'
-                ? 'border-amber-500/60 text-amber-300'
-                : 'border-white/10 text-zinc-300 hover:border-white/25 hover:text-white'
-            }`}
-            title="สตูดิโอเอฟเฟกต์ — สร้าง/จัดการเอฟเฟกต์ สติกเกอร์ เทมเพลต"
-          >
-            <Sparkles size={14} /> สตูดิโอ
-          </button>
-          <button
-            onClick={() => setView(view === 'settings' ? 'projects' : 'settings')}
-            className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-zinc-300 hover:border-white/25 hover:text-white"
-            title="การใช้งาน AI"
-          >
-            <Settings size={14} />
-          </button>
-          <button
-            onClick={onLogout}
-            className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-zinc-300 hover:border-white/25 hover:text-white"
-          >
-            ออกจากระบบ
-          </button>
-        </div>
-      </header>
-      {view === 'settings' && <SettingsPage session={session} onBack={() => setView('projects')} />}
-      {view === 'studio' && (
-        <EffectsStudioPage session={session} onBack={() => setView('projects')} />
-      )}
-      {/* Kept mounted (just hidden) instead of swapped out — unmounting this
-          tree would reset every ProjectCard's in-flight pipeline state and
-          re-trigger already-running/finished AI jobs from scratch on return. */}
-      <div
-        className={`scroll-ghost flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4 md:flex-row md:gap-6 md:overflow-hidden md:p-6 ${view !== 'projects' ? 'hidden' : ''}`}
-      >
-        <NewProjectSidebar onCreated={handleCreated} />
-
-        <div className="flex min-w-0 flex-col gap-4 md:min-h-0 md:flex-1 md:overflow-y-auto">
-          <h2 className="text-sm font-semibold uppercase tracking-widest text-amber-200/70">
-            โปรเจกต์ของฉัน
-          </h2>
-          {loadingList ? (
-            <div className="flex items-center gap-2 text-sm text-amber-300/50">
-              <Loader2 size={14} className="animate-spin" /> กำลังโหลด…
-            </div>
-          ) : projects.length === 0 ? (
-            <div className="flex flex-col items-center justify-center rounded-2xl border border-white/10 bg-white/5 py-16 text-center">
-              <Film size={40} className="text-amber-400/20" />
-              <p className="mt-4 text-sm text-amber-300/50">ยังไม่มีโปรเจกต์</p>
-              <p className="mt-1 text-xs text-amber-300/30">อัปโหลดวิดีโอเพื่อเริ่มต้น</p>
-            </div>
-          ) : (
-            <div className="grid items-stretch gap-3 sm:grid-cols-2 xl:grid-cols-3">
-              {projects.map((p) => (
-                <ProjectCard
-                  key={p.uid}
-                  project={p}
-                  session={apiSession}
-                  onDeleted={handleDeleted}
-                />
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
+  const apiSession = useMemo<ApiSession>(
+    () => ({
+      baseUrl: session.baseUrl,
+      accessToken: session.accessToken,
+      refreshToken: session.refreshToken,
+      onTokens: (access, refresh) => {
+        window.noey.auth.save({
+          baseUrl: session.baseUrl,
+          email: session.profile.email,
+          accessToken: access,
+          refreshToken: refresh
+        })
+      }
+    }),
+    [session]
   )
-}
 
-// Windows only: main process hides the native (white, untheme-able) titlebar
-// and draws an overlay for the caption buttons — this strip fills the rest so
-// the window stays draggable and matches the dark/amber theme.
-function TitleBar(): React.JSX.Element | null {
-  if (window.noey.platform !== 'win32') return null
+  // Provider order matters: JobsProvider fires completion toasts, so it must
+  // sit inside ToastProvider. Both sit inside RouterProvider so a toast action
+  // or a notification click can navigate. PrefsProvider is outermost — the
+  // wizard reads its defaults on mount.
   return (
-    <div
-      className="flex h-9 shrink-0 items-center gap-2 border-b border-white/10 bg-[#140b06] px-3 text-xs font-semibold tracking-wide text-amber-200/70"
-      style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
-    >
-      <Film size={12} className="text-amber-400/70" />
-      Noey Video Edit
-    </div>
+    <PrefsProvider>
+      <ToastProvider>
+        <ConfirmProvider>
+          <RouterProvider>
+            <JobsProvider session={apiSession}>
+              <AppShell session={session}>
+                <RouteView session={session} onLogout={onLogout} />
+              </AppShell>
+            </JobsProvider>
+          </RouterProvider>
+        </ConfirmProvider>
+      </ToastProvider>
+    </PrefsProvider>
   )
 }
 
 function App(): React.JSX.Element {
   const [session, setSession] = useState<Session | null>(null)
   const [restoring, setRestoring] = useState(true)
+  // Temporary — components/ui/* preview page, no login required. See
+  // PLAN.md chunk 1. Remove once the redesign ships.
+  const [devUi] = useState(() => window.location.hash === '#/dev/ui')
 
   useEffect(() => {
     const attempt = async (): Promise<void> => {
@@ -290,18 +106,32 @@ function App(): React.JSX.Element {
     setSession(null)
   }, [])
 
+  if (devUi) {
+    return (
+      <div className="flex h-full flex-col">
+        <DevUiPage />
+      </div>
+    )
+  }
+
+  // Signed in: AppShell owns the title bar (it needs the current route to
+  // label it). Signed out / restoring: render a bare one so the window is
+  // still draggable and the OS caption buttons sit on a themed strip.
+  if (session) return <Workspace session={session} onLogout={logout} />
+
   return (
-    <div className="flex h-full flex-col">
-      <TitleBar />
-      <div className="min-h-0 flex-1">
+    <div className="flex h-full flex-col bg-ground">
+      <TitleBar label="Noey Video Edit" />
+      {/* Must be a flex container: the children below fill and centre
+          themselves with `flex-1`, which is inert under a plain block parent
+          (the box then collapses to content height and nothing centres). */}
+      <div className="flex min-h-0 flex-1 flex-col">
         {restoring ? (
-          <div className="flex h-full items-center justify-center bg-[#07080d] text-sm text-zinc-400">
+          <div className="flex flex-1 items-center justify-center bg-ground text-sm text-muted">
             กำลังโหลด…
           </div>
-        ) : !session ? (
-          <LoginPage onLogin={setSession} />
         ) : (
-          <Workspace session={session} onLogout={logout} />
+          <LoginPage backendUrl={BACKEND_URL} onLogin={setSession} />
         )}
       </div>
     </div>

@@ -35,6 +35,9 @@ export interface LocalProject {
   name: string
   mode?: 'dub_first' | 'talking_head' | 'highlight'
   step:
+    /** Sources are being copied/transcoded in the background (see the
+     * renderer's ProjectStep — this union mirrors it). */
+    | 'importing'
     | 'imported'
     | 'analyzing'
     | 'silent_rendering'
@@ -53,8 +56,32 @@ export interface LocalProject {
   userScript?: string
   scriptStyles?: string[]
   targetDurationSec?: number
+  // Saved cut-style (EffectStyle kind="cut") uid chosen at creation; threads
+  // into the analyze/reedit API calls as form field `style_uid`.
+  /** Set while step==='importing': the source files the pipeline still has to
+   * copy/transcode, and the music the user picked in the wizard. The wizard
+   * hands these over instead of doing the work itself, so a slow HEVC import
+   * runs in the background with its own progress + error like any other
+   * stage. Cleared once the import lands. */
+  pendingSources?: string[]
+  pendingMusic?: { path: string; trimInSec: number; trimOutSec: number }
+  cutStyleUid?: string
+  /** Saved zoom style (kind='effects') to auto-apply after the cut renders; absent = none. */
+  zoomStyleUid?: string
+  // Whether the AI should cut against the music's beat grid. Only meaningful
+  // with `music` attached. Absent on projects created before the wizard
+  // exposed the switch — those are treated as on, which is what they did.
+  beatSync?: boolean
+  /** Wall-clock seconds the last completed run took, measured by the pipeline.
+   * Absent on projects finished before this was recorded, or resumed without a
+   * timed run — the detail page then simply omits "ใช้เวลาทำ". */
+  lastRunSeconds?: number
   remote?: { uid: string; jobId?: string }
   voiceoverPath?: string
+  /** Recorded per-line takes, keyed by `voiceoverLineId`. The assembled
+   * `voiceoverPath` is rebuilt from these, so re-recording one line never
+   * requires re-recording the rest. */
+  voiceoverTakes?: Record<string, { file: string; durationSec: number }>
   // dub_first background music — desktop-local file, mix params from the
   // TimelineEditor audio track, applied at render time by the sidecar.
   music?: {
@@ -83,30 +110,70 @@ export interface LocalProject {
   captionStyle?: { font: string; mode: string; color: string; border_color: string; size: number }
 }
 
+// Mirrors main/prefs.ts and main/storage.ts (preload defines its own view of
+// every main-process shape, same as LocalProject above).
+export interface Prefs {
+  projectsDir: string | null
+  autoDeleteSourcesDays: number
+  defaultMode: 'silence' | 'highlight'
+  defaultDuration: string
+  defaultCaptions: boolean
+  notifications: boolean
+}
+
+export interface StorageReport {
+  root: string
+  isDefault: boolean
+  totalBytes: number
+  reclaimableBytes: number
+  projectCount: number
+  reclaimableProjects: number
+}
+
+export type MoveResult =
+  | { status: 'cancelled' }
+  | { status: 'rejected'; reason: string }
+  | { status: 'moved'; root: string; projects: number }
+
 type ProgressUnsubscribe = () => void
 
-// Mirrors main/library.ts (preload defines its own view, same as LocalProject).
-export interface EffectTemplate {
-  id: string
-  name: string
-  createdAt: string
-  instances: Record<string, unknown>[]
+// LAN receive (mirrors src/main/lanReceive.ts)
+interface LanReceiveSession {
+  sessionId: string
+  port: number
+  token: string
+  ips: { name: string; address: string; ssid?: string }[]
+  /** How long the server waits with no traffic before shutting itself down —
+   * the modal counts this down so the timeout is never a surprise. */
+  idleMs: number
 }
 
-export interface StickerAsset {
-  id: string
+interface LanReceivedFile {
+  fileId: string
+  path: string
   name: string
-  kind: 'lottie' | 'image'
-  file: string
+  size: number
 }
 
-export interface GeneratedComponent {
-  id: string
+interface LanUploadProgress {
+  fileId: string
   name: string
-  prompt: string
-  createdAt: string
-  sourceFile: string
-  previewFile: string | null
+  receivedBytes: number
+  totalBytes: number
+}
+
+interface LanStopped {
+  /** 'abuse' — shut down after too many rejected tokens (see MAX_BAD_TOKENS). */
+  reason: 'idle' | 'manual' | 'abuse'
+}
+
+interface LanArtifact {
+  id: string
+  path: string
+  label: string
+  name: string
+  size: number
+  kind: 'final' | 'subs' | 'scene' | 'bundle'
 }
 
 export interface JobCommandApi {
@@ -142,16 +209,9 @@ const noey = {
     extractAudio: jobCommand('sidecar:extractAudio'),
     renderTimeline: jobCommand('sidecar:renderTimeline'),
     renderAiPreview: jobCommand('sidecar:renderAiPreview'),
-    compositeOverlay: jobCommand('sidecar:compositeOverlay'),
     renderEffects: jobCommand('sidecar:renderEffects'),
     proxyOne: jobCommand('sidecar:proxyOne'),
     cancel: (projectDir: string): Promise<void> => ipcRenderer.invoke('sidecar:cancel', projectDir)
-  },
-  // Node/Remotion sidecar — renders transparent effect overlays (see nodeSidecar.ts).
-  nodeSidecar: {
-    ping: (): Promise<SidecarEvent> => ipcRenderer.invoke('nodeSidecar:ping'),
-    renderOverlay: jobCommand('nodeSidecar:renderOverlay'),
-    renderGeneratedOverlay: jobCommand('nodeSidecar:renderGeneratedOverlay')
   },
   projects: {
     list: (): Promise<LocalProject[]> => ipcRenderer.invoke('projects:list'),
@@ -166,49 +226,38 @@ const noey = {
       ipcRenderer.invoke('projects:resolvePath', uid, relPath),
     openFolder: (uid: string, relPath?: string): Promise<void> =>
       ipcRenderer.invoke('projects:openFolder', uid, relPath),
+    /** Copy a rendered artifact out to a user-chosen path via a native save
+     * dialog. Resolves to the destination, or null if the user cancels. */
+    exportFile: (uid: string, relPath: string, suggestedName: string): Promise<string | null> =>
+      ipcRenderer.invoke('projects:exportFile', uid, relPath, suggestedName),
     /** Copy a user-picked music/video file into the project dir; returns the
      * project-relative path (servable via media://, resolvable for the sidecar). */
     importMusic: (uid: string, srcPath: string): Promise<string> =>
-      ipcRenderer.invoke('projects:importMusic', uid, srcPath)
+      ipcRenderer.invoke('projects:importMusic', uid, srcPath),
+    /** Write renderer-produced bytes (a recorded voiceover take) into the
+     * project dir. Returns the absolute path, for handing to the sidecar. */
+    writeFile: (uid: string, relPath: string, data: Uint8Array): Promise<string> =>
+      ipcRenderer.invoke('projects:writeFile', uid, relPath, data),
+    deleteFile: (uid: string, relPath: string): Promise<void> =>
+      ipcRenderer.invoke('projects:deleteFile', uid, relPath)
   },
   media: {
     /** media:// URL for a file inside a project dir (path must be project-relative). */
     urlFor: (uid: string, relPath: string): string =>
-      `media://project/${uid}/${relPath.split(/[\\/]/).map(encodeURIComponent).join('/')}`,
-    /** media:// URL for a file inside the effects-library dir (library-relative). */
-    urlForLibrary: (relPath: string): string =>
-      `media://library/${relPath.split(/[\\/]/).map(encodeURIComponent).join('/')}`
+      `media://project/${uid}/${relPath.split(/[\\/]/).map(encodeURIComponent).join('/')}`
   },
-  // Local effects asset library (templates + stickers), reusable across projects.
-  library: {
-    listTemplates: (): Promise<EffectTemplate[]> => ipcRenderer.invoke('library:listTemplates'),
-    saveTemplate: (name: string, instances: Record<string, unknown>[]): Promise<EffectTemplate> =>
-      ipcRenderer.invoke('library:saveTemplate', name, instances),
-    deleteTemplate: (id: string): Promise<void> => ipcRenderer.invoke('library:deleteTemplate', id),
-    listStickers: (): Promise<StickerAsset[]> => ipcRenderer.invoke('library:listStickers'),
-    stickerPath: (file: string): Promise<string> => ipcRenderer.invoke('library:stickerPath', file),
-    deleteSticker: (id: string): Promise<void> => ipcRenderer.invoke('library:deleteSticker', id),
-    importSticker: (): Promise<{ asset: StickerAsset; path: string } | null> =>
-      ipcRenderer.invoke('library:importSticker'),
-    scratchDir: (): Promise<string> => ipcRenderer.invoke('library:scratchDir'),
-    listGenerated: (): Promise<GeneratedComponent[]> => ipcRenderer.invoke('library:listGenerated'),
-    saveGenerated: (
-      name: string,
-      prompt: string,
-      source: string,
-      previewSrcPath?: string
-    ): Promise<GeneratedComponent> =>
-      ipcRenderer.invoke('library:saveGenerated', name, prompt, source, previewSrcPath),
-    deleteGenerated: (id: string): Promise<void> => ipcRenderer.invoke('library:deleteGenerated', id),
-    generatedSource: (id: string): Promise<string | null> =>
-      ipcRenderer.invoke('library:generatedSource', id),
-    generatedPreviewPath: (previewFile: string): Promise<string> =>
-      ipcRenderer.invoke('library:generatedPreviewPath', previewFile),
-    /** Pick one file via native dialog, get back its real local path (no
-     * copy into the library) — for one-off attachments like an AI
-     * effects-planning reference video/image. Null if the user cancels. */
-    pickFile: (opts: { title: string; extensions: string[] }): Promise<string | null> =>
-      ipcRenderer.invoke('library:pickFile', opts)
+  // User preferences (userData/prefs.json) — see main/prefs.ts.
+  prefs: {
+    get: (): Promise<Prefs> => ipcRenderer.invoke('prefs:get'),
+    /** Partial merge; resolves to the full prefs object after the write. */
+    set: (patch: Partial<Prefs>): Promise<Prefs> => ipcRenderer.invoke('prefs:set', patch)
+  },
+  // Library disk accounting + maintenance — see main/storage.ts.
+  storage: {
+    report: (): Promise<StorageReport> => ipcRenderer.invoke('storage:report'),
+    purgeSources: (): Promise<{ freedBytes: number; projects: number }> =>
+      ipcRenderer.invoke('storage:purgeSources'),
+    moveLibrary: (): Promise<MoveResult> => ipcRenderer.invoke('storage:moveLibrary')
   },
   auth: {
     save: (auth: StoredAuth): Promise<void> => ipcRenderer.invoke('auth:save', auth),
@@ -220,6 +269,18 @@ const noey = {
       ipcRenderer.invoke('log:write', scope, message),
     openFolder: (): Promise<void> => ipcRenderer.invoke('log:openFolder')
   },
+  // OS notification for jobs that finish while the window is unfocused.
+  // Resolves false when suppressed (window focused) or unsupported.
+  notify: {
+    show: (payload: { title: string; body: string; projectUid?: string }): Promise<boolean> =>
+      ipcRenderer.invoke('notify:show', payload),
+    /** Fires with the project uid when the user clicks a notification. */
+    onActivated: (cb: (projectUid: string) => void): ProgressUnsubscribe => {
+      const listener = (_e: IpcRendererEvent, uid: string): void => cb(uid)
+      ipcRenderer.on('notify:activated', listener)
+      return () => ipcRenderer.removeListener('notify:activated', listener)
+    }
+  },
   api: {
     fetch: (job: {
       url: string
@@ -230,6 +291,36 @@ const noey = {
       formFiles?: { field: string; path: string; filename?: string }[]
     }): Promise<{ ok: boolean; status: number; bodyText: string }> =>
       ipcRenderer.invoke('api:fetch', job)
+  },
+  lan: {
+    start: (): Promise<LanReceiveSession> => ipcRenderer.invoke('lan:start'),
+    /** Pass the sessionId from start()/startSend() so a closing modal never
+     * kills a newer session another surface started. */
+    stop: (onlySessionId?: string): Promise<void> => ipcRenderer.invoke('lan:stop', onlySessionId),
+    onFile: (cb: (f: LanReceivedFile) => void): ProgressUnsubscribe => {
+      const listener = (_e: IpcRendererEvent, f: LanReceivedFile): void => cb(f)
+      ipcRenderer.on('lan:file', listener)
+      return () => ipcRenderer.removeListener('lan:file', listener)
+    },
+    onProgress: (cb: (p: LanUploadProgress) => void): ProgressUnsubscribe => {
+      const listener = (_e: IpcRendererEvent, p: LanUploadProgress): void => cb(p)
+      ipcRenderer.on('lan:progress', listener)
+      return () => ipcRenderer.removeListener('lan:progress', listener)
+    },
+    onStopped: (cb: (s: LanStopped) => void): ProgressUnsubscribe => {
+      const listener = (_e: IpcRendererEvent, s: LanStopped): void => cb(s)
+      ipcRenderer.on('lan:stopped', listener)
+      return () => ipcRenderer.removeListener('lan:stopped', listener)
+    },
+    artifacts: (projectUid: string): Promise<LanArtifact[]> =>
+      ipcRenderer.invoke('lan:artifacts', projectUid),
+    startSend: (projectUid: string, fileIds: string[]): Promise<LanReceiveSession> =>
+      ipcRenderer.invoke('lan:startSend', projectUid, fileIds),
+    onSent: (cb: (s: { fileId: string }) => void): ProgressUnsubscribe => {
+      const listener = (_e: IpcRendererEvent, s: { fileId: string }): void => cb(s)
+      ipcRenderer.on('lan:sent', listener)
+      return () => ipcRenderer.removeListener('lan:sent', listener)
+    }
   }
 }
 

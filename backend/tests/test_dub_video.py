@@ -12,6 +12,8 @@ from packages.video import dub_ai
 
 
 def test_dub_edit_system_video_matches_claude_rules() -> None:
+    """Invariant rules that live in the RAW const (never in the swappable
+    <editing_style> block) — safety, anchoring, duration floor, coverage."""
     s = dub_ai.DUB_EDIT_SYSTEM_VIDEO
     assert s.startswith("<role>\nYou are a TikTok affiliate video editor. Produce an Edit Script JSON.")
     assert s.endswith("</output_format>")
@@ -21,6 +23,22 @@ def test_dub_edit_system_video_matches_claude_rules() -> None:
     assert "Total duration is a 45s hard floor (target 50–60s)" in s
     assert 'สั่งได้เลยที่ TikTok Shop' in s
     assert "zero reject_safety violations remain" in s
+    # Safety + anchoring invariants stay in the raw const — a saved cut style
+    # must never be able to displace them.
+    assert "HARD REJECT" in s
+    assert "ANY visible underwear" in s
+    assert "sourceIn must be within ±0.35s of matchedFrameTime" in s
+    # The editing style itself is spliced at call time via this token. The raw
+    # const may still MENTION "<editing_style>" by name (verify/authenticity
+    # rules point at the section), but the section body must not be baked in.
+    assert "__CUT_STYLE_BLOCK__" in s
+    assert "</editing_style>" not in s  # only the spliced version has the section
+    # Verify re-checks each line against the spliced <editing_style> section
+    # (replaces the old hardcoded "multi-angle on ≥60%" verify clause).
+    assert (
+        "every line's cut pattern follows the <editing_style> section above "
+        "(re-check each line against it before finalizing)" in s
+    )
     # Frame-list mechanics changed — no frame-sample wording, no frame classification wording.
     assert "sample frame you chose" not in s
     assert "Classify every frame before using it" not in s
@@ -39,12 +57,32 @@ def test_dub_edit_system_video_matches_claude_rules() -> None:
     assert "sourceOut can never exceed the clip's duration" in s
     # Authenticity over duration — never fabricate timestamps to hit the floor.
     assert "Never invent a timestamp beyond a clip's real duration" in s
-    # Multi-angle reinforcement (video-specific, addresses observed under-use).
-    assert "you MUST split it into multi-angle cuts" in s
     # 1fps precision rule — brief/transitional poses (e.g. a quick back-view
     # turn) are unreliable to timestamp exactly; prefer held moments.
     assert "you sample the video at 1 frame/second" in s
     assert "Prefer moments that are HELD for at least ~1 second" in s
+
+
+def test_dub_edit_system_video_default_splice_keeps_editing_style_rules() -> None:
+    """The editing-style sentences that used to be baked into the raw const now
+    arrive via apply_cut_style — with no saved style the model-visible prompt
+    must still contain every one of them (behavior-preserving default)."""
+    spliced = dub_ai.apply_cut_style(dub_ai.DUB_EDIT_SYSTEM_VIDEO)
+    assert "__CUT_STYLE_BLOCK__" not in spliced
+    assert "<editing_style>" in spliced and "</editing_style>" in spliced
+    # The extracted default prose is spliced verbatim.
+    assert dub_ai.DEFAULT_CUT_STYLE_PROSE in spliced
+    # Load-bearing style sentences (previously asserted on the raw const).
+    assert "Aim for multi-angle on ≥60% of lines" in spliced
+    assert "each line must look VISUALLY DIFFERENT from the one before" in spliced
+    assert "pick frames ≥30s apart when possible" in spliced
+    assert "each cut 0.5–1.5s" in spliced
+    # Multi-angle reinforcement (video-specific, addresses observed under-use).
+    assert "you MUST split it into multi-angle cuts" in spliced
+    # NO_VO variant paces per <editing_style> instead of per dialogue line.
+    no_vo = dub_ai.apply_cut_style(dub_ai.DUB_EDIT_SYSTEM_VIDEO_NO_VO)
+    assert "Pace cuts per the <editing_style> section" in no_vo
+    assert dub_ai.DEFAULT_CUT_STYLE_PROSE in no_vo
 
 
 def test_build_dub_edit_context_text_video() -> None:
@@ -148,7 +186,8 @@ async def test_generate_dub_edit_script_video_message_assembly(
     )
 
     assert uploaded == ["clip0.mp4", "clip1.mp4"]
-    assert captured["system"] == dub_ai.DUB_EDIT_SYSTEM_VIDEO
+    # System prompt = the raw const with the default editing style spliced in.
+    assert captured["system"] == dub_ai.apply_cut_style(dub_ai.DUB_EDIT_SYSTEM_VIDEO)
 
     content = captured["messages"][0]["content"]
     # Order matters here: Gemini's long-video guidance is data first, directives

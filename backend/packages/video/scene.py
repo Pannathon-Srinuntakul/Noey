@@ -200,8 +200,20 @@ def merge_frame_lists(
     return merged
 
 
-def detect_scenes(video_path: pathlib.Path, threshold: float = 27.0) -> list[dict[str, Any]]:
-    """Return list of {"start": float, "end": float, "duration": float} in seconds."""
+def detect_scenes(video_path: pathlib.Path, threshold: float = 15.0) -> list[dict[str, Any]]:
+    """Return list of {"start": float, "end": float, "duration": float} in seconds.
+
+    ContentDetector's classic default (27.0) is tuned for angle/scene changes
+    in film-style footage — it badly undercounts same-angle jump cuts (trim
+    dead space, keep the good take, same camera/background/lighting), which
+    is most of our TikTok-style dub/highlight content. Measured empirically
+    against 26 real rendered projects (255 ground-truth cuts from their own
+    editScript output boundaries): threshold=27 recall was only 46% (some
+    clips detected ZERO cuts despite having 6-11 real ones); threshold=15.0
+    gave the best precision/recall balance (F1=0.858, ~86% of both). Lower
+    values (6-10) catch more real cuts but false-positive on ordinary body
+    motion fast enough to erase the gain.
+    """
     from scenedetect import open_video, SceneManager
     from scenedetect.detectors import ContentDetector
 

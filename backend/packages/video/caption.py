@@ -204,9 +204,10 @@ _THAI_CHAR_RE = re.compile(r"[฀-๿]")
 
 def _join_words(words: list[str]) -> str:
     """Join word tokens for display — no space between two Thai-script
-    tokens (Thai writing has no inter-word spaces; Whisper only splits on
-    them internally for its own alignment), a normal space everywhere else
-    (Latin/numbers/mixed-script/punctuation) so those don't run together.
+    tokens (Thai writing has no inter-word spaces; the word split exists only
+    so captions can break lines and reveal one word at a time), a normal space
+    everywhere else (Latin/numbers/mixed-script/punctuation) so those don't run
+    together.
     """
     out = ""
     prev_last_char = ""

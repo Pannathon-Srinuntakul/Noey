@@ -41,6 +41,13 @@ from packages.video.timeline import cuts_duration, normalize_dub_edit_script
 from services.api.deps import CurrentUser, db_session
 from services.api.routers.videos import _enqueue, _get_project
 
+# Statuses a run may be (re)started from. "cancelled" is what pressing หยุดงาน
+# leaves behind, so leaving it out made a stopped project permanently
+# unstartable — every retry got a 400 while the app sat on its last progress
+# message forever (live 2026-08-13). Only "processing" genuinely blocks a new
+# start; everything else is a finished or abandoned run.
+RESTARTABLE_STATUSES = ("pending", "error", "waiting_vo", "done", "cancelled")
+
 router = APIRouter(prefix="/videos", tags=["videos-local"])
 log = get_logger(__name__)
 
@@ -169,8 +176,8 @@ async def analyze_frames(
     proj = await _get_local_project(session, uid, auth.user_id)
     if proj.mode not in ("dub_first", "highlight"):
         raise HTTPException(400, "analyze-frames ใช้ได้เฉพาะโหมด dub_first / highlight")
-    if proj.status not in ("pending", "error", "waiting_vo", "done"):
-        raise HTTPException(400, "โปรเจกต์กำลังประมวลผลอยู่")
+    if proj.status not in RESTARTABLE_STATUSES:
+        raise HTTPException(400, f"โปรเจกต์นี้ยังทำงานอยู่ (สถานะ {proj.status}) — กดหยุดงานก่อนถ้าจะเริ่มใหม่")
 
     try:
         entries = [FrameManifestEntry.model_validate(e) for e in json.loads(manifest)]
@@ -233,13 +240,49 @@ async def analyze_video(
     session: AsyncSession = Depends(db_session),
     files: list[UploadFile] = File(...),
     manifest: str = Form(...),
+    style_uid: str = Form(""),
 ) -> AnalyzeFramesOut:
-    """dub_first: receive per-clip proxy MP4s (Gemini native-video path)."""
+    """dub_first: receive per-clip proxy MP4s (Gemini native-video path).
+
+    ``style_uid`` — an OPTIONAL saved kind="cut" EffectStyle whose distilled
+    prose steers the edit-script prompt. It travels with the job as a kwarg
+    and the worker resolves the prose from the DB at run time — nothing is
+    persisted to disk/S3 (a stale style file resurrected by an S3 pull must
+    never override the user's current choice; see plan-effects' 2026-07-18
+    note).
+    """
     proj = await _get_local_project(session, uid, auth.user_id)
     if proj.mode not in ("dub_first", "highlight"):
         raise HTTPException(400, "analyze-video ใช้ได้เฉพาะโหมด dub_first / highlight")
-    if proj.status not in ("pending", "error", "waiting_vo", "done"):
-        raise HTTPException(400, "โปรเจกต์กำลังประมวลผลอยู่")
+    if proj.status not in RESTARTABLE_STATUSES:
+        raise HTTPException(400, f"โปรเจกต์นี้ยังทำงานอยู่ (สถานะ {proj.status}) — กดหยุดงานก่อนถ้าจะเริ่มใหม่")
+
+    chosen_style_uid = style_uid.strip()
+    if chosen_style_uid:
+        from packages.db.models.effect_style import EffectStyle
+
+        style = await session.get(EffectStyle, chosen_style_uid)
+        if style is None or style.user_id != auth.user_id:
+            raise HTTPException(404, "ไม่พบสไตล์นี้")
+        if style.kind != "cut":
+            raise HTTPException(400, "สไตล์นี้ไม่ใช่สไตล์การตัด")
+        if style.system_prompt:
+            log.info(
+                "analyze_video_style_selected",
+                uid=uid,
+                style_uid=chosen_style_uid,
+                style_name=style.name,
+                prompt_chars=len(style.system_prompt),
+            )
+        else:
+            # Not distilled yet (or distillation failed) — proceed with the
+            # default prompt; the worker treats an empty prose as no style.
+            log.warning(
+                "analyze_video_style_empty_prompt",
+                uid=uid,
+                style_uid=chosen_style_uid,
+                style_name=style.name,
+            )
 
     try:
         entries = [ProxyManifestEntry.model_validate(e) for e in json.loads(manifest)]
@@ -271,10 +314,15 @@ async def analyze_video(
     job_id = f"vlocal_{uid[:8]}"
     await session.execute(text("SET search_path TO core, public"))
     existing = await session.get(Job, job_id)
+    queued = {
+        "step": "queued",
+        "message": "รับวิดีโอแล้ว รอ worker วิเคราะห์…",
+        "style_uid": chosen_style_uid or None,
+    }
     if existing:
         existing.status = "queued"
         existing.progress = 2
-        existing.result = {"step": "queued", "message": "รับวิดีโอแล้ว รอ worker วิเคราะห์…"}
+        existing.result = queued
         existing.error = None
     else:
         session.add(Job(
@@ -283,14 +331,22 @@ async def analyze_video(
             type="video_edit",
             status="queued",
             progress=2,
-            result={"step": "queued", "message": "รับวิดีโอแล้ว รอ worker วิเคราะห์…"},
+            result=queued,
         ))
     await bind_tenant_search_path(session, auth.tenant_slug)
     proj.status = "processing"
     proj.job_id = job_id
     await session.commit()
 
-    await _enqueue(job_id, "analyze_dub_video_local", project_uid=uid, tenant_slug=auth.tenant_slug)
+    # style_uid travels with the job; the worker resolves the prose from the
+    # DB at run time (DB is the only source — no style file on disk/S3).
+    await _enqueue(
+        job_id,
+        "analyze_dub_video_local",
+        project_uid=uid,
+        tenant_slug=auth.tenant_slug,
+        style_uid=chosen_style_uid,
+    )
     return AnalyzeFramesOut(job_id=job_id)
 
 
@@ -315,7 +371,7 @@ async def plan_dub(
     from packages.video.dub_ai import plan_dub_timeline_cuts
 
     usage_token = set_usage_ctx(
-        UsageCtx(user_id=auth.user_id, tenant_id=auth.tenant_id, feature="video_edit", reference_id=uid)
+        UsageCtx(user_id=auth.user_id, tenant_id=auth.tenant_id, feature="video_cut", reference_id=uid)
     )
     try:
         render_cuts = await plan_dub_timeline_cuts(
@@ -363,20 +419,20 @@ async def transcribe_audio(
     auth: CurrentUser,
     session: AsyncSession = Depends(db_session),
     files: list[UploadFile] = File(...),
-    video_files: list[UploadFile] = File(default=[]),
 ) -> AnalyzeFramesOut:
-    """talking_head: receive speech WAVs (+ optional downscaled proxy MP4s, WITH audio,
-    for Gemini's per-clip video review) → transcribe + plan on the server → timeline.
+    """talking_head: receive speech WAVs → transcribe + plan on the server → timeline.
 
-    ``video_files`` is optional so older desktop builds (or a run with the Gemini
-    review disabled) keep working audio-only — the worker falls back to
-    code-only cuts when no proxy video is present for a clip.
+    Audio only. The proxy MP4s this endpoint used to accept existed solely for
+    the Gemini per-clip review; ElevenLabs Scribe decides every cut from word
+    timings, so no video leaves the creator's machine in this mode. Older
+    desktop builds that still attach ``video_files`` are unaffected — FastAPI
+    ignores multipart fields the signature does not declare.
     """
     proj = await _get_local_project(session, uid, auth.user_id)
     if proj.mode != "talking_head":
         raise HTTPException(400, "transcribe-audio ใช้ได้เฉพาะโหมด talking_head")
-    if proj.status not in ("pending", "error", "done"):
-        raise HTTPException(400, "โปรเจกต์กำลังประมวลผลอยู่")
+    if proj.status not in RESTARTABLE_STATUSES:
+        raise HTTPException(400, f"โปรเจกต์นี้ยังทำงานอยู่ (สถานะ {proj.status}) — กดหยุดงานก่อนถ้าจะเริ่มใหม่")
 
     import re
 
@@ -384,10 +440,6 @@ async def transcribe_audio(
     for f in files:
         if not f.filename or not name_re.match(f.filename):
             raise HTTPException(422, f"ชื่อไฟล์เสียงต้องเป็น audio_NNN.wav (ได้ {f.filename})")
-    video_re = re.compile(r"^clip\d+\.mp4$")
-    for f in video_files:
-        if not f.filename or not video_re.match(f.filename):
-            raise HTTPException(422, f"ชื่อไฟล์วิดีโอต้องเป็น clipN.mp4 (ได้ {f.filename})")
 
     root = data_root()
     audio_dir = root / "video_outputs" / uid / "audio"
@@ -397,15 +449,7 @@ async def transcribe_audio(
     for f in files:
         (audio_dir / f.filename).write_bytes(await f.read())
 
-    if video_files:
-        proxy_dir = root / "video_outputs" / uid / "proxy"
-        proxy_dir.mkdir(parents=True, exist_ok=True)
-        for stale in proxy_dir.glob("clip*.mp4"):
-            stale.unlink(missing_ok=True)
-        for f in video_files:
-            (proxy_dir / f.filename).write_bytes(await f.read())
-
-    await push_project_files(uid)  # WAVs (+ proxy MP4s if provided)
+    await push_project_files(uid)  # WAVs only
 
     job_id = f"vlocal_{uid[:8]}"
     await session.execute(text("SET search_path TO core, public"))
@@ -622,6 +666,7 @@ async def reedit_dub_scenes(
     session: AsyncSession = Depends(db_session),
     preview: UploadFile = File(...),
     manifest: str = Form(...),
+    style_uid: str = Form(""),
 ) -> AnalyzeFramesOut:
     """dub_first: AI-assisted re-edit of the current edit script.
 
@@ -629,14 +674,46 @@ async def reedit_dub_scenes(
     editor state — reflects exactly what the user is looking at right now.
     Raw source clip proxies are reused as-is from the initial analyze step
     (proxy_manifest.json on disk); no re-upload needed for those.
+
+    ``style_uid`` — an OPTIONAL saved kind="cut" EffectStyle, same contract as
+    POST /{uid}/analyze-video: it travels with the job as a kwarg and the
+    worker resolves the prose from the DB at run time — nothing is persisted
+    to disk/S3.
     """
     proj = await _get_local_project(session, uid, auth.user_id)
     if proj.mode not in ("dub_first", "highlight"):
         raise HTTPException(400, "reedit-dub-scenes ใช้ได้เฉพาะโหมด dub_first / highlight")
-    if proj.status not in ("pending", "error", "waiting_vo", "done"):
-        raise HTTPException(400, "โปรเจกต์กำลังประมวลผลอยู่")
+    if proj.status not in RESTARTABLE_STATUSES:
+        raise HTTPException(400, f"โปรเจกต์นี้ยังทำงานอยู่ (สถานะ {proj.status}) — กดหยุดงานก่อนถ้าจะเริ่มใหม่")
     if not proj.edit_script_path:
         raise HTTPException(400, "ยังไม่มี edit script — ต้อง analyze ก่อน")
+
+    chosen_style_uid = style_uid.strip()
+    if chosen_style_uid:
+        from packages.db.models.effect_style import EffectStyle
+
+        style = await session.get(EffectStyle, chosen_style_uid)
+        if style is None or style.user_id != auth.user_id:
+            raise HTTPException(404, "ไม่พบสไตล์นี้")
+        if style.kind != "cut":
+            raise HTTPException(400, "สไตล์นี้ไม่ใช่สไตล์การตัด")
+        if style.system_prompt:
+            log.info(
+                "reedit_dub_style_selected",
+                uid=uid,
+                style_uid=chosen_style_uid,
+                style_name=style.name,
+                prompt_chars=len(style.system_prompt),
+            )
+        else:
+            # Not distilled yet (or distillation failed) — proceed with the
+            # default prompt; the worker treats an empty prose as no style.
+            log.warning(
+                "reedit_dub_style_empty_prompt",
+                uid=uid,
+                style_uid=chosen_style_uid,
+                style_name=style.name,
+            )
 
     try:
         body = ReeditManifestIn.model_validate(json.loads(manifest))
@@ -661,10 +738,15 @@ async def reedit_dub_scenes(
     job_id = f"vlocal_{uid[:8]}"
     await session.execute(text("SET search_path TO core, public"))
     existing = await session.get(Job, job_id)
+    queued = {
+        "step": "queued",
+        "message": "รับคำสั่งแก้ไขแล้ว รอ AI ประมวลผล…",
+        "style_uid": chosen_style_uid or None,
+    }
     if existing:
         existing.status = "queued"
         existing.progress = 2
-        existing.result = {"step": "queued", "message": "รับคำสั่งแก้ไขแล้ว รอ AI ประมวลผล…"}
+        existing.result = queued
         existing.error = None
     else:
         session.add(Job(
@@ -673,14 +755,22 @@ async def reedit_dub_scenes(
             type="video_edit",
             status="queued",
             progress=2,
-            result={"step": "queued", "message": "รับคำสั่งแก้ไขแล้ว รอ AI ประมวลผล…"},
+            result=queued,
         ))
     await bind_tenant_search_path(session, auth.tenant_slug)
     proj.status = "processing"
     proj.job_id = job_id
     await session.commit()
 
-    await _enqueue(job_id, "reedit_dub_scenes_local", project_uid=uid, tenant_slug=auth.tenant_slug)
+    # style_uid travels with the job; the worker resolves the prose from the
+    # DB at run time (DB is the only source — no style file on disk/S3).
+    await _enqueue(
+        job_id,
+        "reedit_dub_scenes_local",
+        project_uid=uid,
+        tenant_slug=auth.tenant_slug,
+        style_uid=chosen_style_uid,
+    )
     return AnalyzeFramesOut(job_id=job_id)
 
 
@@ -698,7 +788,6 @@ async def plan_effects(
     cuts: str = Form(""),
     use_previous: bool = Form(False),
     reference: UploadFile | None = File(None),
-    image_asset: UploadFile | None = File(None),
 ) -> AnalyzeFramesOut:
     """AI-assisted effects placement: receive a downscaled proxy of the finished
     cut video + an optional instruction + an optional timed script/transcript,
@@ -722,21 +811,15 @@ async def plan_effects(
     entirely, giving a genuinely clean-slate placement pass.
 
     ``reference`` — an OPTIONAL video/image the user attached purely as style
-    inspiration (the AI is told never to copy its literal content). ``image_asset``
-    — an OPTIONAL image the user wants placed IN the clip as a sticker/popup; the
-    AI only sees an ephemeral copy for vision judgment and never gets a real file
-    path, so ANY instance it places using it comes back with a
-    ``"__PENDING_ASSET__"`` sentinel in ``imagePath`` — the caller (desktop app)
-    must substitute the real local file path (the one the user actually picked)
-    and persist the corrected doc via the existing ``PUT /{uid}/effects``
-    before rendering.
+    inspiration (the AI is told never to copy its literal content, only its
+    camera-motion rhythm).
 
     The full-res video never leaves the user's machine — only this proxy is
     uploaded for the AI to watch (parallel to dub's proxy upload). Effects are a
     layer on top; the cut/timeline is untouched.
     """
     proj = await _get_local_project(session, uid, auth.user_id)
-    if proj.status not in ("done", "waiting_vo", "error"):
+    if proj.status not in ("done", "waiting_vo", "error", "cancelled"):
         raise HTTPException(400, "ต้องมีวิดีโอที่ตัดเสร็จแล้วก่อนจึงจะวางเอฟเฟกต์ได้")
 
     root = data_root()
@@ -802,24 +885,18 @@ async def plan_effects(
     else:
         log.info("plan_effects_style_none", uid=uid)
 
-    # Reference/asset are OPTIONAL and named by their real extension (the AI
-    # call needs a real suffix to guess mime type) — any stale file from a
-    # previous run is removed first so an omitted param this time doesn't
-    # silently reuse last run's attachment.
+    # The reference is OPTIONAL and named by its real extension (the AI call
+    # needs a real suffix to guess mime type) — any stale file from a previous
+    # run is removed first so an omitted param this time doesn't silently
+    # reuse last run's attachment.
     for stale in effects_dir.glob("reference.*"):
-        stale.unlink(missing_ok=True)
-        await delete_output_file(uid, f"effects/{stale.name}")
-    for stale in effects_dir.glob("image_asset.*"):
         stale.unlink(missing_ok=True)
         await delete_output_file(uid, f"effects/{stale.name}")
     if reference is not None:
         suffix = Path(reference.filename or "").suffix or ".mp4"
         (effects_dir / f"reference{suffix}").write_bytes(await reference.read())
-    if image_asset is not None:
-        suffix = Path(image_asset.filename or "").suffix or ".jpg"
-        (effects_dir / f"image_asset{suffix}").write_bytes(await image_asset.read())
 
-    await push_project_files(uid)  # proxy MP4 + prompt + script + optional reference/asset
+    await push_project_files(uid)  # proxy MP4 + prompt + script + optional reference
 
     job_id = f"vlocal_{uid[:8]}"
     await session.execute(text("SET search_path TO core, public"))
@@ -899,94 +976,3 @@ async def put_effects(
     return {"uid": uid, "instances": len(doc.instances)}
 
 
-@router.post("/effects/generate-component")
-async def generate_effect_component_global(
-    auth: CurrentUser,
-    prompt: str = Form(""),
-    reference: UploadFile | None = File(None),
-) -> dict:
-    """Project-independent variant of the codegen route below, for the desktop
-    Effects Studio (global component library): same model call, same UNTRUSTED
-    output contract — the desktop side must still validate with
-    codegenValidate.mjs before ever rendering. No project row is touched; the
-    reference image goes to a per-user scratch file, not a project dir.
-    """
-    import tempfile
-
-    from packages.video.effects_codegen import generate_effect_component
-
-    if not prompt.strip() and reference is None:
-        raise HTTPException(400, "ต้องมี prompt หรือรูป reference อย่างน้อยหนึ่งอย่าง")
-
-    ref_path = None
-    if reference is not None:
-        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
-            tmp.write(await reference.read())
-            ref_path = Path(tmp.name)
-
-    usage_token = set_usage_ctx(
-        UsageCtx(
-            user_id=auth.user_id,
-            tenant_id=auth.tenant_id,
-            feature="video_edit",
-            reference_id="effects_studio",
-        )
-    )
-    try:
-        source = await generate_effect_component(
-            prompt, reference_image_path=ref_path, project_uid="effects_studio"
-        )
-    except ValueError as exc:
-        raise HTTPException(422, str(exc)) from exc
-    finally:
-        reset_usage_ctx(usage_token)
-        if ref_path is not None:
-            ref_path.unlink(missing_ok=True)
-
-    return {"componentSource": source}
-
-
-@router.post("/{uid}/generate-effect-component")
-async def generate_effect_component_route(
-    uid: str,
-    auth: CurrentUser,
-    session: AsyncSession = Depends(db_session),
-    prompt: str = Form(""),
-    reference: UploadFile | None = File(None),
-) -> dict:
-    """Ask the model for a brand-new Remotion overlay component's source, from
-    a text prompt and/or a reference image — REMOTION_EFFECTS_REQUIREMENTS.md
-    §6 extension (custom template/effect/component creation).
-
-    Returns the raw (UNTRUSTED) source text as `componentSource`. This
-    response is NOT safe to render as-is — the desktop app MUST re-validate it
-    with codegenValidate.mjs before ever bundling/executing it; nothing about
-    a 200 response here means the code is safe.
-    """
-    from packages.video.effects_codegen import generate_effect_component
-
-    await _get_local_project(session, uid, auth.user_id)
-    if not prompt.strip() and reference is None:
-        raise HTTPException(400, "ต้องมี prompt หรือรูป reference อย่างน้อยหนึ่งอย่าง")
-
-    root = data_root()
-    ref_path = None
-    if reference is not None:
-        effects_dir = root / "video_outputs" / uid / "effects"
-        effects_dir.mkdir(parents=True, exist_ok=True)
-        ref_path = effects_dir / "codegen_reference.jpg"
-        ref_path.write_bytes(await reference.read())
-
-    usage_token = set_usage_ctx(
-        UsageCtx(user_id=auth.user_id, tenant_id=auth.tenant_id, feature="video_edit", reference_id=uid)
-    )
-    try:
-        source = await generate_effect_component(
-            prompt, reference_image_path=ref_path, project_uid=uid
-        )
-    except ValueError as exc:
-        raise HTTPException(422, str(exc)) from exc
-    finally:
-        reset_usage_ctx(usage_token)
-
-    return {"componentSource": source}

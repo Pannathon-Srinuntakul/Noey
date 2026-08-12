@@ -2,14 +2,14 @@
 
 For each source clip, encodes ``proxy/{clip_id}.mp4`` (480p, ~12fps, low-bitrate
 H.264) and writes ``proxy/proxy_manifest.json`` matching the backend
-POST /videos/{uid}/analyze-video (dub_first) / POST /videos/{uid}/transcribe-audio
-(talking_head) manifest schema ({clip_id, file, durationSec, order}).
+POST /videos/{uid}/analyze-video manifest schema
+({clip_id, file, durationSec, order}).
 
-dub_first strips audio entirely (Gemini only needs to see shots, never hears the
-clip). talking_head sets ``keepAudio`` — Gemini's per-clip review needs to hear
-the actual speech to correct Whisper's transcript and judge stutter/repeat, so
-audio must survive the downscale (kept at a modest bitrate; it's a small
-fraction of a video file's size next to the visual track anyway).
+dub_first is the only caller: Gemini needs to see the shots to write the edit
+script, and never hears the clip, so audio is stripped. ``keepAudio`` survives
+for callers that need it — talking_head used to set it so Gemini could review
+the transcript against the real speech, but that pass is gone (ElevenLabs Scribe
+decides the cut from word timings) and that mode no longer encodes proxies at all.
 """
 
 from __future__ import annotations

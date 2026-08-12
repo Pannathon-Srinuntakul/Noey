@@ -51,6 +51,7 @@ describe('projectFlow', () => {
     expect(stepOrderFor('dub_first')).toBe(STEP_ORDER)
     expect(stepOrderFor(undefined)).toBe(STEP_ORDER)
     expect(TH_STEP_ORDER).toEqual([
+      'importing',
       'imported',
       'extracting_audio',
       'transcribing',
@@ -73,10 +74,19 @@ describe('projectFlow', () => {
 
   it('highlight has its own step order — no waiting_vo/planning/final_rendering', () => {
     expect(stepOrderFor('highlight')).toBe(HL_STEP_ORDER)
-    expect(HL_STEP_ORDER).toEqual(['imported', 'analyzing', 'silent_rendering', 'done'])
+    expect(HL_STEP_ORDER).toEqual([
+      'importing',
+      'imported',
+      'analyzing',
+      'silent_rendering',
+      'done'
+    ])
   })
 
   it('highlight advance + busy + resume', () => {
+    // 'importing' is the copy/transcode stage the wizard hands off to the
+    // pipeline; it precedes 'imported' in every mode's order.
+    expect(advance('importing', 'highlight')).toBe('imported')
     expect(advance('imported', 'highlight')).toBe('analyzing')
     expect(advance('analyzing', 'highlight')).toBe('silent_rendering')
     expect(advance('silent_rendering', 'highlight')).toBe('done')
@@ -85,7 +95,8 @@ describe('projectFlow', () => {
     expect(isBusy('silent_rendering')).toBe(true)
     expect(resumeStep('analyzing')).toBe('imported')
     expect(resumeStep('silent_rendering')).toBe('silent_rendering')
-    expect(stepIndex('done', 'highlight')).toBe(3)
+    // importing · imported · analyzing · silent_rendering · done
+    expect(stepIndex('done', 'highlight')).toBe(4)
   })
 })
 
@@ -100,8 +111,22 @@ describe('groupScriptLines', () => {
       ]
     })
     expect(lines).toEqual([
-      { lineId: 1, script: 'เปิดคลิป', visualDescription: '', cutCount: 1, outputIn: 0, outputOut: 0 },
-      { lineId: 2, script: 'ช่วงกลาง', visualDescription: '', cutCount: 2, outputIn: 0, outputOut: 0 },
+      {
+        lineId: 1,
+        script: 'เปิดคลิป',
+        visualDescription: '',
+        cutCount: 1,
+        outputIn: 0,
+        outputOut: 0
+      },
+      {
+        lineId: 2,
+        script: 'ช่วงกลาง',
+        visualDescription: '',
+        cutCount: 2,
+        outputIn: 0,
+        outputOut: 0
+      },
       { lineId: 3, script: 'CTA', visualDescription: '', cutCount: 1, outputIn: 0, outputOut: 0 }
     ])
   })

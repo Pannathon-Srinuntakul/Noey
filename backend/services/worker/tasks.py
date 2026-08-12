@@ -16,10 +16,7 @@ import csv
 import io
 import json
 import pathlib
-import re
 import shutil
-import time
-import zipfile
 from typing import Any
 
 from sqlalchemy import select, text
@@ -30,7 +27,7 @@ from packages.core.errors import format_exception_message
 from packages.db.models.core_auth import Job
 from packages.db.session import bind_tenant_search_path, get_engine, get_sessionmaker
 from packages.video.storage import data_root
-from packages.video.ffmpeg_bin import configure_ffmpeg, has_audio_stream, hwaccel_input_kwargs, media_duration, probe_media, run_ffmpeg, trim_media, video_encode_kwargs, video_stream_info
+from packages.video.ffmpeg_bin import configure_ffmpeg, has_audio_stream, hwaccel_input_kwargs, media_duration, run_ffmpeg, trim_media, video_encode_kwargs, video_stream_info
 from packages.video.timeline import (
     normalize_dub_edit_script,
     cuts_duration,
@@ -64,8 +61,15 @@ async def _get_tenant_id_by_slug(tenant_slug: str) -> int | None:
         await session.close()
 
 
-def _set_video_usage_ctx(proj: Any, tenant_id: int | None, project_uid: str) -> Any:
-    """Set LLM usage context for a video task. Returns the context token to reset later."""
+def _set_video_usage_ctx(
+    proj: Any, tenant_id: int | None, project_uid: str, feature: str = "video_cut"
+) -> Any:
+    """Set LLM usage context for a video task. Returns the context token to reset later.
+
+    ``feature`` decides which task the tokens are reported under — see
+    ``packages.llm.usage._TASK_BY_FEATURE``. Default is the cut/script planning
+    bucket, which is what most video tasks do.
+    """
     from packages.llm.usage import UsageCtx, set_usage_ctx
     if tenant_id is None:
         return None
@@ -76,9 +80,30 @@ def _set_video_usage_ctx(proj: Any, tenant_id: int | None, project_uid: str) -> 
         UsageCtx(
             user_id=int(user_id),
             tenant_id=tenant_id,
-            feature="video",
+            feature=feature,
             reference_id=project_uid,
         )
+    )
+
+
+async def _record_stt(transcript: dict[str, Any] | None) -> None:
+    """Bill this run's transcribed audio to whoever triggered it.
+
+    The ElevenLabs key is one shared account, so its own totals cover every
+    user — per-user attribution can only happen here, against the UsageCtx the
+    task already set.
+    """
+    if not transcript:
+        return
+    from packages.llm.usage import get_usage_ctx, record_stt_usage
+
+    ctx = get_usage_ctx()
+    if ctx is None:
+        return
+    await record_stt_usage(
+        ctx,
+        float(transcript.get("billed_audio_sec") or 0.0),
+        str(transcript.get("stt_model") or ""),
     )
 
 
@@ -269,50 +294,30 @@ def _talking_transcribe_callbacks(
     *,
     base_progress: int,
     transcribe_span: int,
-    review_progress: int,
-) -> tuple[Any, Any]:
-    """Build on_progress + on_thinking callbacks for run_transcription."""
-    state = {"step": "transcribe", "message": "กำลังถอดเสียง…", "progress": base_progress}
+) -> Any:
+    """Build the on_progress callback for elevenlabs_stt.run_transcription."""
 
     async def on_progress(phase: str, idx: int, total: int) -> None:
-        if phase == "retry":
-            state.update(
-                step="transcribe",
-                message="Whisper พลาดช่วงเงียบ — ถอดเสียงรอบ 2…",
-                progress=base_progress + transcribe_span // 2,
-            )
-        elif phase == "whisper_done":
-            state.update(
-                step="transcribe",
-                message=f"ถอดเสียงเสร็จ {total} คลิป — กำลังส่งให้ AI ตรวจวิดีโอ…",
-                progress=base_progress + transcribe_span,
-            )
-        elif phase == "review":
-            state.update(
-                step="review",
-                message=f"AI กำลังดูวิดีโอคลิป {idx + 1}/{total}…",
-                progress=review_progress,
-            )
+        if phase == "done":
+            progress = base_progress + transcribe_span
+            message = f"ถอดเสียงเสร็จ {total} คลิป"
         else:
-            span = transcribe_span
-            state.update(
-                step="transcribe",
-                message=f"กำลังถอดเสียงคลิป {idx + 1}/{total}…",
-                progress=int(base_progress + span * idx / max(total, 1)),
-            )
-        await _video_progress(job_id, state["progress"], state["step"], state["message"])
+            progress = int(base_progress + transcribe_span * idx / max(total, 1))
+            message = f"กำลังถอดเสียงคลิป {idx + 1}/{total}…"
+        await _video_progress(job_id, progress, "transcribe", message)
 
-    async def on_thinking(excerpt: str) -> None:
-        trimmed = excerpt[-2000:] if len(excerpt) > 2000 else excerpt
-        await _video_progress(
-            job_id,
-            state["progress"],
-            state["step"],
-            state["message"],
-            thinking=trimmed,
-        )
+    return on_progress
 
-    return on_progress, on_thinking
+
+def _project_keyterms(proj: Any) -> list[str]:
+    """Product/brand names to bias Scribe towards, from the project's local_meta.
+
+    Desktop clients may send ``local_meta.keyterms``; nothing else supplies them
+    today, and an empty list means the (surcharged) keyterms field is omitted.
+    """
+    meta = getattr(proj, "local_meta", None) or {}
+    terms = meta.get("keyterms") or []
+    return [str(t) for t in terms if str(t).strip()] if isinstance(terms, list) else []
 
 
 async def _abort_if_cancelled(session: AsyncSession, project_uid: str, job_id: str) -> bool:
@@ -543,20 +548,15 @@ async def ingest_video(ctx: dict[str, Any], *, job_id: str, project_uid: str, te
 
 # ── task: transcribe_video ────────────────────────────────────────────────────
 
-from packages.video.whisper_client import (  # noqa: E402  (transcription core shared with local-render API)
-    MODAL_CHUNK_SEC,
-    MODAL_CHUNK_WHEN_MB,
-    MODAL_CHUNK_WHEN_SEC,
+from packages.video.elevenlabs_stt import (  # noqa: E402  (transcription core shared with local-render API)
     run_transcription,
-    transcribe_modal_request as _transcribe_modal_request,
-    transcribe_via_modal as _transcribe_via_modal,
 )
 
 
 async def transcribe_video(ctx: dict[str, Any], *, job_id: str, project_uid: str, tenant_slug: str) -> dict:
-    """Transcribe audio — uses Modal GPU endpoint if configured, else local faster-whisper."""
+    """Transcribe audio with ElevenLabs Scribe."""
     log.info("task_start", task="transcribe_video", project_uid=project_uid)
-    await _video_progress(job_id, 60, "transcribe", "กำลังโหลดโมเดล Whisper…")
+    await _video_progress(job_id, 60, "transcribe", "กำลังถอดเสียง…")
     session = await _tenant_session(tenant_slug)
     try:
         if await _abort_if_cancelled(session, project_uid, job_id):
@@ -567,23 +567,23 @@ async def transcribe_video(ctx: dict[str, Any], *, job_id: str, project_uid: str
         root = data_root()
         output_dir = root / "video_outputs" / project_uid
         audio_dir = output_dir / "audio"
-        norm_dir = output_dir / "normalized"
 
         audio_files = sorted(audio_dir.glob("audio_*.wav"))
         if not audio_files:
             raise ValueError("No audio files to transcribe")
-        # Paired 1:1 with audio_files by clip index (audio_NNN.wav <-> norm_NNN.*) —
-        # Gemini's per-clip review (inside run_transcription) needs the actual video,
-        # not just the extracted WAV.
-        video_files = [
-            next(iter(norm_dir.glob(f"norm_{p.stem.split('_')[-1]}.*")), None)
-            for p in audio_files
-        ]
-        proj_for_brief = await _get_video_project(session, project_uid)
-        brief = proj_for_brief.brief or ""
+        proj_for_terms = await _get_video_project(session, project_uid)
 
-        _t_progress, _t_thinking = _talking_transcribe_callbacks(
-            job_id, base_progress=60, transcribe_span=15, review_progress=68,
+        # This task makes no LLM call, but the context is what tells
+        # `_record_stt` whose transcription minutes these are.
+        _set_video_usage_ctx(
+            proj_for_terms,
+            await _get_tenant_id_by_slug(tenant_slug),
+            project_uid,
+            feature="video_cut",
+        )
+
+        _t_progress = _talking_transcribe_callbacks(
+            job_id, base_progress=60, transcribe_span=10,
         )
 
         async def _should_abort() -> bool:
@@ -591,18 +591,16 @@ async def transcribe_video(ctx: dict[str, Any], *, job_id: str, project_uid: str
 
         transcript = await run_transcription(
             audio_files,
-            video_files=video_files,
-            brief=brief,
+            keyterms=_project_keyterms(proj_for_terms),
             project_uid=project_uid,
             on_progress=_t_progress,
-            on_thinking=_t_thinking,
             should_abort=_should_abort,
         )
         if transcript is None:
             return {"cancelled": True}
+        await _record_stt(transcript)
         all_segments = transcript["segments"]
 
-        transcript = {"segments": all_segments, "silence_gaps": transcript.get("silence_gaps", [])}
         transcript_path = output_dir / "transcript.json"
         transcript_path.write_text(json.dumps(transcript, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -610,7 +608,7 @@ async def transcribe_video(ctx: dict[str, Any], *, job_id: str, project_uid: str
         await _update_video(session, project_uid, transcript_path=rel_path)
         await _video_progress(
             job_id, 70, "transcribe",
-            f"ถอดเสียง + AI ตรวจเสร็จ ({len(all_segments)} ช่วง) กำลังประกอบไทม์ไลน์…",
+            f"ถอดเสียงเสร็จ ({len(all_segments)} ช่วง) กำลังประกอบไทม์ไลน์…",
         )
 
         log.info("transcribe_done", project_uid=project_uid, segments=len(all_segments))
@@ -758,48 +756,6 @@ async def plan_edit(ctx: dict[str, Any], *, job_id: str, project_uid: str, tenan
         if _usage_token is not None:
             from packages.llm.usage import reset_usage_ctx
             reset_usage_ctx(_usage_token)
-
-
-def _marks_to_popups(product_marks: list[dict], render_cuts: list[dict]) -> list[dict]:
-    """Map product_marks (sourceClip + at) → popup overlay entries on the output timeline."""
-    popups: list[dict] = []
-    out_t = 0.0
-    cut_start_times: list[float] = []
-    for cut in render_cuts:
-        cut_start_times.append(out_t)
-        out_t += float(cut["out"]) - float(cut["in"])
-
-    for mark in product_marks:
-        src = mark.get("sourceClip", "clip0")
-        at = float(mark.get("at", 0.0))
-        for i, cut in enumerate(render_cuts):
-            if cut.get("source") != src:
-                continue
-            c_in = float(cut["in"])
-            c_out = float(cut["out"])
-            if c_in <= at <= c_out:
-                output_t = cut_start_times[i] + (at - c_in)
-                popup: dict = {
-                    "template": "product_name",
-                    "data": {
-                        "name": mark.get("productName", ""),
-                        "price": mark.get("price", ""),
-                    },
-                    "start": round(output_t, 3),
-                    "duration": 3.0,
-                    "position": "bottom-center",
-                }
-                popups.append(popup)
-                if mark.get("price"):
-                    popups.append({
-                        "template": "price",
-                        "data": {"price": mark.get("price", "")},
-                        "start": round(output_t + 0.5, 3),
-                        "duration": 2.5,
-                        "position": "bottom-left",
-                    })
-                break
-    return popups
 
 
 # ── task: render_video ────────────────────────────────────────────────────────
@@ -1013,100 +969,6 @@ async def render_video(ctx: dict[str, Any], *, job_id: str, project_uid: str, te
             except Exception as _cap_exc:
                 log.warning("caption_burn_failed", error=str(_cap_exc))
 
-        # 3d. Popup / CTA overlay (non-fatal)
-        popups = timeline.get("popups", [])
-        if popups:
-            try:
-                from packages.video.overlay import popup_position_xy, popup_size, render_popup_png
-
-                overlay_dir = output_dir / "overlays"
-                overlay_dir.mkdir(exist_ok=True)
-
-                # Probe video dimensions for position math
-                _vprobe = probe_media(str(final_path))
-                _vs = next((s for s in _vprobe["streams"] if s["codec_type"] == "video"), {})
-                _vid_w = int(_vs.get("width", 1080))
-                _vid_h = int(_vs.get("height", 1920))
-
-                await _video_progress(job_id, 94, "render", f"กำลังเพิ่ม overlay {len(popups)} ชิ้น…")
-
-                # Render PNG for each popup
-                _png_paths: list[pathlib.Path] = []
-                for _pi, _popup in enumerate(popups):
-                    _tpl = _popup.get("template", "price")
-                    _png = overlay_dir / f"popup_{_pi:03d}.png"
-                    render_popup_png(_tpl, _popup.get("data", {}), _png, _vid_w, _vid_h)
-                    _png_paths.append(_png)
-
-                # Build ffmpeg overlay filter chain
-                _main_in = ffmpeg_lib.input(str(final_path), **hwaccel_input_kwargs())
-                _vid_stream = _main_in.video
-                _aud_stream = _main_in.audio
-                for _pi, (_popup, _png) in enumerate(zip(popups, _png_paths)):
-                    _t0 = float(_popup.get("start", 0.0))
-                    _t1 = _t0 + float(_popup.get("duration", 2.0))
-                    _tpl = _popup.get("template", "price")
-                    _pw, _ph = popup_size(_tpl)
-                    _px, _py = popup_position_xy(
-                        _popup.get("position", "bottom-center"), _vid_w, _vid_h, _pw, _ph
-                    )
-                    _img_in = ffmpeg_lib.input(str(_png))
-                    _vid_stream = ffmpeg_lib.filter(
-                        [_vid_stream, _img_in], "overlay",
-                        x=_px, y=_py,
-                        enable=f"between(t,{_t0},{_t1})",
-                    )
-
-                _final_popup = output_dir / "final_popup.mp4"
-                run_ffmpeg(
-                    ffmpeg_lib.output(
-                        _vid_stream, _aud_stream, str(_final_popup),
-                        **video_encode_kwargs(), acodec="copy",
-                    ).overwrite_output(),
-                    label="render_popups",
-                )
-                _final_popup.replace(final_path)
-            except Exception as _pop_exc:
-                log.warning("popup_overlay_failed", error=str(_pop_exc))
-
-        # 3e. Sticker overlay (Tier 3d, non-fatal)
-        _graphics = timeline.get("graphics", [])
-        if _graphics:
-            try:
-                from packages.video.stickers import sticker_path
-
-                await _video_progress(job_id, 95, "render", f"กำลังเพิ่ม sticker {len(_graphics)} ชิ้น…")
-                _sticker_dir = output_dir / "stickers"
-                _sticker_dir.mkdir(exist_ok=True)
-
-                _g_main = ffmpeg_lib.input(str(final_path), **hwaccel_input_kwargs())
-                _g_vid = _g_main.video
-                _g_aud = _g_main.audio
-                for _gi, _g in enumerate(_graphics):
-                    _sp = sticker_path(_g["name"])
-                    _g_t0 = float(_g.get("at", 0.0))
-                    _g_t1 = _g_t0 + float(_g.get("duration", 2.0))
-                    _gx = int(_g.get("x", 0))
-                    _gy = int(_g.get("y", 0))
-                    _g_img = ffmpeg_lib.input(str(_sp))
-                    _g_vid = ffmpeg_lib.filter(
-                        [_g_vid, _g_img], "overlay",
-                        x=_gx, y=_gy,
-                        enable=f"between(t,{_g_t0},{_g_t1})",
-                    )
-
-                _final_stickered = output_dir / "final_stickers.mp4"
-                run_ffmpeg(
-                    ffmpeg_lib.output(
-                        _g_vid, _g_aud, str(_final_stickered),
-                        **video_encode_kwargs(), acodec="copy",
-                    ).overwrite_output(),
-                    label="render_stickers",
-                )
-                _final_stickered.replace(final_path)
-            except Exception as _ge:
-                log.warning("sticker_overlay_failed", error=str(_ge))
-
         # 4. SRT captions
         srt_path = captions_dir / "subtitles.srt"
         _write_srt(captions, srt_path)
@@ -1122,7 +984,6 @@ async def render_video(ctx: dict[str, Any], *, job_id: str, project_uid: str, te
             final_path=final_path,
             srt_path=srt_path,
             ass_burned=_ass_burned,
-            graphics=_graphics,
         )
 
         final_rel = str(final_path.relative_to(root))
@@ -1653,7 +1514,14 @@ async def analyze_dub_local(ctx: dict[str, Any], *, job_id: str, project_uid: st
 # ── task: analyze_dub_video_local ────────────────────────────────────────────
 
 
-async def analyze_dub_video_local(ctx: dict[str, Any], *, job_id: str, project_uid: str, tenant_slug: str) -> dict:
+async def analyze_dub_video_local(
+    ctx: dict[str, Any],
+    *,
+    job_id: str,
+    project_uid: str,
+    tenant_slug: str,
+    style_uid: str = "",
+) -> dict:
     """Local-render (desktop) dub_first variant using Gemini native video.
 
     The desktop sidecar already encoded a downscaled, no-audio proxy MP4 per
@@ -1662,6 +1530,11 @@ async def analyze_dub_video_local(ctx: dict[str, Any], *, job_id: str, project_u
     Gemini video Vision call and stores edit_script.json; the desktop app then
     renders silently on the user's machine. Parallel to analyze_dub_local
     (frame path), which stays unchanged for the Claude path.
+
+    ``style_uid`` — an optional kind="cut" EffectStyle whose distilled prose
+    steers the edit-script prompt. Resolved from the DB only — never persisted
+    to disk/S3 (a stale style file from a previous attempt must not override
+    the user's current choice; see plan_effects_local's 2026-07-18 note).
     """
     log.info("task_start", task="analyze_dub_video_local", project_uid=project_uid)
     await _video_progress(job_id, 20, "analyze", "กำลังส่งวิดีโอให้ AI วิเคราะห์…")
@@ -1682,6 +1555,25 @@ async def analyze_dub_video_local(ctx: dict[str, Any], *, job_id: str, project_u
         proj = await _get_video_project(session, project_uid)
         tenant_id = await _get_tenant_id_by_slug(tenant_slug)
         _usage_token = _set_video_usage_ctx(proj, tenant_id, project_uid)
+
+        # Cut style: DB is the only source — no style file on disk/S3.
+        style_prompt = ""
+        chosen = (style_uid or "").strip()
+        if chosen:
+            from packages.db.models.effect_style import EffectStyle
+
+            style = await session.get(EffectStyle, chosen)
+            if style is not None and style.kind == "cut" and style.system_prompt:
+                style_prompt = style.system_prompt
+                log.info(
+                    "cut_style_applied",
+                    project_uid=project_uid,
+                    style_uid=chosen,
+                    style_name=style.name,
+                    prompt_chars=len(style_prompt),
+                )
+            else:
+                log.warning("cut_style_uid_unresolved", project_uid=project_uid, style_uid=chosen)
 
         records = json.loads(manifest_file.read_text(encoding="utf-8"))
         records.sort(key=lambda r: int(r.get("order") or 0))
@@ -1711,6 +1603,7 @@ async def analyze_dub_video_local(ctx: dict[str, Any], *, job_id: str, project_u
             project_uid=project_uid,
             music_beats=proj.music_beats,
             system=DUB_EDIT_SYSTEM_VIDEO_NO_VO if proj.mode == "highlight" else DUB_EDIT_SYSTEM_VIDEO,
+            style_prompt=style_prompt,
             on_thinking=_push_thinking,
         )
 
@@ -1777,9 +1670,9 @@ async def plan_effects_local(
     The desktop app uploaded a downscaled proxy of the finished cut video
     (effects/cut_proxy.mp4) plus an optional free-text instruction
     (effects/prompt.txt) via POST /videos/{uid}/plan-effects. This task runs the
-    Gemini effects placement pass and stores effects.json; the desktop then
-    renders the overlays (Remotion) + composites locally. No cut/timeline is
-    touched — effects are a layer on top.
+    Gemini motion-placement pass and stores effects.json; the desktop then
+    bakes those ffmpeg transforms into the footage locally. No cut/timeline is
+    touched.
 
     ``style_uid`` — the EffectStyle the desktop selected for THIS run. Re-applied
     from the DB after S3 pull so a stale ``effects/style.txt`` from a previous
@@ -1853,10 +1746,9 @@ async def plan_effects_local(
             style_file.unlink(missing_ok=True)
             log.info("effects_style_cleared", project_uid=project_uid)
 
-        # Optional style-reference video/image and image-to-place-as-sticker —
-        # named by real extension (glob since we don't know the suffix upfront).
+        # Optional style-reference video/image — named by real extension
+        # (glob since we don't know the suffix upfront).
         reference_path = next((output_dir / "effects").glob("reference.*"), None)
-        image_asset_path = next((output_dir / "effects").glob("image_asset.*"), None)
 
         # Real scene-cut timestamps (output-timeline seconds) the desktop client
         # derives from its own edit script/timeline — lets the AI place a
@@ -1874,7 +1766,7 @@ async def plan_effects_local(
 
         proj = await _get_video_project(session, project_uid)
         tenant_id = await _get_tenant_id_by_slug(tenant_slug)
-        _usage_token = _set_video_usage_ctx(proj, tenant_id, project_uid)
+        _usage_token = _set_video_usage_ctx(proj, tenant_id, project_uid, feature="video_effects")
 
         async def _push_thinking(excerpt: str) -> None:
             await _update_job(
@@ -1905,7 +1797,6 @@ async def plan_effects_local(
             project_uid=project_uid,
             previous_doc=previous_doc,
             reference_path=reference_path,
-            image_asset_path=image_asset_path,
             cut_points_sec=cut_points_sec,
             style_prompt=style_prompt,
             on_thinking=_push_thinking,
@@ -1968,7 +1859,7 @@ async def distill_style_local(ctx: dict[str, Any], *, job_id: str, style_uid: st
                 ref_path = candidate
 
         tenant_id = await _get_tenant_id_by_slug(tenant_slug)
-        _usage_token = _set_video_usage_ctx(style, tenant_id, style_uid)
+        _usage_token = _set_video_usage_ctx(style, tenant_id, style_uid, feature="video_style")
 
         async def _push_thinking(excerpt: str) -> None:
             await _update_job(
@@ -1976,10 +1867,19 @@ async def distill_style_local(ctx: dict[str, Any], *, job_id: str, style_uid: st
                 result={"step": "style", "message": "กำลังวิเคราะห์สไตล์…", "thinking": excerpt},
             )
 
-        guide = await distill_style_prompt(
-            ref_path, style.description or "",
-            project_uid=style_uid, on_thinking=_push_thinking,
-        )
+        if style.kind == "cut":
+            from packages.video.cut_style import distill_cut_style_prompt
+
+            guide = await distill_cut_style_prompt(
+                ref_path, style.description or "",
+                target_platform=style.target_platform or "",
+                project_uid=style_uid, on_thinking=_push_thinking,
+            )
+        else:
+            guide = await distill_style_prompt(
+                ref_path, style.description or "",
+                project_uid=style_uid, on_thinking=_push_thinking,
+            )
 
         style.system_prompt = guide
         style.status = "ready"
@@ -2017,7 +1917,14 @@ async def distill_style_local(ctx: dict[str, Any], *, job_id: str, style_uid: st
 # ── task: reedit_dub_scenes_local ────────────────────────────────────────────
 
 
-async def reedit_dub_scenes_local(ctx: dict[str, Any], *, job_id: str, project_uid: str, tenant_slug: str) -> dict:
+async def reedit_dub_scenes_local(
+    ctx: dict[str, Any],
+    *,
+    job_id: str,
+    project_uid: str,
+    tenant_slug: str,
+    style_uid: str = "",
+) -> dict:
     """AI-assisted re-edit of an existing dub_first edit script (desktop only).
 
     Reviews the CURRENT edit script + a freshly-encoded preview of the live
@@ -2027,6 +1934,11 @@ async def reedit_dub_scenes_local(ctx: dict[str, Any], *, job_id: str, project_u
     packages/video/dub_ai.py:DUB_REEDIT_SYSTEM_VIDEO). Splices the result back
     into edit_script.json rather than overwriting it wholesale — see
     packages/video/timeline.py:merge_dub_reedit_segments.
+
+    ``style_uid`` — an optional kind="cut" EffectStyle whose distilled prose
+    steers the re-edit prompt. Resolved from the DB only — never persisted to
+    disk/S3 (a stale style file from a previous attempt must not override the
+    user's current choice; see plan_effects_local's 2026-07-18 note).
     """
     log.info("task_start", task="reedit_dub_scenes_local", project_uid=project_uid)
     await _video_progress(job_id, 20, "analyze", "กำลังเตรียมข้อมูลให้ AI…")
@@ -2073,6 +1985,25 @@ async def reedit_dub_scenes_local(ctx: dict[str, Any], *, job_id: str, project_u
         tenant_id = await _get_tenant_id_by_slug(tenant_slug)
         _usage_token = _set_video_usage_ctx(proj, tenant_id, project_uid)
 
+        # Cut style: DB is the only source — no style file on disk/S3.
+        style_prompt = ""
+        chosen = (style_uid or "").strip()
+        if chosen:
+            from packages.db.models.effect_style import EffectStyle
+
+            style = await session.get(EffectStyle, chosen)
+            if style is not None and style.kind == "cut" and style.system_prompt:
+                style_prompt = style.system_prompt
+                log.info(
+                    "cut_style_applied",
+                    project_uid=project_uid,
+                    style_uid=chosen,
+                    style_name=style.name,
+                    prompt_chars=len(style_prompt),
+                )
+            else:
+                log.warning("cut_style_uid_unresolved", project_uid=project_uid, style_uid=chosen)
+
         await _video_progress(job_id, 74, "analyze", "กำลังแก้ไขตามคำสั่ง…")
 
         async def _push_thinking(excerpt: str) -> None:
@@ -2090,6 +2021,7 @@ async def reedit_dub_scenes_local(ctx: dict[str, Any], *, job_id: str, project_u
             project_uid=project_uid,
             music_beats=proj.music_beats,
             target_duration_sec=getattr(proj, "target_duration_sec", None),
+            style_prompt=style_prompt,
             on_thinking=_push_thinking,
         )
 
@@ -2159,27 +2091,16 @@ async def plan_talking_local(ctx: dict[str, Any], *, job_id: str, project_uid: s
         audio_files = sorted((output_dir / "audio").glob("audio_*.wav"))
         if not audio_files:
             raise ValueError("No audio files to transcribe — upload them first")
-        # Optional — POST /videos/{uid}/transcribe-audio (`clipN.mp4`, same naming as
-        # dub_first's proxy manifest, paired by index with `audio_NNN.wav`). Absent on
-        # older clients or when the creator skipped it; Gemini's per-clip review just
-        # runs code-only cuts for a clip with no proxy video.
-        proxy_videos = sorted(
-            (output_dir / "proxy").glob("clip*.mp4"),
-            key=lambda p: int(re.search(r"\d+", p.stem).group()),  # type: ignore[union-attr]
-        )
-        video_files: list[pathlib.Path | None] = list(proxy_videos) if len(proxy_videos) == len(audio_files) else [None] * len(audio_files)
-
         proj = await _get_video_project(session, project_uid)
         tenant_id = await _get_tenant_id_by_slug(tenant_slug)
         _usage_token = _set_video_usage_ctx(proj, tenant_id, project_uid)
-        brief = proj.brief or ""
 
         clips_meta = (proj.local_meta or {}).get("clips", [])
         if not clips_meta:
             raise ValueError("local_meta.clips missing — create the project with clip metadata")
 
-        _t_progress, _t_thinking = _talking_transcribe_callbacks(
-            job_id, base_progress=10, transcribe_span=30, review_progress=42,
+        _t_progress = _talking_transcribe_callbacks(
+            job_id, base_progress=10, transcribe_span=45,
         )
 
         async def _t_abort() -> bool:
@@ -2187,15 +2108,14 @@ async def plan_talking_local(ctx: dict[str, Any], *, job_id: str, project_uid: s
 
         transcript = await run_transcription(
             audio_files,
-            video_files=video_files,
-            brief=brief,
+            keyterms=_project_keyterms(proj),
             project_uid=project_uid,
             on_progress=_t_progress,
-            on_thinking=_t_thinking,
             should_abort=_t_abort,
         )
         if transcript is None:
             return {"cancelled": True}
+        await _record_stt(transcript)
 
         transcript_path = output_dir / "transcript.json"
         transcript_path.write_text(json.dumps(transcript, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -2327,6 +2247,14 @@ class WorkerSettings:
     on_startup = startup
     on_shutdown = shutdown
     max_jobs = 10
-    # arq requires a numeric timeout (None breaks worker init). ~1 year = effectively unlimited.
-    job_timeout = 86_400 * 365
+    # arq requires a numeric timeout (None breaks worker init) AND derives the
+    # per-job `arq:in-progress:<id>` lock TTL from it. A ~1-year timeout meant
+    # that any job whose worker died mid-run (crash, Ctrl-C, a stopped run)
+    # left a lock alive for a YEAR — arq then skips that job forever, so the
+    # queue silently stops draining and the desktop app polls a job that will
+    # never start (live 2026-08-13: 4 jobs queued, j_ongoing=0, locks with
+    # ttl≈29,000,000s). 3 hours is longer than the slowest real task here
+    # (a long talking_head transcribe + render) and short enough that a
+    # crashed worker's claim expires on its own.
+    job_timeout = 60 * 60 * 3
     keep_result = 3600  # keep result in Redis 1h

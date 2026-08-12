@@ -12,7 +12,6 @@ Commands (all output is JSON, one object per line, on stdout):
 - ``render-final --job F``    → timeline + voiceover → final.mp4 (+ final_bundle.zip)
 - ``mix-music --job F``       → re-mix music onto an existing final_silent.mp4 (VO optional, none needed here)
 - ``render-ai-preview --job F`` → live (unsaved) edit script → downscaled silent preview MP4 for an AI re-edit request
-- ``composite-overlay --job F`` → composite a transparent effects overlay (from the Node/Remotion sidecar) onto the cut video → final_fx.mp4
 - ``render-effects --job F``   → bake a full effects.json (overlays + transforms) onto the cut video → final_fx.mp4
 
 Exit code 0 on success, 1 on any error (last line is the error event).
@@ -156,15 +155,6 @@ def cmd_render_ai_preview(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_composite_overlay(args: argparse.Namespace) -> int:
-    from sidecar.dub import load_json_job
-    from sidecar.effects_render import CompositeOverlayJob, run_composite_overlay
-
-    job = load_json_job(args.job, CompositeOverlayJob)
-    emit(run_composite_overlay(job, emit))
-    return 0
-
-
 def cmd_render_effects(args: argparse.Namespace) -> int:
     from sidecar.dub import load_json_job
     from sidecar.effects_render import RenderEffectsJob, run_render_effects
@@ -204,7 +194,6 @@ def build_parser() -> argparse.ArgumentParser:
         ("extract-audio", cmd_extract_audio, "extract speech WAVs for server transcription"),
         ("render-timeline", cmd_render_timeline, "render talking_head video from a timeline"),
         ("render-ai-preview", cmd_render_ai_preview, "render a live-editor silent preview for an AI re-edit request"),
-        ("composite-overlay", cmd_composite_overlay, "composite a transparent effects overlay onto the cut video"),
         ("render-effects", cmd_render_effects, "bake a full effects.json (overlays + transforms) onto the cut video"),
         ("proxy-one", cmd_proxy_one, "downscale a single cut video to a proxy MP4 for effects AI upload"),
     ):

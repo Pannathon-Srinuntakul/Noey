@@ -11,15 +11,11 @@ from packages.video import effects_ai, effects_style
 
 
 _SAMPLE_OBS = {
-    "captionVoice": "Calm first-person product showcase, no hype.",
-    "onScreenText": {"cadence": "almost-never", "notes": "No intentional captions."},
-    "decorativeEffects": {"cadence": "almost-never", "notes": "Raw footage only."},
-    "hardCutReframes": {"cadence": "most-scenes", "notes": "Wide to mid hard cuts."},
-    "pushZoomHolds": {"cadence": "almost-never", "notes": ""},
+    "pushZoomHolds": {"cadence": "most-scenes", "notes": "Snaps into product close-ups."},
     "ambientDrift": {"cadence": "almost-never", "notes": ""},
     "transitions": {"cadence": "almost-never", "notes": "Plain hard cuts."},
-    "fontMood": "",
-    "openObservations": ["Soft indoor daylight grade."],
+    "zoomAttack": "mostly cut",
+    "openObservations": ["Motion lands on the beat."],
 }
 
 
@@ -56,19 +52,41 @@ def _patch_gemini(monkeypatch: pytest.MonkeyPatch, *, content: str, uploaded: li
 
 def test_format_style_guide_includes_checklist_and_open_notes() -> None:
     guide = effects_style.format_style_guide(_SAMPLE_OBS)
-    assert "Calm first-person" in guide
-    assert "cadence almost-never" in guide  # on-screen text
-    assert "Hard-cut reframes" in guide and "most-scenes" in guide
+    assert "Push/zoom-holds" in guide and "most-scenes" in guide
+    assert "Ambient scene drift" in guide
+    assert "Sweep/whip transitions" in guide
+    assert "Zoom attack: mostly cut" in guide  # punch-zoom's ramp-vs-snap prop
+    assert "Motion lands on the beat." in guide
+
+
+def test_style_guide_covers_only_the_ffmpeg_transforms() -> None:
+    """Overlay axes were removed on purpose — a style must not steer captions,
+    stickers or fonts, which this pipeline half does not own."""
+    guide = effects_style.format_style_guide(_SAMPLE_OBS)
+    for gone in ("caption", "Voice & tone", "Decorative", "Font", "text"):
+        assert gone.lower() not in guide.lower()
+    props = set(effects_style.STYLE_OBSERVATION_SCHEMA["properties"])
+    assert props == {"pushZoomHolds", "ambientDrift", "transitions", "zoomAttack", "openObservations"}
+
+
+def test_unanswered_axis_is_omitted_not_defaulted() -> None:
+    """A fabricated band reads exactly like an observed one and the placement
+    prompt obeys the style — silence is the only honest fallback."""
+    guide = effects_style.format_style_guide(
+        {"pushZoomHolds": {"cadence": "rare", "notes": ""}, "transitions": {"cadence": "bogus"}}
+    )
     assert "Push/zoom-holds" in guide
-    assert "Soft indoor daylight grade." in guide
+    assert "Ambient scene drift" not in guide  # missing entirely
+    assert "Sweep/whip" not in guide  # cadence outside the band list
 
 
 def test_style_observation_schema_requires_checklist_and_open_field() -> None:
     req = set(effects_style.STYLE_OBSERVATION_SCHEMA["required"])
     assert "openObservations" in req
-    assert "hardCutReframes" in req
     assert "pushZoomHolds" in req
+    assert "zoomAttack" in req
     keys = {k for k, _ in effects_style.STYLE_AXES_LIST}
+    keys |= {k for k, _ in effects_style.STYLE_TEXT_AXES}
     assert keys <= set(effects_style.STYLE_OBSERVATION_SCHEMA["properties"])
 
 
@@ -85,7 +103,7 @@ async def test_distill_with_reference_uploads_and_returns_prose(
 
     guide = await effects_style.distill_style_prompt(ref, "hyped teen seller", project_uid="s1")
 
-    assert "Hard-cut reframes" in guide
+    assert "Push/zoom-holds" in guide
     assert "most-scenes" in guide
     assert "ref.mp4" in uploaded  # reference actually uploaded to Gemini
 
@@ -95,12 +113,12 @@ async def test_distill_description_only_skips_video_upload(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
     uploaded: list[str] = []
-    obs = {**_SAMPLE_OBS, "captionVoice": "Calm reviewer voice."}
+    obs = {**_SAMPLE_OBS, "ambientDrift": {"cadence": "most-scenes", "notes": "Constant gentle sway."}}
     _patch_gemini(monkeypatch, content=json.dumps(obs), uploaded=uploaded)
 
     guide = await effects_style.distill_style_prompt(None, "calm reviewer", project_uid="s1")
 
-    assert "Calm reviewer voice." in guide
+    assert "Constant gentle sway." in guide
     assert uploaded == []  # nothing uploaded when no reference clip
 
 
@@ -201,12 +219,12 @@ async def test_style_prompt_spliced_as_style_block(monkeypatch: pytest.MonkeyPat
 
     await effects_ai.generate_effects_placement(
         video, project_uid="p1",
-        style_prompt="ONLY plain captions, zero decorative effects, no synthetic zoom.",
+        style_prompt="Push/zoom-holds on a detail (punch-zoom): cadence almost-never.",
     )
 
     sys = captured["system"]
     assert "<style>" in sys
-    assert "ONLY plain captions, zero decorative effects" in sys
+    assert "Push/zoom-holds on a detail (punch-zoom): cadence almost-never." in sys
     assert "__STYLE_BLOCK__" not in sys  # token was substituted
 
 

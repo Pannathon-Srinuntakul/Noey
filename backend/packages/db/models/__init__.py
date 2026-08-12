@@ -14,6 +14,7 @@ from packages.db.models.market import MarketTrend
 from packages.db.models.product import Product
 from packages.db.models.sales import SalesDaily
 from packages.db.models.scrape_run import ScrapeRun
+from packages.db.models.stt_usage import SttUsageLog
 from packages.db.models.tiktok_csv import (
     CsvImportRun,
     FollowerActivity,
@@ -38,6 +39,7 @@ __all__ = [
     "AppSetting",
     "CustomTableMeta",
     "EffectStyle",
+    "SttUsageLog",
     "LlmUsageLog",
     "Tenant",
     "User",

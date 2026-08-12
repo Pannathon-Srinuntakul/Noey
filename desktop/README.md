@@ -53,7 +53,7 @@ Two modes, picked per project at the import step:
   speak to camera (original audio kept). Flow: sidecar `extract-audio`
   (mono-16kHz loudnorm WAVs, same as the server) → upload WAVs to
   `POST /videos/{uid}/transcribe-audio` → arq `plan_talking_local` runs
-  Whisper (Modal) + the planning passes (`packages/video/whisper_client.py`
+  ElevenLabs Scribe + the planning passes (`packages/video/elevenlabs_stt.py`
   + `plan_core.py`) → desktop fetches `GET /videos/{uid}/local-timeline` →
   sidecar `render-timeline` (trim/concat + SRT + CapCut bundle via
   `packages/video/render_common.py`) → `final.mp4` + `capcut_bundle.zip`.

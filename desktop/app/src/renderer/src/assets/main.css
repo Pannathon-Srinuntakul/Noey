@@ -13,10 +13,100 @@
 @import '@fontsource/anuphan/700.css';
 @import './base.css';
 
+/* ── Design tokens — see desktop/design/HANDOFF.md §2 ────────────────────
+ * Dark is the default and only app theme. Values are literal, not
+ * placeholders — do not "tune" them without checking the mockups first. */
+@theme {
+  /* ground + surfaces */
+  --color-ground: #171614;
+  --color-surface: #211f1d;
+  --color-surface-2: #2a2825;
+  --color-media: #000000;
+
+  /* text */
+  --color-ink: #f3f2f2;
+  --color-ink-2: #e4e2df;
+  --color-ink-3: #d6d3cf;
+  --color-muted: #a3a09c;
+
+  /* accent (gold) */
+  --color-accent: #d9a441;
+  --color-accent-press: #c28d41;
+  --color-accent-hover-text: #f0c274;
+  --color-accent-tint: rgb(217 164 65 / 0.12);
+  --color-accent-tint-hover: rgb(217 164 65 / 0.2);
+  --color-accent-tint-press: rgb(217 164 65 / 0.28);
+  --color-accent-nav: rgb(217 164 65 / 0.14);
+
+  /* status — these only */
+  --color-ok: #68b184;
+  --color-error: #e08b84;
+  --color-error-tint: rgb(224 139 132 / 0.12);
+
+  /* lines */
+  --color-divider: rgb(243 242 242 / 0.12);
+  --color-border: rgb(243 242 242 / 0.22);
+  --color-border-strong: rgb(243 242 242 / 0.34);
+  --color-border-faint: rgb(243 242 242 / 0.14);
+
+  /* burned-in caption palette — mirrors lib/captionStyle.ts */
+  --color-cap-white: #ffffff;
+  --color-cap-black: #000000;
+  --color-cap-yellow: #ffeb3b;
+  --color-cap-red: #ff3b30;
+  --color-cap-green: #00e676;
+  --color-cap-blue: #2196f3;
+  --color-cap-border-brown: #5b3a1a;
+
+  /* type */
+  --font-sans: 'Noto Sans Thai', system-ui, sans-serif;
+  --font-display: 'Cormorant Garamond', serif; /* wordmark + avatar initial only */
+  --text-page: 34px;
+  --text-section: 24px;
+  --text-item: 17px;
+  --text-body: 15px;
+  --text-meta: 14px;
+  --text-fig: 13px; /* floor for Thai text — never go below this */
+
+  /* spacing — restates Tailwind's default scale at these steps; only these
+   * steps are sanctioned by the design, not a license to use others. */
+  --spacing-1: 4px;
+  --spacing-2: 8px;
+  --spacing-3: 12px;
+  --spacing-4: 16px;
+  --spacing-5: 20px;
+  --spacing-8: 32px;
+  --spacing-10: 40px;
+
+  /* radius — overrides Tailwind defaults */
+  --radius-sm: 3px; /* timeline blocks, thumbnails */
+  --radius-md: 4px; /* everything else */
+  --radius-full: 999px; /* avatar, transport button */
+
+  /* elevation — modals only */
+  --shadow-modal: 0 12px 32px rgb(0 0 0 / 0.5);
+
+  /* motion — overrides Tailwind's built-in ease-out / adds named durations */
+  --ease-out: cubic-bezier(0.2, 0, 0, 1);
+  --duration-state: 120ms; /* hover, selection, toggles, chevrons */
+  --duration-panel: 200ms; /* modals, panels, collapse */
+}
+
+/* HANDOFF §3: "Focus ring everywhere". Explicit and token-based — without
+ * this, Chromium's default outline follows the OS accent color instead,
+ * so it's gold by accident on some machines and blue (or anything else) on
+ * others. */
+*:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
 body {
   overflow: hidden;
-  background-image: url('./wavy-lines.svg');
-  background-size: cover;
+  background: var(--color-ground);
+  /* Global default until the shell rebuild (chunk 2) scopes this to chrome
+   * only and per-screen chunks (4, 10) opt copyable text back in with
+   * `user-select: text` — see desktop/design/PLAN.md §"Cross-cutting rules". */
   user-select: none;
 }
 
@@ -26,12 +116,29 @@ body {
   flex-direction: column;
 }
 
-/* ── Custom scrollbars (ported from frontend/src/index.css) ────────────── */
+/* Dialog panel enter transition (ui/Dialog.tsx) — a CSS mount animation
+ * rather than a JS-toggled class, so the component needs no post-mount
+ * setState. */
+@keyframes noey-dialog-enter {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+.noey-dialog-enter {
+  animation: noey-dialog-enter var(--duration-panel) var(--ease-out);
+}
+
+/* ── Custom scrollbars — themed everywhere per HANDOFF §4 ────────────────── */
 
 :root {
-  --sb-dark-track: #0f1117;
-  --sb-dark-thumb: #2a2d3a;
-  --sb-dark-thumb-hover: #3d4157;
+  --sb-dark-track: transparent;
+  --sb-dark-thumb: rgb(243 242 242 / 0.22);
+  --sb-dark-thumb-hover: rgb(243 242 242 / 0.34);
 }
 
 * {
@@ -39,8 +146,8 @@ body {
   scrollbar-color: var(--sb-dark-thumb) var(--sb-dark-track);
 }
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
 }
 ::-webkit-scrollbar-track {
   background: var(--sb-dark-track);
@@ -124,4 +231,28 @@ body {
 .scroll-none-clip > .scroll-none {
   margin-bottom: -14px;
   padding-bottom: 14px;
+}
+
+
+/** Seek/slider head. Global on purpose: `.noey-slider` is used by the Slider
+ * primitive AND by the video transports, and while this lived in Slider.tsx's
+ * inline <style> a transport on a page with no Slider mounted had NO head at
+ * all — the rail looked like a plain line and could not be dragged (live
+ * report 2026-08-13). */
+.noey-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 13px;
+  height: 13px;
+  border-radius: 999px;
+  background: var(--color-ink);
+  cursor: pointer;
+  margin-top: 0;
+  /* A 3px rail is a 3px hit target; pad the head so it is grabbable. */
+  box-shadow: 0 0 0 4px transparent;
+}
+.noey-slider {
+  cursor: pointer;
+}
+.noey-slider:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 2px rgb(217 164 65 / 0.35);
 }

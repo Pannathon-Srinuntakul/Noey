@@ -172,12 +172,14 @@ export async function analyzeFrames(
   })
 }
 
-/** Upload per-clip proxy MP4s (fetched from media:// URLs) + manifest → {job_id}. */
+/** Upload per-clip proxy MP4s (fetched from media:// URLs) + manifest → {job_id}.
+ *  `styleUid` = saved cut-style (EffectStyle kind="cut") to steer the AI cut. */
 export async function analyzeVideo(
   session: ApiSession,
   remoteUid: string,
   localUid: string,
-  proxies: ProxyManifestEntry[]
+  proxies: ProxyManifestEntry[],
+  styleUid?: string
 ): Promise<{ job_id: string }> {
   const manifest = proxies.map((e) => ({
     clip_id: e.clip_id,
@@ -187,7 +189,10 @@ export async function analyzeVideo(
   }))
   return request(session, `/videos/${remoteUid}/analyze-video`, {
     method: 'POST',
-    formFields: { manifest: JSON.stringify(manifest) },
+    formFields: {
+      manifest: JSON.stringify(manifest),
+      ...(styleUid ? { style_uid: styleUid } : {})
+    },
     formFiles: await Promise.all(
       proxies.map(async (entry) => ({
         field: 'files',
@@ -207,14 +212,37 @@ export async function pollJob(
   session: ApiSession,
   jobId: string,
   onTick: (status: JobStatus) => void,
-  { intervalMs = 2000, signal }: { intervalMs?: number; signal?: AbortSignal } = {}
+  {
+    intervalMs = 2000,
+    signal,
+    queuedStallMs = 180_000
+  }: { intervalMs?: number; signal?: AbortSignal; queuedStallMs?: number } = {}
 ): Promise<JobStatus> {
+  // A job that is enqueued but never claimed used to poll forever: the card sat
+  // on the same step with the same message for as long as the app was open,
+  // with nothing anywhere saying why (live 2026-08-13 — the arq worker had
+  // wedged, four jobs queued, none running). Waiting is normal; waiting
+  // FOREVER is a failure, and it belongs on the card like any other.
+  let lastMovementAt = Date.now()
+  let lastProgress = -1
   for (;;) {
     if (signal?.aborted) throw new ApiError(0, 'ยกเลิกแล้ว')
     const status = await getJob(session, jobId)
     onTick(status)
     if (status.status === 'ok') return status
     if (status.status === 'error') throw new ApiError(500, status.error ?? 'job ล้มเหลว')
+    // Any movement — a progress bump or leaving the queue — resets the clock;
+    // a long stage is not a stall.
+    if (status.progress !== lastProgress || status.status !== 'queued') {
+      lastProgress = status.progress
+      lastMovementAt = Date.now()
+    }
+    if (status.status === 'queued' && Date.now() - lastMovementAt > queuedStallMs) {
+      throw new ApiError(
+        503,
+        'งานถูกส่งเข้าคิวแล้วแต่ไม่มีตัวประมวลผลรับไปทำ — ตรวจว่า worker (python -m services.worker) กำลังรันอยู่ แล้วลองใหม่'
+      )
+    }
     await new Promise((r) => setTimeout(r, intervalMs))
   }
 }
@@ -255,14 +283,14 @@ export function patchLocalStatus(
   })
 }
 
-/** talking_head: upload the locally-extracted speech WAVs (+ optional downscaled
- *  proxy clips, WITH audio, for Gemini's per-clip video review) → {job_id}. */
+/** talking_head: upload the locally-extracted speech WAVs → {job_id}.
+ *  Audio only — Scribe decides every cut from word timings, so no video leaves
+ *  the machine in this mode. */
 export async function uploadAudio(
   session: ApiSession,
   remoteUid: string,
   localUid: string,
-  wavFiles: { file: string; name: string }[],
-  proxyVideoFiles?: { file: string; name: string }[]
+  wavFiles: { file: string; name: string }[]
 ): Promise<{ job_id: string }> {
   const formFiles: { field: string; path: string; filename: string }[] = []
   for (const wav of wavFiles) {
@@ -271,20 +299,6 @@ export async function uploadAudio(
       path: await window.noey.projects.resolvePath(localUid, wav.file),
       filename: wav.name
     })
-  }
-  for (const video of proxyVideoFiles ?? []) {
-    try {
-      formFiles.push({
-        field: 'video_files',
-        path: await window.noey.projects.resolvePath(localUid, video.file),
-        filename: video.name
-      })
-    } catch (err) {
-      void window.noey.log.write(
-        'videosLocalApi',
-        `proxy video resolve failed ${video.file}: ${String(err)}`
-      )
-    }
   }
   return request(session, `/videos/${remoteUid}/transcribe-audio`, {
     method: 'POST',
@@ -361,11 +375,15 @@ export function reeditDubScenes(
   session: ApiSession,
   remoteUid: string,
   previewPath: string,
-  { selectedLineIds, instruction }: { selectedLineIds: number[]; instruction: string }
+  { selectedLineIds, instruction }: { selectedLineIds: number[]; instruction: string },
+  styleUid?: string
 ): Promise<{ job_id: string }> {
   return request(session, `/videos/${remoteUid}/reedit-dub-scenes`, {
     method: 'POST',
-    formFields: { manifest: JSON.stringify({ selectedLineIds, instruction }) },
+    formFields: {
+      manifest: JSON.stringify({ selectedLineIds, instruction }),
+      ...(styleUid ? { style_uid: styleUid } : {})
+    },
     formFiles: [{ field: 'preview', path: previewPath, filename: 'edited_preview.mp4' }]
   })
 }

@@ -1,6 +1,6 @@
 {
   "name": "noey-video-edit",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Noey Video Edit — AI dub-first video editor (local render)",
   "main": "./out/main/index.js",
   "author": "example.com",
@@ -34,14 +34,8 @@
     "@fontsource/noto-sans-thai": "^5.2.8",
     "@fontsource/prompt": "^5.2.8",
     "@fontsource/sarabun": "^5.2.8",
-    "@remotion/fonts": "^4.0.489",
-    "@remotion/layout-utils": "^4.0.489",
-    "@remotion/light-leaks": "^4.0.489",
-    "@remotion/lottie": "^4.0.489",
-    "@remotion/player": "^4.0.489",
-    "@remotion/shapes": "^4.0.489",
     "lucide-react": "^1.23.0",
-    "remotion": "^4.0.489"
+    "qrcode": "^1.5.4"
   },
   "devDependencies": {
     "@aws-sdk/client-s3": "^3.1084.0",
@@ -50,6 +44,7 @@
     "@electron-toolkit/tsconfig": "^2.0.0",
     "@tailwindcss/vite": "^4.3.2",
     "@types/node": "^22.19.1",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.1.1",
@@ -60,6 +55,7 @@
     "eslint-plugin-react": "^7.37.5",
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.4.24",
+    "playwright-core": "^1.62.1",
     "prettier": "^3.7.4",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
