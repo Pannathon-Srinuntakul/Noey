@@ -215,11 +215,19 @@ export function registerSidecarIpc(): void {
     ['sidecar:proxyOne', 'proxy-one']
   ]
   for (const [channel, command] of jobChannels) {
-    ipcMain.handle(channel, (evt, job: unknown) =>
-      runJobCommand(command, job, (progress) => {
-        if (!evt.sender.isDestroyed()) evt.sender.send(`${channel}-progress`, progress)
+    ipcMain.handle(channel, (evt, job: unknown) => {
+      // Progress is broadcast to the whole renderer, so every project running
+      // the same command hears every other project's events. Stamping the
+      // project dir is what lets a listener keep only its own — without it two
+      // simultaneous imports drove each other's progress bars (live report
+      // 2026-08-13: "step bar ทับๆ กัน เหมือนใช้ state เดียวกัน").
+      const projectDir = (job as { projectDir?: string } | null)?.projectDir
+      return runJobCommand(command, job, (progress) => {
+        if (!evt.sender.isDestroyed()) {
+          evt.sender.send(`${channel}-progress`, { ...progress, projectDir })
+        }
       })
-    )
+    })
   }
   ipcMain.handle('sidecar:cancel', (_evt, projectDir: string) => {
     cancelSidecarJob(projectDir)

@@ -162,7 +162,14 @@ def build_dub_bundle_zip(
 
 
 def mux_voiceover(video_in: Path, vo_path: Path, out_path: Path) -> None:
-    """Replace the video's audio track with the voiceover (video stream-copied)."""
+    """Replace the video's audio track with the voiceover (video stream-copied).
+
+    ``+faststart`` for the same reason as everywhere else a deliverable is
+    written: without it the moov atom lands at the END of the file, and the
+    desktop app's ``<video>`` (served over media:// with range requests) has to
+    pull the tail before it can play or seek — which reads as "the clip stutters
+    and only plays a few seconds until you wait" (live report 2026-08-13).
+    """
     import ffmpeg as ffmpeg_lib
 
     vo_in = ffmpeg_lib.input(str(vo_path))
@@ -174,6 +181,7 @@ def mux_voiceover(video_in: Path, vo_path: Path, out_path: Path) -> None:
             vcodec="copy",
             acodec="aac",
             audio_bitrate="192k",
+            movflags="+faststart",
             shortest=None,
         )
         .global_args("-shortest")
@@ -245,7 +253,10 @@ def mix_audio_layers(
     run_ffmpeg(
         ffmpeg_lib.output(
             video_stream, audio_out, str(out_path),
-            vcodec="copy", acodec="aac", audio_bitrate="192k", shortest=None,
+            vcodec="copy", acodec="aac", audio_bitrate="192k",
+            # See mux_voiceover — the music mix is a deliverable the app plays.
+            movflags="+faststart",
+            shortest=None,
         )
         .global_args("-shortest")
         .overwrite_output(),

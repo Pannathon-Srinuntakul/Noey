@@ -95,8 +95,15 @@
 /* HANDOFF §3: "Focus ring everywhere". Explicit and token-based — without
  * this, Chromium's default outline follows the OS accent color instead,
  * so it's gold by accident on some machines and blue (or anything else) on
- * others. */
-*:focus-visible {
+ * others.
+ *
+ * This rule is UNLAYERED, so it beats every Tailwind utility no matter the
+ * specificity (layered styles always lose to unlayered ones) — `outline-none`
+ * on an element does nothing here. Opting out is therefore explicit:
+ * `data-focus-ring="none"`, for the inner control of a field that draws the
+ * ring on its wrapper instead (the login password box). Two rings on one field
+ * is the bug this attribute exists to prevent. */
+*:focus-visible:not([data-focus-ring='none']) {
   outline: 2px solid var(--color-accent);
   outline-offset: 2px;
 }

@@ -12,6 +12,7 @@ import { registerLanIpc, stopLanReceive } from './lanReceive'
 import { registerNotifyIpc } from './notify'
 import { loadPrefs, registerPrefsIpc } from './prefs'
 import { autoDeleteOldSources, registerStorageIpc } from './storage'
+import { attachUnsavedGuard, registerUnsavedIpc } from './unsavedGuard'
 
 // Privileged scheme registration must happen before app is ready.
 registerMediaScheme()
@@ -69,6 +70,9 @@ function createWindow(): void {
     mainWindow.show()
   })
 
+  // Closing the app is the one exit the renderer cannot intercept itself.
+  attachUnsavedGuard(mainWindow)
+
   mainWindow.webContents.setWindowOpenHandler((details) => {
     shell.openExternal(details.url)
     return { action: 'deny' }
@@ -112,6 +116,7 @@ app.whenReady().then(async () => {
   registerNotifyIpc()
   registerPrefsIpc()
   registerStorageIpc()
+  registerUnsavedIpc()
 
   // Fire-and-forget: a retention sweep must never delay the first window, and
   // nothing in the UI is waiting on its result.

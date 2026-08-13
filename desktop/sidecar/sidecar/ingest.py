@@ -14,6 +14,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from sidecar.atomic import atomic_publish
 from sidecar.bootstrap import ensure_backend_on_path
 
 ensure_backend_on_path()
@@ -74,7 +75,13 @@ def run_ingest(job: IngestJob, emit) -> dict[str, Any]:
 
         ext = src.suffix.lower() or ".mp4"
         dest = norm_dir / f"norm_{i:03d}{ext}"
-        shutil.copy2(src, dest)
+        # Copied through a staging name: the project card shows norm_000 as its
+        # picture from the moment the project exists, and a multi-hundred-MB
+        # phone export takes long enough that a straight copy is visibly a
+        # growing file — one that plays a few seconds and stops.
+        with atomic_publish(dest) as (tmp_dest,):
+            assert tmp_dest is not None
+            shutil.copy2(src, tmp_dest)
 
         try:
             info = video_stream_info(dest)

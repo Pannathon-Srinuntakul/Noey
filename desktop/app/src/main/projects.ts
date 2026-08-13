@@ -59,8 +59,6 @@ export interface LocalProject {
   pendingSources?: string[]
   pendingMusic?: { path: string; trimInSec: number; trimOutSec: number }
   cutStyleUid?: string
-  /** Saved zoom style (kind='effects') to auto-apply after the cut renders; absent = none. */
-  zoomStyleUid?: string
   /** Whether the AI cuts against the music's beat grid. Only meaningful with
    * `music`; absent on projects created before the wizard exposed it. */
   beatSync?: boolean

@@ -114,6 +114,15 @@ import { Button } from './ui/Button'
 import { Dialog } from './ui/Dialog'
 import { Slider } from './ui/Slider'
 import { Tabs } from './ui/Tabs'
+import { useFxJobs } from '../lib/fxJobs'
+import { useUnsavedGuard } from '../lib/unsavedGuard'
+import {
+  sameCaptionStyle,
+  sameMusic,
+  sameSnapshot,
+  type EditorSnapshot
+} from '../lib/editorHistory'
+import { paintSeekProgress } from '../lib/seekProgress'
 import { VideoTransport } from './ui/VideoTransport'
 import { Textarea } from './ui/Input'
 
@@ -540,7 +549,18 @@ interface Filmstrip {
 // scroll doesn't show a blank gap while the next tile is still seeking in.
 const FILMSTRIP_PREFETCH_SEC = 6
 
+/** How long auto-follow stays out of the way after the user scrolls. */
+const FOLLOW_RESUME_MS = 4000
+
+/** Upper bound on thumbnails per source — see getFilmstripMeta. */
+const MAX_FILMSTRIP_TILES = 240
+
+/** Paint captured tiles this often instead of once at the end of a pass. */
+const FILMSTRIP_PUBLISH_EVERY = 4
+
 export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }: Props) {
+  // AI re-edit runs at app level so leaving the editor doesn't kill it.
+  const fxJobs = useFxJobs()
   const [timeline, setTimeline] = useState<EditTimeline | null>(null)
   const [cuts, setCuts] = useState<WorkingCut[]>([])
   const [editorPhase, setEditorPhase] = useState<'loading' | 'preparing' | 'ready'>('loading')
@@ -648,38 +668,80 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
   const [aiPanelOpen, setAiPanelOpen] = useState(false)
   const [aiChecked, setAiChecked] = useState<Set<number>>(new Set())
   const [aiInstruction, setAiInstruction] = useState('')
-  const [aiBusy, setAiBusy] = useState(false)
-  const [aiError, setAiError] = useState<string | null>(null)
+  // Busy/error for the AI re-edit come from the app-level job store (the work
+  // outlives this screen); only a locally-raised error lives here.
+  const [localAiError, setLocalAiError] = useState<string | null>(null)
 
   // Undo/redo: refs hold the stacks (no re-render needed per push), historyTick
   // forces a re-render so the toolbar buttons' disabled state stays accurate.
-  const undoStack = useRef<WorkingCut[][]>([])
-  const redoStack = useRef<WorkingCut[][]>([])
-  const editSnapshot = useRef<WorkingCut[] | null>(null)
+  const undoStack = useRef<EditorSnapshot[]>([])
+  const redoStack = useRef<EditorSnapshot[]>([])
+  const editSnapshot = useRef<EditorSnapshot | null>(null)
   const [, setHistoryTick] = useState(0)
   const [editCount, setEditCount] = useState(0)
   const [draftSavedAt, setDraftSavedAt] = useState<string | null>(null)
+  // Mirrors for the fields a snapshot has to read from event handlers and from
+  // inside setCuts updaters (captionLinesRef is declared with the overlay refs).
+  const captionStyleRef = useRef<CaptionStyle | null>(null)
+  const musicRef = useRef<EditorMusic | null>(null)
+  useEffect(() => {
+    captionStyleRef.current = captionStyle
+  }, [captionStyle])
+  useEffect(() => {
+    musicRef.current = music
+  }, [music])
 
   const playOrderMap = useMemo(() => new Map(cuts.map((c, i) => [c.id, i + 1])), [cuts])
 
-  function pushUndoSnapshot(prev: WorkingCut[]) {
-    undoStack.current.push(prev)
+  /** The state as it is right now, with any part the caller already holds. */
+  function snapshotNow(overrides?: Partial<EditorSnapshot>): EditorSnapshot {
+    return {
+      cuts: cutsRef.current,
+      captionLines: captionLinesRef.current,
+      captionStyle: captionStyleRef.current,
+      music: musicRef.current,
+      ...overrides
+    }
+  }
+
+  function pushHistory(snapshot: EditorSnapshot) {
+    undoStack.current.push(snapshot)
     redoStack.current = []
     setEditCount((n) => n + 1)
     setHistoryTick((t) => t + 1)
   }
 
-  /** Call at the start of a continuous edit (drag, typing) — pairs with commitEdit(). */
-  function beginEdit() {
-    editSnapshot.current = cuts
+  /** Cut edits: the caller is inside a setCuts updater and holds the true
+   * pre-edit `prev`, which is more reliable than the ref during a batch. */
+  function pushUndoSnapshot(prev: WorkingCut[]) {
+    pushHistory(snapshotNow({ cuts: prev }))
   }
 
-  /** Call at the end of a continuous edit — pushes the pre-edit snapshot onto the undo stack. */
+  /** Everything that is not a cut edit — call BEFORE applying the change. */
+  function pushHistoryNow() {
+    pushHistory(snapshotNow())
+  }
+
+  /** Call at the start of a continuous edit (drag, typing) — pairs with commitEdit(). */
+  function beginEdit() {
+    editSnapshot.current = snapshotNow({ cuts })
+  }
+
+  /** Call at the end of a continuous edit — pushes the pre-edit snapshot onto
+   * the undo stack, unless nothing actually changed (focusing a text box and
+   * tabbing away must not fill the history with no-ops).
+   *
+   * The comparison is deferred one tick on purpose: some callers apply their
+   * change with a setState and call this in the SAME handler (the caption
+   * timecode inputs do), so right now the mirrors still describe the pre-edit
+   * state and the edit would look like a no-op. */
   function commitEdit() {
-    if (editSnapshot.current) {
-      pushUndoSnapshot(editSnapshot.current)
-      editSnapshot.current = null
-    }
+    const before = editSnapshot.current
+    editSnapshot.current = null
+    if (!before) return
+    window.setTimeout(() => {
+      if (!sameSnapshot(before, snapshotNow())) pushHistory(before)
+    }, 0)
   }
 
   function beginCutBlockEdit() {
@@ -692,28 +754,62 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
     commitEdit()
   }
 
+  /**
+   * Put a snapshot back on screen AND on disk.
+   *
+   * Caption appearance and the music track are not editor-local: they live on
+   * the project and the music mix is re-rendered from them, so restoring them
+   * means writing them back through the same seam that changed them. Cuts and
+   * caption lines are editor-local until the next save/draft-save.
+   */
+  async function applySnapshot(next: EditorSnapshot): Promise<void> {
+    setCuts(next.cuts)
+    cutsRef.current = next.cuts
+    setSelectedId((id) => (id && next.cuts.some((c) => c.id === id) ? id : null))
+    setCaptionLines(next.captionLines)
+    captionLinesRef.current = next.captionLines
+
+    if (!sameCaptionStyle(next.captionStyle, captionStyleRef.current)) {
+      setCaptionStyle(next.captionStyle)
+      captionStyleRef.current = next.captionStyle
+      if (next.captionStyle) {
+        void editorApi.updateCaptionStyle(next.captionStyle).catch(() => undefined)
+      }
+    }
+
+    if (!sameMusic(next.music, musicRef.current)) {
+      const target = next.music
+      setMusic(target)
+      musicRef.current = target
+      setMusicDraft(null)
+      setMusicBusy(true)
+      try {
+        await editorApi.setMusic(target)
+      } catch (err) {
+        setError(formatUserError(err))
+        setErrorRetry(null)
+      } finally {
+        setMusicBusy(false)
+      }
+    }
+  }
+
   function undo() {
     const prev = undoStack.current.pop()
     if (!prev) return
+    redoStack.current.push(snapshotNow())
     setEditCount((n) => n + 1)
-    setCuts((curr) => {
-      redoStack.current.push(curr)
-      return prev
-    })
-    setSelectedId((id) => (id && prev.some((c) => c.id === id) ? id : null))
     setHistoryTick((t) => t + 1)
+    void applySnapshot(prev)
   }
 
   function redo() {
     const next = redoStack.current.pop()
     if (!next) return
+    undoStack.current.push(snapshotNow())
     setEditCount((n) => n + 1)
-    setCuts((curr) => {
-      undoStack.current.push(curr)
-      return next
-    })
-    setSelectedId((id) => (id && next.some((c) => c.id === id) ? id : null))
     setHistoryTick((t) => t + 1)
+    void applySnapshot(next)
   }
 
   useEffect(() => {
@@ -1002,6 +1098,9 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
     }
     if (seekbarRef.current && !isScrubbingSeekbarRef.current) {
       seekbarRef.current.value = String(t)
+      // The value is written straight to the DOM, so the played-portion fill
+      // has to be pushed the same way — React never re-renders this input.
+      paintSeekProgress(seekbarRef.current)
     }
     if (timeLabelRef.current) {
       timeLabelRef.current.textContent = `${fmtTimeTenths(t)} / ${fmtTime(getActiveDurationSec())}`
@@ -1009,17 +1108,59 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
   }
   const isScrubbingSeekbarRef = useRef(false)
 
+  /**
+   * Until when auto-follow stays out of the way, in ms (performance.now).
+   *
+   * Following the playhead is right by default, but during playback it fought
+   * anyone trying to look somewhere else: drag the scrollbar to 2:00 while the
+   * head is at 0:05 and the next frame yanks it straight back, so the far end
+   * of a long clip was unreachable without pausing (live report 2026-08-13).
+   * A hand on the scrollbar suspends the follow, and it resumes on its own.
+   */
+  const followSuspendedUntilRef = useRef(0)
+
+  /** Called from the viewport's own scroll/wheel handlers when the SCROLL was
+   * the user's doing — the follow's own writes are marked so they don't
+   * suspend it (see onViewportScroll). */
+  function suspendFollow(): void {
+    followSuspendedUntilRef.current = performance.now() + FOLLOW_RESUME_MS
+  }
+
+  /** Re-arm the follow now. Anything that means "take me to this moment" —
+   * picking a scene, jumping to a line, switching view — is the user asking to
+   * be moved, so it must not sit out the suspension from an earlier scroll. */
+  function resumeFollow(): void {
+    followSuspendedUntilRef.current = 0
+  }
+
+  /** Set while followPlayhead itself writes scrollLeft, so the scroll event it
+   * causes is not mistaken for the user scrolling. */
+  const autoScrollingRef = useRef(false)
+
   /** Keep the playhead on screen while playing — nudge scrollLeft only when it
    * leaves the viewport (scroll position itself never means anything now). */
   function followPlayhead(t: number) {
     const el = viewportRef.current
     if (!el) return
+    if (performance.now() < followSuspendedUntilRef.current) return
     const x = HEADER_COL_PX + t * pxPerSecRef.current
     const leftEdge = el.scrollLeft + HEADER_COL_PX + 16
     const rightEdge = el.scrollLeft + el.clientWidth - 48
     if (x < leftEdge || x > rightEdge) {
+      autoScrollingRef.current = true
       el.scrollLeft = Math.max(0, x - HEADER_COL_PX - 16)
+      // Cleared after the scroll event this write queues has been delivered.
+      requestAnimationFrame(() => {
+        autoScrollingRef.current = false
+      })
     }
+  }
+
+  /** One scroll listener for the viewport: a scroll this component did not
+   * cause is the user looking around, and pauses the follow. */
+  function onViewportScroll(): void {
+    if (autoScrollingRef.current) return
+    suspendFollow()
   }
 
   function applyScrubTime(sec: number, seekVideo: boolean) {
@@ -1199,7 +1340,13 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
   const commitMusic = async (patch: MusicPatch): Promise<void> => {
     if (!music) return
     const next = { ...music, ...patch }
+    if (sameMusic(next, music)) return
+    // Before the change, and once per COMMITTED move: the audio track reports
+    // a live draft while the block is being dragged and calls this only on
+    // pointer-up, so one drag is one undo step.
+    pushHistoryNow()
     setMusic(next)
+    musicRef.current = next
     setMusicBusy(true)
     try {
       await editorApi.updateMusic(patch)
@@ -1273,10 +1420,15 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
   }, [isPlaying, editorPhase])
 
   const handlePickMusic = async (): Promise<void> => {
+    const before = musicRef.current
     setMusicBusy(true)
     try {
       const next = await editorApi.pickMusic()
+      // Pushed only once the picker actually returned something different —
+      // cancelling the file dialog must not leave an empty step in the history.
+      if (!sameMusic(next ?? null, before)) pushHistory(snapshotNow({ music: before }))
       setMusic(next ?? null)
+      musicRef.current = next ?? null
     } catch (err) {
       setError(formatUserError(err))
       setErrorRetry(null)
@@ -1286,10 +1438,13 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
   }
 
   const handleRemoveMusic = async (): Promise<void> => {
+    if (!musicRef.current) return
+    pushHistoryNow()
     setMusicBusy(true)
     try {
       await editorApi.removeMusic()
       setMusic(null)
+      musicRef.current = null
       setMusicPeaks(null)
     } catch (err) {
       setError(formatUserError(err))
@@ -1349,7 +1504,12 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
     const ratio =
       video.videoWidth && video.videoHeight ? video.videoWidth / video.videoHeight : 9 / 16
     const tileWidthPx = Math.max(1, Math.round(IMG_LANE_PX * ratio))
-    const totalTiles = Math.max(4, Math.ceil(laneWidthPx / tileWidthPx))
+    // Capped: one tile per ~23px of lane means a 5-minute source wants ~530
+    // thumbnails, and every one of them is a seek + a canvas draw. The tiles
+    // are stretched to fill the lane at whatever zoom is current (see
+    // SourceLane), so a lower count only costs resolution — and below this cap
+    // nothing changes for the short clips this editor mostly sees.
+    const totalTiles = clamp(Math.ceil(laneWidthPx / tileWidthPx), 4, MAX_FILMSTRIP_TILES)
     const meta = { duration, tileWidthPx, totalTiles }
     filmstripMetaCache.current.set(sourceId, meta)
     return meta
@@ -1380,7 +1540,23 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
         ? [...existing.thumbs]
         : new Array(totalTiles).fill(undefined)
 
-    let changed = false
+    // Publishing only at the END of the loop is why a long source looked like
+    // it never loaded at all: ~60 seeks at ~150ms each is ten seconds of blank
+    // lane, and any scroll in the meantime queued another pass behind this one
+    // (live report 2026-08-13). Tiles now go on screen as they are captured,
+    // and a newer request for the same source cancels this one at the next
+    // tile instead of waiting it out.
+    const publish = (): void => {
+      setFilmstrips((prev) => ({ ...prev, [sourceId]: { thumbs: [...thumbs], tileWidthPx } }))
+    }
+    // Nothing missing in this window — the common case once a lane has been
+    // looked at, and the reason repeated requests (every cut block asks for
+    // its own window on mount, every scroll asks again) cost nothing.
+    let missing = false
+    for (let i = startIdx; i <= endIdx && !missing; i++) if (!thumbs[i]) missing = true
+    if (!missing) return
+
+    let pending = 0
     try {
       for (let i = startIdx; i <= endIdx; i++) {
         if (thumbs[i]) continue
@@ -1404,17 +1580,28 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
         if (!ctx) break
         ctx.drawImage(video, 0, 0, captureW, captureH)
         thumbs[i] = canvas.toDataURL('image/jpeg', 0.82)
-        changed = true
+        pending += 1
+        if (pending >= FILMSTRIP_PUBLISH_EVERY) {
+          pending = 0
+          publish()
+        }
       }
     } catch {
       // Filmstrip is a visual aid only — lane still works without it.
     }
-    if (changed) {
-      setFilmstrips((prev) => ({ ...prev, [sourceId]: { thumbs, tileWidthPx } }))
-    }
+    if (pending > 0) publish()
   }
 
-  /** Serialize fill requests per source — they share one hidden <video>. */
+  /**
+   * Serialize fill requests per source — they share one hidden <video>.
+   *
+   * Requests are never superseded, they queue: in edited mode EVERY cut block
+   * asks for its own window on mount, so treating a newer request as "the only
+   * one that matters" left most blocks blank and made the lane look like it
+   * had loaded the wrong clip (live report 2026-08-13). A window whose tiles
+   * are already captured returns immediately, which is what keeps the queue
+   * cheap under scroll spam.
+   */
   function queueFilmstripRange(
     sourceId: string,
     declaredDurationSec: number,
@@ -1464,6 +1651,7 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
       currentTimeRef.current = activeT
       setCurrentTime(activeT)
       paintTime(activeT)
+      resumeFollow()
       followPlayhead(activeT)
       if (resumePlaybackRef.current) void v.play()
     }
@@ -1487,6 +1675,7 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
       currentTimeRef.current = activeT
       setCurrentTime(activeT)
       paintTime(activeT)
+      resumeFollow()
       followPlayhead(activeT)
       isSourceSwapPendingRef.current = false
       if (resumePlaybackRef.current) void v.play()
@@ -1646,6 +1835,7 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
     }
 
     paintTime(nextTime)
+    resumeFollow()
     followPlayhead(nextTime)
 
     if (nextWasPlaying) void v.play()
@@ -1668,12 +1858,31 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
   function togglePlay() {
     const v = activeVideo()
     if (!v) return
-    if (v.paused) {
-      if (v.currentTime >= (v.duration || 0) - 0.05) v.currentTime = 0
-      void v.play()
-    } else {
+    if (!v.paused) {
       v.pause()
+      return
     }
+    // Rewind when the PLAYHEAD is at the end of the domain being played, not
+    // when the <video> element is at the end of its own file. In edited mode
+    // the last cut's out-point is nowhere near the source file's duration, so
+    // the old `v.currentTime >= v.duration` test never fired: pressing play at
+    // the end resumed at a position the sequence had already finished on, and
+    // maybeAdvanceEditedSegment paused it again on the next frame — the clip
+    // looked stuck (live report 2026-08-13).
+    const dur = getActiveDurationSec()
+    if (dur > 0 && currentTimeRef.current >= dur - 0.05) {
+      applyScrubTime(0, true)
+      if (isSourceSwapPendingRef.current) {
+        // The first cut lives in another source file; the previewSrc effect
+        // starts playback once that file has swapped in.
+        resumePlaybackRef.current = true
+        return
+      }
+      const rewound = activeVideo()
+      if (rewound) void rewound.play()
+      return
+    }
+    void v.play()
   }
 
   function nudgePlayhead(deltaSec: number) {
@@ -1908,7 +2117,59 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
   }
 
   function deleteCaptionLine(id: string): void {
+    pushHistoryNow()
     setCaptionLines((prev) => (prev ? prev.filter((l) => l.id !== id) : prev))
+  }
+
+  /** The cut list in the shape both the draft save and the render save send. */
+  function cutPayload(list: WorkingCut[]): EditCut[] {
+    return list.map(
+      (c) =>
+        ({
+          source: c.source,
+          in: c.in,
+          out: c.out,
+          label: c.label,
+          voiceoverLineId: isDub ? (c.voiceoverLineId ?? (cutLineId(c) || null)) : undefined,
+          voiceoverScript: isDub ? (c.voiceoverScript ?? '') : undefined
+        }) as EditCut
+    )
+  }
+
+  /** Edits made since the last draft write. Refs, not state: the flush on the
+   * way out runs from an event handler and must see the newest values. */
+  const draftDirtyRef = useRef(false)
+  const draftSavingRef = useRef<Promise<void> | null>(null)
+
+  /**
+   * Write the draft NOW (used by the debounce and by the way out).
+   *
+   * Leaving the editor within the debounce window used to drop the last edit
+   * on the floor: the timer was cleared by the unmount and nothing else wrote
+   * it. Everything else about closing is a warning; this is the part that
+   * actually preserves the work.
+   */
+  async function saveDraftNow(): Promise<void> {
+    if (draftSavingRef.current) return draftSavingRef.current
+    if (!draftDirtyRef.current) return
+    if (editorPhase !== 'ready' || cutsRef.current.length === 0) return
+    draftDirtyRef.current = false
+    const run = editorApi
+      .saveDraft(cutPayload(cutsRef.current), captionLinesRef.current ?? undefined)
+      .then(() =>
+        setDraftSavedAt(
+          new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })
+        )
+      )
+      .catch(() => {
+        // Keep it pending so the next tick (or the way out) tries again.
+        draftDirtyRef.current = true
+      })
+      .finally(() => {
+        draftSavingRef.current = null
+      })
+    draftSavingRef.current = run
+    return run
   }
 
   // Draft autosave (R3 header). Debounced, and never while a render save is
@@ -1920,29 +2181,30 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
       return
     }
     if (saving || editorPhase !== 'ready' || cuts.length === 0 || editCount === 0) return
-    const t = setTimeout(() => {
-      const payload: EditCut[] = cuts.map(
-        (c) =>
-          ({
-            source: c.source,
-            in: c.in,
-            out: c.out,
-            label: c.label,
-            voiceoverLineId: isDub ? (c.voiceoverLineId ?? (cutLineId(c) || null)) : undefined,
-            voiceoverScript: isDub ? (c.voiceoverScript ?? '') : undefined
-          }) as EditCut
-      )
-      void editorApi
-        .saveDraft(payload, captionLines ?? undefined)
-        .then(() =>
-          setDraftSavedAt(
-            new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })
-          )
-        )
-        .catch(() => undefined)
-    }, 2000)
+    draftDirtyRef.current = true
+    const t = setTimeout(() => void saveDraftNow(), 2000)
     return () => clearTimeout(t)
   }, [cuts, captionLines, saving, editorPhase, isDub, editCount])
+
+  /**
+   * What is at stake if the user walks out now, or null when nothing is.
+   *
+   * Not "unsaved" in the usual sense — the draft is written continuously, so
+   * nothing is LOST. What is pending is the render: the finished clip on disk
+   * is still the one from before these edits, and that is the surprise worth a
+   * dialog (live report 2026-08-13).
+   */
+  const unrenderedReason =
+    editorPhase === 'ready' && editCount > 0 && !saving
+      ? `แก้ไว้ ${editCount} อย่างแล้วแต่ยังไม่ได้กด "บันทึกและเรนเดอร์" — ระบบเก็บร่างไว้ให้ กลับมาแก้ต่อได้ แต่คลิปที่ได้จะยังเป็นของเดิมจนกว่าจะเรนเดอร์ใหม่`
+      : null
+  const { confirmLeave } = useUnsavedGuard(unrenderedReason)
+
+  /** The one way out of the editor — flushes the draft, then asks. */
+  async function requestClose(): Promise<void> {
+    await saveDraftNow()
+    if (await confirmLeave()) onClose()
+  }
 
   async function handleSave() {
     if (cuts.length === 0) {
@@ -1996,40 +2258,52 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
     })
   }
 
-  async function handleAiReedit() {
+  /**
+   * Hand the re-edit to the app-level job store rather than awaiting it here:
+   * closing the editor while the AI is thinking used to throw the answer away
+   * (and hide the fact that anything was running). `fxResult` below applies it
+   * whenever the editor is on screen again.
+   */
+  function handleAiReedit(): void {
     if (!aiInstruction.trim()) return
-    setAiBusy(true)
-    setAiError(null)
-    try {
-      const payload: EditCut[] = cuts.map(
-        (c) =>
-          ({
-            source: c.source,
-            in: c.in,
-            out: c.out,
-            label: c.label,
-            voiceoverLineId: c.voiceoverLineId ?? (cutLineId(c) || null),
-            voiceoverScript: c.voiceoverScript ?? ''
-          }) as EditCut
-      )
-      const result = await editorApi.requestAiReedit(
-        uid,
-        payload,
-        Array.from(aiChecked),
-        aiInstruction.trim()
-      )
-      pushUndoSnapshot(cuts)
-      setCuts(result)
-      setSelectedId(null)
-      setAiChecked(new Set())
-      setAiInstruction('')
-      setAiPanelOpen(false)
-    } catch (e) {
-      setAiError(formatUserError(e))
-    } finally {
-      setAiBusy(false)
-    }
+    setLocalAiError(null)
+    fxJobs.clearError(uid)
+    const payload: EditCut[] = cuts.map(
+      (c) =>
+        ({
+          source: c.source,
+          in: c.in,
+          out: c.out,
+          label: c.label,
+          voiceoverLineId: c.voiceoverLineId ?? (cutLineId(c) || null),
+          voiceoverScript: c.voiceoverScript ?? ''
+        }) as EditCut
+    )
+    const selectedLineIds = Array.from(aiChecked)
+    const instruction = aiInstruction.trim()
+    void fxJobs.run(uid, 'reedit', 'AI กำลังแก้การตัด', () =>
+      editorApi.requestAiReedit(uid, payload, selectedLineIds, instruction)
+    )
+    setAiChecked(new Set())
+    setAiInstruction('')
+    setAiPanelOpen(false)
   }
+
+  const fxJob = fxJobs.jobFor(uid)
+  const fxResult = fxJobs.resultFor(uid)
+  const aiBusy = fxJob?.kind === 'reedit'
+  const aiError = localAiError ?? fxJobs.errorFor(uid) ?? null
+  useEffect(() => {
+    if (!fxResult || fxResult.kind !== 'reedit') return
+    // Deferred: applying the answer is a fresh update, not part of this commit.
+    const t = window.setTimeout(() => {
+      pushUndoSnapshot(cutsRef.current)
+      setCuts(fxResult.value as EditCut[])
+      setSelectedId(null)
+      fxJobs.clearResult(uid)
+    }, 0)
+    return () => window.clearTimeout(t)
+  }, [fxResult, fxJobs, uid])
 
   const canAiReedit = isDub && timeline?.editTarget === 'edit_script'
   const selectedCut = cuts.find((c) => c.id === selectedId) ?? null
@@ -2046,7 +2320,7 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
         }
         if (editorPhase === 'ready') {
           e.preventDefault()
-          onClose()
+          void requestClose()
         }
         return
       }
@@ -2220,6 +2494,52 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
   const activeInspectorTab = showTabs ? inspectorTab : 'caption'
   const lineCuts = selectedCut && isDub ? cutsInLine(cuts, cutLineId(selectedCut)) : []
 
+  // One frame per angle of the selected line. The angle buttons were black
+  // rectangles — "2 มุม" with nothing to tell them apart (live report
+  // 2026-08-13). Captured from the same cached <video> elements the filmstrip
+  // uses, keyed by source+in so re-selecting a line is free and dragging a cut
+  // re-captures only that angle.
+  const [angleThumbs, setAngleThumbs] = useState<Record<string, string>>({})
+  const angleThumbKey = (cut: WorkingCut): string => `${cut.source}@${cut.in.toFixed(2)}`
+  const angleKeys = lineCuts.map(angleThumbKey).join('|')
+  useEffect(() => {
+    if (lineCuts.length === 0) return
+    let cancelled = false
+    void (async () => {
+      for (const cut of lineCuts) {
+        const key = angleThumbKey(cut)
+        if (cancelled || angleThumbs[key]) continue
+        const video = await getFilmstripVideo(cut.source)
+        if (!video || cancelled) return
+        // A hair into the cut: the first frame of a trim is often a fade or a
+        // transition frame, which reads as the black box this replaces.
+        const at = Math.max(0, Math.min(cut.in + 0.08, (video.duration || cut.out) - 0.05))
+        await new Promise<void>((resolve) => {
+          const onSeeked = () => {
+            video.removeEventListener('seeked', onSeeked)
+            resolve()
+          }
+          video.addEventListener('seeked', onSeeked)
+          video.currentTime = at
+        })
+        if (cancelled) return
+        const ratio =
+          video.videoWidth && video.videoHeight ? video.videoWidth / video.videoHeight : 9 / 16
+        const canvas = document.createElement('canvas')
+        canvas.height = 88
+        canvas.width = Math.max(1, Math.round(88 * ratio))
+        const ctx = canvas.getContext('2d')
+        if (!ctx) return
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+        const url = canvas.toDataURL('image/jpeg', 0.8)
+        if (!cancelled) setAngleThumbs((prev) => (prev[key] ? prev : { ...prev, [key]: url }))
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [angleKeys])
+
   // "ท่อนที่ตรงกับฉากนี้" has to mean it: selecting a scene moves the caption
   // cursor onto the first line inside that scene, if there is one. Typing in
   // the box must not yank the cursor, so this only reacts to the selection.
@@ -2337,8 +2657,12 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
   // Track NAMES are ink-3; only the count beside ภาพ is muted (design R3).
   // pl-3: the labels sat flush against the window edge — a sticky column with
   // no left padding reads as clipped text (live report 2026-08-13).
+  // z-40, above every lane element (blocks are z-0/z-20, trim handles z-30):
+  // the label column is what lane content scrolls UNDER, and at the same
+  // z-index DOM order won instead — a cut block dragged to the left edge was
+  // painted on top of its own track name (live report 2026-08-13).
   const trackLabelCls =
-    'sticky left-0 z-30 flex h-full shrink-0 items-center gap-1.5 bg-ground pr-3 pl-3 text-[13px] text-ink-3'
+    'sticky left-0 z-40 flex h-full shrink-0 items-center gap-1.5 bg-ground pr-3 pl-3 text-[13px] text-ink-3'
 
   return (
     <div className="fixed inset-0 z-100 flex flex-col bg-ground text-ink">
@@ -2350,7 +2674,7 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
       />
       {/* header (R3): leave, history, what state the cut is in, then act */}
       <div className="flex items-center gap-3 border-b border-divider px-6 py-3">
-        <Button variant="ghost" icon={<ArrowLeft size={16} />} onClick={onClose}>
+        <Button variant="ghost" icon={<ArrowLeft size={16} />} onClick={() => void requestClose()}>
           กลับไปหน้าโปรเจกต์
         </Button>
         <span className="h-5 w-px bg-divider" />
@@ -2444,7 +2768,10 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
           <CaptionPanel
             style={captionStyle}
             onChange={(next) => {
+              if (sameCaptionStyle(next, captionStyleRef.current)) return
+              pushHistoryNow()
               setCaptionStyle(next)
+              captionStyleRef.current = next
               void editorApi.updateCaptionStyle(next)
             }}
             previewThumb={null}
@@ -2527,7 +2854,12 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
                 onPointerLeave={() => setTransportOn(false)}
               >
                 {/* Two elements so the "next" edited-mode segment can be pre-seeked hidden, then swapped in instantly. */}
+                {/* Clicking the picture toggles playback, the way every video
+                    player does — the transport button was the only way before
+                    (live report 2026-08-13). It sits on both elements because
+                    which one is on top changes with every scene swap. */}
                 <video
+                  onClick={togglePlay}
                   ref={videoARef}
                   onTimeUpdate={(e) => isActiveVideoEvent(e) && onTimeUpdate()}
                   onLoadedMetadata={(e) => isActiveVideoEvent(e) && onVideoLoadedMetadata()}
@@ -2539,6 +2871,7 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
                   style={{ opacity: 1 }}
                 />
                 <video
+                  onClick={togglePlay}
                   ref={videoBRef}
                   onTimeUpdate={(e) => isActiveVideoEvent(e) && onTimeUpdate()}
                   onLoadedMetadata={(e) => isActiveVideoEvent(e) && onVideoLoadedMetadata()}
@@ -2662,12 +2995,20 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
                                 type="button"
                                 onClick={() => void selectCut(c)}
                                 title={`มุม ${cutIndexInLine(cuts, c)} · ${(c.out - c.in).toFixed(1)} วิ`}
-                                className={`h-11 w-[26px] rounded border bg-black transition-colors duration-state ${
+                                className={`h-11 w-[26px] overflow-hidden rounded border bg-black transition-colors duration-state ${
                                   c.id === selectedId
                                     ? 'border-accent'
                                     : 'border-border hover:border-border-strong'
                                 }`}
-                              />
+                              >
+                                {angleThumbs[angleThumbKey(c)] ? (
+                                  <img
+                                    src={angleThumbs[angleThumbKey(c)]}
+                                    alt=""
+                                    className="h-full w-full object-cover"
+                                  />
+                                ) : null}
+                              </button>
                             ))}
                             <button
                               type="button"
@@ -3000,13 +3341,16 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
             <div
               ref={viewportRef}
               onWheel={onTimelineWheel}
+              onScroll={onViewportScroll}
               className="scroll-ghost relative max-h-[248px] overflow-auto select-none"
             >
               <div className="relative" style={{ width: HEADER_COL_PX + contentW }}>
                 {/* ruler */}
                 <div className="flex" style={{ height: RULER_PX }}>
                   <div
-                    className="sticky left-0 z-30 h-full shrink-0 bg-ground"
+                    // Same stacking rule as trackLabelCls — this is the
+                    // ruler's corner and the ruler ticks must scroll under it.
+                    className="sticky left-0 z-40 h-full shrink-0 bg-ground"
                     style={{ width: HEADER_COL_PX }}
                   />
                   <TimelineRuler
@@ -3417,7 +3761,7 @@ function TimecodeInput({
           e.currentTarget.blur()
         }
       }}
-      className="w-24 rounded-md border border-border bg-transparent px-2 py-1.5 text-sm tabular-nums text-ink outline-none focus:border-accent"
+      className="w-24 rounded-md border border-border bg-transparent px-2 py-1.5 text-sm tabular-nums text-ink"
     />
   )
 }

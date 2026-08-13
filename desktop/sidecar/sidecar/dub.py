@@ -13,7 +13,9 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from sidecar.atomic import atomic_publish
 from sidecar.bootstrap import ensure_backend_on_path
+from sidecar.captions import burn_caption_lines
 
 ensure_backend_on_path()
 
@@ -29,7 +31,22 @@ from packages.video.ffmpeg_bin import media_duration, trim_media  # noqa: E402
 from packages.video.timeline import normalize_dub_edit_script  # noqa: E402
 
 
-class RenderSilentJob(BaseModel):
+class CaptionsMixin(BaseModel):
+    """Burned-in captions for a dub render.
+
+    dub_first never gets word timestamps (the voiceover is recorded against the
+    cut, not transcribed), so the caller sends finished lines in OUTPUT time —
+    see ``lib/captionLines.ts``. Absent style or lines → no burn at all, which
+    is what a project with captions switched off looks like.
+    """
+
+    captionStyle: dict[str, Any] | None = None
+    captionLines: list[dict[str, Any]] | None = None
+    #: Optional per-word timing for the word_pop / typewriter reveal modes.
+    captionWords: list[dict[str, Any]] | None = None
+
+
+class RenderSilentJob(CaptionsMixin):
     projectDir: Path
     editScript: dict[str, Any]
     brief: str | None = None
@@ -42,7 +59,7 @@ class RenderSilentJob(BaseModel):
     musicTrimInSec: float = 0.0
 
 
-class RenderFinalJob(BaseModel):
+class RenderFinalJob(CaptionsMixin):
     projectDir: Path
     timeline: dict[str, Any]
     voiceoverPath: Path
@@ -105,27 +122,47 @@ def run_render_silent(job: RenderSilentJob, emit) -> dict[str, Any]:
         clip_paths.append(clip_out)
         clip_durations_sec.append(round(media_duration(clip_out), 3))
 
-    emit({"event": "progress", "stage": "concat", "step": total, "total": total})
     final_path = project_dir / "final_silent.mp4"
-    concat_stream_copy(clip_paths, final_path, project_dir / "concat_silent.txt")
-
+    music_mixed_path: Path | None = (
+        project_dir / "final_silent_music.mp4" if job.musicPath is not None else None
+    )
     script_path = project_dir / "script.txt"
-    write_dub_script_txt(segments, job.brief, script_path)
-
-    music_mixed_path: Path | None = None
-    if job.musicPath is not None:
-        emit({"event": "progress", "stage": "music", "step": total, "total": total})
-        music_mixed_path = project_dir / "final_silent_music.mp4"
-        mix_audio_layers(
-            final_path, None, job.musicPath, music_mixed_path,
-            music_volume=job.musicVolume,
-            music_offset_sec=job.musicOffsetSec,
-            music_trim_in_sec=job.musicTrimInSec,
-        )
-
-    emit({"event": "progress", "stage": "bundle", "step": total, "total": total})
     zip_path = project_dir / "dub_bundle.zip"
-    build_dub_bundle_zip(final_path, script_path, clip_paths, zip_path, music_mixed_path=music_mixed_path)
+
+    # Everything below runs on staging paths and is renamed in at the end — a
+    # half-written final_silent.mp4 must never be visible to the app, which
+    # treats "the file is there" as "the render is done" (see sidecar/atomic).
+    with atomic_publish(final_path, music_mixed_path, zip_path) as (tmp_final, tmp_music, tmp_zip):
+        assert tmp_final is not None and tmp_zip is not None
+        emit({"event": "progress", "stage": "concat", "step": total, "total": total})
+        concat_stream_copy(clip_paths, tmp_final, project_dir / "concat_silent.txt")
+
+        # Captions go on BEFORE the music mix, so the music-mixed copy carries
+        # them too — the silent cut is a deliverable on its own (the voiceover
+        # is optional), and a deliverable with the captions missing is the bug
+        # this fixes (live report 2026-08-13).
+        if job.captionStyle and job.captionLines:
+            emit({"event": "progress", "stage": "captions", "step": total, "total": total})
+            burn_caption_lines(
+                project_dir, tmp_final, job.captionStyle, job.captionLines, job.captionWords
+            )
+
+        write_dub_script_txt(segments, job.brief, script_path)
+
+        if tmp_music is not None:
+            emit({"event": "progress", "stage": "music", "step": total, "total": total})
+            mix_audio_layers(
+                tmp_final, None, job.musicPath, tmp_music,
+                music_volume=job.musicVolume,
+                music_offset_sec=job.musicOffsetSec,
+                music_trim_in_sec=job.musicTrimInSec,
+            )
+
+        emit({"event": "progress", "stage": "bundle", "step": total, "total": total})
+        build_dub_bundle_zip(
+            tmp_final, script_path, clip_paths, tmp_zip, music_mixed_path=tmp_music
+        )
+        duration_sec = round(media_duration(tmp_final), 3)
 
     return {
         "event": "done",
@@ -133,7 +170,7 @@ def run_render_silent(job: RenderSilentJob, emit) -> dict[str, Any]:
         "finalSilentMusic": str(music_mixed_path) if music_mixed_path else None,
         "script": str(script_path),
         "zip": str(zip_path),
-        "durationSec": round(media_duration(final_path), 3),
+        "durationSec": duration_sec,
         "clipDurationsSec": clip_durations_sec,
         "segments": total,
     }
@@ -151,22 +188,30 @@ def run_mix_music(job: MixMusicJob, emit) -> dict[str, Any]:
     script_path = project_dir / "script.txt"
     clip_paths = sorted((project_dir / "clips").glob("clip_*.mp4"))
 
-    music_mixed_path = project_dir / "final_silent_music.mp4"
+    music_mixed_path: Path | None = project_dir / "final_silent_music.mp4"
+    zip_path = project_dir / "dub_bundle.zip"
     if job.musicPath is None:
+        assert music_mixed_path is not None
         music_mixed_path.unlink(missing_ok=True)
         music_mixed_path = None
-    else:
-        emit({"event": "progress", "stage": "music", "step": 1, "total": 1})
-        mix_audio_layers(
-            final_path, None, job.musicPath, music_mixed_path,
-            music_volume=job.musicVolume,
-            music_offset_sec=job.musicOffsetSec,
-            music_trim_in_sec=job.musicTrimInSec,
-        )
 
-    emit({"event": "progress", "stage": "bundle", "step": 1, "total": 1})
-    zip_path = project_dir / "dub_bundle.zip"
-    build_dub_bundle_zip(final_path, script_path, clip_paths, zip_path, music_mixed_path=music_mixed_path)
+    # Staged like the silent render: the previous mix stays playable for the
+    # whole re-mix instead of turning into a truncated file mid-write.
+    with atomic_publish(music_mixed_path, zip_path) as (tmp_music, tmp_zip):
+        assert tmp_zip is not None
+        if tmp_music is not None:
+            emit({"event": "progress", "stage": "music", "step": 1, "total": 1})
+            mix_audio_layers(
+                final_path, None, job.musicPath, tmp_music,
+                music_volume=job.musicVolume,
+                music_offset_sec=job.musicOffsetSec,
+                music_trim_in_sec=job.musicTrimInSec,
+            )
+
+        emit({"event": "progress", "stage": "bundle", "step": 1, "total": 1})
+        build_dub_bundle_zip(
+            final_path, script_path, clip_paths, tmp_zip, music_mixed_path=tmp_music
+        )
 
     return {
         "event": "done",
@@ -209,29 +254,41 @@ def run_render_final(job: RenderFinalJob, emit) -> dict[str, Any]:
     concat_out = project_dir / "final_noaudio.mp4"
     concat_stream_copy(clip_paths, concat_out, project_dir / "concat_final.txt")
 
-    emit({"event": "progress", "stage": "mux", "step": total, "total": total})
     final_path = project_dir / "final.mp4"
-    mix_audio_layers(
-        concat_out, job.voiceoverPath, job.musicPath, final_path,
-        music_volume=job.musicVolume,
-        music_offset_sec=job.musicOffsetSec,
-        music_trim_in_sec=job.musicTrimInSec,
-    )
-    concat_out.unlink(missing_ok=True)
-
-    emit({"event": "progress", "stage": "bundle", "step": total, "total": total})
     bundle_path = project_dir / "final_bundle.zip"
-    with zipfile.ZipFile(bundle_path, "w", zipfile.ZIP_DEFLATED) as zf:
-        zf.write(final_path, "final.mp4")
-        script_path = project_dir / "script.txt"
-        if script_path.is_file():
-            zf.write(script_path, "script.txt")
+
+    with atomic_publish(final_path, bundle_path) as (tmp_final, tmp_bundle):
+        assert tmp_final is not None and tmp_bundle is not None
+        emit({"event": "progress", "stage": "mux", "step": total, "total": total})
+        mix_audio_layers(
+            concat_out, job.voiceoverPath, job.musicPath, tmp_final,
+            music_volume=job.musicVolume,
+            music_offset_sec=job.musicOffsetSec,
+            music_trim_in_sec=job.musicTrimInSec,
+        )
+        concat_out.unlink(missing_ok=True)
+
+        # After the mux, not before: the burn stream-copies audio, so the
+        # voiceover and music survive untouched.
+        if job.captionStyle and job.captionLines:
+            emit({"event": "progress", "stage": "captions", "step": total, "total": total})
+            burn_caption_lines(
+                project_dir, tmp_final, job.captionStyle, job.captionLines, job.captionWords
+            )
+
+        emit({"event": "progress", "stage": "bundle", "step": total, "total": total})
+        with zipfile.ZipFile(tmp_bundle, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.write(tmp_final, "final.mp4")
+            script_path = project_dir / "script.txt"
+            if script_path.is_file():
+                zf.write(script_path, "script.txt")
+        duration_sec = round(media_duration(tmp_final), 3)
 
     return {
         "event": "done",
         "final": str(final_path),
         "bundle": str(bundle_path),
-        "durationSec": round(media_duration(final_path), 3),
+        "durationSec": duration_sec,
         "cuts": total,
     }
 

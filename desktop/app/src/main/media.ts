@@ -59,6 +59,15 @@ function mimeTypeFor(path: string): string {
   return MIME_BY_EXT[ext] ?? 'application/octet-stream'
 }
 
+/**
+ * A project file's URL is stable but its BYTES are not — every re-render
+ * rewrites final.mp4 / final_silent_music.mp4 in place under the same name.
+ * Cached, Chromium happily replays the previous render (a preview with the old
+ * music, a clip that ends where the old one did) and no remount key can undo
+ * it, because the key only changes which element loads the same cached URL.
+ */
+const NO_STORE = 'no-store, no-cache, must-revalidate'
+
 function parseRange(
   rangeHeader: string | null,
   size: number
@@ -102,6 +111,7 @@ export function registerMediaProtocol(): void {
         headers: {
           'Content-Length': String(size),
           'Accept-Ranges': 'bytes',
+          'Cache-Control': NO_STORE,
           'Content-Type': contentType
         }
       })
@@ -115,6 +125,7 @@ export function registerMediaProtocol(): void {
         'Content-Range': `bytes ${start}-${end}/${size}`,
         'Content-Length': String(end - start + 1),
         'Accept-Ranges': 'bytes',
+        'Cache-Control': NO_STORE,
         'Content-Type': contentType
       }
     })

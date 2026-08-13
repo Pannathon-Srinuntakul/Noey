@@ -13,9 +13,12 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from sidecar.atomic import atomic_publish
 from sidecar.bootstrap import ensure_backend_on_path
 
 ensure_backend_on_path()
+
+from sidecar.captions import burn_ass  # noqa: E402
 
 from packages.video.caption import (  # noqa: E402
     build_ass_captions,
@@ -23,14 +26,7 @@ from packages.video.caption import (  # noqa: E402
     resolve_caption_style,
 )
 from packages.video.dub_render import concat_stream_copy, norm_for_clip, prepare_clips_dir  # noqa: E402
-from packages.video.ffmpeg_bin import (  # noqa: E402
-    hwaccel_input_kwargs,
-    media_duration,
-    run_ffmpeg,
-    trim_media,
-    video_encode_kwargs,
-)
-from packages.video.fonts import escape_ass_filter_path, fonts_dir  # noqa: E402
+from packages.video.ffmpeg_bin import media_duration, trim_media  # noqa: E402
 from packages.video.render_common import build_capcut_bundle, write_srt  # noqa: E402
 
 
@@ -41,23 +37,6 @@ def _clip_abs_offsets(norm_files: list[Path]) -> dict[str, float]:
         offsets[f"clip{i}"] = off
         off += media_duration(nf)
     return offsets
-
-
-def _burn_captions(src: Path, ass_path: Path, dest: Path) -> None:
-    import ffmpeg as ffmpeg_lib
-
-    ass_filter = (
-        f"ass={escape_ass_filter_path(ass_path)}:fontsdir={escape_ass_filter_path(fonts_dir())}"
-    )
-    run_ffmpeg(
-        ffmpeg_lib.input(str(src), **hwaccel_input_kwargs()).output(
-            str(dest),
-            vf=ass_filter,
-            acodec="copy",
-            **video_encode_kwargs(),
-        ).overwrite_output(),
-        label="burn_captions",
-    )
 
 
 class RenderTimelineJob(BaseModel):
@@ -99,9 +78,45 @@ def run_render_timeline(job: RenderTimelineJob, emit) -> dict[str, Any]:
         clip_paths.append(clip_out)
         actual_durations.append(media_duration(clip_out))
 
-    emit({"event": "progress", "stage": "concat", "step": total, "total": total})
+    # `final.mp4` is only renamed into place once the concat, the caption burn
+    # and the bundle have all succeeded — until then the app must keep seeing
+    # the previous complete render, not a growing file (see sidecar/atomic).
     final_path = project_dir / "final.mp4"
-    concat_stream_copy(clip_paths, final_path, project_dir / "concat_final.txt")
+    with atomic_publish(final_path) as (tmp_final,):
+        assert tmp_final is not None
+        emit({"event": "progress", "stage": "concat", "step": total, "total": total})
+        concat_stream_copy(clip_paths, tmp_final, project_dir / "concat_final.txt")
+        srt_path, zip_path, duration_sec = _finish_timeline_render(
+            job, tmp_final, clip_paths, cuts, norm_files, actual_durations, emit
+        )
+
+    return {
+        "event": "done",
+        "final": str(final_path),
+        "srt": str(srt_path),
+        "bundle": str(zip_path),
+        "durationSec": duration_sec,
+        "cuts": total,
+    }
+
+
+def _finish_timeline_render(
+    job: RenderTimelineJob,
+    final_path: Path,
+    clip_paths: list[Path],
+    cuts: list[dict[str, Any]],
+    norm_files: list[Path],
+    actual_durations: list[float],
+    emit,
+) -> tuple[Path, Path, float]:
+    """Captions + SRT + CapCut bundle for an already-concatenated render.
+
+    `final_path` is the STAGING file, so everything here reads and rewrites
+    that rather than the published name.
+    """
+    project_dir = job.projectDir
+    timeline = job.timeline
+    total = len(cuts)
 
     captions_dir = project_dir / "captions"
     captions_dir.mkdir(exist_ok=True)
@@ -137,7 +152,7 @@ def run_render_timeline(job: RenderTimelineJob, emit) -> dict[str, Any]:
                 encoding="utf-8",
             )
             final_captioned = project_dir / "final_captions.mp4"
-            _burn_captions(final_path, ass_path, final_captioned)
+            burn_ass(final_path, ass_path, final_captioned)
             final_captioned.replace(final_path)
             ass_burned = True
 
@@ -153,11 +168,4 @@ def run_render_timeline(job: RenderTimelineJob, emit) -> dict[str, Any]:
         ass_burned=ass_burned,
     )
 
-    return {
-        "event": "done",
-        "final": str(final_path),
-        "srt": str(srt_path),
-        "bundle": str(zip_path),
-        "durationSec": round(media_duration(final_path), 3),
-        "cuts": total,
-    }
+    return srt_path, zip_path, round(media_duration(final_path), 3)

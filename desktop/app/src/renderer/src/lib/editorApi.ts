@@ -66,6 +66,10 @@ export interface EditorContext {
    * editor's audio track — waveform + drag/trim/volume/mute). */
   music?: EditorMusic
   onMusicChange?: (patch: MusicPatch) => Promise<void>
+  /** Replace the whole track (or detach it with null). `onMusicChange` can only
+   * patch a track that is already attached, which is not enough to UNDO an
+   * attach/detach — see the editor's history. */
+  onSetMusic?: (music: EditorMusic | null) => Promise<void>
   onPickMusic?: () => Promise<EditorMusic | undefined>
   onRemoveMusic?: () => Promise<void>
   /** Persist + re-render; useProjectPipeline owns the flow. */
@@ -227,6 +231,12 @@ export const editorApi = {
   removeMusic: async (): Promise<void> => {
     const c = requireCtx()
     await c.onRemoveMusic?.()
+  },
+
+  /** Undo/redo path — set the whole track at once (null detaches it). */
+  setMusic: async (music: EditorMusic | null): Promise<void> => {
+    const c = requireCtx()
+    await c.onSetMusic?.(music)
   }
 }
 

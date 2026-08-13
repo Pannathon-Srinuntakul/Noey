@@ -151,6 +151,35 @@ export function dubCaptionLines(scenes: DubScene[]): CaptionLine[] {
   return lines.sort((a, b) => a.start - b.start)
 }
 
+/**
+ * Per-word timings for caption lines that have none — dub_first's whole
+ * situation, since its voiceover is never transcribed.
+ *
+ * Only the reveal modes (word_pop / typewriter) need this: the burn-in falls
+ * back to splitting a line on whitespace, and Thai has no spaces, so without
+ * these tokens a Thai line "reveals" as one lump. The timings are an even
+ * spread across the line — nobody knows when each word is actually spoken, and
+ * a guessed rhythm would be no more true than an even one.
+ */
+export function captionWordsFromLines(lines: CaptionLine[]): CaptionWord[] {
+  const words: CaptionWord[] = []
+  for (const line of lines) {
+    const span = line.end - line.start
+    if (span <= 0) continue
+    const tokens = segmentWords(line.text)
+    if (tokens.length === 0) continue
+    const step = span / tokens.length
+    tokens.forEach((word, i) => {
+      words.push({
+        word,
+        start: Number((line.start + i * step).toFixed(3)),
+        end: Number((line.start + (i + 1) * step).toFixed(3))
+      })
+    })
+  }
+  return words
+}
+
 /** `1,234` seconds → SubRip's `HH:MM:SS,mmm`. */
 function srtStamp(sec: number): string {
   const t = Math.max(0, sec)

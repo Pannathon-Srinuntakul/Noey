@@ -30,7 +30,8 @@ import {
   type EditCut,
   type SaveCutPayload
 } from './editorApi'
-import { dubCaptionLines, groupWordsIntoLines, type DubScene } from './captionLines'
+import { captionWordsFromLines, dubCaptionLines, groupWordsIntoLines } from './captionLines'
+import { dubScenesFor, timelineScenesFor } from './dubScenes'
 import type { CaptionStyle } from './captionStyle'
 import { pickFile } from './pickFile'
 import type { ProjectMode, ProjectStep } from './projectFlow'
@@ -106,30 +107,6 @@ export interface ProjectPipeline {
  * for. Durations accumulate because the segments play back to back, which is
  * what makes an output-time caption possible without re-measuring the render.
  */
-function dubScenesFor(script: DubEditScript | null): DubScene[] {
-  if (!script?.segments) return []
-  const scenes: DubScene[] = []
-  let cursor = 0
-  script.segments.forEach((seg, i) => {
-    const duration = Number(
-      seg.durationSec ?? Math.max(0, Number(seg.sourceOut ?? 0) - Number(seg.sourceIn ?? 0))
-    )
-    const start = cursor
-    cursor += Number.isFinite(duration) ? duration : 0
-    scenes.push({
-      lineId: Number(seg.voiceoverLineId ?? seg.order ?? i + 1),
-      script: String(seg.voiceoverScript ?? '').trim(),
-      start,
-      end: cursor
-    })
-  })
-  // A scene inherits the text of the first segment of its line — later
-  // segments of the same line carry an empty script.
-  const textByLine = new Map<number, string>()
-  for (const s of scenes)
-    if (s.script && !textByLine.has(s.lineId)) textByLine.set(s.lineId, s.script)
-  return scenes.map((s) => ({ ...s, script: s.script || (textByLine.get(s.lineId) ?? '') }))
-}
 
 export function useProjectPipeline(initial: LocalProject, session: ApiSession): ProjectPipeline {
   const [project, setProject] = useState<LocalProject>(initial)
@@ -233,19 +210,37 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     }
   }, [])
 
+  /**
+   * The project as it is NOW, for code inside a pipeline stage.
+   *
+   * A run is one long async chain (`bootstrapPipeline` → import → analyze →
+   * render), so every stage in it closes over the `project` value from the
+   * render that STARTED the chain. Anything the chain itself wrote — the music
+   * the import stage attaches from `pendingMusic`, the remote uid, the
+   * voiceover path — is invisible through that variable. Stages must read
+   * this instead; `patchProject` keeps it current synchronously.
+   */
+  const live = (): LocalProject => projectRef.current
+
   // dub_first final render only: extra sidecar job fields for the attached
   // background music track (see TimelineEditor's audio track for editing).
   // Omitted entirely when no music is attached — old VO-only mux, unchanged.
   // The sidecar is a plain local process, so it gets the resolved absolute
   // path (project.music.path itself is project-relative, for media:// use).
-  const musicJobFields = async (
-    p: LocalProject
-  ): Promise<{
+  //
+  // Reads `live()` rather than taking a project: it used to be handed the
+  // stale closure `project`, so a project whose music was attached during the
+  // import stage rendered with NO music mix at all — final_silent_music.mp4
+  // was never produced and the detail page fell back to the silent cut, while
+  // the editor (which plays the raw track through its own <audio>) had music.
+  // That is the "เพลงไม่มาในหน้าโปรเจกต์ แต่ในหน้า edit มี" report (2026-08-13).
+  const musicJobFields = async (): Promise<{
     musicPath?: string
     musicVolume?: number
     musicOffsetSec?: number
     musicTrimInSec?: number
   }> => {
+    const p = live()
     if (!p.music) return {}
     const musicPath = await window.noey.projects.resolvePath(p.uid, p.music.path)
     return {
@@ -410,12 +405,12 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
       'useProjectPipeline',
       `mixMusic start: ${music ? `path=${music.path} vol=${music.volume} offset=${music.offsetSec} trimIn=${music.trimInSec}` : 'clearing music'}`
     )
+    const projectDir = await window.noey.projects.dir(project.uid)
     const unsub = window.noey.sidecar.mixMusic.onProgress((evt: SidecarEvent) => {
       setProgressMsg(evt.stage === 'music' ? 'กำลังใส่เพลงประกอบ…' : 'กำลังอัพเดต bundle…')
       void window.noey.log.write('useProjectPipeline', `mixMusic progress: ${JSON.stringify(evt)}`)
-    })
+    }, projectDir)
     try {
-      const projectDir = await window.noey.projects.dir(project.uid)
       const musicPath = music
         ? await window.noey.projects.resolvePath(project.uid, music.path)
         : null
@@ -465,10 +460,22 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
   }
 
   const removeMusic = async (): Promise<void> => {
-    await patchProject({ music: undefined })
-    await remixMusicOntoSilent(undefined)
+    await setMusicTrack(null)
+  }
+
+  /**
+   * Replace the whole track at once — what the editor's undo/redo needs.
+   * `updateMusic` can only patch a track that is already attached, so it cannot
+   * put back a track that was detached (or take away one that was attached),
+   * which are both single steps in the editor's history.
+   */
+  const setMusicTrack = async (music: LocalProject['music'] | null): Promise<void> => {
+    await patchProject({ music: music ?? undefined })
+    await remixMusicOntoSilent(music ?? undefined)
     const remoteUid = project.remote?.uid
-    if (remoteUid) deleteMusic(session, remoteUid).catch(() => undefined)
+    // The server copy only exists to give the cut AI a beat grid; dropping the
+    // track locally means it must not keep steering the next cut.
+    if (!music && remoteUid) deleteMusic(session, remoteUid).catch(() => undefined)
   }
 
   // ── stage: analyze (frames → upload → LLM → edit script → silent render) ──
@@ -525,7 +532,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
       const projectDir = await window.noey.projects.dir(project.uid)
       const unsub = window.noey.sidecar.extractProxy.onProgress((evt: SidecarEvent) => {
         setProgressMsg(`กำลังย่อวิดีโอให้ AI ${evt.step}/${evt.total}…`)
-      })
+      }, projectDir)
       try {
         await window.noey.sidecar.extractProxy.run({ projectDir })
       } finally {
@@ -575,50 +582,9 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     }
   }
 
-  /**
-   * Wizard step 2's promise: "เลือกแล้ว AI จะใส่การซูมให้ตอนตัด". Runs once when
-   * a cut finishes rendering, only if the project carries a zoomStyleUid and
-   * no effects.json exists yet (a re-render must not stomp edited zooms).
-   * 'default' = AI's own judgment (no saved style spliced in). Best-effort:
-   * the cut is already good, so a failed zoom pass never fails the pipeline.
-   */
-  const autoApplyZoomStyle = async (remoteUid: string, baseFile: string): Promise<void> => {
-    const zoomStyleUid = projectRef.current.zoomStyleUid ?? project.zoomStyleUid
-    if (!zoomStyleUid) return
-    try {
-      const { getEffectsDoc } = await import('./effectsLocalApi')
-      const existing = await getEffectsDoc(session, remoteUid).catch(() => null)
-      if (existing && existing.instances.length > 0) return
-      const { runAiEffects } = await import('./effectsPipeline')
-      const { buildEffectsScriptText } = await import('./effectsScript')
-      const { buildEffectsCutPoints, resolveClipDurationsSec } = await import('./effectsCuts')
-      const current = projectRef.current
-      const clipDurationsSec = await resolveClipDurationsSec(current)
-      setProgressMsg('AI กำลังใส่การซูมตามสไตล์ที่เลือก…')
-      await runAiEffects(
-        {
-          session,
-          localUid: current.uid,
-          remoteUid,
-          baseFile,
-          project: current,
-          onProgress: setProgressMsg,
-          onThinking: setThinking
-        },
-        '',
-        buildEffectsScriptText(current),
-        undefined,
-        zoomStyleUid === 'default' ? undefined : zoomStyleUid,
-        buildEffectsCutPoints(current, clipDurationsSec),
-        false
-      )
-    } catch (zoomErr) {
-      console.error('auto zoom pass failed', zoomErr)
-      void window.noey.log.write('useProjectPipeline', `auto zoom pass failed: ${String(zoomErr)}`)
-    } finally {
-      setThinking('')
-    }
-  }
+  // Zoom is NOT part of the render pipeline (2026-08-13): the wizard no longer
+  // asks for a zoom style, and no pass runs automatically. Zoom is placed after
+  // the cut exists, from the zoom-effects editor, against real footage.
 
   // ── stage: import (copy + normalise the sources) ─────────────────────────
   /**
@@ -646,7 +612,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
           ? msg || 'กำลังแปลงวิดีโอให้เล่น/ลากได้…'
           : `กำลังนำเข้าคลิป ${evt.step}/${evt.total}${msg ? ` · ${msg}` : ''}`
       )
-    })
+    }, projectDir)
     let ingested: { clips?: unknown }
     try {
       ingested = (await window.noey.sidecar.ingest.run({
@@ -684,6 +650,49 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     return true
   }
 
+  /**
+   * Burned-in caption fields for a dub render job.
+   *
+   * A dub has no transcript, so the lines ARE the source of truth: derived from
+   * the cut the first time, then whatever the timeline editor saved. Captions
+   * used to be dropped entirely on this path — the sidecar was never told about
+   * them and the finished cut came out bare (live report 2026-08-13).
+   */
+  const captionJobFields = (
+    lines: CaptionLine[]
+  ): {
+    captionStyle?: CaptionStyle
+    captionLines?: CaptionLine[]
+    captionWords?: ReturnType<typeof captionWordsFromLines>
+  } => {
+    const style = projectRef.current.captionStyle as CaptionStyle | undefined
+    const usable = lines.filter((l) => l.text.trim() && l.end > l.start)
+    if (!style || usable.length === 0) return {}
+    return {
+      captionStyle: style,
+      captionLines: usable,
+      captionWords: captionWordsFromLines(usable)
+    }
+  }
+
+  /** Saved lines win; otherwise split each spoken line across its own scenes. */
+  const dubCaptionLinesFor = (script: DubEditScript | null): CaptionLine[] => {
+    const saved = projectRef.current.captionLines as CaptionLine[] | undefined
+    if (saved?.length) return saved
+    return dubCaptionLines(dubScenesFor(script))
+  }
+
+  /** Post-VO equivalent: lines the editor saved against the planned timeline,
+   * else the same split re-timed onto that timeline's cuts. */
+  const finalCaptionLinesFor = (
+    timeline: DubTimeline,
+    script: DubEditScript | null
+  ): CaptionLine[] => {
+    const saved = timeline.captionLines as CaptionLine[] | undefined
+    if (saved?.length) return saved
+    return dubCaptionLines(timelineScenesFor(timeline, script))
+  }
+
   // ── stage: silent render ──────────────────────────────────────────────────
   const runRenderSilent = async (script: DubEditScript, remoteUid: string): Promise<void> => {
     await patchProject({ step: 'silent_rendering' })
@@ -696,22 +705,26 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
             ? 'กำลังรวมคลิป…'
             : evt.stage === 'music'
               ? 'กำลังใส่เพลงประกอบ…'
-              : evt.stage === 'bundle'
-                ? 'กำลังสร้าง bundle…'
-                : `กำลังทำ (${String(evt.stage)})…`
+              : evt.stage === 'captions'
+                ? 'กำลังใส่คำบรรยาย…'
+                : evt.stage === 'bundle'
+                  ? 'กำลังสร้าง bundle…'
+                  : `กำลังทำ (${String(evt.stage)})…`
       setProgressMsg(msg)
       void window.noey.log.write(
         'useProjectPipeline',
         `renderSilent progress: ${JSON.stringify(evt)}`
       )
-    })
+    }, projectDir)
+    const captionLines = dubCaptionLinesFor(script)
     let clipDurationsSec: number[] | undefined
     try {
       const done = await window.noey.sidecar.renderSilent.run({
         projectDir,
         editScript: script,
-        brief: project.brief || null,
-        ...(await musicJobFields(project))
+        brief: live().brief || null,
+        ...captionJobFields(captionLines),
+        ...(await musicJobFields())
       })
       clipDurationsSec = (done as { clipDurationsSec?: number[] }).clipDurationsSec
     } finally {
@@ -722,15 +735,27 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     // instead of the edit script's nominal sourceOut-sourceIn when present,
     // so scene-cut timing doesn't drift as rounding error accumulates across
     // segments (live report 2026-07-19).
+    // Persist the lines that were actually burned in, so the timeline editor
+    // opens on the same text/timing the video shows rather than re-deriving.
+    const burnedLines = captionJobFields(captionLines).captionLines
     if (mode === 'highlight') {
       // No voiceover step at all — the silent cut IS the final output,
       // mirrors talking_head's runRenderTimeline going straight to done.
-      await autoApplyZoomStyle(remoteUid, 'final.mp4')
       await patchLocalStatus(session, remoteUid, 'done')
-      await patchProject({ step: 'done', clipDurationsSec, lastRunSeconds: runSeconds() })
+      await patchProject({
+        step: 'done',
+        clipDurationsSec,
+        lastRunSeconds: runSeconds(),
+        ...(burnedLines ? { captionLines: burnedLines } : {})
+      })
     } else {
       await patchLocalStatus(session, remoteUid, 'waiting_vo')
-      await patchProject({ step: 'waiting_vo', clipDurationsSec, lastRunSeconds: runSeconds() })
+      await patchProject({
+        step: 'waiting_vo',
+        clipDurationsSec,
+        lastRunSeconds: runSeconds(),
+        ...(burnedLines ? { captionLines: burnedLines } : {})
+      })
     }
     setMediaKey((k) => k + 1)
     setProgressMsg('')
@@ -746,7 +771,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     setError(null)
     markRunStarted()
     try {
-      const remoteUid = project.remote?.uid
+      const remoteUid = live().remote?.uid
       if (!remoteUid) throw new Error('ไม่พบ remote project')
 
       const probe = await window.noey.sidecar.probe(voiceoverPath)
@@ -759,7 +784,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
         session,
         remoteUid,
         voDuration,
-        project.clips.map((c) => c.durationSec)
+        live().clips.map((c) => c.durationSec)
       )
 
       await patchProject({ step: 'final_rendering', timeline })
@@ -769,26 +794,30 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
           evt.stage === 'cut'
             ? `กำลังตัดช่วงที่ ${evt.step}/${evt.total}…`
             : evt.stage === 'mux'
-              ? project.music
+              ? live().music
                 ? 'กำลังใส่เสียงพากย์ + เพลงประกอบ…'
                 : 'กำลังใส่เสียงพากย์…'
               : evt.stage === 'concat'
                 ? 'กำลังรวมคลิป…'
-                : evt.stage === 'bundle'
-                  ? 'กำลังสร้าง bundle…'
-                  : `กำลังทำ (${String(evt.stage)})…`
+                : evt.stage === 'captions'
+                  ? 'กำลังใส่คำบรรยาย…'
+                  : evt.stage === 'bundle'
+                    ? 'กำลังสร้าง bundle…'
+                    : `กำลังทำ (${String(evt.stage)})…`
         )
         void window.noey.log.write(
           'useProjectPipeline',
           `renderFinal progress: ${JSON.stringify(evt)}`
         )
-      })
+      }, projectDir)
+      const captionLines = finalCaptionLinesFor(timeline, editScript)
       try {
         await window.noey.sidecar.renderFinal.run({
           projectDir,
           timeline,
           voiceoverPath,
-          ...(await musicJobFields(project))
+          ...captionJobFields(captionLines),
+          ...(await musicJobFields())
         })
       } finally {
         unsub()
@@ -820,10 +849,6 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
         // good; the user can re-render effects from the editor if this fails.
         console.error('effects re-apply failed', fxErr)
       }
-
-      // No effects placed while waiting? The wizard's zoom style (if any)
-      // gets its first pass now, on the voiced final.
-      await autoApplyZoomStyle(remoteUid, 'final.mp4')
 
       await patchLocalStatus(session, remoteUid, 'done')
       await patchProject({ step: 'done', lastRunSeconds: runSeconds() })
@@ -881,7 +906,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
       setProgressMsg('กำลังแยกเสียงจากคลิป…')
       const unsubAudio = window.noey.sidecar.extractAudio.onProgress((evt: SidecarEvent) => {
         setProgressMsg(`กำลังแยกเสียงคลิป ${evt.step}/${evt.total}…`)
-      })
+      }, projectDir)
       let wavs: { file: string; name: string }[]
       try {
         const done = await window.noey.sidecar.extractAudio.run({ projectDir })
@@ -929,13 +954,12 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
             ? 'กำลังรวมคลิป…'
             : 'กำลังสร้าง CapCut bundle…'
       )
-    })
+    }, projectDir)
     try {
       await window.noey.sidecar.renderTimeline.run({ projectDir, timeline })
     } finally {
       unsub()
     }
-    await autoApplyZoomStyle(remoteUid, 'final.mp4')
     await patchLocalStatus(session, remoteUid, 'done')
     await patchProject({ step: 'done', lastRunSeconds: runSeconds() })
     setMediaKey((k) => k + 1)
@@ -1145,6 +1169,10 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     if (target === 'edit_script') {
       const es = editScriptFromCuts(cuts)
       applyEditScript(es)
+      // Pre-VO caption edits have nowhere else to live: there is no planned
+      // timeline yet, so they go on the project and the next silent render
+      // burns exactly them.
+      if (captionLines) await patchProject({ captionLines })
       await putLocalEditScript(session, remoteUid, es)
       return
     }
@@ -1175,6 +1203,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     if (target === 'edit_script') {
       const es = editScriptFromCuts(cuts)
       applyEditScript(es)
+      if (captionLines) await patchProject({ captionLines })
       await putLocalEditScript(session, remoteUid, es)
       await runRenderSilent(es, remoteUid)
     } else {
@@ -1196,7 +1225,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
         await runRenderTimeline(timeline, remoteUid)
         return
       }
-      if (!project.voiceoverPath) throw new Error('ไม่พบไฟล์เสียงพากย์เดิม')
+      if (!live().voiceoverPath) throw new Error('ไม่พบไฟล์เสียงพากย์เดิม')
       await patchProject({ step: 'final_rendering', timeline })
       const projectDir = await window.noey.projects.dir(project.uid)
       const unsub = window.noey.sidecar.renderFinal.onProgress((evt: SidecarEvent) => {
@@ -1204,7 +1233,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
           evt.stage === 'cut'
             ? `กำลังตัดช่วงที่ ${evt.step}/${evt.total}…`
             : evt.stage === 'mux'
-              ? project.music
+              ? live().music
                 ? 'กำลังใส่เสียงพากย์ + เพลงประกอบ…'
                 : 'กำลังใส่เสียงพากย์…'
               : 'กำลังประกอบวิดีโอ…'
@@ -1213,13 +1242,14 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
           'useProjectPipeline',
           `renderFinal progress: ${JSON.stringify(evt)}`
         )
-      })
+      }, projectDir)
       try {
         await window.noey.sidecar.renderFinal.run({
           projectDir,
           timeline,
-          voiceoverPath: project.voiceoverPath,
-          ...(await musicJobFields(project))
+          voiceoverPath: live().voiceoverPath,
+          ...captionJobFields(finalCaptionLinesFor(timeline, editScript)),
+          ...(await musicJobFields())
         })
       } finally {
         unsub()
@@ -1294,7 +1324,9 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
           groupWordsIntoLines(
             (timeline?.words as { word: string; start: number; end: number }[]) ?? []
           ))
-        : (savedCaptionLines ?? dubCaptionLines(dubScenesFor(editScript)))
+        : (savedCaptionLines ??
+          (project.captionLines as CaptionLine[] | undefined) ??
+          dubCaptionLines(dubScenesFor(editScript)))
     configureEditorApi({
       localUid: project.uid,
       clips: project.clips,
@@ -1316,6 +1348,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
       },
       music: mode === 'dub_first' || mode === 'highlight' ? project.music : undefined,
       onMusicChange: mode === 'dub_first' || mode === 'highlight' ? updateMusic : undefined,
+      onSetMusic: mode === 'dub_first' || mode === 'highlight' ? setMusicTrack : undefined,
       onPickMusic: mode === 'dub_first' || mode === 'highlight' ? pickMusic : undefined,
       onRemoveMusic: mode === 'dub_first' || mode === 'highlight' ? removeMusic : undefined,
       onSave: (cuts, lines) => saveEditedCuts(cuts, target, lines),

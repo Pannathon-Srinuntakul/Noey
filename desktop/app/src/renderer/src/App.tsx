@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { me, restoreSession, type Me } from './lib/api'
 import type { ApiSession } from './lib/videosLocalApi'
 import { ConfirmProvider } from './lib/confirm'
+import { FxJobsProvider } from './lib/fxJobs'
 import { JobsProvider } from './lib/jobs'
 import { PrefsProvider } from './lib/prefs'
 import { RouterProvider } from './lib/router'
@@ -57,9 +58,13 @@ function Workspace({
         <ConfirmProvider>
           <RouterProvider>
             <JobsProvider session={apiSession}>
-              <AppShell session={session}>
-                <RouteView session={session} onLogout={onLogout} />
-              </AppShell>
+              {/* Editor AI work lives here, not in the editors: leaving the
+                  screen must not kill a running job (see lib/fxJobs). */}
+              <FxJobsProvider>
+                <AppShell session={session}>
+                  <RouteView session={session} onLogout={onLogout} />
+                </AppShell>
+              </FxJobsProvider>
             </JobsProvider>
           </RouterProvider>
         </ConfirmProvider>

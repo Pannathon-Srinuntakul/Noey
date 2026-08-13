@@ -66,8 +66,6 @@ export interface LocalProject {
   pendingSources?: string[]
   pendingMusic?: { path: string; trimInSec: number; trimOutSec: number }
   cutStyleUid?: string
-  /** Saved zoom style (kind='effects') to auto-apply after the cut renders; absent = none. */
-  zoomStyleUid?: string
   // Whether the AI should cut against the music's beat grid. Only meaningful
   // with `music` attached. Absent on projects created before the wizard
   // exposed the switch — those are treated as on, which is what they did.
@@ -108,6 +106,12 @@ export interface LocalProject {
   clipDurationsSec?: number[]
   error?: string
   captionStyle?: { font: string; mode: string; color: string; border_color: string; size: number }
+  /** dub_first/highlight caption lines in OUTPUT time. There are no word
+   * timestamps for a dub (the voiceover is recorded against the cut, never
+   * transcribed), so the lines themselves are the source of truth: derived
+   * from the cut on first render, overwritten by the timeline editor, and
+   * burned in by the sidecar on every later render. */
+  captionLines?: { id: string; text: string; start: number; end: number }[]
 }
 
 // Mirrors main/prefs.ts and main/storage.ts (preload defines its own view of
@@ -178,14 +182,25 @@ interface LanArtifact {
 
 export interface JobCommandApi {
   run: (job: unknown) => Promise<SidecarEvent>
-  onProgress: (cb: (evt: SidecarEvent) => void) => ProgressUnsubscribe
+  /**
+   * Subscribe to this command's progress events.
+   *
+   * `projectDir` is not optional in spirit: progress is broadcast to the whole
+   * renderer, so a listener without it also receives the events of every OTHER
+   * project running the same command at the same time. Pass the same
+   * `projectDir` the job was started with (main stamps each event with it).
+   */
+  onProgress: (cb: (evt: SidecarEvent) => void, projectDir?: string) => ProgressUnsubscribe
 }
 
 function jobCommand(channel: string): JobCommandApi {
   return {
     run: (job: unknown): Promise<SidecarEvent> => ipcRenderer.invoke(channel, job),
-    onProgress: (cb: (evt: SidecarEvent) => void): ProgressUnsubscribe => {
-      const listener = (_e: IpcRendererEvent, evt: SidecarEvent): void => cb(evt)
+    onProgress: (cb: (evt: SidecarEvent) => void, projectDir?: string): ProgressUnsubscribe => {
+      const listener = (_e: IpcRendererEvent, evt: SidecarEvent): void => {
+        if (projectDir && evt.projectDir !== projectDir) return
+        cb(evt)
+      }
       ipcRenderer.on(`${channel}-progress`, listener)
       return () => ipcRenderer.removeListener(`${channel}-progress`, listener)
     }
@@ -230,6 +245,15 @@ const noey = {
      * dialog. Resolves to the destination, or null if the user cancels. */
     exportFile: (uid: string, relPath: string, suggestedName: string): Promise<string | null> =>
       ipcRenderer.invoke('projects:exportFile', uid, relPath, suggestedName),
+    /** Copy chosen artifacts (same ids as `lan.artifacts`) out to disk: a Save
+     * dialog for one file, a folder picker for several. Resolves to null when
+     * the user cancels. */
+    exportArtifacts: (
+      uid: string,
+      fileIds: string[],
+      projectName: string
+    ): Promise<{ dir: string; files: number } | null> =>
+      ipcRenderer.invoke('projects:exportArtifacts', uid, fileIds, projectName),
     /** Copy a user-picked music/video file into the project dir; returns the
      * project-relative path (servable via media://, resolvable for the sidecar). */
     importMusic: (uid: string, srcPath: string): Promise<string> =>
@@ -263,6 +287,20 @@ const noey = {
     save: (auth: StoredAuth): Promise<void> => ipcRenderer.invoke('auth:save', auth),
     load: (): Promise<StoredAuth | null> => ipcRenderer.invoke('auth:load'),
     clear: (): Promise<void> => ipcRenderer.invoke('auth:clear')
+  },
+  // Unrendered-work guard: a screen publishes a reason while it holds edits
+  // that have not been rendered, and answers the close prompt with its own
+  // in-app dialog (see main/unsavedGuard.ts).
+  app: {
+    setUnsaved: (reason: string | null): Promise<void> =>
+      ipcRenderer.invoke('app:setUnsaved', reason),
+    allowClose: (): Promise<void> => ipcRenderer.invoke('app:allowClose'),
+    cancelClose: (): Promise<void> => ipcRenderer.invoke('app:cancelClose'),
+    onCloseRequested: (cb: (reason: string) => void): ProgressUnsubscribe => {
+      const listener = (_e: IpcRendererEvent, reason: string): void => cb(reason)
+      ipcRenderer.on('app:close-requested', listener)
+      return () => ipcRenderer.removeListener('app:close-requested', listener)
+    }
   },
   log: {
     write: (scope: string, message: string): Promise<void> =>
