@@ -261,7 +261,7 @@ async def distill_style_prompt(
             ),
         })
 
-        extra = call_kwargs(model=model, effort="high")
+        extra = call_kwargs(model=model, effort=settings.effects_vision_effort)
         extra["timeout"] = settings.effects_vision_timeout_sec
         # Same Gemini structured-output path as effects placement.
         extra["response_format"] = {

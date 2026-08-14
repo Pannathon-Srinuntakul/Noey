@@ -3,6 +3,7 @@ import { join, normalize } from 'path'
 import { mediaPathForUrl } from './mediaPath'
 
 const ROOT = normalize(join('C:', 'users', 'x', 'projects'))
+const INBOX = normalize(join('C:', 'users', 'x', 'lan-inbox'))
 
 describe('mediaPathForUrl', () => {
   it('resolves a normal project file', () => {
@@ -32,5 +33,29 @@ describe('mediaPathForUrl', () => {
     expect(mediaPathForUrl('media://other/abc/file.mp4', ROOT)).toBeNull()
     expect(mediaPathForUrl('not a url', ROOT)).toBeNull()
     expect(mediaPathForUrl('media://project/', ROOT)).toBeNull()
+  })
+
+  // The inbox host — how the wizard draws a thumbnail for a phone upload.
+  describe('inbox host', () => {
+    it('resolves a file in the inbox', () => {
+      const abs = mediaPathForUrl('media://inbox/9f2c-4a.mp4', ROOT, INBOX)
+      expect(abs).toBe(normalize(join(INBOX, '9f2c-4a.mp4')))
+    })
+
+    it('is off unless an inbox dir is supplied', () => {
+      expect(mediaPathForUrl('media://inbox/9f2c-4a.mp4', ROOT)).toBeNull()
+    })
+
+    it('allows exactly one segment — no subdirectories, no traversal', () => {
+      expect(mediaPathForUrl('media://inbox/sub/file.mp4', ROOT, INBOX)).toBeNull()
+      expect(mediaPathForUrl('media://inbox/..%5C..%5Csecret.txt', ROOT, INBOX)).toBeNull()
+      expect(mediaPathForUrl('media://inbox/%2E%2E%2Fsecret.txt', ROOT, INBOX)).toBeNull()
+      expect(mediaPathForUrl('media://inbox/', ROOT, INBOX)).toBeNull()
+    })
+
+    it('leaves the project host alone', () => {
+      const abs = mediaPathForUrl('media://project/abc/final.mp4', ROOT, INBOX)
+      expect(abs).toBe(normalize(join(ROOT, 'abc', 'final.mp4')))
+    })
   })
 })

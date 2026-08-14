@@ -31,6 +31,7 @@ async function runFetch(job: ApiFetchJob): Promise<ApiFetchResult> {
   void appendLog('api', `fetch start ${label} files=${job.formFiles?.length ?? 0}`)
   const headers = { ...(job.headers ?? {}) }
   let body: BodyInit | undefined
+  let uploadBytes = 0
 
   if (job.formFiles?.length || job.formFields) {
     const form = new FormData()
@@ -39,6 +40,7 @@ async function runFetch(job: ApiFetchJob): Promise<ApiFetchResult> {
     }
     for (const file of job.formFiles ?? []) {
       const data = await readFile(file.path)
+      uploadBytes += data.byteLength
       form.append(file.field, new Blob([data]), file.filename ?? basename(file.path))
     }
     body = form
@@ -52,14 +54,20 @@ async function runFetch(job: ApiFetchJob): Promise<ApiFetchResult> {
   // Without a timeout, a request in flight when the backend restarts (uvicorn
   // --reload) or drops the connection can hang forever — fetch() gives no
   // guarantee of ever rejecting on its own for a stalled/reset connection on
-  // Windows. 60s is generous for any of this app's endpoints (uploads
-  // included) while still eventually freeing a permanently-stuck UI.
+  // Windows.
+  //
+  // The budget cannot be a flat 60s: this bridge also carries the frame/WAV/
+  // proxy uploads, and 60s at a real ADSL upstream is roughly 6 MB. A 40 MB cut
+  // proxy on a slow line was aborted mid-transfer and surfaced as "TimeoutError"
+  // — a working upload reported as a failure. So the ceiling scales with what is
+  // actually being sent, at a deliberately pessimistic 100 KB/s floor.
+  const timeoutMs = Math.min(30 * 60_000, 60_000 + (uploadBytes / 100_000) * 1000)
   try {
     const res = await fetch(job.url, {
       method: job.method ?? 'GET',
       headers,
       body,
-      signal: AbortSignal.timeout(60_000)
+      signal: AbortSignal.timeout(timeoutMs)
     })
     const bodyText = await res.text()
     void appendLog('api', `fetch done ${label} status=${res.status} ms=${Date.now() - started}`)

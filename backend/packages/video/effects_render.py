@@ -3,8 +3,7 @@
 Consumes the normalized EffectsDoc (packages/video/effects.py) and applies
 every instance as an ffmpeg filter over the real footage:
 
-  base ─▶ [punch-zoom: baked per-clip pre-concat, see below] ─▶
-  [remaining transforms: whip-pan/scene-drift on the merged timeline] ─▶ final.mp4
+  base ─▶ [all transforms in one filter_complex] ─▶ final_fx.mp4
 
 The overlay compositing stage (transparent Remotion clips overlaid on top) was
 removed 2026-08-12 together with the node-sidecar — every effect is now a
@@ -16,15 +15,13 @@ a re-encode per effect: chaining apply_zoom sequentially would decode+encode
 the whole video once per instance, multiplying render time and stacking
 generation loss.
 
-``punch-zoom`` instances are the one exception (2026-07-19): they are baked
-onto each INDIVIDUAL per-scene clip file (``clips/clip_NNN.mp4``, produced
-pre-concat by the cut stage), at that clip's own LOCAL 0-based timeline, then
-the clips are re-concatenated BEFORE the rest of this pipeline runs — see
-``_bake_zoom_punches_per_clip``. This removes any possibility of a punch-zoom's
-absolute-timeline window drifting relative to the real cut boundaries in the
-final concatenated video (whip-pan/scene-drift stay on the post-concat global
-timeline: they deliberately straddle a cut or span a whole scene, so they
-inherently need more than one clip's worth of footage).
+``punch-zoom`` used to be baked onto each per-scene clip and the clips
+re-concatenated into a new base, to stop a zoom drifting across a real cut
+boundary. That was removed 2026-08-14: the clips are intermediates with no
+burned captions and no audio, so the rebuilt base silently dropped both from
+final_fx.mp4. The anti-drift property is kept by clamping each transform's
+window to the cut it starts in (``_clamp_transforms_to_cuts``) and applying
+everything in the normal single pass over the REAL base.
 """
 
 from __future__ import annotations
@@ -35,8 +32,7 @@ import subprocess
 from pathlib import Path
 
 from packages.core.logging import get_logger
-from packages.video.dub_render import concat_stream_copy
-from packages.video.effects import EffectInstance, EffectsDoc
+from packages.video.effects import EffectsDoc
 from packages.video.ffmpeg_bin import (
     ffmpeg_cmd,
     has_audio_stream,
@@ -76,99 +72,41 @@ def _clip_index_for(global_time: float, boundaries: list[float]) -> tuple[int, f
     return pos, boundaries[pos - 1], boundaries[pos]
 
 
-def _bake_zoom_punches_per_clip(
-    clips_dir: Path,
-    clip_durations_sec: list[float],
-    zoom_instances: list[EffectInstance],
-    *,
-    work_dir: Path,
-) -> tuple[Path, set[str]]:
-    """Bake ``punch-zoom`` instances onto their containing clip's LOCAL
-    timeline, then re-concatenate into a fresh base video.
+def _clamp_transforms_to_cuts(doc: EffectsDoc, clip_durations_sec: list[float]) -> EffectsDoc:
+    """Keep every transform inside the cut it starts in.
 
-    Reads ``clip_NNN.mp4`` fresh from ``clips_dir`` every call and never
-    mutates them — a clip untouched by any zoom is stream-copied into the
-    new concat unmodified, and re-running after a prop tweak always re-bakes
-    from the original clip, never chains onto a previous bake. Returns the
-    new base video path plus the set of instance ids actually baked (an
-    instance whose global window falls outside all known clip boundaries —
-    stale ``clip_durations_sec`` vs. a re-cut project — is left out of that
-    set so the caller can fall back to applying it on the post-concat pass
-    instead of silently dropping it).
+    A zoom that runs past a cut plays as a mistake: the shot changes mid-move.
+    The window is clamped rather than dropped, and an instance that would be
+    left shorter than a few frames is passed through untouched (better a small
+    overshoot than a zoom that silently disappears).
     """
     if not clip_durations_sec:
-        return clips_dir, set()
+        return doc
     boundaries = [0.0]
     for d in clip_durations_sec:
         boundaries.append(boundaries[-1] + max(0.0, float(d)))
-    n_clips = len(clip_durations_sec)
 
-    by_clip: dict[int, list[tuple[float, float, EffectInstance]]] = {}
-    baked_ids: set[str] = set()
-    for inst in zoom_instances:
-        idx, b_start, b_end = _clip_index_for(inst.startSec, boundaries)
-        local_start = max(0.0, inst.startSec - b_start)
-        local_end = min(inst.endSec, b_end) - b_start
-        if local_end - local_start < _MIN_BAKED_ZOOM_SEC:
-            log.warning(
-                "effects_zoom_clip_clamp_too_short",
-                instanceId=inst.id, clipIndex=idx,
-                localStart=round(local_start, 3), localEnd=round(local_end, 3),
-            )
+    instances = []
+    for inst in doc.instances:
+        if inst.kind != "transform":
+            instances.append(inst)
             continue
-        by_clip.setdefault(idx, []).append((local_start, local_end, inst))
-        baked_ids.add(inst.id)
-
-    if not by_clip:
-        return clips_dir, set()
-
-    tmp_dir = work_dir / "_effects_zoom_tmp"
-    if tmp_dir.exists():
-        shutil.rmtree(tmp_dir, ignore_errors=True)
-    tmp_dir.mkdir(parents=True, exist_ok=True)
-
-    clip_paths: list[Path] = []
-    for i in range(1, n_clips + 1):
-        original = clips_dir / f"clip_{i:03d}.mp4"
-        windows = by_clip.get(i)
-        if not windows or not original.is_file():
-            if windows and not original.is_file():
-                log.warning("effects_zoom_clip_missing", clipIndex=i, path=str(original))
-            clip_paths.append(original)
+        _, _, b_end = _clip_index_for(inst.startSec, boundaries)
+        if inst.endSec <= b_end + 1e-3:
+            instances.append(inst)
             continue
-
-        info = video_stream_info(original)
-        synthetic = EffectsDoc(instances=[
-            inst.model_copy(update={"startSec": ls, "durationSec": le - ls})
-            for ls, le, inst in sorted(windows, key=lambda w: w[0])
-        ])
-        filtergraph, final_label = build_effects_filtergraph(
-            synthetic, width=info["width"], height=info["height"], fps=info["fps"],
+        clamped = b_end - inst.startSec
+        if clamped < _MIN_BAKED_ZOOM_SEC:
+            instances.append(inst)
+            continue
+        log.info(
+            "effects_transform_clamped_to_cut",
+            instanceId=inst.id,
+            fromSec=round(inst.durationSec, 3),
+            toSec=round(clamped, 3),
         )
-        baked = tmp_dir / f"clip_{i:03d}.mp4"
-        enc = video_encode_kwargs()
-        vcodec = enc.pop("vcodec")
-        args = [
-            ffmpeg_cmd(), "-hide_banner", "-loglevel", "error", "-y",
-            "-i", str(original),
-            "-filter_complex", filtergraph, "-map", f"[{final_label}]",
-            "-an", "-c:v", str(vcodec),
-        ]
-        for k, v in enc.items():
-            args += [f"-{k}", str(v)]
-        args += [str(baked)]
-        result = subprocess.run(args, capture_output=True, timeout=600)
-        if result.returncode != 0:
-            stderr = result.stderr.decode("utf-8", errors="replace").strip()
-            log.error("effects_zoom_clip_bake_failed", clipIndex=i, stderr=stderr[-2000:])
-            raise RuntimeError(f"ffmpeg (effects_zoom_clip_bake clip {i}): {stderr[-500:]}")
-        clip_paths.append(baked)
-
-    zoomed_base = work_dir / "_effects_zoomed_base.mp4"
-    list_path = work_dir / "_effects_zoom_concat.txt"
-    concat_stream_copy(clip_paths, zoomed_base, list_path)
-    log.info("effects_zoom_preclip_bake_done", clipsBaked=len(by_clip), instancesBaked=len(baked_ids))
-    return zoomed_base, baked_ids
+        instances.append(inst.model_copy(update={"durationSec": clamped}))
+    return doc.model_copy(update={"instances": instances})
 
 
 def build_effects_filtergraph(
@@ -216,40 +154,32 @@ def render_effects(
     width: int | None = None,
     height: int | None = None,
     fps: float | None = None,
-    clips_dir: str | Path | None = None,
     clip_durations_sec: list[float] | None = None,
 ) -> None:
     """Render ``base_path`` with all effects in ``doc`` baked in, to ``out_path``.
 
     Base dims/fps default to the base video's own.
 
-    ``clips_dir``/``clip_durations_sec`` (both optional): when supplied and
-    ``doc`` has ``punch-zoom`` instances, those are pre-baked per-clip and the
-    clips re-concatenated into a new base BEFORE the rest of this function
-    runs (see module docstring + ``_bake_zoom_punches_per_clip``). Instances
-    that fail to map onto a clip (or either param is omitted) fall back to
-    the normal post-concat filtergraph pass unchanged — this is a pure
-    quality improvement, never a hard requirement.
+    ``clip_durations_sec`` (optional): the measured per-cut durations, used to
+    clamp each transform to its own cut so a zoom cannot bleed across a scene
+    change. Omitted → windows are applied exactly as authored.
     """
     base_path = Path(base_path)
-    zoom_instances = [
-        i for i in doc.transforms() if i.componentId == "punch-zoom"
-    ]
-    if zoom_instances and clips_dir and clip_durations_sec:
-        try:
-            zoomed_base, baked_ids = _bake_zoom_punches_per_clip(
-                Path(clips_dir), clip_durations_sec, zoom_instances,
-                work_dir=base_path.parent,
-            )
-        except Exception:
-            log.exception("effects_zoom_preclip_bake_failed")
-            baked_ids = set()
-        else:
-            if baked_ids:
-                base_path = zoomed_base
-                doc = doc.model_copy(update={
-                    "instances": [i for i in doc.instances if i.id not in baked_ids]
-                })
+    if clip_durations_sec:
+        # Clamp each punch-zoom to the cut it starts in, then apply everything
+        # in the single pass below.
+        #
+        # This used to REBUILD the base by re-baking each clip_NNN.mp4 and
+        # re-concatenating them. The clips are intermediates: they carry no
+        # burned captions (those are burned onto the concat afterwards) and no
+        # audio at all — so whenever a punch-zoom existed, final_fx.mp4 came out
+        # with the subtitles gone and silent, and final_fx is the top candidate
+        # for preview, export and the phone hand-off (2026-08-14). It also
+        # trusted clip durations recorded by a DIFFERENT render: the voiceover
+        # pass rewrites clips/ from its own cut list and never refreshes them.
+        # Clamping keeps the only property the rebuild was for — a zoom must not
+        # bleed across a cut — without discarding the real base.
+        doc = _clamp_transforms_to_cuts(doc, clip_durations_sec)
 
     info = video_stream_info(base_path)
     w = width or info["width"]
@@ -286,11 +216,26 @@ def render_effects(
         transforms=len(doc.transforms()),
         has_filtergraph=bool(filtergraph),
     )
-    result = subprocess.run(args, capture_output=True, timeout=1800)
-    if result.returncode != 0:
-        stderr = result.stderr.decode("utf-8", errors="replace").strip()
-        tail = stderr[-2000:]
-        last = next((ln.strip() for ln in reversed(tail.splitlines()) if ln.strip()), "unknown")
-        log.error("effects_render_failed", stderr=tail)
-        raise RuntimeError(f"ffmpeg (effects_render): {last}")
+    try:
+        result = subprocess.run(args, capture_output=True, timeout=1800)
+        if result.returncode != 0:
+            stderr = result.stderr.decode("utf-8", errors="replace").strip()
+            tail = stderr[-2000:]
+            last = next((ln.strip() for ln in reversed(tail.splitlines()) if ln.strip()), "unknown")
+            log.error("effects_render_failed", stderr=tail)
+            raise RuntimeError(f"ffmpeg (effects_render): {last}")
+    finally:
+        # Scratch left by the removed pre-clip bake — projects rendered before
+        # 2026-08-14 still carry it, and it is the size of the whole render.
+        _clean_zoom_workdir(Path(out_path).parent)
     log.info("effects_render_done", out=str(out_path))
+
+
+def _clean_zoom_workdir(work_dir: Path) -> None:
+    """Remove leftovers of the old pre-clip zoom bake (best effort)."""
+    shutil.rmtree(work_dir / "_effects_zoom_tmp", ignore_errors=True)
+    for name in ("_effects_zoomed_base.mp4", "_effects_zoom_concat.txt"):
+        try:
+            (work_dir / name).unlink(missing_ok=True)
+        except OSError:
+            pass

@@ -300,11 +300,20 @@ async def analyze_video(
     proxy_dir = root / "video_outputs" / uid / "proxy"
     proxy_dir.mkdir(parents=True, exist_ok=True)
     manifest_records: list[dict] = []
-    for f in files:
+    for idx, f in enumerate(files):
         entry = by_file[f.filename or ""]
-        dest = proxy_dir / entry.file
+        # The destination NAME is ours, never the client's. `entry.file` is
+        # free text from the request: `proxy_dir / "../../x"` keeps the
+        # traversal and `proxy_dir / "C:/..."` discards the base entirely, so
+        # the old form was an arbitrary write on the API host — which also runs
+        # the worker and holds the provider keys. analyze-frames below already
+        # synthesizes its names; this is the same rule.
+        stored = f"proxy_{idx:03d}.mp4"
+        dest = proxy_dir / stored
         dest.write_bytes(await f.read())
-        manifest_records.append(entry.model_dump())
+        # The worker reads the file back through the manifest, so record the
+        # name that actually exists on disk.
+        manifest_records.append({**entry.model_dump(), "file": stored})
 
     (proxy_dir / "proxy_manifest.json").write_text(
         json.dumps(manifest_records, ensure_ascii=False, indent=2), encoding="utf-8"

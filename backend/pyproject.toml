@@ -21,11 +21,11 @@ dependencies = [
     "psycopg[binary]>=3.2",
     "alembic>=1.14",
     "greenlet>=3.1",
-    # scheduling
-    "apscheduler>=3.11",
-    # scraping
+    # browser automation — used by the operational scripts in backend/scripts
+    # (UI probes, model-list fetch). `apscheduler` and `playwright-stealth` were
+    # dropped 2026-08-14: nothing imported either. Scheduling is arq's job, and
+    # stealth belonged to the scraper that was never built and is out of scope.
     "playwright>=1.49",
-    "playwright-stealth>=1.0.6",
     # ai (provider-agnostic)
     "litellm>=1.55",
     # logging

@@ -30,7 +30,6 @@ from packages.video.storage import data_root
 from packages.video.ffmpeg_bin import configure_ffmpeg, has_audio_stream, hwaccel_input_kwargs, media_duration, run_ffmpeg, trim_media, video_encode_kwargs, video_stream_info
 from packages.video.timeline import (
     normalize_dub_edit_script,
-    cuts_duration,
     filter_renderable_cuts,
     merge_dub_reedit_segments,
 )
@@ -395,8 +394,6 @@ async def ingest_video(ctx: dict[str, Any], *, job_id: str, project_uid: str, te
     await _video_progress(job_id, 5, "ingest", "กำลังเตรียมวิดีโอ…")
     session = await _tenant_session(tenant_slug)
     try:
-        import ffmpeg as ffmpeg_lib
-
         if await _abort_if_cancelled(session, project_uid, job_id):
             return {"cancelled": True}
 
@@ -414,8 +411,6 @@ async def ingest_video(ctx: dict[str, Any], *, job_id: str, project_uid: str, te
         source_files: list[str] = proj.source_files or []
         if not source_files:
             raise ValueError("No source files found in project")
-
-        upload_dir_path = root / "video_uploads" / project_uid
 
         (output_dir / "upload_sources.json").write_text(
             json.dumps(source_files, ensure_ascii=False),
@@ -1373,45 +1368,11 @@ async def plan_dub_timeline(ctx: dict[str, Any], *, job_id: str, project_uid: st
             reset_usage_ctx(_usage_token)
 
 
-# ── task: analyze_reference ──────────────────────────────────────────────────
-
-
-async def analyze_reference(ctx: dict[str, Any], *, job_id: str, project_uid: str, tenant_slug: str) -> dict:
-    """Extract Style Profile from uploaded reference clip. Saves to style_profile.json."""
-    await _update_job(job_id, "running", 10, result={"step": "analyze", "message": "กำลังวิเคราะห์ reference clip…"})
-    session = await _tenant_session(tenant_slug)
-    try:
-        from packages.video.style_profile import extract_style_profile
-
-        await _pull_project_files(project_uid)
-
-        root = data_root()
-        proj = await _get_video_project(session, project_uid)
-        if not proj.reference_clip_path:
-            raise ValueError("reference_clip_path not set")
-
-        ref_path = root / proj.reference_clip_path
-        if not ref_path.exists():
-            raise ValueError(f"Reference clip not found: {ref_path}")
-
-        await _update_job(job_id, "running", 40, result={"step": "analyze", "message": "PySceneDetect + Claude Vision…"})
-        profile = extract_style_profile(ref_path, use_vision=True)
-
-        output_dir = root / "video_outputs" / project_uid
-        output_dir.mkdir(parents=True, exist_ok=True)
-        profile_path = output_dir / "style_profile.json"
-        profile_path.write_text(json.dumps(profile, ensure_ascii=False, indent=2), encoding="utf-8")
-
-        rel = str(profile_path.relative_to(root))
-        await _update_video(session, project_uid, style_profile_path=rel)
-        await _push_project_files(project_uid)
-        await _update_job(job_id, "ok", 100, result={"step": "done", "message": "วิเคราะห์ style เสร็จแล้ว", "profile": profile})
-        return profile
-    except Exception as exc:
-        await _update_job(job_id, "error", 0, result={"step": "error", "message": format_exception_message(exc)}, error=format_exception_message(exc))
-        raise
-    finally:
-        await session.close()
+# The `analyze_reference` task was removed 2026-08-14 together with its route
+# and packages/video/style_profile.py: the Style Profile JSON it produced was
+# never read by any planner. Distilling a reference clip is now Effect/Cut
+# Styles' job (packages/video/effects_style.py, cut_style.py), which stores
+# prose that IS spliced into the prompts.
 
 
 # ── task: analyze_dub_local ──────────────────────────────────────────────────
@@ -2242,7 +2203,6 @@ class WorkerSettings:
         plan_talking_local,
         render_dub_silent,
         plan_dub_timeline,
-        analyze_reference,
     ]
     on_startup = startup
     on_shutdown = shutdown

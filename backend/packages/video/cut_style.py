@@ -346,7 +346,10 @@ async def distill_cut_style_prompt(
             ),
         })
 
-        extra = call_kwargs(model=model, effort="high")
+        # Distillation, not placement — it shares effects_style's depth setting
+        # because it is the same "watch a reference and judge it" call, even
+        # though the model it runs on is the dub one.
+        extra = call_kwargs(model=model, effort=settings.effects_vision_effort)
         extra["timeout"] = settings.dub_vision_timeout_sec
         extra["response_format"] = {
             "type": "json_schema",

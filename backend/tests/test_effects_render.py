@@ -12,7 +12,7 @@ import pytest
 
 from packages.video.effects import EffectInstance, EffectsDoc
 from packages.video.effects_render import (
-    _bake_zoom_punches_per_clip,
+    _clamp_transforms_to_cuts,
     _clip_index_for,
     build_effects_filtergraph,
     render_effects,
@@ -66,7 +66,7 @@ def test_clip_index_for_clamps_out_of_range() -> None:
     assert _clip_index_for(999.0, boundaries) == (3, 7.0, 10.0)  # past last clip (stale data)
 
 
-# ── _bake_zoom_punches_per_clip / render_effects: real ffmpeg over lavfi clips
+# ── clamp-to-cut / render_effects: real ffmpeg over lavfi clips
 
 def _make_clip(path: Path, *, duration: float, color: str) -> Path:
     subprocess.run(
@@ -102,62 +102,35 @@ def _zoom(id_: str, start: float, dur: float) -> EffectInstance:
     )
 
 
-def test_bake_zoom_punches_bakes_only_containing_clip(clips_dir: Path, tmp_path: Path) -> None:
-    inst = _zoom("z1", start=3.0, dur=1.0)  # falls inside clip 2 ([2,5))
-    zoomed_base, baked_ids = _bake_zoom_punches_per_clip(
-        clips_dir, CLIP_DURATIONS, [inst], work_dir=tmp_path,
-    )
-    assert baked_ids == {"z1"}
-    tmp_dir = tmp_path / "_effects_zoom_tmp"
-    assert (tmp_dir / "clip_002.mp4").is_file()
-    assert not (tmp_dir / "clip_001.mp4").exists()
-    assert not (tmp_dir / "clip_003.mp4").exists()
-    assert abs(media_duration(zoomed_base) - sum(CLIP_DURATIONS)) < 0.35
-
-
-def test_bake_zoom_punches_clamps_straddling_instance(clips_dir: Path, tmp_path: Path) -> None:
-    # startSec lands in clip 1 ([0,2)) but endSec (4.5) would spill into clip 2.
+def test_clamp_keeps_a_zoom_inside_its_own_cut() -> None:
+    # startSec lands in clip 1 ([0,2)) but the window would spill into clip 2.
     inst = _zoom("z1", start=1.0, dur=3.5)
-    _zoomed_base, baked_ids = _bake_zoom_punches_per_clip(
-        clips_dir, CLIP_DURATIONS, [inst], work_dir=tmp_path,
-    )
-    # Clamped to clip 1's own [0,2) span: local window [1.0, 2.0) — still >=
-    # the degenerate-duration floor, so it's baked (onto clip 1 only).
-    assert baked_ids == {"z1"}
-    tmp_dir = tmp_path / "_effects_zoom_tmp"
-    assert (tmp_dir / "clip_001.mp4").is_file()
-    assert not (tmp_dir / "clip_002.mp4").exists()
+    out = _clamp_transforms_to_cuts(EffectsDoc(instances=[inst]), CLIP_DURATIONS)
+    assert len(out.instances) == 1
+    assert abs(out.instances[0].endSec - 2.0) < 1e-6
 
 
-def test_bake_zoom_punches_multiple_on_same_clip(clips_dir: Path, tmp_path: Path) -> None:
-    insts = [_zoom("z1", start=2.5, dur=0.4), _zoom("z2", start=3.8, dur=0.4)]  # both in clip 2
-    _zoomed_base, baked_ids = _bake_zoom_punches_per_clip(
-        clips_dir, CLIP_DURATIONS, insts, work_dir=tmp_path,
-    )
-    assert baked_ids == {"z1", "z2"}
-    tmp_dir = tmp_path / "_effects_zoom_tmp"
-    assert (tmp_dir / "clip_002.mp4").is_file()
-    assert not (tmp_dir / "clip_001.mp4").exists()
-    assert not (tmp_dir / "clip_003.mp4").exists()
+def test_clamp_leaves_a_contained_zoom_untouched() -> None:
+    inst = _zoom("z1", start=2.5, dur=1.0)  # entirely inside clip 2 ([2,5))
+    out = _clamp_transforms_to_cuts(EffectsDoc(instances=[inst]), CLIP_DURATIONS)
+    assert out.instances[0].durationSec == inst.durationSec
 
 
-def test_bake_zoom_punches_never_mutates_source_clips(clips_dir: Path, tmp_path: Path) -> None:
-    before = (clips_dir / "clip_002.mp4").read_bytes()
-    _bake_zoom_punches_per_clip(
-        clips_dir, CLIP_DURATIONS, [_zoom("z1", start=3.0, dur=1.0)], work_dir=tmp_path,
-    )
-    # Re-run with a DIFFERENT prop value — must re-bake from the untouched
-    # original, never chain onto the previous bake's temp output.
-    _bake_zoom_punches_per_clip(
-        clips_dir, CLIP_DURATIONS,
-        [_zoom("z1", start=3.0, dur=1.0).model_copy(update={"props": {"zoomTo": 3.5, "focusX": 0.5, "focusY": 0.5, "hold": "true", "cut": "true"}})],
-        work_dir=tmp_path,
-    )
-    after = (clips_dir / "clip_002.mp4").read_bytes()
-    assert before == after
+def test_clamp_does_not_erase_a_zoom_that_would_become_degenerate() -> None:
+    # Starts a hair before the boundary: clamping would leave ~0.01s, which is
+    # worse than a small overshoot, so the instance is passed through as-is.
+    inst = _zoom("z1", start=1.99, dur=1.0)
+    out = _clamp_transforms_to_cuts(EffectsDoc(instances=[inst]), CLIP_DURATIONS)
+    assert out.instances[0].durationSec == inst.durationSec
 
 
-def test_render_effects_bakes_zoom_per_clip_then_composites(clips_dir: Path, tmp_path: Path) -> None:
+def test_clamp_is_a_no_op_without_durations() -> None:
+    inst = _zoom("z1", start=1.0, dur=3.5)
+    out = _clamp_transforms_to_cuts(EffectsDoc(instances=[inst]), [])
+    assert out.instances[0].durationSec == inst.durationSec
+
+
+def test_render_effects_clamps_zoom_to_its_cut(clips_dir: Path, tmp_path: Path) -> None:
     final_silent = tmp_path / "final_silent.mp4"
     # Reuse the clips to build the concatenated base the way the real cut
     # stage would (stream copy, no re-encode) — dub_render.concat_stream_copy.
@@ -169,10 +142,7 @@ def test_render_effects_bakes_zoom_per_clip_then_composites(clips_dir: Path, tmp
     )
     doc = EffectsDoc(instances=[_zoom("z1", start=3.0, dur=1.0)])
     out = tmp_path / "final_fx.mp4"
-    render_effects(
-        final_silent, out, doc,
-        clips_dir=clips_dir, clip_durations_sec=CLIP_DURATIONS,
-    )
+    render_effects(final_silent, out, doc, clip_durations_sec=CLIP_DURATIONS)
     assert out.is_file()
     assert abs(media_duration(out) - sum(CLIP_DURATIONS)) < 0.5
 
@@ -182,8 +152,7 @@ def test_render_effects_without_clips_dir_falls_back_to_post_concat(tmp_path: Pa
     _make_clip(final_silent, duration=4.0, color="red")
     doc = EffectsDoc(instances=[_zoom("z1", start=1.0, dur=1.0)])
     out = tmp_path / "final_fx.mp4"
-    # No clips_dir/clip_durations_sec — regression guard: today's post-concat
-    # behavior must still work unchanged.
+    # No clip_durations_sec — windows applied exactly as authored.
     render_effects(final_silent, out, doc)
     assert out.is_file()
     assert abs(media_duration(out) - 4.0) < 0.35
@@ -197,14 +166,13 @@ def test_render_effects_transitions_unaffected_by_zoom_bake(clips_dir: Path, tmp
         [clips_dir / "clip_001.mp4", clips_dir / "clip_002.mp4", clips_dir / "clip_003.mp4"],
         final_silent, tmp_path / "concat.txt",
     )
-    # A scene-drift (whole-scene span) alongside a punch-zoom — the zoom gets
-    # pre-baked per-clip, the drift must still apply on the post-concat pass
-    # against the (re-concatenated) base, since it spans clip 3's whole span.
+    # A scene-drift (whole-scene span) alongside a punch-zoom — both are applied
+    # in the single post-concat pass; the drift must survive the zoom's clamp.
     drift = EffectInstance(
         id="d1", kind="transform", componentId="scene-drift", startSec=5.0, durationSec=2.0,
         props={"zoomFrom": 1.0, "zoomTo": 1.15},
     )
     doc = EffectsDoc(instances=[_zoom("z1", start=3.0, dur=1.0), drift])
     out = tmp_path / "final_fx.mp4"
-    render_effects(final_silent, out, doc, clips_dir=clips_dir, clip_durations_sec=CLIP_DURATIONS)
+    render_effects(final_silent, out, doc, clip_durations_sec=CLIP_DURATIONS)
     assert out.is_file()

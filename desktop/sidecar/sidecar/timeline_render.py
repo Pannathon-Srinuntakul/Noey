@@ -13,7 +13,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from sidecar.atomic import atomic_publish
+from sidecar.atomic import atomic_publish, drop_stale_bake
 from sidecar.bootstrap import ensure_backend_on_path
 
 ensure_backend_on_path()
@@ -89,6 +89,9 @@ def run_render_timeline(job: RenderTimelineJob, emit) -> dict[str, Any]:
         srt_path, zip_path, duration_sec = _finish_timeline_render(
             job, tmp_final, clip_paths, cuts, norm_files, actual_durations, emit
         )
+
+    # The cut changed, so any zoom bake made from the old one is now a lie.
+    drop_stale_bake(project_dir)
 
     return {
         "event": "done",

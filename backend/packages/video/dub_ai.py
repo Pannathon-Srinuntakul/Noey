@@ -680,7 +680,7 @@ async def generate_dub_edit_script_video(
         user_msg_content.append({"type": "text", "text": DUB_EDIT_REMINDER})
 
         messages = [{"role": "user", "content": user_msg_content}]
-        extra = call_kwargs(model=model, effort="medium")
+        extra = call_kwargs(model=model, effort=settings.dub_vision_effort)
         extra["timeout"] = settings.dub_vision_timeout_sec
         # Gemini does not reliably follow a JSON shape from prose instructions
         # alone (observed in production: it invented its own top-level keys
@@ -889,7 +889,7 @@ async def generate_dub_reedit_script_video(
         user_msg_content.append({"type": "text", "text": DUB_EDIT_REMINDER})
 
         messages = [{"role": "user", "content": user_msg_content}]
-        extra = call_kwargs(model=model, effort="medium")
+        extra = call_kwargs(model=model, effort=settings.dub_vision_effort)
         extra["timeout"] = settings.dub_vision_timeout_sec
         extra["response_format"] = {
             "type": "json_object",

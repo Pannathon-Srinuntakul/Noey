@@ -216,7 +216,6 @@ const noey = {
     probe: (file: string): Promise<SidecarEvent> => ipcRenderer.invoke('sidecar:probe', file),
     render: jobCommand('sidecar:render'),
     ingest: jobCommand('sidecar:ingest'),
-    extractFrames: jobCommand('sidecar:extractFrames'),
     extractProxy: jobCommand('sidecar:extractProxy'),
     renderSilent: jobCommand('sidecar:renderSilent'),
     renderFinal: jobCommand('sidecar:renderFinal'),
@@ -268,7 +267,13 @@ const noey = {
   media: {
     /** media:// URL for a file inside a project dir (path must be project-relative). */
     urlFor: (uid: string, relPath: string): string =>
-      `media://project/${uid}/${relPath.split(/[\\/]/).map(encodeURIComponent).join('/')}`
+      `media://project/${uid}/${relPath.split(/[\\/]/).map(encodeURIComponent).join('/')}`,
+    /** media:// URL for a clip sitting in the LAN inbox — the only way the
+     * wizard can decode a frame from a phone upload, which arrives as a path
+     * with no `File` object behind it. Takes the absolute path the transfer
+     * reported and uses its file name. */
+    inboxUrlFor: (absPath: string): string =>
+      `media://inbox/${encodeURIComponent(absPath.split(/[\\/]/).pop() ?? '')}`
   },
   // User preferences (userData/prefs.json) — see main/prefs.ts.
   prefs: {
@@ -345,6 +350,36 @@ const noey = {
       ipcRenderer.on('lan:progress', listener)
       return () => ipcRenderer.removeListener('lan:progress', listener)
     },
+    /** A transfer that will never finish — cancelled by either end, or broken. */
+    onFailed: (
+      cb: (f: { fileId: string; name: string; reason: 'cancelled' | 'error' }) => void
+    ): ProgressUnsubscribe => {
+      const listener = (
+        _e: IpcRendererEvent,
+        f: { fileId: string; name: string; reason: 'cancelled' | 'error' }
+      ): void => cb(f)
+      ipcRenderer.on('lan:failed', listener)
+      return () => ipcRenderer.removeListener('lan:failed', listener)
+    },
+    /** The upload page on the phone is still open — heartbeats once a minute,
+     * so the countdown here can follow the server's own idle timer instead of
+     * expiring while someone is still choosing a clip out of Photos. */
+    onAlive: (cb: () => void): ProgressUnsubscribe => {
+      const listener = (): void => cb()
+      ipcRenderer.on('lan:alive', listener)
+      return () => ipcRenderer.removeListener('lan:alive', listener)
+    },
+    /** An already-received file was thrown away (from the phone or from here). */
+    onRemoved: (cb: (f: { fileId: string }) => void): ProgressUnsubscribe => {
+      const listener = (_e: IpcRendererEvent, f: { fileId: string }): void => cb(f)
+      ipcRenderer.on('lan:removed', listener)
+      return () => ipcRenderer.removeListener('lan:removed', listener)
+    },
+    /** Stop an in-flight transfer / delete one that already landed. `path` is
+     * the fallback for a row whose LAN session has since been replaced (idle
+     * stop, or "เปิดรับอีกครั้ง") — main only honours it inside the inbox. */
+    cancelFile: (fileId: string, path?: string): Promise<void> =>
+      ipcRenderer.invoke('lan:cancelFile', fileId, path),
     onStopped: (cb: (s: LanStopped) => void): ProgressUnsubscribe => {
       const listener = (_e: IpcRendererEvent, s: LanStopped): void => cb(s)
       ipcRenderer.on('lan:stopped', listener)

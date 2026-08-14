@@ -202,11 +202,53 @@ async function writeProject(project: LocalProject): Promise<LocalProject> {
   return project
 }
 
+/**
+ * Delete `.<name>.part.<ext>` staging files left in a project dir.
+ *
+ * The sidecar removes its own staging file when a render fails, but "หยุดงาน"
+ * kills the process tree outright (taskkill /T /F), so that cleanup never runs
+ * and a half-written file the size of the render sits in the project forever.
+ * They are invisible to every lookup the app does, which is exactly why nothing
+ * would ever notice them. Best-effort, and only for a project with no job
+ * running (the caller lists projects at startup / on refresh).
+ */
+async function prunePartFiles(dir: string): Promise<void> {
+  // One level deep, not just the top: ingest stages into
+  // `normalized/.norm_000.part.mp4`, so a killed import left a half-written
+  // copy of the whole source video behind — the biggest leftover there is, and
+  // the one a top-level-only sweep never saw. Walking the sub-directories
+  // instead of listing their names keeps this correct when the sidecar stages
+  // somewhere new.
+  const targets = [dir]
+  try {
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+      if (entry.isDirectory()) targets.push(join(dir, entry.name))
+    }
+  } catch {
+    // unreadable project dir — nothing to prune
+  }
+  for (const target of targets) {
+    try {
+      for (const name of await readdir(target)) {
+        if (name.startsWith('.') && name.includes('.part.')) {
+          await rm(join(target, name), { force: true }).catch(() => undefined)
+        }
+      }
+    } catch {
+      // unreadable/absent dir — skip it
+    }
+  }
+}
+
 async function listProjects(): Promise<LocalProject[]> {
   try {
     const entries = await readdir(projectsRoot(), { withFileTypes: true })
-    const projects = await Promise.all(
-      entries.filter((e) => e.isDirectory()).map((e) => readProject(e.name))
+    const dirs = entries.filter((e) => e.isDirectory())
+    const projects = await Promise.all(dirs.map((e) => readProject(e.name)))
+    // Fire-and-forget: a stranded staging file is disk, not correctness, and
+    // the list must not wait on filesystem sweeps.
+    void Promise.all(dirs.map((e) => prunePartFiles(join(projectsRoot(), e.name)))).catch(
+      () => undefined
     )
     return projects
       .filter((p): p is LocalProject => p !== null)
@@ -266,11 +308,18 @@ async function deleteProject(uid: string): Promise<void> {
 async function importMusicFile(uid: string, srcPath: string): Promise<string> {
   const dir = projectDir(uid)
   const musicDir = join(dir, 'music')
-  await rm(musicDir, { recursive: true, force: true })
   await mkdir(musicDir, { recursive: true })
   const base = srcPath.replace(/\\/g, '/').split('/').pop() || 'track'
   const dest = join(musicDir, base)
+
+  // Copy FIRST, then drop the previous track. Wiping music/ up front meant a
+  // failing copy (source unplugged, permission, disk full) left the project
+  // with no music at all while `LocalProject.music` still pointed at the file
+  // that had just been deleted.
   await copyFile(srcPath, dest)
+  for (const name of await readdir(musicDir).catch(() => [] as string[])) {
+    if (name !== base) await rm(join(musicDir, name), { recursive: true, force: true })
+  }
   return `music/${base}`
 }
 

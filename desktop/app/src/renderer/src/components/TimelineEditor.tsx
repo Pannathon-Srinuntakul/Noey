@@ -1329,8 +1329,18 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
         setMusicPeaks(peaks)
         setMusicDurationSec(durationSec)
       })
-      .catch((err: unknown) => {
+      .catch(async (err: unknown) => {
         void window.noey.log.write('TimelineEditor', `music waveform decode failed: ${String(err)}`)
+        // No waveform, but the LENGTH still matters: the trim handles and their
+        // clamps are built from it, and without one the track cannot be
+        // trimmed at all. ffprobe reads containers Web Audio refuses.
+        try {
+          const abs = await window.noey.projects.resolvePath(uid, music.path)
+          const probed = Number((await window.noey.sidecar.probe(abs)).duration)
+          if (!cancelled && Number.isFinite(probed) && probed > 0) setMusicDurationSec(probed)
+        } catch {
+          // Leave it at 0 — the UI then offers no trim rather than a wrong one.
+        }
       })
     return () => {
       cancelled = true
@@ -2150,7 +2160,14 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
    * actually preserves the work.
    */
   async function saveDraftNow(): Promise<void> {
-    if (draftSavingRef.current) return draftSavingRef.current
+    // A save already in flight cannot contain edits made after it started, so
+    // returning it as "done" let the way-out flush report success while the
+    // newest edits were still only in memory — then the editor unmounted.
+    // Chain behind it and write again instead.
+    if (draftSavingRef.current) {
+      await draftSavingRef.current.catch(() => undefined)
+      return saveDraftNow()
+    }
     if (!draftDirtyRef.current) return
     if (editorPhase !== 'ready' || cutsRef.current.length === 0) return
     draftDirtyRef.current = false
@@ -2198,7 +2215,7 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
     editorPhase === 'ready' && editCount > 0 && !saving
       ? `แก้ไว้ ${editCount} อย่างแล้วแต่ยังไม่ได้กด "บันทึกและเรนเดอร์" — ระบบเก็บร่างไว้ให้ กลับมาแก้ต่อได้ แต่คลิปที่ได้จะยังเป็นของเดิมจนกว่าจะเรนเดอร์ใหม่`
       : null
-  const { confirmLeave } = useUnsavedGuard(unrenderedReason)
+  const { confirmLeave } = useUnsavedGuard(unrenderedReason, saveDraftNow)
 
   /** The one way out of the editor — flushes the draft, then asks. */
   async function requestClose(): Promise<void> {
@@ -4328,6 +4345,11 @@ function MusicBlock({
   const onTrimDown = (e: React.PointerEvent, edge: TrimEdge): void => {
     e.stopPropagation()
     e.preventDefault()
+    // The track's length comes from decoding the file, which can still be in
+    // flight (or have failed). With 0 the right-edge clamp inverts —
+    // clamp(x, trimIn + 0.3, 0) returns 0.3 — so one drag committed a track
+    // trimmed to 0.3s and re-mixed the whole clip against it.
+    if (fullDurationSec <= 0) return
     const startX = e.clientX
     const startTrimIn = music.trimInSec
     const startTrimOut = music.trimOutSec ?? fullDurationSec
@@ -4390,20 +4412,26 @@ function MusicBlock({
         className="relative z-10 h-[3px] w-16 shrink-0 accent-[var(--color-accent)]"
         title="ระดับเสียงเพลง"
       />
-      <button
-        type="button"
-        data-trim-handle
-        onPointerDown={(e) => onTrimDown(e, 'left')}
-        title="ลากเพื่อตัดต้นเพลง"
-        className="absolute top-0 left-0 z-20 h-full w-[10px] cursor-ew-resize touch-none rounded-l-[5px] bg-accent/60 hover:bg-accent"
-      />
-      <button
-        type="button"
-        data-trim-handle
-        onPointerDown={(e) => onTrimDown(e, 'right')}
-        title="ลากเพื่อตัดท้ายเพลง"
-        className="absolute top-0 right-0 z-20 h-full w-[10px] cursor-ew-resize touch-none rounded-r-[5px] bg-accent/60 hover:bg-accent"
-      />
+      {/* Not offered until the track's length is known — a trim against an
+          unknown duration cannot produce a correct range (see onTrimDown). */}
+      {fullDurationSec > 0 ? (
+        <>
+          <button
+            type="button"
+            data-trim-handle
+            onPointerDown={(e) => onTrimDown(e, 'left')}
+            title="ลากเพื่อตัดต้นเพลง"
+            className="absolute top-0 left-0 z-20 h-full w-[10px] cursor-ew-resize touch-none rounded-l-[5px] bg-accent/60 hover:bg-accent"
+          />
+          <button
+            type="button"
+            data-trim-handle
+            onPointerDown={(e) => onTrimDown(e, 'right')}
+            title="ลากเพื่อตัดท้ายเพลง"
+            className="absolute top-0 right-0 z-20 h-full w-[10px] cursor-ew-resize touch-none rounded-r-[5px] bg-accent/60 hover:bg-accent"
+          />
+        </>
+      ) : null}
     </div>
   )
 }

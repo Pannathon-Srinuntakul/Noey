@@ -560,10 +560,11 @@ async def generate_effects_placement(
         ]
         messages = [{"role": "user", "content": user_content}]
 
-        # "high" not "medium": this call's failure mode is a plausible-looking
-        # but lazy plan (dead-center focus points, one push per scene), which
-        # degrades silently instead of erroring — worth the reasoning budget.
-        extra = call_kwargs(model=model, effort="high")
+        # Defaults to "high", not "medium": this call's failure mode is a
+        # plausible-looking but lazy plan (dead-center focus points, one push
+        # per scene), which degrades silently instead of erroring — worth the
+        # reasoning budget. Lower it only with a comparison in hand.
+        extra = call_kwargs(model=model, effort=settings.effects_vision_effort)
         extra["timeout"] = settings.effects_vision_timeout_sec
         if previous_doc and previous_doc.get("instances"):
             # Regenerate: bump sampling temperature so the retake actually varies.

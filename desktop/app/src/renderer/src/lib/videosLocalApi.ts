@@ -5,6 +5,7 @@
  */
 
 import { ApiError, refresh } from './api'
+import { apiErrorDetail } from './apiError'
 import { apiFetch } from './httpClient'
 
 export interface ApiSession {
@@ -37,18 +38,6 @@ export interface CreateLocalProjectIn {
   target_duration_sec?: number | null
   clips: ClipMetaIn[]
   caption_style?: CaptionStyleIn | null
-}
-
-export interface FrameManifestEntry {
-  name: string
-  clip_id: string
-  time: number
-  scene_idx: number
-  scene_start: number
-  scene_end: number
-  edge?: string
-  /** project-relative path — used to build the media:// fetch URL, not sent to the server */
-  file: string
 }
 
 export interface ProxyManifestEntry {
@@ -122,8 +111,7 @@ async function request<T>(
   if (!res.ok) {
     let detail = `HTTP ${res.status}`
     try {
-      const body = res.json() as { detail?: string }
-      if (typeof body?.detail === 'string') detail = body.detail
+      detail = apiErrorDetail(res.status, res.json())
     } catch {
       /* non-JSON body */
     }
@@ -143,34 +131,11 @@ export function createLocalProject(
   })
 }
 
-/** Upload frame JPEGs (fetched from media:// URLs) + manifest → {job_id}. */
-export async function analyzeFrames(
-  session: ApiSession,
-  remoteUid: string,
-  localUid: string,
-  entries: FrameManifestEntry[]
-): Promise<{ job_id: string }> {
-  const manifest = entries.map((e) => ({
-    name: e.name,
-    clip_id: e.clip_id,
-    time: e.time,
-    scene_idx: e.scene_idx,
-    scene_start: e.scene_start,
-    scene_end: e.scene_end,
-    ...(e.edge ? { edge: e.edge } : {})
-  }))
-  return request(session, `/videos/${remoteUid}/analyze-frames`, {
-    method: 'POST',
-    formFields: { manifest: JSON.stringify(manifest) },
-    formFiles: await Promise.all(
-      entries.map(async (entry) => ({
-        field: 'files',
-        path: await window.noey.projects.resolvePath(localUid, entry.file),
-        filename: entry.name
-      }))
-    )
-  })
-}
+// `analyzeFrames()` (POST /videos/{uid}/analyze-frames) was removed 2026-08-14
+// along with the sidecar's `extract-frames`: the dub planner watches per-clip
+// proxy videos now (analyzeDubVideo below), which sees motion and timing that
+// still JPEGs never could. Nothing had called it since. The server route stays
+// for desktop builds already installed on other machines.
 
 /** Upload per-clip proxy MP4s (fetched from media:// URLs) + manifest → {job_id}.
  *  `styleUid` = saved cut-style (EffectStyle kind="cut") to steer the AI cut. */

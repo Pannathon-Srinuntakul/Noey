@@ -10,8 +10,9 @@ natural-language style prompt here. Every later run for any project can then
 reuse that cheap stored text instead of re-uploading and re-analysing a
 reference video each time.
 
-Distinct from ``video_project.style_profile_path`` — that is the dub/cut-stage
-Style Profile JSON (packages/video/style_profile.py), a different pipeline stage.
+This replaced the older Style Profile JSON (``video_project.style_profile_path``
++ packages/video/style_profile.py, both removed 2026-08-14): that one was
+extracted but never read back by any planner.
 """
 
 import uuid as _uuid

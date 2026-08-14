@@ -87,10 +87,29 @@ function createWindow(): void {
   }
 }
 
+// One instance only. Two copies of the app share `userData` — the same project
+// registry, the same prefs file, the same LAN port — so a second launch means
+// two writers to one project.json (last write wins, silently) and a LAN server
+// that fails to bind. Launching again focuses the window that already exists.
+const gotTheLock = app.requestSingleInstanceLock()
+if (!gotTheLock) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    const win = BrowserWindow.getAllWindows()[0]
+    if (!win) return
+    if (win.isMinimized()) win.restore()
+    win.focus()
+  })
+}
+
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
 app.whenReady().then(async () => {
+  // `app.quit()` above is asynchronous — whenReady still fires in the losing
+  // instance, and creating a window there would defeat the lock.
+  if (!gotTheLock) return
   // Set app user model id for windows
   electronApp.setAppUserModelId('com.noey.videoedit')
 

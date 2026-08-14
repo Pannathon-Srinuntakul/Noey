@@ -368,12 +368,39 @@ def normalize_loudness(
     )
 
 
-def trim_media(input_path: str | Path, output_path: str | Path, start: float, duration: float) -> None:
-    """Accurate A/V trim with re-encode (trim/atrim filters keep lip-sync)."""
+def trim_media(
+    input_path: str | Path,
+    output_path: str | Path,
+    start: float,
+    duration: float,
+    *,
+    include_audio: bool = True,
+) -> None:
+    """Accurate A/V trim with re-encode (trim/atrim filters keep lip-sync).
+
+    ``include_audio=False`` skips the atrim branch entirely. Two reasons to use
+    it: the caller is going to replace the audio anyway (the dub's final render
+    muxes the voiceover over these clips), and — the actual bug — the atrim
+    branch names ``[0:a]``, so a source with no audio track makes ffmpeg fail
+    outright with "Stream specifier ':a' … matches no streams". A silent clip
+    (screen recording, a phone clip with the mic off) killed the whole render.
+    """
     import ffmpeg
 
     inp = ffmpeg.input(str(input_path), **hwaccel_input_kwargs())
     v = inp.video.filter("trim", start=start, duration=duration).filter("setpts", "PTS-STARTPTS")
+    if not include_audio:
+        run_ffmpeg(
+            ffmpeg.output(
+                v,
+                str(output_path),
+                **video_encode_kwargs(),
+                avoid_negative_ts="make_zero",
+                **{"an": None},
+            ).overwrite_output(),
+            label="render_cut_video_only",
+        )
+        return
     a = inp.audio.filter("atrim", start=start, duration=duration).filter("asetpts", "PTS-STARTPTS")
     run_ffmpeg(
         ffmpeg.output(

@@ -239,6 +239,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     musicVolume?: number
     musicOffsetSec?: number
     musicTrimInSec?: number
+    musicTrimOutSec?: number
   }> => {
     const p = live()
     if (!p.music) return {}
@@ -247,7 +248,11 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
       musicPath,
       musicVolume: p.music.muted ? 0 : p.music.volume,
       musicOffsetSec: p.music.offsetSec,
-      musicTrimInSec: p.music.trimInSec
+      musicTrimInSec: p.music.trimInSec,
+      // The right trim handle. It was edited, stored and honoured in the
+      // preview, but never shipped to a render — every finished file played
+      // the song past the point the editor showed it stopping.
+      ...(p.music.trimOutSec != null ? { musicTrimOutSec: p.music.trimOutSec } : {})
     }
   }
 
@@ -419,7 +424,10 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
         musicPath,
         musicVolume: music ? (music.muted ? 0 : music.volume) : 0.25,
         musicOffsetSec: music?.offsetSec ?? 0,
-        musicTrimInSec: music?.trimInSec ?? 0
+        musicTrimInSec: music?.trimInSec ?? 0,
+        // Same omission as musicJobFields had — the right trim handle never
+        // reached the mix, so the re-mixed file ignored it too.
+        ...(music?.trimOutSec != null ? { musicTrimOutSec: music.trimOutSec } : {})
       })
       void window.noey.log.write('useProjectPipeline', `mixMusic done: ${JSON.stringify(done)}`)
       setMediaKey((k) => k + 1)
@@ -434,7 +442,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
 
   const pickMusic = async (): Promise<LocalProject['music'] | undefined> => {
     const picked = await pickFile('video/*,audio/*')
-    if (!picked) return project.music
+    if (!picked) return live().music
     // Copied into the project dir (like clips) so the editor's waveform can
     // fetch it via media:// — window.electron file objects aren't otherwise
     // readable from the renderer's fetch/decodeAudioData.
@@ -452,9 +460,20 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     return music
   }
 
+  /**
+   * Patch the attached track. Reads `live()`, never the render closure: the
+   * editor holds ONE `configureEditorApi` snapshot for the whole session
+   * (openEditor runs once), and every music edit arrives as a PARTIAL patch
+   * that `projects.update` merges over the WHOLE `music` object. Merging onto a
+   * frozen copy therefore reverted the previous edit — drag the block to 8s,
+   * then nudge the volume, and the offset silently went back to 0 and the mix
+   * was re-rendered at 0. Picking a track from inside the editor was worse: the
+   * frozen copy had no `music` at all, so every later edit was a no-op.
+   */
   const updateMusic = async (patch: Partial<NonNullable<LocalProject['music']>>): Promise<void> => {
-    if (!project.music) return
-    const music = { ...project.music, ...patch }
+    const current = live().music
+    if (!current) return
+    const music = { ...current, ...patch }
     await patchProject({ music })
     await remixMusicOntoSilent(music)
   }
@@ -472,7 +491,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
   const setMusicTrack = async (music: LocalProject['music'] | null): Promise<void> => {
     await patchProject({ music: music ?? undefined })
     await remixMusicOntoSilent(music ?? undefined)
-    const remoteUid = project.remote?.uid
+    const remoteUid = live().remote?.uid
     // The server copy only exists to give the cut AI a beat grid; dropping the
     // track locally means it must not keep steering the next cut.
     if (!music && remoteUid) deleteMusic(session, remoteUid).catch(() => undefined)
@@ -811,16 +830,25 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
         )
       }, projectDir)
       const captionLines = finalCaptionLinesFor(timeline, editScript)
+      let finalClipDurations: number[] | undefined
       try {
-        await window.noey.sidecar.renderFinal.run({
+        const doneFinal = await window.noey.sidecar.renderFinal.run({
           projectDir,
           timeline,
           voiceoverPath,
           ...captionJobFields(captionLines),
           ...(await musicJobFields())
         })
+        finalClipDurations = (doneFinal as { clipDurationsSec?: number[] }).clipDurationsSec
       } finally {
         unsub()
+      }
+      // This pass re-cut clips/ from its own cut list, so the durations the
+      // silent render stored describe a video that no longer exists. Persist
+      // the new ones BEFORE the effects re-apply below — that step clamps zoom
+      // windows to cut boundaries derived from exactly this array.
+      if (finalClipDurations?.length) {
+        await patchProject({ clipDurationsSec: finalClipDurations })
       }
 
       // Effects placed while waiting for the VO (on final_silent.mp4) carry
@@ -838,7 +866,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
               localUid: project.uid,
               remoteUid,
               baseFile: 'final.mp4',
-              project,
+              project: live(),
               onProgress: setProgressMsg
             },
             fxDoc
@@ -1164,7 +1192,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     target: 'edit_script' | 'timeline',
     captionLines?: CaptionLine[]
   ): Promise<void> => {
-    const remoteUid = project.remote?.uid
+    const remoteUid = live().remote?.uid
     if (!remoteUid) return
     if (target === 'edit_script') {
       const es = editScriptFromCuts(cuts)
@@ -1176,7 +1204,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
       await putLocalEditScript(session, remoteUid, es)
       return
     }
-    const base = (project.timeline ?? {}) as DubTimeline
+    const base = (live().timeline ?? {}) as DubTimeline
     const timeline: DubTimeline = {
       ...base,
       mode,
@@ -1190,6 +1218,11 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
       ...(captionLines ? { captionLines } : {})
     }
     await putLocalTimeline(session, remoteUid, timeline).catch(() => undefined)
+    // A draft is only ever a fallback for work not yet rendered, so it must
+    // never win over a render that started after it: pressing Save while a
+    // debounced draft was mid-flight let the draft's post-round-trip write land
+    // last and put the pre-render timeline back on the project.
+    if (isBusy(projectRef.current.step as ProjectStep)) return
     await patchProject({ timeline })
   }
 
@@ -1198,7 +1231,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     target: 'edit_script' | 'timeline',
     captionLines?: CaptionLine[]
   ): Promise<void> => {
-    const remoteUid = project.remote?.uid
+    const remoteUid = live().remote?.uid
     if (!remoteUid) throw new Error('ไม่พบ remote project')
     if (target === 'edit_script') {
       const es = editScriptFromCuts(cuts)
@@ -1207,7 +1240,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
       await putLocalEditScript(session, remoteUid, es)
       await runRenderSilent(es, remoteUid)
     } else {
-      const base = (project.timeline ?? {}) as DubTimeline
+      const base = (live().timeline ?? {}) as DubTimeline
       const timeline: DubTimeline = {
         ...base,
         mode,
@@ -1218,6 +1251,12 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
           out: c.out,
           label: c.label
         })),
+        // talking_head burns from `timeline.captionStyle` (the sidecar reads it
+        // off the timeline, not off the project), and the editor's appearance
+        // picker writes only `project.captionStyle` — so every change made in
+        // the editor was dropped at render and the clip kept the style chosen
+        // at creation. Carry the project's copy in, it is the live one.
+        ...(live().captionStyle ? { captionStyle: live().captionStyle } : {}),
         ...(captionLines ? { captionLines } : {})
       }
       if (mode === 'talking_head') {
@@ -1243,19 +1282,26 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
           `renderFinal progress: ${JSON.stringify(evt)}`
         )
       }, projectDir)
+      let finalClipDurations: number[] | undefined
       try {
-        await window.noey.sidecar.renderFinal.run({
+        const doneFinal = await window.noey.sidecar.renderFinal.run({
           projectDir,
           timeline,
           voiceoverPath: live().voiceoverPath,
           ...captionJobFields(finalCaptionLinesFor(timeline, editScript)),
           ...(await musicJobFields())
         })
+        finalClipDurations = (doneFinal as { clipDurationsSec?: number[] }).clipDurationsSec
       } finally {
         unsub()
       }
       await patchLocalStatus(session, remoteUid, 'done')
-      await patchProject({ step: 'done', lastRunSeconds: runSeconds() })
+      // Re-cut clips → the stored per-clip durations describe the old render.
+      await patchProject({
+        step: 'done',
+        lastRunSeconds: runSeconds(),
+        ...(finalClipDurations?.length ? { clipDurationsSec: finalClipDurations } : {})
+      })
       setMediaKey((k) => k + 1)
       setProgressMsg('')
     }

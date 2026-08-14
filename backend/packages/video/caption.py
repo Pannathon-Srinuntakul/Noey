@@ -188,11 +188,18 @@ def _groups_from_caption_lines(
         text = str(line.get("text", "")).strip()
         if not text or end <= start:
             continue
-        target_words = text.split()
         matched = [
             w for w in remapped_words if w["start"] >= start - 0.01 and w["end"] <= end + 0.01
         ]
-        if matched and len(matched) == len(target_words):
+        # Compare the TEXT, not the word count. Thai has no inter-word spaces,
+        # so `text.split()` is always 1 for a Thai line while `matched` holds
+        # its N real tokens — the count could never agree and every Thai line
+        # fell through to redistribute_line_words, which splits on whitespace
+        # again and yields ONE word spanning the line. "ทีละคำ" therefore
+        # rendered as a static whole line, with the per-word timings the
+        # renderer had shipped thrown away (2026-08-14). Spaces are ignored on
+        # both sides because _join_words is what put them there.
+        if matched and _squash(_join_words([str(w["word"]) for w in matched])) == _squash(text):
             groups.append(matched)
         else:
             groups.append(redistribute_line_words(text, start, end))
@@ -200,6 +207,12 @@ def _groups_from_caption_lines(
 
 
 _THAI_CHAR_RE = re.compile(r"[฀-๿]")
+
+
+def _squash(s: str) -> str:
+    """Text with all whitespace removed — for comparing a joined word list
+    against a line whose spacing came from _join_words in the first place."""
+    return "".join(s.split())
 
 
 def _join_words(words: list[str]) -> str:

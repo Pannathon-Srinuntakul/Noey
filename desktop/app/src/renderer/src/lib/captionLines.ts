@@ -182,11 +182,15 @@ export function captionWordsFromLines(lines: CaptionLine[]): CaptionWord[] {
 
 /** `1,234` seconds → SubRip's `HH:MM:SS,mmm`. */
 function srtStamp(sec: number): string {
-  const t = Math.max(0, sec)
-  const h = Math.floor(t / 3600)
-  const m = Math.floor((t % 3600) / 60)
-  const s = Math.floor(t % 60)
-  const ms = Math.round((t - Math.floor(t)) * 1000)
+  // Round to whole milliseconds FIRST, then split. Rounding the fraction on its
+  // own could carry to 1000 (e.g. 1.9997 → "00:00:01,1000"), which is not a
+  // valid SubRip stamp — players reject the cue or the whole file.
+  const totalMs = Math.max(0, Math.round(sec * 1000))
+  const ms = totalMs % 1000
+  const totalSec = (totalMs - ms) / 1000
+  const h = Math.floor(totalSec / 3600)
+  const m = Math.floor((totalSec % 3600) / 60)
+  const s = totalSec % 60
   const p = (n: number, w = 2): string => String(n).padStart(w, '0')
   return `${p(h)}:${p(m)}:${p(s)},${p(ms, 3)}`
 }

@@ -59,3 +59,48 @@ def test_vision_call_kwargs(monkeypatch):
     assert extra["model"] == "anthropic/claude-sonnet-4-6"
     assert extra["reasoning_effort"] == "medium"
     assert extra["timeout"] == 900
+
+
+def test_gemini_vision_effort_settings_are_env_tunable(monkeypatch):
+    """The Gemini video calls read their thinking depth from settings.
+
+    They used to pass a literal "medium"/"high", so comparing depths — the
+    first thing anyone does when swapping the vision model — meant editing
+    and redeploying code.
+    """
+    from packages.core.settings import get_settings
+
+    get_settings.cache_clear()
+    s = get_settings()
+    assert s.dub_vision_effort == "medium"      # the hardcoded value it replaced
+    assert s.effects_vision_effort == "high"    # ditto
+
+    monkeypatch.setenv("DUB_VISION_EFFORT", "high")
+    monkeypatch.setenv("EFFECTS_VISION_EFFORT", "low")
+    get_settings.cache_clear()
+    s = get_settings()
+    assert s.dub_vision_effort == "high"
+    assert s.effects_vision_effort == "low"
+
+    # …and it survives the trip into the litellm kwargs.
+    extra = call_kwargs(model="gemini/gemini-3.7-flash", effort=s.dub_vision_effort)
+    assert extra["reasoning_effort"] == "high"
+    get_settings.cache_clear()
+
+
+def test_llm_vision_effort_does_not_reach_the_gemini_paths(monkeypatch):
+    """LLM_VISION_EFFORT belongs to the Anthropic vision path only.
+
+    Setting it and expecting the dub cut planner to think harder is a trap:
+    that planner goes through call_kwargs() with its own effort argument.
+    """
+    from packages.core.settings import get_settings
+
+    get_settings.cache_clear()
+    monkeypatch.setenv("LLM_VISION_EFFORT", "high")
+    monkeypatch.setenv("LLM_VISION_MODEL", "anthropic/claude-sonnet-4-6")
+    get_settings.cache_clear()
+
+    assert vision_call_kwargs()["reasoning_effort"] == "high"
+    assert get_settings().dub_vision_effort == "medium"
+    get_settings.cache_clear()

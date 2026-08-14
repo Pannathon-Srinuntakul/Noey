@@ -13,7 +13,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from sidecar.atomic import atomic_publish
+from sidecar.atomic import atomic_publish, drop_stale_bake
 from sidecar.bootstrap import ensure_backend_on_path
 from sidecar.captions import burn_caption_lines
 
@@ -57,6 +57,9 @@ class RenderSilentJob(CaptionsMixin):
     musicVolume: float = 0.25
     musicOffsetSec: float = 0.0
     musicTrimInSec: float = 0.0
+    #: End the track early (the editor's right trim handle). None = play to the
+    #: end of the file. Previewed but never rendered until 2026-08-14.
+    musicTrimOutSec: float | None = None
 
 
 class RenderFinalJob(CaptionsMixin):
@@ -69,6 +72,9 @@ class RenderFinalJob(CaptionsMixin):
     musicVolume: float = 0.25
     musicOffsetSec: float = 0.0
     musicTrimInSec: float = 0.0
+    #: End the track early (the editor's right trim handle). None = play to the
+    #: end of the file. Previewed but never rendered until 2026-08-14.
+    musicTrimOutSec: float | None = None
 
     def voiceover_exists(self) -> bool:
         return self.voiceoverPath.is_file()
@@ -84,6 +90,9 @@ class MixMusicJob(BaseModel):
     musicVolume: float = 0.25
     musicOffsetSec: float = 0.0
     musicTrimInSec: float = 0.0
+    #: End the track early (the editor's right trim handle). None = play to the
+    #: end of the file. Previewed but never rendered until 2026-08-14.
+    musicTrimOutSec: float | None = None
 
 
 def _norm_files(project_dir: Path) -> list[Path]:
@@ -156,6 +165,7 @@ def run_render_silent(job: RenderSilentJob, emit) -> dict[str, Any]:
                 music_volume=job.musicVolume,
                 music_offset_sec=job.musicOffsetSec,
                 music_trim_in_sec=job.musicTrimInSec,
+                music_trim_out_sec=job.musicTrimOutSec,
             )
 
         emit({"event": "progress", "stage": "bundle", "step": total, "total": total})
@@ -163,6 +173,9 @@ def run_render_silent(job: RenderSilentJob, emit) -> dict[str, Any]:
             tmp_final, script_path, clip_paths, tmp_zip, music_mixed_path=tmp_music
         )
         duration_sec = round(media_duration(tmp_final), 3)
+
+    # The cut changed, so any zoom bake made from the old one is now a lie.
+    drop_stale_bake(project_dir)
 
     return {
         "event": "done",
@@ -206,12 +219,22 @@ def run_mix_music(job: MixMusicJob, emit) -> dict[str, Any]:
                 music_volume=job.musicVolume,
                 music_offset_sec=job.musicOffsetSec,
                 music_trim_in_sec=job.musicTrimInSec,
+                music_trim_out_sec=job.musicTrimOutSec,
             )
 
         emit({"event": "progress", "stage": "bundle", "step": 1, "total": 1})
         build_dub_bundle_zip(
             final_path, script_path, clip_paths, tmp_zip, music_mixed_path=tmp_music
         )
+
+    # Only the PRE-voiceover mix was rebuilt here. Once final.mp4 exists the
+    # bake was composited onto that, and this command did not touch it — so
+    # deleting it unconditionally threw away a perfectly current zoom render and
+    # sent the app back to a cut without the zooms. (The music change still has
+    # to be re-rendered to reach final.mp4; the editor already reports that as
+    # "ยังไม่ได้เรนเดอร์".)
+    if not (project_dir / "final.mp4").is_file():
+        drop_stale_bake(project_dir)
 
     return {
         "event": "done",
@@ -247,7 +270,10 @@ def run_render_final(job: RenderFinalJob, emit) -> dict[str, Any]:
             src = project_dir / source
         clip_out = clips_dir / f"clip_{i + 1:03d}.mp4"
         dur = float(cut["out"]) - float(cut["in"])
-        trim_media(src, clip_out, float(cut["in"]), dur)
+        # Video only: the mux below replaces the audio with the voiceover (plus
+        # music) regardless, and asking for [0:a] here made a silent source clip
+        # fail the whole render instead of rendering fine without sound.
+        trim_media(src, clip_out, float(cut["in"]), dur, include_audio=False)
         clip_paths.append(clip_out)
 
     emit({"event": "progress", "stage": "concat", "step": total, "total": total})
@@ -265,6 +291,7 @@ def run_render_final(job: RenderFinalJob, emit) -> dict[str, Any]:
             music_volume=job.musicVolume,
             music_offset_sec=job.musicOffsetSec,
             music_trim_in_sec=job.musicTrimInSec,
+            music_trim_out_sec=job.musicTrimOutSec,
         )
         concat_out.unlink(missing_ok=True)
 
@@ -284,12 +311,23 @@ def run_render_final(job: RenderFinalJob, emit) -> dict[str, Any]:
                 zf.write(script_path, "script.txt")
         duration_sec = round(media_duration(tmp_final), 3)
 
+    # A bake made from the silent pre-VO cut must not outrank the voiced final.
+    # The renderer re-applies the stored effects onto final.mp4 right after this
+    # returns; if that best-effort step fails, falling back to final.mp4 is the
+    # correct outcome — serving the silent bake is not.
+    drop_stale_bake(project_dir)
+
     return {
         "event": "done",
         "final": str(final_path),
         "bundle": str(bundle_path),
         "durationSec": duration_sec,
         "cuts": total,
+        # This pass rewrote clips/ from ITS cut list, so the durations recorded
+        # by the silent render no longer describe final.mp4. They are what the
+        # effects layer clamps zoom windows against, so a stale array puts the
+        # cut boundaries in the wrong places — report the measured ones.
+        "clipDurationsSec": [round(media_duration(p), 3) for p in clip_paths],
     }
 
 

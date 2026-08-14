@@ -18,7 +18,6 @@ from sidecar.dub import (
     run_render_final,
     run_render_silent,
 )
-from sidecar.frames import ExtractFramesJob, run_extract_frames
 from sidecar.ingest import IngestJob, run_ingest
 
 
@@ -109,41 +108,8 @@ def test_talking_head_rejects_single_three_hour_clip(
         )
 
 
-@pytest.fixture()
-def long_project_dir(tmp_path: Path) -> Path:
-    """Project dir with one 8s clip — long enough for both edge frames."""
-    from packages.video.ffmpeg_bin import ffmpeg_cmd
-
-    src = tmp_path / "long.mp4"
-    subprocess.run(
-        [ffmpeg_cmd(), "-y",
-         "-f", "lavfi", "-i", "testsrc=duration=8:size=320x240:rate=30",
-         "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", str(src)],
-        check=True, capture_output=True,
-    )
-    pdir = tmp_path / "proj_long"
-    pdir.mkdir()
-    run_ingest(IngestJob(projectDir=pdir, sources=[src]), lambda e: None)
-    return pdir
-
-
-def test_extract_frames_manifest_schema(long_project_dir: Path) -> None:
-    project_dir = long_project_dir
-    events: list[dict] = []
-    done = run_extract_frames(ExtractFramesJob(projectDir=project_dir), events.append)
-
-    assert done["frameCount"] > 0
-    manifest = json.loads(Path(done["manifest"]).read_text(encoding="utf-8"))
-    assert len(manifest) == done["frameCount"]
-    for entry in manifest:
-        assert set(entry) >= {"name", "clip_id", "time", "scene_idx", "scene_start", "scene_end", "file"}
-        assert (project_dir / entry["file"]).is_file()
-        assert entry["name"] == Path(entry["file"]).name
-    edges = {e.get("edge") for e in manifest if e.get("edge")}
-    assert "opening" in edges and "closing" in edges
-    # opening first, closing last — server pipeline ordering
-    assert manifest[0].get("edge") == "opening"
-    assert manifest[-1].get("edge") == "closing"
+# The extract-frames tests went with the command itself (2026-08-14): the dub
+# planner analyses per-clip proxy VIDEOS now, not sampled JPEGs.
 
 
 EDIT_SCRIPT = {

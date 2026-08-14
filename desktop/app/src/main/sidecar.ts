@@ -203,7 +203,6 @@ export function registerSidecarIpc(): void {
   const jobChannels: [string, string][] = [
     ['sidecar:render', 'render'],
     ['sidecar:ingest', 'ingest'],
-    ['sidecar:extractFrames', 'extract-frames'],
     ['sidecar:extractProxy', 'extract-proxy'],
     ['sidecar:renderSilent', 'render-silent'],
     ['sidecar:renderFinal', 'render-final'],

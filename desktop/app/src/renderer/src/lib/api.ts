@@ -3,6 +3,7 @@
 
 import { isTokenExpired } from './jwt'
 import { apiFetch } from './httpClient'
+import { apiErrorDetail } from './apiError'
 
 export interface TokenPair {
   access_token: string
@@ -43,8 +44,7 @@ async function request<T>(baseUrl: string, path: string, init?: ApiFetchInit): P
   if (!res.ok) {
     let detail = `HTTP ${res.status}`
     try {
-      const body = res.json() as { detail?: string }
-      if (typeof body?.detail === 'string') detail = body.detail
+      detail = apiErrorDetail(res.status, res.json())
     } catch {
       /* non-JSON error body */
     }

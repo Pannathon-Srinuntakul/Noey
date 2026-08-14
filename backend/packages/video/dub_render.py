@@ -190,10 +190,29 @@ def mux_voiceover(video_in: Path, vo_path: Path, out_path: Path) -> None:
     )
 
 
-def _music_stream(ffmpeg_lib, music_path: Path, *, volume: float, offset_sec: float, trim_in_sec: float):
+def _music_stream(
+    ffmpeg_lib,
+    music_path: Path,
+    *,
+    volume: float,
+    offset_sec: float,
+    trim_in_sec: float,
+    trim_out_sec: float | None = None,
+):
     """Shared music-input filter chain (trim → offset delay → volume) for both
-    mix_audio_layers branches below."""
-    music_kwargs = {"ss": trim_in_sec} if trim_in_sec > 0 else {}
+    mix_audio_layers branches below.
+
+    ``trim_out_sec`` ends the track early — the editor's right-hand trim handle.
+    It used to stop at the preview: the block went silent past the handle on
+    screen while every rendered file played the song to the end of the video.
+    Seeking on the INPUT (``-ss``/``-to``) rather than an atrim filter keeps the
+    stream starting at zero, which is what the following adelay assumes.
+    """
+    music_kwargs: dict[str, float] = {}
+    if trim_in_sec > 0:
+        music_kwargs["ss"] = trim_in_sec
+    if trim_out_sec is not None and trim_out_sec > trim_in_sec:
+        music_kwargs["to"] = trim_out_sec
     stream = ffmpeg_lib.input(str(music_path), **music_kwargs).audio
     if offset_sec > 0:
         delay_ms = int(round(offset_sec * 1000))
@@ -210,6 +229,7 @@ def mix_audio_layers(
     music_volume: float = 0.25,
     music_offset_sec: float = 0.0,
     music_trim_in_sec: float = 0.0,
+    music_trim_out_sec: float | None = None,
 ) -> None:
     """VO and/or background music mixed onto the (silent) video, video stream-
     copied. ``vo_path`` is optional — dub_first's voiceover step is itself
@@ -240,14 +260,20 @@ def mix_audio_layers(
     music_stream = _music_stream(
         ffmpeg_lib, music_path,
         volume=music_volume, offset_sec=music_offset_sec, trim_in_sec=music_trim_in_sec,
+        trim_out_sec=music_trim_out_sec,
     )
 
     if vo_path is None:
         audio_out = music_stream
     else:
         vo_stream = ffmpeg_lib.input(str(vo_path)).audio
+        # normalize=0: amix divides every input by the number of inputs by
+        # default, so adding a music track quietly halved the voiceover — the
+        # voice is the content here and its level must not depend on whether a
+        # song is attached. The music already carries its own volume filter.
         audio_out = ffmpeg_lib.filter(
-            [vo_stream, music_stream], "amix", inputs=2, duration="first", dropout_transition=0
+            [vo_stream, music_stream], "amix",
+            inputs=2, duration="first", dropout_transition=0, normalize=0,
         )
 
     run_ffmpeg(

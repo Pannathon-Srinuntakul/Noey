@@ -48,11 +48,28 @@ class Settings(BaseSettings):
     # --- Desktop dub_first video analysis (Gemini native video, proxy upload) ---
     # flash was tested and never produced a multi-angle line (always 1 cut per
     # voiceoverLineId) despite explicit prompt reinforcement — pro reasons
-    # better about multi-shot editing structure. gemini-3.5-pro is not yet GA on
-    # the public API (as of 2026-07-08) — 3.1-pro-preview is the current pro
-    # tier. override via DUB_VISION_MODEL.
+    # better about multi-shot editing structure. Still no Pro above 3.1 on the
+    # public API (checked 2026-08-14), and 3.1-pro-preview is still a preview
+    # with no free tier.
+    #
+    # Worth re-testing against gemini-3.7-flash (released 2026-08-13): Google's
+    # own migration note points 3.1 Pro → 3.7 Flash, it is ~3x cheaper per token
+    # in both directions, ~3x faster, and unlike Pro it has no >200k context
+    # price step — which this path crosses on any source over ~11 minutes. The
+    # flash result above was a much older flash generation. Compare the cut
+    # lists before switching: video understanding is the ONE axis 3.7 barely
+    # moved on (+1.2 on LVBench), and it is the axis this call lives or dies by.
+    # Override via DUB_VISION_MODEL.
     dub_vision_model: str = "gemini-3.1-pro-preview"
     dub_vision_timeout_sec: int = 1200  # video inference is slower than Files-API frames
+    # Thinking depth for the dub cut/re-edit calls, sent as `reasoning_effort`
+    # which LiteLLM maps to Gemini's `thinking_level` (minimal|low|medium|high).
+    # Was hardcoded "medium" at both call sites, so comparing depths — the whole
+    # question when swapping the model — meant editing and redeploying code.
+    # Note `llm_vision_effort` does NOT reach these: that one belongs to
+    # `vision_call_kwargs()`, i.e. the Anthropic vision path. Override via
+    # DUB_VISION_EFFORT.
+    dub_vision_effort: str = "medium"
     # Cut-style distillation (packages/video/cut_style.py): >0 attaches
     # video_metadata {"fps": N} to the reference upload for denser sampling.
     # Enable ONLY after scripts/probe_gemini_fps.py confirms LiteLLM passes it
@@ -66,6 +83,11 @@ class Settings(BaseSettings):
     # text task. Override via EFFECTS_VISION_MODEL.
     effects_vision_model: str = "gemini-3.1-pro-preview"
     effects_vision_timeout_sec: int = 900
+    # Thinking depth for effects placement AND both style distillations
+    # (effects_style.py, cut_style.py) — all three are "watch this and judge"
+    # calls of the same shape. Default "high" keeps the behaviour they were
+    # hardcoded to. Override via EFFECTS_VISION_EFFORT.
+    effects_vision_effort: str = "high"
 
     # --- Auth (JWT) ---
     jwt_secret: str = "dev_change_me_in_production"

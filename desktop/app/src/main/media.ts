@@ -3,6 +3,7 @@ import { createReadStream } from 'fs'
 import { stat } from 'fs/promises'
 import { Readable } from 'stream'
 import { mediaPathForUrl } from './mediaPath'
+import { lanInboxDir } from './lanReceive'
 import { projectsRoot } from './projects'
 
 /**
@@ -92,7 +93,7 @@ function parseRange(
 /** Call inside app.whenReady(). */
 export function registerMediaProtocol(): void {
   protocol.handle('media', async (request) => {
-    const abs = mediaPathForUrl(request.url, projectsRoot())
+    const abs = mediaPathForUrl(request.url, projectsRoot(), lanInboxDir())
     if (!abs) return new Response('not found', { status: 404 })
 
     let size: number

@@ -305,3 +305,48 @@ def test_resolve_caption_style_custom():
     assert style["primary"] == "&H0000FF00"
     assert style["outline"] == "&H00FFFFFF"
     assert style["fontsize"] == 90
+
+
+# ── Thai per-word reveal ─────────────────────────────────────────────────────
+#
+# Thai has no inter-word spaces, so a Thai caption line is ONE whitespace token
+# however many real words it holds. Matching the shipped per-word timings by
+# word count could therefore never succeed for Thai: every line fell back to an
+# even redistribution that produced a single word spanning the line, and
+# "ทีละคำ" rendered as a static whole line (2026-08-14).
+
+_THAI_WORDS = [
+    {"word": "สวัสดี", "start": 0.0, "end": 0.4},
+    {"word": "ค่ะ", "start": 0.4, "end": 0.7},
+    {"word": "วันนี้", "start": 0.7, "end": 1.2},
+]
+
+
+def test_thai_word_pop_uses_the_shipped_per_word_timing():
+    # The line's text is the words joined the way the renderer joins them: no
+    # spaces between Thai tokens.
+    caption_lines = [{"id": "1", "text": "สวัสดีค่ะวันนี้", "start": 0.0, "end": 1.2}]
+    result = build_ass_captions(_THAI_WORDS, mode="word_pop", caption_lines=caption_lines)
+    lines = _dialogue_lines(result)
+    # One cue per word, not one cue for the whole line.
+    assert len(lines) == 3
+    assert lines[0].endswith(",สวัสดี")
+    assert lines[1].endswith(",สวัสดีค่ะ")
+
+
+def test_thai_static_line_is_unaffected():
+    caption_lines = [{"id": "1", "text": "สวัสดีค่ะวันนี้", "start": 0.0, "end": 1.2}]
+    result = build_ass_captions(_THAI_WORDS, mode="static", caption_lines=caption_lines)
+    lines = _dialogue_lines(result)
+    assert len(lines) == 1
+    assert "สวัสดีค่ะวันนี้" in lines[0]
+
+
+def test_edited_thai_line_still_falls_back_to_redistribution():
+    # Hand-edited text no longer matches the words — timing must be rebuilt,
+    # not silently mapped onto the wrong tokens.
+    caption_lines = [{"id": "1", "text": "เปลี่ยนข้อความแล้ว", "start": 0.0, "end": 1.2}]
+    result = build_ass_captions(_THAI_WORDS, mode="word_pop", caption_lines=caption_lines)
+    lines = _dialogue_lines(result)
+    assert len(lines) >= 1
+    assert "เปลี่ยนข้อความแล้ว" in lines[-1]

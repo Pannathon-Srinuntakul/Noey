@@ -50,9 +50,13 @@ class VideoProject(Base):
     error_msg: Mapped[str | None] = mapped_column(Text, nullable=True)
     edit_script_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     voiceover_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Dead since 2026-08-14, kept only because the columns still exist: the
+    # reference-clip upload + Style Profile extraction were removed (Effect/Cut
+    # Styles do that now) and product marks fed the popup overlays that went
+    # away with the Remotion layer. Mapped so a stray row still loads; nothing
+    # reads or writes them.
     reference_clip_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     style_profile_path: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # [{"sourceClip": str, "at": float, "productName": str, "price": str}]
     product_marks: Mapped[list | None] = mapped_column(JSONB, nullable=True)
 
     # "local" = desktop app renders on the user's machine (video files never

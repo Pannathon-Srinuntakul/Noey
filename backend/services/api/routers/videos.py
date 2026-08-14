@@ -67,9 +67,6 @@ def _to_out(p: VideoProject) -> VideoProjectOut:
         error_msg=p.error_msg,
         edit_script_path=p.edit_script_path,
         voiceover_path=p.voiceover_path,
-        reference_clip_path=p.reference_clip_path,
-        style_profile_path=p.style_profile_path,
-        product_marks=p.product_marks,
         origin=p.origin,
         created_at=p.created_at.isoformat(),
         updated_at=p.updated_at.isoformat(),
@@ -160,21 +157,11 @@ class VideoProjectOut(BaseModel):
     error_msg: str | None
     edit_script_path: str | None = None
     voiceover_path: str | None = None
-    reference_clip_path: str | None = None
-    style_profile_path: str | None = None
-    product_marks: list | None = None
     origin: str | None = None
     created_at: str
     updated_at: str
 
     model_config = {"from_attributes": True}
-
-
-class ProductMark(BaseModel):
-    sourceClip: str
-    at: float
-    productName: str
-    price: str = ""
 
 
 class UploadProjectItem(BaseModel):
@@ -753,7 +740,10 @@ async def get_source_url(
     session: AsyncSession = Depends(db_session),
 ) -> PlaybackUrlOut:
     """Return a URL for the original/normalized source clip — for Edit Mode preview, not the final render."""
-    p = await _get_project(session, uid, auth.user_id)
+    # Called for the ownership check, not the row: it 404s a project that is not
+    # this user's, which is the only thing standing between a guessed uid and
+    # someone else's source footage.
+    await _get_project(session, uid, auth.user_id)
     output_dir_path = data_root() / "video_outputs" / uid
     try:
         clip_path = _normalized_clip_path(output_dir_path, source)
@@ -843,74 +833,10 @@ async def upload_voiceover(
     return _to_out(p)
 
 
-@router.post("/{uid}/reference", response_model=VideoProjectOut)
-async def upload_reference(
-    uid: str,
-    auth: CurrentUser,
-    file: UploadFile = File(...),
-    session: AsyncSession = Depends(db_session),
-) -> VideoProjectOut:
-    """Upload a reference TikTok clip to learn editing style. Enqueues analyze_reference."""
-    p = await _get_project(session, uid, auth.user_id)
-
-    ext = pathlib.Path(file.filename or "reference.mp4").suffix or ".mp4"
-    allowed_video = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
-    if ext.lower() not in allowed_video:
-        raise HTTPException(400, f"Unsupported video format '{ext}'. Use mp4/mov/avi/mkv/webm.")
-
-    ref_dir = data_root() / "video_uploads" / uid
-    ref_dir.mkdir(parents=True, exist_ok=True)
-    ref_path = ref_dir / f"reference{ext}"
-    ref_path.write_bytes(await file.read())
-
-    rel_ref = str(ref_path.relative_to(data_root()))
-    p.reference_clip_path = rel_ref
-    await session.commit()
-
-    await push_uploads(uid, ref_dir)
-
-    ref_job_id = f"ref_{uid[:8]}"
-    from packages.db.models.core_auth import Job as _Job
-    from sqlalchemy import select as _sel
-    await session.execute(
-        __import__("sqlalchemy", fromlist=["text"]).text("SET search_path TO core, public")
-    )
-    existing_ref = (await session.execute(_sel(_Job).where(_Job.id == ref_job_id))).scalar_one_or_none()
-    if existing_ref:
-        existing_ref.status = "queued"
-        existing_ref.progress = 2
-        existing_ref.result = {"step": "analyze", "message": "อัปโหลด reference เสร็จแล้ว รอวิเคราะห์…"}
-    else:
-        from packages.db.session import bind_tenant_search_path as _bsp
-        ref_job = _Job(
-            id=ref_job_id,
-            tenant_id=auth.tenant_id,
-            type="analyze_reference",
-            status="queued",
-            progress=2,
-            result={"step": "analyze", "message": "อัปโหลด reference เสร็จแล้ว รอวิเคราะห์…"},
-        )
-        session.add(ref_job)
-    await bind_tenant_search_path(session, auth.tenant_slug)
-    await session.commit()
-
-    await _enqueue(ref_job_id, "analyze_reference", project_uid=uid, tenant_slug=auth.tenant_slug)
-    return _to_out(p)
-
-
-@router.post("/{uid}/product-marks", response_model=VideoProjectOut)
-async def set_product_marks(
-    uid: str,
-    marks: list[ProductMark],
-    auth: CurrentUser,
-    session: AsyncSession = Depends(db_session),
-) -> VideoProjectOut:
-    """Save product mark timestamps for overlay rendering.
-
-    Marks will be picked up by plan_edit and rendered as popup overlays.
-    Call this before or after upload — marks are stored and applied at render time.
-    """
-    p = await _get_project(session, uid, auth.user_id)
-    p.product_marks = [m.model_dump() for m in marks]
-    await session.commit()
-    return _to_out(p)
+# `POST /{uid}/reference` and `POST /{uid}/product-marks` were removed
+# 2026-08-14. The reference upload fed the `analyze_reference` task and its
+# Style Profile JSON, which nothing has read since Effect/Cut Styles replaced
+# it (packages/video/effects_style.py + cut_style.py distil a reference into
+# prose instead). Product marks were the timestamps for the popup overlays that
+# went away with the Remotion layer on 2026-08-12 — they were stored and never
+# rendered. No client called either endpoint.

@@ -6,7 +6,6 @@ Commands (all output is JSON, one object per line, on stdout):
 - ``probe FILE``              → duration / dimensions / fps / audio presence (audio-only OK)
 - ``render --job F``          → generic cut-list render (trim + concat)
 - ``ingest --job F``          → copy sources → normalized/ + upload_sources.json
-- ``extract-frames --job F``  → Vision sample frames + frames_manifest.json
 - ``extract-proxy --job F``   → downscaled no-audio proxy MP4s + proxy_manifest.json
 - ``render-silent --job F``   → edit script → final_silent.mp4 + script.txt + dub_bundle.zip
 - ``render-final --job F``    → timeline + voiceover → final.mp4 (+ final_bundle.zip)
@@ -83,15 +82,6 @@ def cmd_ingest(args: argparse.Namespace) -> int:
 
     job = load_json_job(args.job, IngestJob)
     emit(run_ingest(job, emit))
-    return 0
-
-
-def cmd_extract_frames(args: argparse.Namespace) -> int:
-    from sidecar.dub import load_json_job
-    from sidecar.frames import ExtractFramesJob, run_extract_frames
-
-    job = load_json_job(args.job, ExtractFramesJob)
-    emit(run_extract_frames(job, emit))
     return 0
 
 
@@ -186,7 +176,6 @@ def build_parser() -> argparse.ArgumentParser:
     for name, fn, help_text in (
         ("render", cmd_render, "run a generic cut-list render job"),
         ("ingest", cmd_ingest, "copy source clips into a project dir"),
-        ("extract-frames", cmd_extract_frames, "sample Vision frames from normalized clips"),
         ("extract-proxy", cmd_extract_proxy, "encode downscaled no-audio proxy MP4s for Gemini video analysis"),
         ("render-silent", cmd_render_silent, "render silent dub video from an edit script"),
         ("render-final", cmd_render_final, "render final video from timeline + voiceover"),
