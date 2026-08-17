@@ -33,13 +33,33 @@ function apiUrl(baseUrl: string, path: string): string {
   return `${baseUrl.replace(/\/+$/, '')}${path}`
 }
 
+/**
+ * Message for a request that never produced a response.
+ *
+ * Not everything that throws here is a network problem. The bridge in the main
+ * process can fail on its own before a packet leaves the machine — 0.1.11
+ * shipped a RangeError from `AbortSignal.timeout()` that killed every upload in
+ * 27ms, and the flat "เชื่อมต่อ server ไม่ได้" sent everyone hunting the Wi-Fi
+ * and the server instead. Anything that is not a plain connection failure now
+ * says what it actually was.
+ */
+export function connectErrorMessage(err: unknown): string {
+  const offline = 'เชื่อมต่อ server ไม่ได้ ลองใหม่อีกครั้ง'
+  const name = (err as { name?: string })?.name ?? ''
+  const message = (err as { message?: string })?.message ?? ''
+  if (name === 'TimeoutError') return 'server ไม่ตอบกลับ (หมดเวลา) — ลองใหม่อีกครั้ง'
+  // Node's fetch reports a genuine connection failure as TypeError.
+  if (!name || name === 'TypeError' || name === 'AbortError') return offline
+  return `${offline} (${name}${message ? `: ${message.slice(0, 120)}` : ''})`
+}
+
 async function request<T>(baseUrl: string, path: string, init?: ApiFetchInit): Promise<T> {
   let res
   try {
     res = await apiFetch(apiUrl(baseUrl, path), init)
   } catch (err) {
     void window.noey.log.write('api', `fetch failed ${baseUrl}${path}: ${String(err)}`)
-    throw new ApiError(0, 'เชื่อมต่อ server ไม่ได้ ลองใหม่อีกครั้ง')
+    throw new ApiError(0, connectErrorMessage(err))
   }
   if (!res.ok) {
     let detail = `HTTP ${res.status}`

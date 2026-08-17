@@ -625,6 +625,10 @@ def captions_for_edited_cuts(
 
 # Dub-first silent preview floor (talking_head keeps MIN_KEEP_CUT_SEC).
 DUB_MIN_CUT_SEC = 0.35
+# Upper bound on a cut recovered from MM:SS digits. Real dub cuts run 1.5-4s;
+# anything longer means the two ends probably did not come from the same
+# mis-formatted moment, so the decode is not trustworthy enough to apply.
+DUB_MMSS_MAX_CUT_SEC = 15.0
 # Soft cap: one angle should not linger longer than this when more cuts are possible.
 DUB_MAX_HOLD_SEC = 3.5
 # When model picks sourceIn far from a sampled frame, snap trim to that frame.
@@ -849,11 +853,100 @@ def anchor_dub_segments_to_frames(
     return edit_script
 
 
+def _decode_mmss_digits(value: float, clip_duration: float) -> float | None:
+    """Read an out-of-range timestamp as M:SS digits run together, or None.
+
+    Gemini's own video docs tell you to reference moments as MM:SS, and that is
+    how the model reasons about a clip internally — but our schema asks for
+    decimal seconds, so a moment at 4:42 can surface as the number 442.0.
+    Decoding every value the clamp rejected on a 291.7s clip (two live runs,
+    11 rejects: 300.0, 320.0, 335.5, 355.0, 356.0, 401.5, 403.0, 408.0, 409.0,
+    442.0 twice) turns all 11 into ordinary in-range cuts of 1.5-3.5s — a ~0.4%
+    coincidence. They were real shot choices with the wrong number format, not
+    invented footage.
+
+    Only the seconds field being a valid 0-59 and the result landing inside the
+    clip count as a decode; anything else returns None and the caller falls
+    back to the existing drop/clamp behaviour.
+    """
+    minutes = int(value) // 100
+    seconds = value - minutes * 100
+    if minutes < 1 or not (0.0 <= seconds < 60.0):
+        return None
+    decoded = minutes * 60 + seconds
+    return decoded if 0.0 <= decoded <= clip_duration else None
+
+
+def repair_mmss_timestamps(
+    edit_script: dict[str, Any],
+    clip_durations: dict[str, float],
+) -> int:
+    """Rewrite MM:SS-digit timestamps in place; return how many segments changed.
+
+    Deliberately conservative: BOTH ends of a cut must be out of range before
+    anything is touched, both must decode, and the decoded cut must stay short
+    and correctly ordered. A value already inside the clip is never reread —
+    128.5 could mean 1:28.5, but it is also a perfectly good 128.5s, and there
+    is no way to tell them apart. Guessing there would corrupt good cuts to
+    salvage bad ones.
+    """
+    from packages.core.logging import get_logger
+
+    log = get_logger(__name__)
+    repaired = 0
+    for seg in edit_script.get("segments") or []:
+        if not isinstance(seg, dict):
+            continue
+        dur = clip_durations.get(str(seg.get("sourceClip") or ""))
+        if dur is None:
+            continue
+        try:
+            src_in = float(seg["sourceIn"])
+            src_out = float(seg["sourceOut"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if src_in <= dur or src_out <= dur:
+            continue
+        new_in = _decode_mmss_digits(src_in, dur)
+        new_out = _decode_mmss_digits(src_out, dur)
+        if new_in is None or new_out is None:
+            continue
+        if not 0 < new_out - new_in <= DUB_MMSS_MAX_CUT_SEC:
+            continue
+        seg["sourceIn"] = round(new_in, 2)
+        seg["sourceOut"] = round(new_out, 2)
+        seg["durationSec"] = round(new_out - new_in, 2)
+        mft = seg.get("matchedFrameTime")
+        if mft is not None:
+            try:
+                decoded_mft = _decode_mmss_digits(float(mft), dur)
+            except (TypeError, ValueError):
+                decoded_mft = None
+            seg["matchedFrameTime"] = round(
+                decoded_mft if decoded_mft is not None else new_in, 2
+            )
+        repaired += 1
+        log.warning(
+            "dub_segment_mmss_repaired",
+            order=seg.get("order"),
+            source_clip=seg.get("sourceClip"),
+            was=[round(src_in, 2), round(src_out, 2)],
+            now=[seg["sourceIn"], seg["sourceOut"]],
+            clip_duration_sec=dur,
+        )
+    return repaired
+
+
 def clamp_dub_segments_to_clip_durations(
     edit_script: dict[str, Any],
     clip_durations: dict[str, float],
 ) -> dict[str, Any]:
     """Drop/clamp segments whose sourceIn/sourceOut fall outside their clip's real duration.
+
+    Runs repair_mmss_timestamps first: most "beyond the end of the clip" values
+    turn out to be real moments written as MM:SS digits, and dropping them threw
+    away genuine shot choices (typically the last third of a long clip, which is
+    where minute-2-and-up timestamps live).
 
     Safety net for the Gemini video path: unlike Claude+frames (every timestamp
     is bounded by a real sampled frame), Gemini can output a timestamp beyond
@@ -874,6 +967,8 @@ def clamp_dub_segments_to_clip_durations(
     from packages.core.logging import get_logger
 
     log = get_logger(__name__)
+
+    repair_mmss_timestamps(edit_script, clip_durations)
 
     segs = [s for s in (edit_script.get("segments") or []) if isinstance(s, dict)]
     kept: list[dict[str, Any]] = []

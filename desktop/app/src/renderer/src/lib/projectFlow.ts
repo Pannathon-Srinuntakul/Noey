@@ -79,7 +79,8 @@ export const SHORT_STEP_LABELS: Record<ProjectStep, string> = {
   imported: 'นำเข้า',
   analyzing: 'วิเคราะห์ภาพ',
   silent_rendering: 'ตัดต่อ',
-  waiting_vo: 'รอเสียงพากย์',
+  // The last pip of a finished dub run — 'waiting for voiceover' read as unfinished work.
+  waiting_vo: 'คลิปพร้อม',
   planning: 'วางแผน',
   final_rendering: 'เรนเดอร์',
   extracting_audio: 'แยกเสียง',
@@ -89,17 +90,49 @@ export const SHORT_STEP_LABELS: Record<ProjectStep, string> = {
   error: 'ผิดพลาด'
 }
 
-/** The work stages shown in a progress row — the mode's real step order minus
- * `done`, which is the completion state rather than a stage of its own.
- * Lengths differ per mode (dub_first 6, talking_head 4, highlight 3), which is
- * exactly why progress UI must never assume a fixed count. */
-export function progressStagesFor(mode: ProjectMode | undefined): ProjectStep[] {
-  // 'importing' and 'imported' are one stage to the user (it is in flight, then
-  // it is done) — showing both would put two "นำเข้า" pips in the row.
-  return stepOrderFor(mode).filter((s) => s !== 'done' && s !== 'importing')
+/**
+ * What to say when a run ENDS in this step.
+ *
+ * The completion toast used to name the step that had been running, which read
+ * fine while every run ended in 'done'. A dub run now finishes out of
+ * 'silent_rendering' at `waiting_vo`, and "กำลังตัดวิดีโอ (เงียบ) เสร็จแล้ว"
+ * is a progressive-tense label wrapped in a completion sentence.
+ */
+export const TERMINAL_LABELS: Partial<Record<ProjectStep, string>> = {
+  done: 'เสร็จแล้ว',
+  waiting_vo: 'ตัดคลิปเสร็จแล้ว — ใส่เสียงพากย์ต่อได้ถ้าต้องการ'
 }
 
-/** 0–100 for a project's current position through its mode's stages. */
+/**
+ * The work stages shown in a progress row.
+ *
+ * The mode's step order minus `done` (the completion state, not a stage) and
+ * minus `importing` — 'importing' and 'imported' are one stage to the user (it
+ * is in flight, then it is done), and showing both would put two "นำเข้า" pips
+ * in the row.
+ *
+ * A dub run also stops at `waiting_vo`: the silent cut is the deliverable, and
+ * `planning` / `final_rendering` only ever happen if the user chooses to record
+ * a voiceover. Listing them unconditionally left two pips greyed out forever on
+ * a job that was, as far as the user was concerned, finished.
+ *
+ * `withVoiceover` puts that tail back, and callers rendering a live job MUST
+ * pass it while the step is one of those two — `stages.indexOf(step)` returns
+ * -1 otherwise and the bar sits at 0% for the whole voiced render.
+ *
+ * Lengths differ per mode (dub_first 4, +2 with the tail; talking_head 4;
+ * highlight 3), which is exactly why progress UI must never assume a fixed
+ * count.
+ */
+export function progressStagesFor(
+  mode: ProjectMode | undefined,
+  opts: { withVoiceover?: boolean } = {}
+): ProjectStep[] {
+  const stages = stepOrderFor(mode).filter((s) => s !== 'done' && s !== 'importing')
+  if (opts.withVoiceover) return stages
+  return stages.filter((s) => s !== 'planning' && s !== 'final_rendering')
+}
+
 /**
  * Minutes still to go, extrapolated from how long the run has taken to reach
  * `percent`, or null when there is nothing to extrapolate from.
@@ -118,9 +151,17 @@ export function etaMinutes(startedAtMs: number | null, percent: number): number 
   return Math.max(1, Math.round(remainingMs / 60_000))
 }
 
+/**
+ * 0–100 for a project's current position through its mode's stages.
+ *
+ * `waiting_vo` is 100 for the same reason it is terminal: the cut is done. The
+ * voiced tail is measured against the extended list so a render that IS running
+ * keeps moving instead of dropping into the unknown-step arm below.
+ */
 export function progressPercent(step: ProjectStep, mode: ProjectMode | undefined): number {
-  const stages = progressStagesFor(mode)
-  if (step === 'done') return 100
+  if (step === 'done' || step === 'waiting_vo') return 100
+  const voiced = step === 'planning' || step === 'final_rendering'
+  const stages = progressStagesFor(mode, { withVoiceover: voiced })
   const idx = stages.indexOf(step === 'importing' ? 'imported' : step)
   if (idx === -1) return 0
   return Math.round((idx / stages.length) * 100)
@@ -140,15 +181,17 @@ const RESUME_CHECKPOINT: Partial<Record<ProjectStep, ProjectStep>> = {
   rendering: 'rendering'
 }
 
-export function advance(step: ProjectStep, mode: ProjectMode = 'dub_first'): ProjectStep {
-  const order = stepOrderFor(mode)
-  const idx = order.indexOf(step)
-  if (idx === -1 || idx === order.length - 1) return step
-  return order[idx + 1]
-}
-
+/**
+ * Nothing more will happen on its own.
+ *
+ * `waiting_vo` counts: the silent cut is rendered and usable, and the voiceover
+ * is an optional job the user may start later — not work the project is still
+ * waiting to have done to it. Most of the UI already read it that way
+ * (ProjectGridCard's "คลิปพร้อมใช้", ProjectDetailPage's `ready`); this is the
+ * step machine catching up.
+ */
 export function isTerminal(step: ProjectStep): boolean {
-  return step === 'done' || step === 'error'
+  return step === 'done' || step === 'error' || step === 'waiting_vo'
 }
 
 export function isBusy(step: ProjectStep): boolean {
@@ -171,9 +214,4 @@ export function resumeStep(step: ProjectStep): ProjectStep {
     return 'silent_rendering'
   }
   return RESUME_CHECKPOINT[step] ?? step
-}
-
-export function stepIndex(step: ProjectStep, mode: ProjectMode = 'dub_first'): number {
-  const idx = stepOrderFor(mode).indexOf(step)
-  return idx === -1 ? 0 : idx
 }

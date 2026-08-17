@@ -21,6 +21,25 @@ export interface ApiFetchResult {
 
 let fetchSeq = 0
 
+/** Abort budget for one request, in whole milliseconds.
+ *
+ * A flat 60s is wrong for this bridge: it also carries the frame/WAV/proxy
+ * uploads, and 60s at a real ADSL upstream is roughly 6 MB. A 40 MB cut proxy
+ * on a slow line was aborted mid-transfer and surfaced as "TimeoutError" — a
+ * working upload reported as a failure. So the ceiling scales with what is
+ * actually being sent, at a deliberately pessimistic 100 KB/s floor, capped at
+ * 30 minutes.
+ *
+ * The rounding is not cosmetic: `AbortSignal.timeout()` throws a RangeError on
+ * a fractional delay, and it throws BEFORE the request is issued — so in 0.1.11
+ * every upload whose size did not divide evenly failed instantly and showed up
+ * as "เชื่อมต่อ server ไม่ได้" with the server never contacted at all.
+ */
+export function uploadTimeoutMs(uploadBytes: number): number {
+  const scaled = 60_000 + (Math.max(0, uploadBytes) / 100_000) * 1000
+  return Math.ceil(Math.min(30 * 60_000, scaled))
+}
+
 async function runFetch(job: ApiFetchJob): Promise<ApiFetchResult> {
   // Every request is logged start→end: a renderer stage that hangs on an
   // upload is indistinguishable from one that never issued the request, and
@@ -61,7 +80,7 @@ async function runFetch(job: ApiFetchJob): Promise<ApiFetchResult> {
   // proxy on a slow line was aborted mid-transfer and surfaced as "TimeoutError"
   // — a working upload reported as a failure. So the ceiling scales with what is
   // actually being sent, at a deliberately pessimistic 100 KB/s floor.
-  const timeoutMs = Math.min(30 * 60_000, 60_000 + (uploadBytes / 100_000) * 1000)
+  const timeoutMs = uploadTimeoutMs(uploadBytes)
   try {
     const res = await fetch(job.url, {
       method: job.method ?? 'GET',

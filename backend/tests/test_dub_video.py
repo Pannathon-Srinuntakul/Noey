@@ -13,21 +13,28 @@ from packages.video import dub_ai
 
 def test_dub_edit_system_video_matches_claude_rules() -> None:
     """Invariant rules that live in the RAW const (never in the swappable
-    <editing_style> block) — safety, anchoring, duration floor, coverage."""
+    <editing_style> block) — safety, anchoring, span selection, coverage."""
     s = dub_ai.DUB_EDIT_SYSTEM_VIDEO
     assert s.startswith("<role>\nYou are a TikTok affiliate video editor. Produce an Edit Script JSON.")
     assert s.endswith("</output_format>")
     # Editorial rules must be byte-identical to the Claude+frames prompt.
     assert 'cutStyle options: "jump_cut" | "standard" | "zoom_in" | "zoom_out" — default to "jump_cut"' in s
     assert "No fixed segment cap per voiceoverLineId" in s
-    assert "Total duration is a 45s hard floor (target 50–60s)" in s
+    # v2: the 45s figure survives as CALIBRATION only — the quota language
+    # (hard floor / line counts) is exactly what the rewrite removed.
+    assert "about 45 seconds" in s
+    assert "hard floor" not in s
+    assert "12–18 lines" not in s
     assert 'สั่งได้เลยที่ TikTok Shop' in s
     assert "zero reject_safety violations remain" in s
     # Safety + anchoring invariants stay in the raw const — a saved cut style
     # must never be able to displace them.
     assert "HARD REJECT" in s
     assert "ANY visible underwear" in s
-    assert "sourceIn must be within ±0.35s of matchedFrameTime" in s
+    # v2 anchor: the trim may slide FORWARD to where the action lands, only
+    # backward drift (into prep) stays forbidden.
+    assert "sourceIn must be ≥ matchedFrameTime − 0.35s" in s
+    assert "Starting LATER than the anchor is allowed" in s
     # The editing style itself is spliced at call time via this token. The raw
     # const may still MENTION "<editing_style>" by name (verify/authenticity
     # rules point at the section), but the section body must not be baked in.
@@ -42,20 +49,24 @@ def test_dub_edit_system_video_matches_claude_rules() -> None:
     # Frame-list mechanics changed — no frame-sample wording, no frame classification wording.
     assert "sample frame you chose" not in s
     assert "Classify every frame before using it" not in s
-    assert "Classify each shot as you watch the video" in s
+    assert "Classify each shot as you watch:" in s
     # New multi-clip labeling line.
     assert '=== clip0 ===' in s
     assert "the exact timestamp (seconds) in the video you chose for this cut" in s
     # Coverage rule — watch every clip in full before selecting, regardless of target duration.
-    assert "Watch EVERY clip in FULL, start to finish, before selecting any cuts" in s
-    assert "This applies whether or not a target duration is set" in s
+    assert "Watch EVERY clip in FULL, start to finish, before selecting anything" in s
+    # v2 coverage: reviewing everything is mandatory, USING everything is not.
+    assert "Reviewing all of it is mandatory. USING all of it is not." in s
     assert "you watched every clip to its FULL given duration" in s
-    # Per-scene coverage — don't collapse to only the single best scene.
-    assert "Do NOT collapse the clip down to only its single most impressive scene" in s
-    assert "every scene that has a usable moment should contribute a cut" in s
+    # v2 selection model: spans bounded by action arcs, ranked; prep is the
+    # leading edge of its span, never a span of its own; state continuity.
+    assert "<scene_spans>" in s
+    assert "Preparation is NEVER a span of its own" in s
+    assert "the action has ARRIVED, not begun" in s
+    assert "State must not go backwards" in s
     # Hard numeric bound — sourceOut must never exceed a clip's real duration.
     assert "sourceOut can never exceed the clip's duration" in s
-    # Authenticity over duration — never fabricate timestamps to hit the floor.
+    # Quality over duration — never fabricate timestamps to run longer.
     assert "Never invent a timestamp beyond a clip's real duration" in s
     # 1fps precision rule — brief/transitional poses (e.g. a quick back-view
     # turn) are unreliable to timestamp exactly; prefer held moments.
@@ -75,7 +86,9 @@ def test_dub_edit_system_video_default_splice_keeps_editing_style_rules() -> Non
     # Load-bearing style sentences (previously asserted on the raw const).
     assert "Aim for multi-angle on ≥60% of lines" in spliced
     assert "each line must look VISUALLY DIFFERENT from the one before" in spliced
-    assert "pick frames ≥30s apart when possible" in spliced
+    # v2 prose: variety is visual, not temporal — same-span pulls preferred.
+    assert "prefer pulling them from the same span or adjacent ones" in spliced
+    assert "continuity outranks variety" in spliced
     assert "each cut 0.5–1.5s" in spliced
     # Multi-angle reinforcement (video-specific, addresses observed under-use).
     assert "you MUST split it into multi-angle cuts" in spliced
@@ -96,7 +109,10 @@ def test_build_dub_edit_context_text_video() -> None:
         "<user_script>สคริปต์ผู้ใช้</user_script>\n</creator_input>"
     )
     assert "<frame_timestamps" not in text
-    assert "<clips>\nclip0: 47.3s\n</clips>" in text
+    # <clips> states a valid RANGE per clip — the bound is what the model kept
+    # violating, so it reads as a constraint on the answer rather than a fact
+    # about the file. Interpolated from the probe; never a literal.
+    assert "<clips>\nclip0: 47.3s — valid timestamps 0.0 to 47.3, nothing beyond 47.3 exists\n</clips>" in text
     assert "<instruction>" not in text  # directives live in the post-video block
 
 
@@ -106,7 +122,8 @@ def test_build_dub_edit_context_text_video_no_input() -> None:
         clip_durations=[("clip0", 12.0), ("clip1", 8.5)],
     )
     assert "<brief>(ไม่ระบุ)</brief>" in text
-    assert "<clips>\nclip0: 12.0s\nclip1: 8.5s\n</clips>" in text
+    assert "clip0: 12.0s — valid timestamps 0.0 to 12.0" in text
+    assert "clip1: 8.5s — valid timestamps 0.0 to 8.5" in text
 
 
 def test_build_dub_edit_instruction_text_video_with_target() -> None:
@@ -115,7 +132,10 @@ def test_build_dub_edit_instruction_text_video_with_target() -> None:
         target_duration_sec=30, clip_durations=[("clip0", 47.3)],
     )
     assert text.startswith("<instruction>")
-    assert "Target video length: ~30 seconds." in text
+    assert "Requested video length: ~30 seconds" in text
+    # v2: an explicit target is an aim and a CEILING, never a quota.
+    assert "CEILING" in text
+    assert "deliver the shorter honest cut" in text
     assert "Based on the video(s) above: watch each clip in full for its ENTIRE given duration" in text
     assert text.endswith("Return ONLY the Edit Script JSON.</instruction>")
 
@@ -124,8 +144,9 @@ def test_build_dub_edit_instruction_text_video_no_target() -> None:
     text = dub_ai.build_dub_edit_instruction_text_video(
         target_duration_sec=None, clip_durations=[("clip0", 12.0), ("clip1", 8.5)],
     )
-    assert "No target set — minimum 45s, target 50–60s" in text
-    assert "total available footage across all clips is 20.5s" in text
+    assert "No target set. Calibration:" in text
+    assert "minimum 45s" not in text
+    assert "available footage across all clips is 20.5s" in text
 
 
 @pytest.mark.asyncio
@@ -194,7 +215,8 @@ async def test_generate_dub_edit_script_video_message_assembly(
     # last — context text, then both video blocks, then instruction, then reminder.
     assert content[0]["type"] == "text"
     assert content[0]["text"].startswith("<creator_input>")
-    assert "<clips>\nclip0: 12.0s\nclip1: 8.0s\n</clips>" in content[0]["text"]
+    assert "clip0: 12.0s — valid timestamps 0.0 to 12.0" in content[0]["text"]
+    assert "clip1: 8.0s — valid timestamps 0.0 to 8.0" in content[0]["text"]
     assert "<instruction>" not in content[0]["text"]
 
     video_blocks = [c for c in content if c.get("type") == "file"]
@@ -210,7 +232,7 @@ async def test_generate_dub_edit_script_video_message_assembly(
     assert "=== clip1 ===" in label_texts
     instruction_text = content[-2]["text"]
     assert instruction_text.startswith("<instruction>")
-    assert "No target set — minimum 45s" in instruction_text
+    assert "No target set. Calibration:" in instruction_text
     last_video_idx = max(i for i, c in enumerate(content) if c.get("type") == "file")
     instruction_idx = next(i for i, c in enumerate(content) if c["type"] == "text" and c["text"].startswith("<instruction>"))
     assert instruction_idx > last_video_idx  # directives sent after all video blocks
@@ -230,7 +252,9 @@ async def test_generate_dub_edit_script_video_message_assembly(
     rf = captured["kwargs"]["response_format"]
     assert rf["type"] == "json_object"
     assert rf["enforce_validation"] is True
-    assert rf["response_schema"] == dub_ai.DUB_EDIT_SCHEMA_VIDEO
+    # Fresh-edit calls send the bounded variant: the model echoes each clip's
+    # end time as clipBounds before it may emit any segment.
+    assert rf["response_schema"] == dub_ai.DUB_EDIT_SCHEMA_VIDEO_BOUNDED
     assert "segments" in rf["response_schema"]["required"]
 
 

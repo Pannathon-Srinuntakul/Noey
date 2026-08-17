@@ -112,13 +112,30 @@ export interface LocalProject {
    * from the cut on first render, overwritten by the timeline editor, and
    * burned in by the sidecar on every later render. */
   captionLines?: { id: string; text: string; start: number; end: number }[]
+  /** Every recut comment the user has sent, oldest first. Round 1 is the
+   * original cut and has no entry — the first entry is round 2. */
+  recutNotes?: { round: number; text: string; at: string }[]
+  /** The render kept from before the latest recut, so a worse round can be
+   * undone. One version only: recutting again overwrites it. Holds the edit
+   * script + measured clip durations + timeline + caption lines alongside the
+   * moved files, because restoring the video without them leaves the timeline
+   * editor and the burned captions describing a cut no longer on disk. */
+  previousRender?: {
+    round: number
+    at: string
+    /** Project-relative paths, now living under `previous/`. */
+    files: string[]
+    editScript?: Record<string, unknown>
+    clipDurationsSec?: number[]
+    timeline?: Record<string, unknown>
+    captionLines?: { id: string; text: string; start: number; end: number }[]
+  }
 }
 
 // Mirrors main/prefs.ts and main/storage.ts (preload defines its own view of
 // every main-process shape, same as LocalProject above).
 export interface Prefs {
   projectsDir: string | null
-  autoDeleteSourcesDays: number
   defaultMode: 'silence' | 'highlight'
   defaultDuration: string
   defaultCaptions: boolean
@@ -129,9 +146,7 @@ export interface StorageReport {
   root: string
   isDefault: boolean
   totalBytes: number
-  reclaimableBytes: number
   projectCount: number
-  reclaimableProjects: number
 }
 
 export type MoveResult =
@@ -262,7 +277,13 @@ const noey = {
     writeFile: (uid: string, relPath: string, data: Uint8Array): Promise<string> =>
       ipcRenderer.invoke('projects:writeFile', uid, relPath, data),
     deleteFile: (uid: string, relPath: string): Promise<void> =>
-      ipcRenderer.invoke('projects:deleteFile', uid, relPath)
+      ipcRenderer.invoke('projects:deleteFile', uid, relPath),
+    /** Move this round's render products under `previous/`, replacing anything
+     * kept before; returns the project-relative paths that moved. */
+    stashRender: (uid: string): Promise<string[]> =>
+      ipcRenderer.invoke('projects:stashRender', uid),
+    /** Put `previous/` back and discard the current render. */
+    restoreRender: (uid: string): Promise<void> => ipcRenderer.invoke('projects:restoreRender', uid)
   },
   media: {
     /** media:// URL for a file inside a project dir (path must be project-relative). */
@@ -281,11 +302,9 @@ const noey = {
     /** Partial merge; resolves to the full prefs object after the write. */
     set: (patch: Partial<Prefs>): Promise<Prefs> => ipcRenderer.invoke('prefs:set', patch)
   },
-  // Library disk accounting + maintenance — see main/storage.ts.
+  // Library disk accounting + move — see main/storage.ts.
   storage: {
     report: (): Promise<StorageReport> => ipcRenderer.invoke('storage:report'),
-    purgeSources: (): Promise<{ freedBytes: number; projects: number }> =>
-      ipcRenderer.invoke('storage:purgeSources'),
     moveLibrary: (): Promise<MoveResult> => ipcRenderer.invoke('storage:moveLibrary')
   },
   auth: {

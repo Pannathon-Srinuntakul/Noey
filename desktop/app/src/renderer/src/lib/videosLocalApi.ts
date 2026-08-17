@@ -4,7 +4,7 @@
  * report the renewed tokens via onTokens so the caller can persist them.
  */
 
-import { ApiError, refresh } from './api'
+import { ApiError, connectErrorMessage, refresh } from './api'
 import { apiErrorDetail } from './apiError'
 import { apiFetch } from './httpClient'
 
@@ -97,7 +97,7 @@ async function request<T>(
       'videosLocalApi',
       `fetch failed ${session.baseUrl}${path}: ${String(err)}`
     )
-    throw new ApiError(0, 'เชื่อมต่อ server ไม่ได้ ลองใหม่อีกครั้ง')
+    throw new ApiError(0, connectErrorMessage(err))
   }
 
   if (res.status === 401 && !retried) {
@@ -144,7 +144,12 @@ export async function analyzeVideo(
   remoteUid: string,
   localUid: string,
   proxies: ProxyManifestEntry[],
-  styleUid?: string
+  styleUid?: string,
+  /** Replaces the brief stored server-side for this run onwards. The desktop
+   * sends the original brief plus any recut comments; the row is the only way
+   * the brief reaches the model, and it is otherwise written once at creation.
+   * Empty is "keep what is stored" — it never blanks an existing brief. */
+  brief?: string
 ): Promise<{ job_id: string }> {
   const manifest = proxies.map((e) => ({
     clip_id: e.clip_id,
@@ -156,7 +161,8 @@ export async function analyzeVideo(
     method: 'POST',
     formFields: {
       manifest: JSON.stringify(manifest),
-      ...(styleUid ? { style_uid: styleUid } : {})
+      ...(styleUid ? { style_uid: styleUid } : {}),
+      ...(brief?.trim() ? { brief: brief.trim() } : {})
     },
     formFiles: await Promise.all(
       proxies.map(async (entry) => ({

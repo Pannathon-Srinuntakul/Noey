@@ -11,7 +11,7 @@ import { registerApiProxyIpc } from './apiProxy'
 import { registerLanIpc, stopLanReceive } from './lanReceive'
 import { registerNotifyIpc } from './notify'
 import { loadPrefs, registerPrefsIpc } from './prefs'
-import { autoDeleteOldSources, registerStorageIpc } from './storage'
+import { registerStorageIpc } from './storage'
 import { attachUnsavedGuard, registerUnsavedIpc } from './unsavedGuard'
 
 // Privileged scheme registration must happen before app is ready.
@@ -116,7 +116,7 @@ app.whenReady().then(async () => {
   // Before anything reads `projectsRoot()` — that resolves the projects
   // location synchronously from the prefs cache, so the cache has to be warm
   // or the first requests would resolve against the default folder.
-  const prefs = await loadPrefs()
+  await loadPrefs()
 
   // Default open or close DevTools by F12 in development
   // and ignore CommandOrControl + R in production.
@@ -136,10 +136,6 @@ app.whenReady().then(async () => {
   registerPrefsIpc()
   registerStorageIpc()
   registerUnsavedIpc()
-
-  // Fire-and-forget: a retention sweep must never delay the first window, and
-  // nothing in the UI is waiting on its result.
-  void autoDeleteOldSources(prefs.autoDeleteSourcesDays).catch(() => undefined)
 
   createWindow()
 

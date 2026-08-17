@@ -1,6 +1,6 @@
 import { app, dialog, ipcMain, shell } from 'electron'
 import { dirname, join, normalize, relative, sep } from 'path'
-import { copyFile, mkdir, readdir, readFile, writeFile, rm, stat } from 'fs/promises'
+import { copyFile, mkdir, readdir, readFile, rename, writeFile, rm, stat } from 'fs/promises'
 import { randomUUID } from 'crypto'
 import { isSafeUid } from './uid'
 import { appendLog } from './logger'
@@ -90,7 +90,88 @@ export interface LocalProject {
    * of the edit script's nominal sourceOut-sourceIn (which drifts a little
    * more with each segment as ffmpeg's frame-rounding accumulates). */
   clipDurationsSec?: number[]
+  /** Every recut comment the user has sent, oldest first. Round 1 is the
+   * original cut and has no entry — the first entry is round 2. */
+  recutNotes?: { round: number; text: string; at: string }[]
+  /** The render kept from before the latest recut, so a worse round can be
+   * undone. One version only: recutting again overwrites it. Mirrors the
+   * renderer's LocalProject — see src/preload/index.ts for the full note. */
+  previousRender?: {
+    round: number
+    at: string
+    files: string[]
+    editScript?: Record<string, unknown>
+    clipDurationsSec?: number[]
+    timeline?: Record<string, unknown>
+    captionLines?: { id: string; text: string; start: number; end: number }[]
+  }
   error?: string
+}
+
+/** Every product of a render run, in the order they are stashed/restored.
+ * `clips/` is a directory; everything else is a file. A recut regenerates all
+ * of them, so undoing one has to move the whole set — restoring only the
+ * playable mp4 would leave the timeline editor opening last round's per-scene
+ * clips against this round's edit script. */
+const RENDER_ARTIFACTS = [
+  'final.mp4',
+  'final_fx.mp4',
+  'final_silent.mp4',
+  'final_silent_music.mp4',
+  'dub_bundle.zip',
+  'script.txt',
+  'concat_silent.txt',
+  'clips'
+] as const
+
+const PREVIOUS_DIR = 'previous'
+
+/** Move this round's render products into `previous/`, replacing whatever was
+ * kept before. Returns the project-relative paths that were actually moved —
+ * a project with no music mix or no fx bake simply has fewer. */
+async function stashRender(uid: string): Promise<string[]> {
+  const dir = projectDir(uid)
+  const prev = join(dir, PREVIOUS_DIR)
+  await rm(prev, { recursive: true, force: true })
+  await mkdir(prev, { recursive: true })
+  const moved: string[] = []
+  for (const name of RENDER_ARTIFACTS) {
+    const from = join(dir, name)
+    try {
+      await stat(from)
+    } catch {
+      continue // this project never produced that one
+    }
+    await rename(from, join(prev, name))
+    moved.push(`${PREVIOUS_DIR}/${name}`)
+  }
+  return moved
+}
+
+/** Put `previous/` back, discarding the current render. The inverse of
+ * stashRender: the caller has already confirmed the newest cut is unwanted. */
+async function restoreRender(uid: string): Promise<void> {
+  const dir = projectDir(uid)
+  const prev = join(dir, PREVIOUS_DIR)
+  try {
+    await stat(prev)
+  } catch {
+    return // nothing kept — treated as a no-op, not an error
+  }
+  for (const name of RENDER_ARTIFACTS) {
+    const kept = join(prev, name)
+    try {
+      await stat(kept)
+    } catch {
+      // Not in the kept set: the current one would otherwise survive the
+      // restore and mix two rounds together, so it goes.
+      await rm(join(dir, name), { recursive: true, force: true })
+      continue
+    }
+    await rm(join(dir, name), { recursive: true, force: true })
+    await rename(kept, join(dir, name))
+  }
+  await rm(prev, { recursive: true, force: true })
 }
 
 /** Default location, used when the user has not moved the library. */
@@ -129,7 +210,7 @@ function resolveProjectPath(uid: string, relPath: string): string {
   return resolved
 }
 
-async function readProject(uid: string): Promise<LocalProject | null> {
+export async function readProject(uid: string): Promise<LocalProject | null> {
   try {
     return JSON.parse(await readFile(projectFile(uid), 'utf-8')) as LocalProject
   } catch {
@@ -368,6 +449,8 @@ export function registerProjectsIpc(): void {
   ipcMain.handle('projects:writeFile', (_e, uid: string, relPath: string, data: Uint8Array) =>
     writeProjectFile(uid, relPath, data)
   )
+  ipcMain.handle('projects:stashRender', (_e, uid: string) => stashRender(uid))
+  ipcMain.handle('projects:restoreRender', (_e, uid: string) => restoreRender(uid))
   ipcMain.handle('projects:deleteFile', (_e, uid: string, relPath: string) =>
     deleteProjectFile(uid, relPath)
   )

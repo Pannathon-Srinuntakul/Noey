@@ -3,28 +3,22 @@ import {
   HL_STEP_ORDER,
   STEP_ORDER,
   TH_STEP_ORDER,
-  advance,
   isBusy,
   isTerminal,
+  progressPercent,
+  progressStagesFor,
   resumeStep,
-  stepIndex,
   stepOrderFor
 } from './projectFlow'
 import { groupScriptLines } from './dubScript'
 
 describe('projectFlow', () => {
-  it('advance walks the step order and stops at done', () => {
-    expect(advance('imported')).toBe('analyzing')
-    expect(advance('analyzing')).toBe('silent_rendering')
-    expect(advance('waiting_vo')).toBe('planning')
-    expect(advance('done')).toBe('done')
-    expect(advance('error')).toBe('error') // not in order → unchanged
-  })
-
   it('terminal and busy classification', () => {
     expect(isTerminal('done')).toBe(true)
     expect(isTerminal('error')).toBe(true)
-    expect(isTerminal('waiting_vo')).toBe(false)
+    // The silent cut IS the deliverable — the voiceover is optional work
+    // offered afterwards, not a stage the project is stuck inside.
+    expect(isTerminal('waiting_vo')).toBe(true)
     expect(isBusy('analyzing')).toBe(true)
     expect(isBusy('final_rendering')).toBe(true)
     expect(isBusy('waiting_vo')).toBe(false)
@@ -38,12 +32,6 @@ describe('projectFlow', () => {
     expect(resumeStep('silent_rendering')).toBe('silent_rendering')
     expect(resumeStep('waiting_vo')).toBe('waiting_vo')
     expect(resumeStep('done')).toBe('done')
-  })
-
-  it('stepIndex is monotonic over the order', () => {
-    const indexes = STEP_ORDER.map((s) => stepIndex(s))
-    expect(indexes).toEqual([...indexes].sort((a, b) => a - b))
-    expect(stepIndex('error')).toBe(0)
   })
 
   it('talking_head has its own step order', () => {
@@ -60,10 +48,7 @@ describe('projectFlow', () => {
     ])
   })
 
-  it('talking_head advance + busy + resume', () => {
-    expect(advance('imported', 'talking_head')).toBe('extracting_audio')
-    expect(advance('transcribing', 'talking_head')).toBe('rendering')
-    expect(advance('done', 'talking_head')).toBe('done')
+  it('talking_head busy + resume', () => {
     expect(isBusy('extracting_audio')).toBe(true)
     expect(isBusy('transcribing')).toBe(true)
     expect(isBusy('rendering')).toBe(true)
@@ -83,20 +68,58 @@ describe('projectFlow', () => {
     ])
   })
 
-  it('highlight advance + busy + resume', () => {
-    // 'importing' is the copy/transcode stage the wizard hands off to the
-    // pipeline; it precedes 'imported' in every mode's order.
-    expect(advance('importing', 'highlight')).toBe('imported')
-    expect(advance('imported', 'highlight')).toBe('analyzing')
-    expect(advance('analyzing', 'highlight')).toBe('silent_rendering')
-    expect(advance('silent_rendering', 'highlight')).toBe('done')
-    expect(advance('done', 'highlight')).toBe('done')
+  it('highlight busy + resume', () => {
     expect(isBusy('analyzing')).toBe(true)
     expect(isBusy('silent_rendering')).toBe(true)
     expect(resumeStep('analyzing')).toBe('imported')
     expect(resumeStep('silent_rendering')).toBe('silent_rendering')
-    // importing · imported · analyzing · silent_rendering · done
-    expect(stepIndex('done', 'highlight')).toBe(4)
+  })
+
+  it('a dub run is four stages and ends at waiting_vo', () => {
+    // planning/final_rendering are NOT here: they only happen if the user
+    // records a voiceover, and listing them left two pips greyed out forever.
+    expect(progressStagesFor('dub_first')).toEqual([
+      'imported',
+      'analyzing',
+      'silent_rendering',
+      'waiting_vo'
+    ])
+    expect(progressStagesFor('talking_head')).toEqual([
+      'imported',
+      'extracting_audio',
+      'transcribing',
+      'rendering'
+    ])
+    expect(progressStagesFor('highlight')).toEqual(['imported', 'analyzing', 'silent_rendering'])
+  })
+
+  it('the voiceover tail is opt-in, for the render that is actually running', () => {
+    // Without this, `stages.indexOf('planning')` is -1 on the progress screen
+    // and the bar sits at 0% for the whole voiced render.
+    expect(progressStagesFor('dub_first', { withVoiceover: true })).toEqual([
+      'imported',
+      'analyzing',
+      'silent_rendering',
+      'waiting_vo',
+      'planning',
+      'final_rendering'
+    ])
+    // The flag is meaningless for the modes that have no voiceover step.
+    expect(progressStagesFor('highlight', { withVoiceover: true })).toEqual(
+      progressStagesFor('highlight')
+    )
+  })
+
+  it('a finished cut reads as finished, and the voiced tail keeps moving', () => {
+    expect(progressPercent('waiting_vo', 'dub_first')).toBe(100)
+    expect(progressPercent('done', 'dub_first')).toBe(100)
+    expect(progressPercent('analyzing', 'dub_first')).toBe(25)
+    // Resolved against the extended list rather than falling into the
+    // "unknown step → 0%" arm.
+    expect(progressPercent('planning', 'dub_first')).toBeGreaterThan(0)
+    expect(progressPercent('final_rendering', 'dub_first')).toBeGreaterThan(
+      progressPercent('planning', 'dub_first')
+    )
   })
 })
 

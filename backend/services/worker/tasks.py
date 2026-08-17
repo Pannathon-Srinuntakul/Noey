@@ -1027,13 +1027,12 @@ async def render_video(ctx: dict[str, Any], *, job_id: str, project_uid: str, te
 
 from packages.video.dub_ai import (  # noqa: E402  (prompt + LLM cores shared with local-render API)
     DUB_EDIT_SYSTEM as _DUB_EDIT_SYSTEM_IMPORTED,
-    DUB_EDIT_SYSTEM_VIDEO,
-    DUB_EDIT_SYSTEM_VIDEO_NO_VO,
     DUB_TIMELINE_SYSTEM as _DUB_TIMELINE_SYSTEM_IMPORTED,
     generate_dub_edit_script,
     generate_dub_edit_script_video,
     generate_dub_reedit_script_video,
     plan_dub_timeline_cuts,
+    select_video_edit_prompts,
 )
 
 _DUB_EDIT_SYSTEM = _DUB_EDIT_SYSTEM_IMPORTED
@@ -1556,6 +1555,10 @@ async def analyze_dub_video_local(
                 result={"step": "analyze", "message": "กำลัง match script กับซีนวิดีโอ…", "thinking": excerpt},
             )
 
+        # DUB_PROMPT_VERSION picks the prompt generation (v2 spans/ranking by
+        # default; v1 = the frozen pre-2026-08-15 set). System + default prose
+        # travel as a pair — see select_video_edit_prompts.
+        edit_system, edit_default_prose = select_video_edit_prompts(proj.mode == "highlight")
         edit_script = await generate_dub_edit_script_video(
             clip_videos,
             brief=proj.brief or "",
@@ -1563,8 +1566,9 @@ async def analyze_dub_video_local(
             target_duration_sec=getattr(proj, "target_duration_sec", None),
             project_uid=project_uid,
             music_beats=proj.music_beats,
-            system=DUB_EDIT_SYSTEM_VIDEO_NO_VO if proj.mode == "highlight" else DUB_EDIT_SYSTEM_VIDEO,
+            system=edit_system,
             style_prompt=style_prompt,
+            default_cut_style_prose=edit_default_prose,
             on_thinking=_push_thinking,
         )
 

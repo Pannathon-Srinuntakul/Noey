@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
-import { FolderOpen, LogOut, Trash2 } from 'lucide-react'
+import { FolderOpen, LogOut } from 'lucide-react'
 import type { Session } from '../App'
 import type { StorageReport } from '../../../preload'
 import { ApiError, getUsage, restoreSession, type Usage } from '../lib/api'
-import { useConfirm } from '../lib/confirm'
 import { usePrefs } from '../lib/prefs'
+import { isBusy } from '../lib/projectFlow'
 import { useToast } from '../lib/toast'
 import { DUB_DURATION_CHIPS } from '../lib/dubBrief'
 import { UI_MODE_LABEL, type UiMode } from '../lib/wizardState'
@@ -254,8 +254,10 @@ function useProjectCounts(): { projects: { done: number; running: number; error:
       if (cancelled) return
       setCounts({
         done: list.filter((p) => p.step === 'done').length,
-        running: list.filter((p) => !['done', 'error', 'imported', 'waiting_vo'].includes(p.step))
-          .length,
+        // `isBusy` rather than a hand-written exclusion list: the two agreed on
+        // all twelve steps, which is exactly the kind of duplicate that drifts
+        // the next time a step is added.
+        running: list.filter((p) => isBusy(p.step)).length,
         error: list.filter((p) => p.step === 'error').length
       })
     })
@@ -268,18 +270,18 @@ function useProjectCounts(): { projects: { done: number; running: number; error:
 
 // ── tab: storage ─────────────────────────────────────────────────────────────
 
-const RETENTION_CHOICES: { value: number; label: string }[] = [
-  { value: 0, label: 'ไม่ลบ' },
-  { value: 7, label: '7 วัน' },
-  { value: 14, label: '14 วัน' },
-  { value: 30, label: '30 วัน' },
-  { value: 90, label: '90 วัน' }
-]
-
+/**
+ * Disk usage and where the library lives — reporting only.
+ *
+ * The "ล้างไฟล์ต้นฉบับเก่า" button and the auto-delete-after-N-days setting were
+ * removed on 2026-08-15. Deleting `normalized/` made a project permanently
+ * read-only — every re-edit entry point in the sidecar (timeline_render,
+ * ai_reedit, dub, audio) globs `normalized/norm_*.*` and raises "no normalized
+ * clips — run ingest first" — and the retention sweep did it silently at
+ * startup. Reporting the size is honest; freeing it that way was not.
+ */
 function StorageTab(): React.JSX.Element {
-  const { prefs, update } = usePrefs()
   const { showToast } = useToast()
-  const confirm = useConfirm()
   const [report, setReport] = useState<StorageReport | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -296,36 +298,6 @@ function StorageTab(): React.JSX.Element {
       cancelled = true
     }
   }, [])
-
-  const purge = async (): Promise<void> => {
-    if (!report) return
-    const ok = await confirm({
-      title: 'ล้างไฟล์ต้นฉบับเก่า?',
-      body: (
-        <>
-          <p>
-            จะลบคลิปต้นฉบับที่ระบบคัดลอกไว้ของงานที่เสร็จแล้ว {report.reclaimableProjects} งาน คืน
-            พื้นที่ราว {fmtGB(report.reclaimableBytes)}
-          </p>
-          <p className="mt-2 text-muted">
-            วิดีโอที่ตัดเสร็จ ซับ และไฟล์โปรเจกต์ยังอยู่ครบ — ที่หายคือไฟล์ตั้งต้นที่ใช้ตอนตัด
-            ถ้าจะแก้งานเดิมใหม่ต้องนำคลิปเข้ามาอีกครั้ง
-          </p>
-        </>
-      ),
-      confirmLabel: 'ล้างเลย',
-      destructive: true
-    })
-    if (!ok) return
-    setBusy(true)
-    try {
-      const result = await window.noey.storage.purgeSources()
-      showToast({ text: `คืนพื้นที่ ${fmtGB(result.freedBytes)} จาก ${result.projects} งาน` })
-      await reload()
-    } finally {
-      setBusy(false)
-    }
-  }
 
   const move = async (): Promise<void> => {
     setBusy(true)
@@ -344,60 +316,21 @@ function StorageTab(): React.JSX.Element {
   }
 
   return (
-    <div className="flex flex-col gap-4">
-      <Section title="โฟลเดอร์เก็บงาน">
-        <p className="break-all text-sm text-ink-2" style={{ userSelect: 'text' }}>
-          {report?.root ?? '—'}
-        </p>
-        <p className="mt-1.5 text-sm tabular-nums text-muted">
-          {report
-            ? `${report.projectCount} โปรเจกต์ · ใช้พื้นที่ ${fmtGB(report.totalBytes)} · ไฟล์ต้นฉบับของงานที่เสร็จแล้ว ${fmtGB(report.reclaimableBytes)}`
-            : 'กำลังอ่านขนาดโฟลเดอร์…'}
-        </p>
-        <div className="mt-3.5 flex items-center gap-3">
-          <Button icon={<FolderOpen size={16} />} loading={busy} onClick={() => void move()}>
-            เปลี่ยนที่เก็บ
-          </Button>
-          {report && report.reclaimableBytes > 0 ? (
-            <Button
-              variant="danger"
-              icon={<Trash2 size={16} />}
-              loading={busy}
-              onClick={() => void purge()}
-            >
-              ล้างไฟล์ต้นฉบับเก่า
-            </Button>
-          ) : (
-            <Button
-              variant="danger"
-              icon={<Trash2 size={16} />}
-              disabled
-              disabledReason="ยังไม่มีไฟล์ต้นฉบับที่ล้างได้"
-            >
-              ล้างไฟล์ต้นฉบับเก่า
-            </Button>
-          )}
-        </div>
-      </Section>
-
-      <Section
-        title="ลบไฟล์ต้นฉบับอัตโนมัติ"
-        hint="หลังงานเสร็จแล้วเก็บคลิปต้นฉบับไว้อีกกี่วัน — คลิปที่ตัดเสร็จไม่ถูกลบ · ทำงานตอนเปิดแอป"
-      >
-        <div className="flex flex-wrap gap-2">
-          {RETENTION_CHOICES.map((c) => (
-            <Chip
-              key={c.value}
-              dense
-              selected={prefs?.autoDeleteSourcesDays === c.value}
-              onClick={() => void update({ autoDeleteSourcesDays: c.value })}
-            >
-              {c.label}
-            </Chip>
-          ))}
-        </div>
-      </Section>
-    </div>
+    <Section title="โฟลเดอร์เก็บงาน">
+      <p className="break-all text-sm text-ink-2" style={{ userSelect: 'text' }}>
+        {report?.root ?? '—'}
+      </p>
+      <p className="mt-1.5 text-sm tabular-nums text-muted">
+        {report
+          ? `${report.projectCount} โปรเจกต์ · ใช้พื้นที่ ${fmtGB(report.totalBytes)}`
+          : 'กำลังอ่านขนาดโฟลเดอร์…'}
+      </p>
+      <div className="mt-3.5 flex items-center gap-3">
+        <Button icon={<FolderOpen size={16} />} loading={busy} onClick={() => void move()}>
+          เปลี่ยนที่เก็บ
+        </Button>
+      </div>
+    </Section>
   )
 }
 

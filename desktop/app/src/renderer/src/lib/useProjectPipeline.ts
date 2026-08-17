@@ -58,6 +58,24 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
 }
 
 /**
+ * The brief actually sent to the AI: the one saved at creation, plus every
+ * recut comment as one appended block.
+ *
+ * Composed per run rather than written back to `project.brief`, so round five
+ * carries each comment once instead of five stacked copies of the earlier
+ * ones. Oldest first — the model reads them as a running list of corrections,
+ * and the newest is the one it has not tried yet.
+ */
+export function briefWithRecutNotes(project: LocalProject): string {
+  const base = (project.brief ?? '').trim()
+  const notes = project.recutNotes ?? []
+  if (notes.length === 0) return base
+  const lines = notes.map((n) => `- ${n.text}`).join('\n')
+  const block = `สิ่งที่ผู้ใช้ขอให้แก้เพิ่ม (เรียงจากรอบเก่าไปใหม่):\n${lines}`
+  return base ? `${base}\n\n${block}` : block
+}
+
+/**
  * One project's full render pipeline (analyze → silent render → voiceover →
  * final render, or talking_head's extract-audio → transcribe → render), as a
  * hook so each project card in the grid can run its own instance
@@ -97,6 +115,10 @@ export interface ProjectPipeline {
   updateMusic: (patch: Partial<NonNullable<LocalProject['music']>>) => Promise<void>
   removeMusic: () => Promise<void>
   retry: () => Promise<void>
+  /** Re-run the cut with the same settings plus a comment on what to change. */
+  recut: (text: string) => Promise<void>
+  /** Put the render kept before the last recut back, discarding the new one. */
+  revertRecut: () => Promise<void>
   stop: () => Promise<void>
   stopping: boolean
   openEditor: () => void
@@ -412,7 +434,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     )
     const projectDir = await window.noey.projects.dir(project.uid)
     const unsub = window.noey.sidecar.mixMusic.onProgress((evt: SidecarEvent) => {
-      setProgressMsg(evt.stage === 'music' ? 'กำลังใส่เพลงประกอบ…' : 'กำลังอัพเดต bundle…')
+      setProgressMsg(evt.stage === 'music' ? 'กำลังใส่เพลงประกอบ…' : 'กำลังอัพเดตไฟล์ทั้งชุด…')
       void window.noey.log.write('useProjectPipeline', `mixMusic progress: ${JSON.stringify(evt)}`)
     }, projectDir)
     try {
@@ -576,7 +598,8 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
         remoteUid,
         project.uid,
         proxies,
-        current.cutStyleUid
+        current.cutStyleUid,
+        briefWithRecutNotes(current)
       )
       await patchProject({ remote: { uid: remoteUid, jobId: job_id } })
 
@@ -727,7 +750,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
               : evt.stage === 'captions'
                 ? 'กำลังใส่คำบรรยาย…'
                 : evt.stage === 'bundle'
-                  ? 'กำลังสร้าง bundle…'
+                  ? 'กำลังรวมไฟล์ทั้งชุด…'
                   : `กำลังทำ (${String(evt.stage)})…`
       setProgressMsg(msg)
       void window.noey.log.write(
@@ -786,7 +809,26 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
    * disk — whichever way it got there. The recorder screen assembles takes
    * into one WAV and calls this; `runFinal` picks a file and calls this.
    */
+  /**
+   * The optional voiceover render, started from VoiceoverPage.
+   *
+   * Claims `pipelineRef` the way `retry()` does. Without it the busy effect
+   * saw no live pipeline at step='planning', called ensurePipeline →
+   * bootstrapPipeline, and `resumeStep('planning')` patched the step back to
+   * 'waiting_vo' mid-render. That already bounced the user off the progress
+   * screen; with waiting_vo terminal it would also fire a false "เสร็จแล้ว"
+   * toast and OS notification.
+   */
   const runFinalWithAudio = async (voiceoverPath: string): Promise<void> => {
+    if (pipelineRef.current) return
+    const run = runFinalWithAudioInner(voiceoverPath)
+    pipelineRef.current = run.finally(() => {
+      pipelineRef.current = null
+    })
+    await pipelineRef.current
+  }
+
+  const runFinalWithAudioInner = async (voiceoverPath: string): Promise<void> => {
     setError(null)
     markRunStarted()
     try {
@@ -821,7 +863,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
                 : evt.stage === 'captions'
                   ? 'กำลังใส่คำบรรยาย…'
                   : evt.stage === 'bundle'
-                    ? 'กำลังสร้าง bundle…'
+                    ? 'กำลังรวมไฟล์ทั้งชุด…'
                     : `กำลังทำ (${String(evt.stage)})…`
         )
         void window.noey.log.write(
@@ -980,7 +1022,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
           ? `กำลังตัดช่วงที่ ${evt.step}/${evt.total}…`
           : evt.stage === 'concat'
             ? 'กำลังรวมคลิป…'
-            : 'กำลังสร้าง CapCut bundle…'
+            : 'กำลังรวมไฟล์ทั้งชุด…'
       )
     }, projectDir)
     try {
@@ -1184,6 +1226,78 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
       pipelineRef.current = null
     })
     await pipelineRef.current
+  }
+
+  /**
+   * "ให้ AI ตัดใหม่" — run the cut again with the same settings plus a comment
+   * about what to change (HANDOFF R12.4).
+   *
+   * The comment is appended to the brief at RUN time and never written over
+   * `project.brief`: the stored brief has to stay the original, or round five
+   * would carry five stacked copies of every earlier comment.
+   *
+   * Only dub_first/highlight. talking_head cuts to a transcript, not to an
+   * AI's judgement, so there is nothing for a comment to steer — the menu item
+   * is disabled for it rather than failing silently here.
+   */
+  const recut = async (text: string): Promise<void> => {
+    const note = text.trim()
+    if (!note || pipelineRef.current || mode === 'talking_head') return
+    void window.noey.log.write('useProjectPipeline', `recut uid=${project.uid}`)
+    setError(null)
+
+    const run = (async () => {
+      const current = live()
+      const notes = current.recutNotes ?? []
+      const round = (notes.at(-1)?.round ?? 1) + 1
+
+      // Keep this round's output before anything overwrites it. stashRender
+      // replaces whatever was kept before, so the folder holds one spare
+      // version no matter how many rounds are run.
+      const files = await window.noey.projects.stashRender(project.uid)
+      await patchProject({
+        recutNotes: [...notes, { round, text: note, at: new Date().toISOString() }],
+        previousRender: {
+          round: round - 1,
+          at: current.updatedAt,
+          files,
+          editScript: current.editScript,
+          clipDurationsSec: current.clipDurationsSec,
+          timeline: current.timeline,
+          captionLines: current.captionLines
+        },
+        step: 'imported',
+        error: undefined
+      })
+      await runAnalyze()
+    })()
+    pipelineRef.current = run.finally(() => {
+      pipelineRef.current = null
+    })
+    await pipelineRef.current
+  }
+
+  /**
+   * Undo the latest recut: put the kept render back and drop the new one.
+   *
+   * `recutNotes` is deliberately left alone — what the user asked for is still
+   * what they asked for, and the dialog shows that history to build on.
+   */
+  const revertRecut = async (): Promise<void> => {
+    const kept = live().previousRender
+    if (!kept || pipelineRef.current) return
+    void window.noey.log.write('useProjectPipeline', `revertRecut uid=${project.uid}`)
+    await window.noey.projects.restoreRender(project.uid)
+    const restored = await patchProject({
+      previousRender: undefined,
+      editScript: kept.editScript,
+      clipDurationsSec: kept.clipDurationsSec,
+      timeline: kept.timeline,
+      captionLines: kept.captionLines,
+      error: undefined
+    })
+    setEditScript((restored.editScript as unknown as DubEditScript | undefined) ?? null)
+    setMediaKey((k) => k + 1)
   }
 
   /** Draft save: write the edit model to disk + server, render nothing. */
@@ -1432,6 +1546,8 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     updateMusic,
     removeMusic,
     retry,
+    recut,
+    revertRecut,
     stop,
     stopping,
     openEditor

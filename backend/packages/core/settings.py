@@ -75,6 +75,15 @@ class Settings(BaseSettings):
     # Enable ONLY after scripts/probe_gemini_fps.py confirms LiteLLM passes it
     # through to Gemini — PySceneDetect stats carry the rhythm signal regardless.
     cut_style_ref_fps: int = 0
+    # Which ตัดฉากเด่น edit-prompt generation the native-video call uses.
+    # "v2" (2026-08-15): spans bounded by complete action arcs, spans/moments
+    # RANKED rather than merely filtered, state continuity required, and no
+    # duration quota — the ~45s norm is calibration, an explicit user target is
+    # a ceiling. "v1" restores the exact previous prompts (frozen verbatim in
+    # packages/video/dub_ai_v1.py, instruction fragments in dub_ai.py's v1
+    # branches) — rollback is this one env var, no redeploy of code needed
+    # beyond it. Override via DUB_PROMPT_VERSION.
+    dub_prompt_version: str = "v2"
 
     # --- AI-assisted effects layer (camera motion) placement pass ---
     # Watches the already-cut video and places ffmpeg transforms (punch-zoom,

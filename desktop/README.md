@@ -69,11 +69,13 @@ Two modes, picked per project at the import step:
    `GET /jobs/{id}` (live thinking shown) → fetches the edit script.
 3. **Silent render** — sidecar `render-silent` (shared
    `packages/video/dub_render.py` cores) → `final_silent.mp4` + `script.txt`
-   + `dub_bundle.zip`; server status → `waiting_vo`.
-4. **Voiceover** — user records externally, picks the audio file; probe
-   measures duration; `POST /videos/{uid}/plan-dub` (sync LLM) returns the
-   timeline.
-5. **Final render** — sidecar `render-final` (trim/concat + VO mux) →
+   + `dub_bundle.zip`; server status → `waiting_vo`. **A dub run normally ends
+   here** — `waiting_vo` is a finished, usable cut, not a pause inside the
+   pipeline. Steps 4-5 only happen if the user chooses to add a voiceover.
+4. **Voiceover (optional)** — recorded line by line in-app (`VoiceoverPage.tsx`),
+   or an audio file picked from disk; probe measures duration;
+   `POST /videos/{uid}/plan-dub` (sync LLM) returns the timeline.
+5. **Final render (optional)** — sidecar `render-final` (trim/concat + VO mux) →
    `final.mp4`; server status → `done`.
 6. **Manual edit** — TimelineEditor (ported from
    `frontend/src/hud/VideoTimelineEditor.tsx`, IO seam swapped in

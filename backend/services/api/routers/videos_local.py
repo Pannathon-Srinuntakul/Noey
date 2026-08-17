@@ -241,6 +241,7 @@ async def analyze_video(
     files: list[UploadFile] = File(...),
     manifest: str = Form(...),
     style_uid: str = Form(""),
+    brief: str = Form(""),
 ) -> AnalyzeFramesOut:
     """dub_first: receive per-clip proxy MP4s (Gemini native-video path).
 
@@ -250,12 +251,25 @@ async def analyze_video(
     persisted to disk/S3 (a stale style file resurrected by an S3 pull must
     never override the user's current choice; see plan-effects' 2026-07-18
     note).
+
+    ``brief`` — OPTIONAL replacement for the stored brief, for this run and
+    every later one. The desktop "ให้ AI ตัดใหม่" flow sends the original brief
+    with the user's recut comments appended; the brief only reaches the model
+    through the project row (create-time is the only other place it is set), so
+    a re-analyze with no way to update it would silently drop the comments.
+    Empty means "keep what is stored" — never blank an existing brief.
     """
     proj = await _get_local_project(session, uid, auth.user_id)
     if proj.mode not in ("dub_first", "highlight"):
         raise HTTPException(400, "analyze-video ใช้ได้เฉพาะโหมด dub_first / highlight")
     if proj.status not in RESTARTABLE_STATUSES:
         raise HTTPException(400, f"โปรเจกต์นี้ยังทำงานอยู่ (สถานะ {proj.status}) — กดหยุดงานก่อนถ้าจะเริ่มใหม่")
+
+    new_brief = brief.strip()
+    if new_brief and new_brief != (proj.brief or ""):
+        proj.brief = new_brief
+        await session.flush()
+        log.info("analyze_video_brief_updated", uid=uid, chars=len(new_brief))
 
     chosen_style_uid = style_uid.strip()
     if chosen_style_uid:
