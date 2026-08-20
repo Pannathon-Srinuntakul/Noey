@@ -15,7 +15,6 @@ import pytest
 
 import packages.llm.gateway as gw
 from packages.llm.usage import (
-    MODEL_PRICES,
     UsageCtx,
     UsageLimitExceeded,
     _period_start,
@@ -26,7 +25,6 @@ from packages.llm.usage import (
     merge_provider_usage,
     reset_usage_ctx,
     set_usage_ctx,
-    sum_tokens_since,
 )
 
 

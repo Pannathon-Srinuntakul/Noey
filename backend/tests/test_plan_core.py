@@ -125,3 +125,45 @@ def test_plan_talking_local_registered() -> None:
     from services.worker.tasks import WorkerSettings, plan_talking_local
 
     assert plan_talking_local in WorkerSettings.functions
+
+
+@pytest.mark.asyncio
+async def test_waveform_pass_is_opt_in_and_shortens_the_cut(tmp_path, monkeypatch):
+    """ตัดช่วงเงียบ gets the same waveform pass as the highlights mode: word
+    timings hide the pause a trailing word was stretched over, so without it a
+    silence-cutting mode keeps silence. Omitting wav_path must leave the old
+    behaviour untouched — that is what every existing project rendered with."""
+    calls: list[str] = []
+
+    def fake_remove(cuts, wav, *, offset=0.0):
+        calls.append("remove")
+        return [{**c, "out": float(c["out"]) - 0.5} for c in cuts]
+
+    def fake_snap(cuts, wav, *, offset=0.0):
+        calls.append("snap")
+        return cuts
+
+    monkeypatch.setattr("packages.video.audio_edges.remove_internal_silence", fake_remove)
+    monkeypatch.setattr("packages.video.audio_edges.snap_cuts_to_silence", fake_snap)
+
+    segs = [
+        {"start": 0.0, "end": 6.0, "text": "หนึ่ง",
+         "words": [{"word": "หนึ่ง", "start": 0.0, "end": 5.9}]},
+        {"start": 8.0, "end": 14.0, "text": "สอง",
+         "words": [{"word": "สอง", "start": 8.0, "end": 13.9}]},
+    ]
+    common = dict(duration_mode="full", target_duration_sec=None,
+                  clip_durations=[20.0], source_info={"width": 1080, "height": 1920, "fps": 30},
+                  sources=[{"id": "clip0", "file": "normalized/norm_000.mp4"}])
+
+    plain = await plan_core.build_talking_head_timeline(segs, **common)
+    assert calls == [], "no wav_path must mean no waveform work at all"
+
+    wav = tmp_path / "audio_000.wav"
+    wav.write_bytes(b"")
+    withwav = await plan_core.build_talking_head_timeline(segs, wav_path=str(wav), **common)
+    assert calls == ["remove", "snap"], "and in that order: create edges, then verify them"
+
+    kept = lambda tl: sum(float(c["out"]) - float(c["in"]) for c in tl["timeline"])
+    assert kept(withwav) < kept(plain)
+

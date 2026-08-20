@@ -33,7 +33,7 @@ export interface LocalClip {
 export interface LocalProject {
   uid: string
   name: string
-  mode?: 'dub_first' | 'talking_head' | 'highlight'
+  mode?: 'dub_first' | 'talking_head' | 'highlight' | 'speech_highlights' | 'speech_scenes'
   step:
     /** Sources are being copied/transcoded in the background (see the
      * renderer's ProjectStep — this union mirrors it). */
@@ -46,6 +46,7 @@ export interface LocalProject {
     | 'final_rendering'
     | 'extracting_audio'
     | 'transcribing'
+    | 'selecting'
     | 'rendering'
     | 'done'
     | 'error'
@@ -94,6 +95,8 @@ export interface LocalProject {
     // dub scene cuts in TimelineEditor. Absent for tracks uploaded before this.
     beats?: number[]
   }
+  /** speech_highlights (R17): display metadata for the N highlight clips (no embedded timelines). */
+  highlightIndex?: Record<string, unknown>
   timeline?: Record<string, unknown>
   // dub_first only: the edit script the analyze step produced. Persisted so the
   // timeline editor stays available after an app restart — without this it only
@@ -167,6 +170,18 @@ interface LanReceiveSession {
   idleMs: number
 }
 
+/** Phone-remote mode: a switch, not a session — see main/remoteAccess.ts. */
+export interface RemoteStatus {
+  running: boolean
+  port: number | null
+  ips: { name: string; address: string; ssid?: string }[]
+  /** Dead-man window in ms — the UI states this number, never its own copy. */
+  autoStopMs: number
+  /** When a phone last talked to us, and what it was. */
+  lastSeenAt: number
+  lastDevice: string
+}
+
 interface LanReceivedFile {
   fileId: string
   path: string
@@ -237,6 +252,7 @@ const noey = {
     mixMusic: jobCommand('sidecar:mixMusic'),
     extractAudio: jobCommand('sidecar:extractAudio'),
     renderTimeline: jobCommand('sidecar:renderTimeline'),
+    renderHighlights: jobCommand('sidecar:renderHighlights'),
     renderAiPreview: jobCommand('sidecar:renderAiPreview'),
     renderEffects: jobCommand('sidecar:renderEffects'),
     proxyOne: jobCommand('sidecar:proxyOne'),
@@ -250,6 +266,15 @@ const noey = {
     update: (uid: string, patch: Partial<LocalProject>): Promise<LocalProject> =>
       ipcRenderer.invoke('projects:update', uid, patch),
     delete: (uid: string): Promise<void> => ipcRenderer.invoke('projects:delete', uid),
+    /** Something outside the renderer changed the project list — today that is
+     * the phone remote creating a job. Without this the new row sits on disk
+     * until the app restarts, because the job host only knows the list it
+     * loaded at startup. */
+    onChanged: (cb: () => void): ProgressUnsubscribe => {
+      const listener = (): void => cb()
+      ipcRenderer.on('projects:changed', listener)
+      return () => ipcRenderer.removeListener('projects:changed', listener)
+    },
     dir: (uid: string): Promise<string> => ipcRenderer.invoke('projects:dir', uid),
     resolvePath: (uid: string, relPath: string): Promise<string> =>
       ipcRenderer.invoke('projects:resolvePath', uid, relPath),
@@ -353,6 +378,26 @@ const noey = {
       formFiles?: { field: string; path: string; filename?: string }[]
     }): Promise<{ ok: boolean; status: number; bodyText: string }> =>
       ipcRenderer.invoke('api:fetch', job)
+  },
+  remote: {
+    status: (): Promise<RemoteStatus> => ipcRenderer.invoke('remote:status'),
+    start: (): Promise<RemoteStatus> => ipcRenderer.invoke('remote:start'),
+    stop: (): Promise<void> => ipcRenderer.invoke('remote:stop'),
+    /** The full link (key included) for one of this machine's addresses — the
+     * thing the QR encodes. Never rendered anywhere but the owner's screen. */
+    link: (ip: string): Promise<string> => ipcRenderer.invoke('remote:link', ip),
+    /** New key: every saved link on every phone stops working at once. */
+    rotate: (): Promise<RemoteStatus> => ipcRenderer.invoke('remote:rotate'),
+    onStatus: (cb: (s: RemoteStatus) => void): ProgressUnsubscribe => {
+      const listener = (_e: IpcRendererEvent, s: RemoteStatus): void => cb(s)
+      ipcRenderer.on('remote:status', listener)
+      return () => ipcRenderer.removeListener('remote:status', listener)
+    },
+    onStopped: (cb: (e: { reason: 'idle' | 'abuse' }) => void): ProgressUnsubscribe => {
+      const listener = (_e: IpcRendererEvent, x: { reason: 'idle' | 'abuse' }): void => cb(x)
+      ipcRenderer.on('remote:stopped', listener)
+      return () => ipcRenderer.removeListener('remote:stopped', listener)
+    }
   },
   lan: {
     start: (): Promise<LanReceiveSession> => ipcRenderer.invoke('lan:start'),

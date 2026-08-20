@@ -12,7 +12,7 @@ from arq import run_worker
 from arq.connections import RedisSettings
 
 from packages.core.logging import configure_logging
-from packages.core.settings import get_settings, reload_settings
+from packages.core.settings import reload_settings
 from services.worker.tasks import WorkerSettings
 
 

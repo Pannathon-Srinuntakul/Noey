@@ -13,7 +13,7 @@ def test_run_transcription_reports_the_billable_audio_length(monkeypatch) -> Non
     """Scribe returns no price, but it does return what it billed on."""
     from packages.video import elevenlabs_stt as stt
 
-    async def fake_transcribe(wav, keyterms):  # noqa: ANN001, ARG001
+    async def fake_transcribe(wav, keyterms, *, diarize=None):  # noqa: ANN001, ARG001
         # Shape per the official convert-endpoint docs: audio_duration_secs is
         # present, and there is no cost or credit field to read.
         return {"words": [], "text": "", "audio_duration_secs": 12.5}
@@ -33,7 +33,7 @@ def test_run_transcription_reports_the_billable_audio_length(monkeypatch) -> Non
 def test_billable_length_survives_a_reply_without_the_field(monkeypatch) -> None:
     from packages.video import elevenlabs_stt as stt
 
-    async def fake_transcribe(wav, keyterms):  # noqa: ANN001, ARG001
+    async def fake_transcribe(wav, keyterms, *, diarize=None):  # noqa: ANN001, ARG001
         return {"words": [], "text": ""}
 
     monkeypatch.setattr(stt, "transcribe_clip", fake_transcribe)
@@ -119,7 +119,7 @@ def test_run_transcription_reports_the_model_it_used(monkeypatch) -> None:
     from packages.core.settings import get_settings
     from packages.video import elevenlabs_stt as stt
 
-    async def fake_transcribe(wav, keyterms):  # noqa: ANN001, ARG001
+    async def fake_transcribe(wav, keyterms, *, diarize=None):  # noqa: ANN001, ARG001
         return {"words": [], "text": "", "audio_duration_secs": 4.0}
 
     monkeypatch.setattr(stt, "transcribe_clip", fake_transcribe)

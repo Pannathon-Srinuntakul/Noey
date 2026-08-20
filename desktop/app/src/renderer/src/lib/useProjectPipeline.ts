@@ -31,6 +31,42 @@ import {
   type SaveCutPayload
 } from './editorApi'
 import { captionWordsFromLines, dubCaptionLines, groupWordsIntoLines } from './captionLines'
+
+/** talking_head + the R17 speech modes all run the audio chain
+ * (extract → transcribe → render locally); everything else runs the
+ * video-analysis chain. */
+function isSpeechMode(mode: string | undefined): boolean {
+  return mode === 'talking_head' || mode === 'speech_scenes' || mode === 'speech_highlights'
+}
+
+/** The speech_highlights plan: N mini-timelines plus display metadata, embedded
+ * in one index so the desktop needs no per-highlight endpoint (R17.3). */
+export interface HighlightIndexItem {
+  id: string
+  title: string
+  why: string
+  score: number
+  srcIn: number
+  srcOut: number
+  durationSec: number
+  speakers: string[]
+  video: string
+  srt: string
+  timeline?: Record<string, unknown>
+}
+
+export interface HighlightIndex {
+  mode: 'speech_highlights'
+  count: number
+  items: HighlightIndexItem[]
+}
+
+/** What the project row keeps: the metadata WITHOUT the embedded timelines —
+ * they are render input, not display state, and a 2 h source makes each one
+ * big enough to bloat every project.json write. */
+export function stripIndexTimelines(index: HighlightIndex): HighlightIndex {
+  return { ...index, items: index.items.map(({ timeline: _t, ...rest }) => ({ ...rest })) }
+}
 import { dubScenesFor, timelineScenesFor } from './dubScenes'
 import type { CaptionStyle } from './captionStyle'
 import { pickFile } from './pickFile'
@@ -938,25 +974,33 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     await runFinalWithAudio(picked.path)
   }
 
-  // ── stage: talking_head (extract audio → server transcribe+plan → local render) ──
+  // ── stage: speech chain (extract audio → server transcribe(+select) → local render) ──
+  // talking_head and the two R17 speech modes share this shape end to end; the
+  // only forks are the mode sent to the server, the step shown while the LLM
+  // picks, and which renderer runs at the end.
   const runTalkingHead = async (): Promise<void> => {
     setError(null)
     setThinking('')
     markRunStarted()
     const runToken = beginRun()
-    void window.noey.log.write('useProjectPipeline', `runTalkingHead start token=${runToken}`)
+    const speechMode = (projectRef.current.mode ?? 'talking_head') as
+      'talking_head' | 'speech_scenes' | 'speech_highlights'
+    void window.noey.log.write(
+      'useProjectPipeline',
+      `runTalkingHead start token=${runToken} mode=${speechMode}`
+    )
     setProgressMsg('กำลังเตรียมถอดเสียง…')
     try {
       let current = await patchProject({
         step: 'extracting_audio',
-        mode: 'talking_head',
+        mode: speechMode,
         error: undefined
       })
 
       let remoteUid = current.remote?.uid
       if (!remoteUid) {
         const created = await createLocalProject(session, {
-          mode: 'talking_head',
+          mode: speechMode,
           brief: current.brief || null,
           target_duration_sec: current.targetDurationSec ?? null,
           clips: current.clips.map((c) => ({
@@ -986,14 +1030,17 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
       }
       if (isStale(runToken)) return
 
-      // No proxy encode here: the cut is decided from Scribe's word timings, so
-      // talking_head never sends video off the machine — only the speech WAVs.
+      // No proxy encode here: every mode on this chain decides its cut from
+      // Scribe's word timings, so no video leaves the machine — only WAVs.
       await patchProject({ step: 'transcribing' })
       setProgressMsg('กำลังอัพโหลดไฟล์เสียง…')
-      const { job_id } = await uploadAudio(session, remoteUid, project.uid, wavs)
+      const { job_id } = await uploadAudio(session, remoteUid, project.uid, wavs, {
+        styleUid: speechMode === 'speech_scenes' ? projectRef.current.cutStyleUid : undefined
+      })
       await patchProject({ remote: { uid: remoteUid, jobId: job_id } })
 
       abortRef.current = new AbortController()
+      let selecting = false
       await pollJob(
         session,
         job_id,
@@ -1002,15 +1049,53 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
           setProgressMsg(String(result.message ?? 'กำลังถอดเสียง…'))
           if (typeof result.thinking === 'string') setThinking(result.thinking)
           else setThinking('')
+          // The worker flips its stage to "select" once transcription lands —
+          // surface that as the `selecting` step so the pips advance (R17.9).
+          if (
+            speechMode !== 'talking_head' &&
+            !selecting &&
+            String(result.step ?? '') === 'select'
+          ) {
+            selecting = true
+            void patchProject({ step: 'selecting' })
+          }
         },
         { signal: abortRef.current.signal }
       )
 
       const timeline = await getLocalTimeline(session, remoteUid)
-      await runRenderTimeline(timeline, remoteUid)
+      if (speechMode === 'speech_highlights') {
+        await runRenderHighlights(timeline as unknown as HighlightIndex, remoteUid)
+      } else {
+        await runRenderTimeline(timeline, remoteUid)
+      }
     } catch (exc) {
       await handlePipelineError(exc)
     }
+  }
+
+  const runRenderHighlights = async (index: HighlightIndex, remoteUid: string): Promise<void> => {
+    await patchProject({
+      step: 'rendering',
+      highlightIndex: stripIndexTimelines(index) as unknown as Record<string, unknown>
+    })
+    const projectDir = await window.noey.projects.dir(project.uid)
+    const unsub = window.noey.sidecar.renderHighlights.onProgress((evt: SidecarEvent) => {
+      if (evt.stage === 'highlight') {
+        setProgressMsg(
+          `กำลังตัดไฮไลต์ ${evt.step}/${evt.total}${evt.message ? ` · ${evt.message}` : ''}…`
+        )
+      }
+    }, projectDir)
+    try {
+      await window.noey.sidecar.renderHighlights.run({ projectDir, index })
+    } finally {
+      unsub()
+    }
+    await patchLocalStatus(session, remoteUid, 'done')
+    await patchProject({ step: 'done', lastRunSeconds: runSeconds() })
+    setMediaKey((k) => k + 1)
+    setProgressMsg('')
   }
 
   const runRenderTimeline = async (timeline: DubTimeline, remoteUid: string): Promise<void> => {
@@ -1070,6 +1155,9 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
         const script = await getEditScript(session, remoteUid)
         applyEditScript(script)
         await runRenderSilent(script, remoteUid)
+      } else if (projectRef.current.mode === 'speech_highlights') {
+        const index = await getLocalTimeline(session, remoteUid)
+        await runRenderHighlights(index as unknown as HighlightIndex, remoteUid)
       } else {
         const timeline = await getLocalTimeline(session, remoteUid)
         await runRenderTimeline(timeline, remoteUid)
@@ -1100,7 +1188,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
       // Stopped while the sources were being copied/transcoded — do not walk
       // on into the AI stage.
       if (isStale(importToken)) return
-      if (currentMode === 'talking_head') await runTalkingHead()
+      if (isSpeechMode(currentMode)) await runTalkingHead()
       else await runAnalyze()
       return
     }
@@ -1110,14 +1198,20 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
 
     // Brand-new project: no remote row yet → start once.
     if (currentStep === 'imported') {
-      if (currentMode === 'talking_head') await runTalkingHead()
+      if (isSpeechMode(currentMode)) await runTalkingHead()
       else await runAnalyze()
       return
     }
 
     // Remount / HMR while server job still running → resume poll or restart.
-    if (currentStep === 'analyzing' || currentStep === 'transcribing') {
-      await resumeFromJobPoll(currentStep)
+    // `selecting` (R17) is the same server job later in its life, so it
+    // resumes through the same poll.
+    if (
+      currentStep === 'analyzing' ||
+      currentStep === 'transcribing' ||
+      currentStep === 'selecting'
+    ) {
+      await resumeFromJobPoll(currentStep === 'analyzing' ? 'analyzing' : 'transcribing')
       return
     }
 
@@ -1136,6 +1230,15 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
 
     if (currentStep === 'rendering' && current.remote?.uid) {
       const remoteUid = current.remote.uid
+      if (currentMode === 'speech_highlights') {
+        // The stored index has its render timelines stripped; the server copy
+        // is the render input, so a resume re-fetches it whole.
+        setProgressMsg('กำลังโหลดแผนไฮไลต์…')
+        const index = await getLocalTimeline(session, remoteUid).catch(() => null)
+        if (index) await runRenderHighlights(index as unknown as HighlightIndex, remoteUid)
+        else await fail(new Error('ไม่พบแผนไฮไลต์บนเซิร์ฟเวอร์ — ลองถอดเสียงใหม่'))
+        return
+      }
       setProgressMsg('กำลังโหลด timeline…')
       const timeline =
         (current.timeline as DubTimeline | undefined) ??
@@ -1149,7 +1252,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     if (checkpoint === currentStep) return
     await patchProject({ step: checkpoint })
     if (checkpoint === 'imported' && !current.remote?.uid) {
-      if (currentMode === 'talking_head') await runTalkingHead()
+      if (isSpeechMode(currentMode)) await runTalkingHead()
       else await runAnalyze()
     }
   }
@@ -1219,7 +1322,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     setError(null)
     const run = (async () => {
       await patchProject({ step: 'imported', error: undefined })
-      if (mode === 'talking_head') await runTalkingHead()
+      if (isSpeechMode(mode)) await runTalkingHead()
       else await runAnalyze()
     })()
     pipelineRef.current = run.finally(() => {

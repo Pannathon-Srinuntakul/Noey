@@ -6,8 +6,8 @@ import { ApiError, getUsage, restoreSession, type Usage } from '../lib/api'
 import { usePrefs } from '../lib/prefs'
 import { isBusy } from '../lib/projectFlow'
 import { useToast } from '../lib/toast'
-import { DUB_DURATION_CHIPS } from '../lib/dubBrief'
-import { UI_MODE_LABEL, type UiMode } from '../lib/wizardState'
+import { DUB_DURATION_AUTO, DUB_DURATION_FIXED } from '../lib/dubBrief'
+import { UI_MODE_LABEL } from '../lib/wizardState'
 import { Bar, TaskBreakdown } from '../components/settings/TaskBreakdown'
 import { PageHeader } from '../components/shell/PageHeader'
 import { Button } from '../components/ui/Button'
@@ -15,6 +15,14 @@ import { Chip } from '../components/ui/Chip'
 import { Skeleton } from '../components/ui/Skeleton'
 import { Switch } from '../components/ui/Switch'
 import { Tabs } from '../components/ui/Tabs'
+
+/** A default can only be a value this page can store on its own: "กำหนดเอง"
+ * needs a number typed next to it and "ตามความยาวเพลง" needs a music file, and
+ * neither exists here. */
+const DEFAULT_DURATION_CHOICES = [
+  ...DUB_DURATION_FIXED.filter((c) => c.value !== 'custom'),
+  ...DUB_DURATION_AUTO.filter((c) => c.value !== 'music')
+]
 
 type TabKey = 'usage' | 'storage' | 'defaults' | 'account'
 
@@ -338,7 +346,9 @@ function StorageTab(): React.JSX.Element {
 
 function DefaultsTab(): React.JSX.Element {
   const { prefs, update } = usePrefs()
-  const modes: UiMode[] = ['silence', 'highlight']
+  // Only the modes prefs can store (main/prefs.ts keeps the union narrow) —
+  // longform starting as the wizard default is not an R17 decision.
+  const modes: ('silence' | 'highlight')[] = ['silence', 'highlight']
 
   return (
     <div className="flex flex-col gap-4">
@@ -359,18 +369,16 @@ function DefaultsTab(): React.JSX.Element {
 
       <Section title="ความยาวที่ใช้บ่อย" hint="ใช้เฉพาะโหมดตัดฉากเด่น">
         <div className="flex flex-wrap gap-2">
-          {DUB_DURATION_CHIPS.filter((c) => c.value !== 'music' && c.value !== 'custom').map(
-            (c) => (
-              <Chip
-                key={c.value}
-                dense
-                selected={prefs?.defaultDuration === c.value}
-                onClick={() => void update({ defaultDuration: c.value })}
-              >
-                {c.label}
-              </Chip>
-            )
-          )}
+          {DEFAULT_DURATION_CHOICES.map((c) => (
+            <Chip
+              key={c.value}
+              dense
+              selected={prefs?.defaultDuration === c.value}
+              onClick={() => void update({ defaultDuration: c.value })}
+            >
+              {c.label}
+            </Chip>
+          ))}
         </div>
       </Section>
 

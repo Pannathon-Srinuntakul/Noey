@@ -20,6 +20,7 @@ from sidecar.bootstrap import ensure_backend_on_path
 ensure_backend_on_path()
 
 from packages.video.ffmpeg_bin import (  # noqa: E402
+    add_silent_audio_track,
     has_audio_stream,
     is_browser_safe_video_codec,
     media_duration,
@@ -100,6 +101,17 @@ def run_ingest(job: IngestJob, emit) -> dict[str, Any]:
             })
             transcode_to_h264(dest, dest)
             info = video_stream_info(dest)
+
+        # A clip with no audio track (screen recording, mic off) breaks every
+        # later stage that assumes [0:a] exists — trim_media's audio branch and
+        # stream-copy concat both die on it. Repair once here so the rest of
+        # the pipeline never has to special-case it (R17.6).
+        if not has_audio_stream(dest):
+            emit({
+                "event": "progress", "stage": "ingest", "step": i + 1, "total": total,
+                "message": f"เพิ่มแทร็กเสียงเงียบ ({src.name})…",
+            })
+            add_silent_audio_track(dest)
 
         clip = {
             "id": f"clip{i}",

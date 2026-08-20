@@ -209,6 +209,7 @@ export function registerSidecarIpc(): void {
     ['sidecar:mixMusic', 'mix-music'],
     ['sidecar:extractAudio', 'extract-audio'],
     ['sidecar:renderTimeline', 'render-timeline'],
+    ['sidecar:renderHighlights', 'render-highlights'],
     ['sidecar:renderAiPreview', 'render-ai-preview'],
     ['sidecar:renderEffects', 'render-effects'],
     ['sidecar:proxyOne', 'proxy-one']

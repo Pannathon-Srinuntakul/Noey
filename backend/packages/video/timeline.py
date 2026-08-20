@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import dataclass
 from typing import Any
 
 # Merge consecutive Whisper segments with gap ≤ this into one cut.
@@ -305,10 +306,12 @@ def _snap_to_words(
     is_opening: bool,
     is_conclusion: bool,
     join_cut: bool = False,
+    profile: CutProfile | None = None,
 ) -> tuple[float, float]:
     """Snap cut edges to spoken-word boundaries with editor-style padding."""
     if not words:
         return start, end
+    p = profile or DEFAULT_PROFILE
 
     overlapping = [(ws, we) for ws, we in words if we > start and ws < end]
     if not overlapping:
@@ -319,22 +322,26 @@ def _snap_to_words(
     first_w = min(ws for ws, _ in overlapping)
     last_w = max(we for _, we in overlapping)
     if is_opening:
-        lead = OPENING_LEAD_IN
+        lead = p.opening_lead_in
     elif join_cut:
-        lead = JOIN_LEAD_IN
+        lead = p.join_lead_in
     else:
-        lead = WORD_LEAD_IN
+        lead = p.word_lead_in
     if is_conclusion:
-        tail = CONCLUSION_TAIL
+        tail = p.conclusion_tail
     elif join_cut:
-        tail = JOIN_TAIL
+        tail = p.join_tail
     else:
-        tail = WORD_TAIL
+        tail = p.word_tail
 
     head_anchor = min(start, first_w)
     # Whisper often places the first grapheme late — pull head back if words start
     # just before the segment boundary.
-    early = [(ws, we) for ws, we in words if ws >= start - HEAD_LOOKBACK_SEC and ws < start + 0.05]
+    early = (
+        [(ws, we) for ws, we in words if ws >= start - p.head_lookback_sec and ws < start + 0.05]
+        if p.head_lookback_sec
+        else []
+    )
     if early:
         head_anchor = min(head_anchor, min(ws for ws, _ in early))
 
@@ -347,12 +354,93 @@ def _snap_to_words(
     return max(0.0, head_anchor - lead), tail_anchor + tail
 
 
+@dataclass(frozen=True)
+class CutProfile:
+    """The padding/merge numbers the silence cut runs with.
+
+    The module constants are the WHISPER-ERA defaults: their own comments say so
+    ("phonemes Whisper placed just before segment.start", "Whisper timing
+    glitches", the grapheme-gap inflation SEGMENT_MERGE_GAP exists to undo).
+    They stay the default so ``talking_head`` and the dub keep behaving exactly
+    as they were verified to behave.
+
+    ``SPEECH_PROFILE`` is what those numbers become once the recognizer is
+    accurate. Measured on a 179 s podcast highlight (31 real gaps, 23.8 s of
+    silence, 13.3% of the window):
+
+        defaults                          removed  0.0 s
+        tight pads only                   removed  1.5 s
+        tight pads + merge 0.3            removed 11.3 s
+
+    The pads were never the blocker. ``SEGMENT_MERGE_GAP`` (2.5 s) is: it is a
+    SECOND merge decision, looser than the first one, so resnap re-absorbed
+    every gap ``build_speech_cuts`` had just split on. Two thresholds deciding
+    the same thing, and the looser one always wins.
+    """
+
+    word_lead_in: float = WORD_LEAD_IN
+    opening_lead_in: float = OPENING_LEAD_IN
+    join_lead_in: float = JOIN_LEAD_IN
+    word_tail: float = WORD_TAIL
+    join_tail: float = JOIN_TAIL
+    conclusion_tail: float = CONCLUSION_TAIL
+    head_lookback_sec: float = HEAD_LOOKBACK_SEC
+    segment_merge_gap: float = SEGMENT_MERGE_GAP
+
+    def __post_init__(self) -> None:
+        # The invariant the constants carry in a comment, enforced instead:
+        # resnap's re-absorb window must clear the pad it will then add, or a
+        # cut can be extended past the neighbour it was just separated from.
+        widest = max(self.join_lead_in + self.join_tail, self.word_lead_in + self.word_tail)
+        if self.segment_merge_gap and self.segment_merge_gap < widest:
+            raise ValueError(
+                f"segment_merge_gap {self.segment_merge_gap} must clear "
+                f"lead+tail {widest}"
+            )
+
+
+DEFAULT_PROFILE = CutProfile()
+
+#: Speech modes (speech_highlights / speech_scenes). Pads sized for Thai
+#: acoustics — an onset needs ~0.1 s, a tone tail ~0.15 s — not for a recognizer
+#: that misplaced its own timestamps. merge 0.3 is the floor the invariant
+#: allows (0.10 + 0.15 = 0.25) and measured identical to disabling re-absorb
+#: entirely, so nothing is gained by going lower.
+#: Pass 1 of the speech chain (block detection) adds no padding at all: it only
+#: decides WHERE the blocks are. Without this the edges get padded twice — once
+#: by build_speech_cuts and again by resnap over the already-padded edge — which
+#: silently halves what the silence cut removes (0.66 s instead of 1.35 s on a
+#: 3-gap fixture).
+SPEECH_BLOCK_PROFILE = CutProfile(
+    word_lead_in=0.0,
+    opening_lead_in=0.0,
+    join_lead_in=0.0,
+    word_tail=0.0,
+    join_tail=0.0,
+    conclusion_tail=0.0,
+    head_lookback_sec=0.0,
+    segment_merge_gap=0.3,
+)
+
+SPEECH_PROFILE = CutProfile(
+    word_lead_in=0.08,
+    opening_lead_in=0.15,
+    join_lead_in=0.10,
+    word_tail=0.15,
+    join_tail=0.15,
+    conclusion_tail=0.30,
+    head_lookback_sec=0.0,
+    segment_merge_gap=0.3,
+)
+
+
 def build_speech_cuts(
     segments: list[dict[str, Any]],
     *,
     source_id: str = "clip0",
     gap_threshold: float = SEGMENT_MERGE_GAP,
     source_duration: float | None = None,
+    profile: CutProfile | None = None,
 ) -> list[dict[str, Any]]:
     """Build keep-ranges from transcript segment boundaries.
 
@@ -390,6 +478,7 @@ def build_speech_cuts(
         is_conclusion = i == last_idx
         cut_in, cut_out = _snap_to_words(
             start, end, all_words, is_opening=is_opening, is_conclusion=is_conclusion,
+            profile=profile,
         )
         if source_duration is not None:
             cut_out = min(cut_out, source_duration)
@@ -450,6 +539,7 @@ def resnap_selected_cuts(
     segments: list[dict[str, Any]],
     *,
     source_duration: float | None = None,
+    profile: CutProfile | None = None,
 ) -> list[dict[str, Any]]:
     """Re-snap each kept block after editorial selection with join-aware padding.
 
@@ -458,6 +548,7 @@ def resnap_selected_cuts(
     """
     if not cuts:
         return cuts
+    p = profile or DEFAULT_PROFILE
 
     words = _collect_words(segments, exclude_fillers=True)
     valid = sorted(
@@ -493,7 +584,7 @@ def resnap_selected_cuts(
             # Look BACKWARD: previous segment close enough → extend head
             if fi > 0:
                 prev = valid[fi - 1]
-                if float(first["start"]) - float(prev["end"]) <= SEGMENT_MERGE_GAP:
+                if float(first["start"]) - float(prev["end"]) <= p.segment_merge_gap:
                     seg_start = min(seg_start, float(prev["start"]))
                     seg_end = max(seg_end, float(prev["end"]))
             # Look FORWARD: next segment(s) within SEGMENT_MERGE_GAP → extend tail.
@@ -510,7 +601,7 @@ def resnap_selected_cuts(
                 while nxt_i < len(valid):
                     nxt = valid[nxt_i]
                     nxt_start = float(nxt["start"])
-                    if nxt_start - seg_end > SEGMENT_MERGE_GAP:
+                    if nxt_start - seg_end > p.segment_merge_gap:
                         break
                     # Only absorb into tail if the next kept cut does NOT claim this segment
                     next_cut_in = float(ordered[i + 1]["in"]) if i + 1 < len(ordered) else float("inf")
@@ -532,6 +623,7 @@ def resnap_selected_cuts(
             is_opening=(i == 0),
             is_conclusion=(i == len(ordered) - 1),
             join_cut=(i > 0),
+            profile=p,
         )
         if source_duration is not None:
             new_out = min(new_out, source_duration)

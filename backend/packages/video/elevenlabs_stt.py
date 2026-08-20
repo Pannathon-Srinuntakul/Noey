@@ -154,11 +154,24 @@ def build_stt_fields(
 async def transcribe_clip(
     wav_path: pathlib.Path,
     keyterms: list[str] | None = None,
+    *,
+    diarize: bool | None = None,
+    no_verbatim: bool | None = None,
 ) -> dict[str, Any]:
     """POST one WAV to Scribe and return the parsed response body.
 
     ``keyterms`` biases the model towards project-specific product/brand names.
     They carry a per-request surcharge, so they are only sent when supplied.
+
+    ``no_verbatim`` — per-CALL override. The pipeline asks Scribe to clean the
+    transcript, which is right for subtitles and wrong for the disfluency pass:
+    cleaned words come back with no timestamps at all, so there is nothing to
+    cut. That pass asks for verbatim.
+
+    ``diarize`` — per-CALL override of ``settings.elevenlabs_diarize``. The
+    speech modes (R17) need speaker labels; ตัดช่วงเงียบ does not, and turning
+    it on globally would bill every mode for a field one uses. ``None`` keeps
+    the settings value.
 
     Raises ElevenLabsSTTError on a non-retryable failure or exhausted retries.
     """
@@ -181,9 +194,9 @@ async def transcribe_clip(
         model_id=s.elevenlabs_stt_model,
         language=s.elevenlabs_language,
         granularity=s.elevenlabs_timestamps_granularity,
-        no_verbatim=s.elevenlabs_no_verbatim,
+        no_verbatim=s.elevenlabs_no_verbatim if no_verbatim is None else no_verbatim,
         tag_audio_events=s.elevenlabs_tag_audio_events,
-        diarize=s.elevenlabs_diarize,
+        diarize=s.elevenlabs_diarize if diarize is None else diarize,
         num_speakers=s.elevenlabs_num_speakers,
         keyterms=keyterms,
         file_format=file_format,
@@ -480,12 +493,18 @@ def build_segments(
         text = _segment_text(raw_tokens, group)
         if not text:
             continue
-        segments.append({
+        seg: dict[str, Any] = {
             "start": group[0]["start"],
             "end": group[-1]["end"],
             "text": text,
             "words": [{"word": w["word"], "start": w["start"], "end": w["end"]} for w in group],
-        })
+        }
+        # Majority speaker of the group, present only when diarization ran —
+        # additive key, absent for every existing caller.
+        speakers = [w.get("speaker_id") for w in group if w.get("speaker_id")]
+        if speakers:
+            seg["speaker"] = max(set(speakers), key=speakers.count)
+        segments.append(seg)
     return segments
 
 
@@ -543,6 +562,7 @@ async def run_transcription(
     audio_files: list[pathlib.Path],
     *,
     keyterms: list[str] | None = None,
+    diarize: bool | None = None,
     project_uid: str = "",
     on_progress: ProgressFn | None = None,
     should_abort: AbortFn | None = None,
@@ -580,12 +600,20 @@ async def run_transcription(
             return None
         await _progress("clip", idx, len(audio_files))
 
-        response = await transcribe_clip(wav, keyterms)
+        response = await transcribe_clip(wav, keyterms, diarize=diarize)
         clip_billed = response.get("audio_duration_secs")
         if isinstance(clip_billed, (int, float)):
             billed_audio_sec += float(clip_billed)
         raw_tokens = response.get("words") or []
-        keep_speaker = dominant_speaker(raw_tokens) if s.elevenlabs_diarize else None
+        # Legacy settings-driven diarization keeps only the dominant speaker
+        # (talking_head: drop the TV in the next room). An EXPLICIT diarize=True
+        # keeps every speaker — the speech modes exist to cut conversations,
+        # and filtering to one voice would delete the guest.
+        keep_speaker = (
+            dominant_speaker(raw_tokens)
+            if (diarize is None and s.elevenlabs_diarize)
+            else None
+        )
         words, events = extract_tokens(
             response,
             min_logprob=s.elevenlabs_min_word_logprob,

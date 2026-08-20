@@ -2,24 +2,36 @@
  * app's DUB_SCRIPT_STYLES/buildBrief() (frontend/src/pages/VideoPage.tsx). */
 
 export const DUB_SCRIPT_STYLES = [
-  { value: 'review', label: 'รีวิวสินค้า', emoji: '📦' },
-  { value: 'funny', label: 'ตลก / สนุก', emoji: '😄' },
-  { value: 'informative', label: 'ให้ข้อมูล', emoji: '📊' },
-  { value: 'story', label: 'เล่าเรื่อง', emoji: '🎭' }
+  { value: 'review', label: 'รีวิวสินค้า' },
+  { value: 'funny', label: 'ตลก / สนุก' },
+  { value: 'informative', label: 'ให้ข้อมูล' },
+  { value: 'story', label: 'เล่าเรื่อง' }
 ] as const
 
 export const DUB_SCRIPT_STYLE_LABELS: Record<string, string> = Object.fromEntries(
   DUB_SCRIPT_STYLES.map(({ value, label }) => [value, label])
 )
 
-export const DUB_DURATION_CHIPS = [
+/**
+ * Length choices, in two sets because they are two different kinds of answer
+ * (R14.5).
+ *
+ * `FIXED` is a number the user names — one rail, pick one. `AUTO` hands the
+ * decision to the system instead, and each of those has a condition attached
+ * ("ตามความยาวเพลง" needs a music file), so they sit outside the rail as
+ * ordinary bordered buttons rather than pretending to be two more numbers.
+ */
+export const DUB_DURATION_FIXED = [
   { value: '15', label: '15 วิ' },
   { value: '30', label: '30 วิ' },
   { value: '60', label: '60 วิ' },
   { value: '90', label: '90 วิ' },
-  { value: 'auto', label: 'ให้ AI เลือก' },
-  { value: 'music', label: 'ตามความยาวเพลง' },
   { value: 'custom', label: 'กำหนดเอง' }
+] as const
+
+export const DUB_DURATION_AUTO = [
+  { value: 'auto', label: 'ให้ AI เลือก' },
+  { value: 'music', label: 'ตามความยาวเพลง' }
 ] as const
 
 /** Combine style/duration/note into one text field — same shape as web's

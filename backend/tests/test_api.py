@@ -1,6 +1,5 @@
 """API tests. REST endpoints hit the live Postgres; chat mocks the LLM gateway."""
 
-import json
 import types
 
 import pytest

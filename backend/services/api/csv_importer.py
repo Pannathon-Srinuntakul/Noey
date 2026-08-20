@@ -2,10 +2,9 @@
 
 import csv
 import io
-import logging
 import re
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date
 from pathlib import Path
 
 import structlog

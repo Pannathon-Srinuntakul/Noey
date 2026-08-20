@@ -1,6 +1,5 @@
 """Unit tests for face tracker helper functions (no real video/camera required)."""
 
-import pytest
 
 from packages.video.face_tracker import (
     build_ffmpeg_crop_filter,

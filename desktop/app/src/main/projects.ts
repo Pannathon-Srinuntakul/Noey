@@ -26,7 +26,7 @@ export interface LocalClip {
 export interface LocalProject {
   uid: string // local uid == backend VideoProject uid once created remotely
   name: string
-  mode?: 'dub_first' | 'talking_head' | 'highlight'
+  mode?: 'dub_first' | 'talking_head' | 'highlight' | 'speech_highlights' | 'speech_scenes'
   step:
     /** Sources are being copied/transcoded in the background (see the
      * renderer's ProjectStep — this union mirrors it). */
@@ -39,6 +39,7 @@ export interface LocalProject {
     | 'final_rendering'
     | 'extracting_audio'
     | 'transcribing'
+    | 'selecting'
     | 'rendering'
     | 'done'
     | 'error'
@@ -78,6 +79,9 @@ export interface LocalProject {
     trimOutSec: number | null
     muted: boolean
   }
+  /** speech_highlights (R17): display metadata for the N highlight clips —
+   * id/title/why/srcIn windows, WITHOUT the embedded render timelines. */
+  highlightIndex?: Record<string, unknown>
   /** Planned dub timeline (from POST /videos/{uid}/plan-dub) — kept for post-VO manual edits. */
   timeline?: Record<string, unknown>
   /** dub_first edit script from the analyze step — persisted so the timeline
@@ -321,7 +325,7 @@ async function prunePartFiles(dir: string): Promise<void> {
   }
 }
 
-async function listProjects(): Promise<LocalProject[]> {
+export async function listProjects(): Promise<LocalProject[]> {
   try {
     const entries = await readdir(projectsRoot(), { withFileTypes: true })
     const dirs = entries.filter((e) => e.isDirectory())
@@ -339,7 +343,7 @@ async function listProjects(): Promise<LocalProject[]> {
   }
 }
 
-async function createProject(
+export async function createProject(
   init: Partial<LocalProject> & { name: string }
 ): Promise<LocalProject> {
   const now = new Date().toISOString()
@@ -359,7 +363,10 @@ async function createProject(
   return writeProject(project)
 }
 
-async function updateProject(uid: string, patch: Partial<LocalProject>): Promise<LocalProject> {
+export async function updateProject(
+  uid: string,
+  patch: Partial<LocalProject>
+): Promise<LocalProject> {
   return withProjectWriteLock(uid, async () => {
     const current = await readProject(uid)
     if (!current) throw new Error(`project not found: ${uid}`)

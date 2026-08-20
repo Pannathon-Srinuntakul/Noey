@@ -136,6 +136,15 @@ def cmd_render_timeline(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_render_highlights(args: argparse.Namespace) -> int:
+    from sidecar.dub import load_json_job
+    from sidecar.timeline_render import RenderHighlightsJob, run_render_highlights
+
+    job = load_json_job(args.job, RenderHighlightsJob)
+    emit(run_render_highlights(job, emit))
+    return 0
+
+
 def cmd_render_ai_preview(args: argparse.Namespace) -> int:
     from sidecar.ai_reedit import RenderAiPreviewJob, run_render_ai_preview
     from sidecar.dub import load_json_job
@@ -182,6 +191,7 @@ def build_parser() -> argparse.ArgumentParser:
         ("mix-music", cmd_mix_music, "re-mix music onto an existing final_silent.mp4 (VO optional)"),
         ("extract-audio", cmd_extract_audio, "extract speech WAVs for server transcription"),
         ("render-timeline", cmd_render_timeline, "render talking_head video from a timeline"),
+        ("render-highlights", cmd_render_highlights, "render every speech_highlights clip from its index"),
         ("render-ai-preview", cmd_render_ai_preview, "render a live-editor silent preview for an AI re-edit request"),
         ("render-effects", cmd_render_effects, "bake a full effects.json (overlays + transforms) onto the cut video"),
         ("proxy-one", cmd_proxy_one, "downscale a single cut video to a proxy MP4 for effects AI upload"),

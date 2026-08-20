@@ -59,11 +59,17 @@ def test_dub_edit_system_video_matches_claude_rules() -> None:
     assert "Reviewing all of it is mandatory. USING all of it is not." in s
     assert "you watched every clip to its FULL given duration" in s
     # v2 selection model: spans bounded by action arcs, ranked; prep is the
-    # leading edge of its span, never a span of its own; state continuity.
+    # leading edge of its span, never a span of its own.
     assert "<scene_spans>" in s
     assert "Preparation is NEVER a span of its own" in s
     assert "the action has ARRIVED, not begun" in s
-    assert "State must not go backwards" in s
+    # Order is the only continuity rule left (2026-08-18). A wardrobe/location
+    # change BETWEEN clips is the user's choice, not an error to edit around —
+    # the previous "state must not go backwards" wording made the model stay
+    # inside one clip and ignore the other four the user had sent.
+    assert "Never cut backwards" in s
+    assert "is not a continuity error and is never a reason to avoid a clip" in s
+    assert "State must not go backwards" not in s
     # Hard numeric bound — sourceOut must never exceed a clip's real duration.
     assert "sourceOut can never exceed the clip's duration" in s
     # Quality over duration — never fabricate timestamps to run longer.

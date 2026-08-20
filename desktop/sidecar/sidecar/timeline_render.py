@@ -42,6 +42,14 @@ def _clip_abs_offsets(norm_files: list[Path]) -> dict[str, float]:
 class RenderTimelineJob(BaseModel):
     projectDir: Path
     timeline: dict[str, Any]
+    #: Output file name relative to the project dir. The default keeps
+    #: talking_head byte-identical; render-highlights passes highlights/hNN.mp4
+    #: so mode A never writes a final.mp4 at all (R17.5 — anything reading
+    #: final.mp4 must know this mode has none, not find a lookalike).
+    outName: str = "final.mp4"
+    #: CapCut bundle + shared clips/ dir — on for the single-video modes,
+    #: off for highlights (each highlight is already self-contained).
+    withBundle: bool = True
 
 
 def run_render_timeline(job: RenderTimelineJob, emit) -> dict[str, Any]:
@@ -55,7 +63,16 @@ def run_render_timeline(job: RenderTimelineJob, emit) -> dict[str, Any]:
     if not norm_files:
         raise FileNotFoundError("no normalized clips — run ingest first")
 
-    clips_dir = project_dir / "clips"
+    out_rel = Path(job.outName)
+    # Highlights each get their own scratch clips dir so parallel-named cuts
+    # from h01 and h02 never clobber each other; prepare_clips_dir uses
+    # mkdir(exist_ok=True) which is not recursive, so make the parent first.
+    clips_dir = (
+        project_dir / "clips"
+        if job.withBundle
+        else project_dir / out_rel.parent / f"{out_rel.stem}_clips"
+    )
+    clips_dir.parent.mkdir(parents=True, exist_ok=True)
     prepare_clips_dir(clips_dir)
 
     clip_paths: list[Path] = []
@@ -78,14 +95,15 @@ def run_render_timeline(job: RenderTimelineJob, emit) -> dict[str, Any]:
         clip_paths.append(clip_out)
         actual_durations.append(media_duration(clip_out))
 
-    # `final.mp4` is only renamed into place once the concat, the caption burn
+    # The output is only renamed into place once the concat, the caption burn
     # and the bundle have all succeeded — until then the app must keep seeing
     # the previous complete render, not a growing file (see sidecar/atomic).
-    final_path = project_dir / "final.mp4"
+    final_path = project_dir / out_rel
+    final_path.parent.mkdir(parents=True, exist_ok=True)
     with atomic_publish(final_path) as (tmp_final,):
         assert tmp_final is not None
         emit({"event": "progress", "stage": "concat", "step": total, "total": total})
-        concat_stream_copy(clip_paths, tmp_final, project_dir / "concat_final.txt")
+        concat_stream_copy(clip_paths, tmp_final, final_path.parent / f"concat_{out_rel.stem}.txt")
         srt_path, zip_path, duration_sec = _finish_timeline_render(
             job, tmp_final, clip_paths, cuts, norm_files, actual_durations, emit
         )
@@ -97,7 +115,7 @@ def run_render_timeline(job: RenderTimelineJob, emit) -> dict[str, Any]:
         "event": "done",
         "final": str(final_path),
         "srt": str(srt_path),
-        "bundle": str(zip_path),
+        "bundle": str(zip_path) if zip_path else None,
         "durationSec": duration_sec,
         "cuts": total,
     }
@@ -111,7 +129,7 @@ def _finish_timeline_render(
     norm_files: list[Path],
     actual_durations: list[float],
     emit,
-) -> tuple[Path, Path, float]:
+) -> tuple[Path, Path | None, float]:
     """Captions + SRT + CapCut bundle for an already-concatenated render.
 
     `final_path` is the STAGING file, so everything here reads and rewrites
@@ -121,9 +139,17 @@ def _finish_timeline_render(
     timeline = job.timeline
     total = len(cuts)
 
-    captions_dir = project_dir / "captions"
-    captions_dir.mkdir(exist_ok=True)
-    srt_path = captions_dir / "subtitles.srt"
+    out_rel = Path(job.outName)
+    if job.withBundle:
+        captions_dir = project_dir / "captions"
+        captions_dir.mkdir(exist_ok=True)
+        srt_path = captions_dir / "subtitles.srt"
+    else:
+        # Highlights: hNN.srt sits next to hNN.mp4 so exporting one highlight
+        # grabs a matching pair, no shared captions/ dir to disambiguate.
+        srt_path = project_dir / out_rel.with_suffix(".srt")
+        srt_path.parent.mkdir(parents=True, exist_ok=True)
+        captions_dir = srt_path.parent
     write_srt(timeline.get("captions", []), srt_path)
 
     # Burned-in captions (talking_head only — opted into via caption_style at
@@ -143,7 +169,11 @@ def _finish_timeline_render(
         if remapped:
             style, mode = resolve_caption_style(caption_style)
             output_dur = sum(actual_durations)
-            ass_path = captions_dir / "subtitles.ass"
+            ass_path = (
+                captions_dir / "subtitles.ass"
+                if job.withBundle
+                else project_dir / out_rel.with_suffix(".ass")
+            )
             ass_path.write_text(
                 build_ass_captions(
                     remapped,
@@ -154,10 +184,13 @@ def _finish_timeline_render(
                 ),
                 encoding="utf-8",
             )
-            final_captioned = project_dir / "final_captions.mp4"
+            final_captioned = final_path.with_name(out_rel.stem + "_captions.mp4")
             burn_ass(final_path, ass_path, final_captioned)
             final_captioned.replace(final_path)
             ass_burned = True
+
+    if not job.withBundle:
+        return srt_path, None, round(media_duration(final_path), 3)
 
     emit({"event": "progress", "stage": "bundle", "step": total, "total": total})
     zip_path = build_capcut_bundle(
@@ -172,3 +205,43 @@ def _finish_timeline_render(
     )
 
     return srt_path, zip_path, round(media_duration(final_path), 3)
+
+
+class RenderHighlightsJob(BaseModel):
+    projectDir: Path
+    #: The index plan_speech_local wrote — every item embeds its own timeline.
+    index: dict[str, Any]
+
+
+def run_render_highlights(job: RenderHighlightsJob, emit) -> dict[str, Any]:
+    """Mode A: render every highlight through the ordinary timeline path.
+
+    One highlight at a time, each publishing atomically to highlights/hNN.mp4 —
+    a crash mid-run leaves N complete files and zero partial ones. There is
+    deliberately no final.mp4 and no CapCut bundle in this mode.
+    """
+    items = [i for i in job.index.get("items", []) if isinstance(i, dict)]
+    if not items:
+        raise ValueError("highlight index has no items")
+
+    done: list[dict[str, Any]] = []
+    total = len(items)
+    for n, item in enumerate(items, start=1):
+        emit({"event": "progress", "stage": "highlight", "step": n, "total": total,
+              "message": str(item.get("title") or item.get("id") or n)})
+        hid = str(item.get("id") or f"h{n:02d}")
+        sub = run_render_timeline(
+            RenderTimelineJob(
+                projectDir=job.projectDir,
+                timeline=item.get("timeline") or {},
+                outName=f"highlights/{hid}.mp4",
+                withBundle=False,
+            ),
+            # Inner stages stay quiet — the highlight counter above is the
+            # progress a person can follow; 6x(cut/concat/captions) is noise.
+            lambda _evt: None,
+        )
+        done.append({"id": hid, "final": sub["final"], "srt": sub["srt"],
+                     "durationSec": sub["durationSec"]})
+
+    return {"event": "done", "highlights": done, "count": len(done)}

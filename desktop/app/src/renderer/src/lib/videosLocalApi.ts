@@ -32,7 +32,7 @@ export interface CaptionStyleIn {
 }
 
 export interface CreateLocalProjectIn {
-  mode?: 'dub_first' | 'talking_head' | 'highlight'
+  mode?: 'dub_first' | 'talking_head' | 'highlight' | 'speech_highlights' | 'speech_scenes'
   brief?: string | null
   user_script?: string | null
   target_duration_sec?: number | null
@@ -261,7 +261,8 @@ export async function uploadAudio(
   session: ApiSession,
   remoteUid: string,
   localUid: string,
-  wavFiles: { file: string; name: string }[]
+  wavFiles: { file: string; name: string }[],
+  opts: { styleUid?: string } = {}
 ): Promise<{ job_id: string }> {
   const formFiles: { field: string; path: string; filename: string }[] = []
   for (const wav of wavFiles) {
@@ -273,7 +274,10 @@ export async function uploadAudio(
   }
   return request(session, `/videos/${remoteUid}/transcribe-audio`, {
     method: 'POST',
-    formFiles
+    formFiles,
+    // speech_scenes carries its saved cut style; the other speech modes send
+    // nothing and the server ignores the field.
+    ...(opts.styleUid ? { formFields: { style_uid: opts.styleUid } } : {})
   })
 }
 

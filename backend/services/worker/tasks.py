@@ -674,6 +674,9 @@ async def plan_edit(ctx: dict[str, Any], *, job_id: str, project_uid: str, tenan
         transcript_data = json.loads(transcript_text)
         segments = transcript_data.get("segments", [])
         silence_gaps = transcript_data.get("silence_gaps", [])
+        # The WAV the transcript was made from — the waveform pass needs the
+        # audio itself, and this task is a re-plan that did not extract it.
+        plan_audio = sorted((output_dir / "audio").glob("audio_*.wav"))
 
         norm_dir = output_dir / "normalized"
         norm_files = sorted(norm_dir.glob("norm_*.*"))
@@ -686,6 +689,9 @@ async def plan_edit(ctx: dict[str, Any], *, job_id: str, project_uid: str, tenan
 
         timeline = await build_talking_head_timeline(
             segments,
+            # Single-clip only: with several clips the transcript runs on a
+            # combined timeline while each WAV starts at zero.
+            wav_path=str(plan_audio[0]) if len(plan_audio) == 1 else None,
             duration_mode=duration_mode,
             target_duration_sec=target_sec,
             clip_durations=clip_durations,
@@ -2107,6 +2113,9 @@ async def plan_talking_local(ctx: dict[str, Any], *, job_id: str, project_uid: s
 
         timeline = await build_talking_head_timeline(
             segments,
+            # Single-clip only: with several clips the transcript runs on a
+            # combined timeline while each WAV starts at zero.
+            wav_path=str(audio_files[0]) if len(audio_files) == 1 else None,
             duration_mode=proj.duration_mode,
             target_duration_sec=proj.target_duration_sec,
             clip_durations=clip_durations,
@@ -2164,6 +2173,303 @@ async def plan_talking_local(ctx: dict[str, Any], *, job_id: str, project_uid: s
             reset_usage_ctx(_usage_token)
 
 
+# ── task: plan_speech_local ──────────────────────────────────────────────────
+
+
+async def _load_cut_style_prompt(session: Any, style_uid: str, project_uid: str) -> str:
+    """Distilled kind="cut" style prose by uid, '' when unset/not-ready.
+
+    Same DB-only lookup the dub tasks perform inline; shared here so the speech
+    path cannot drift from it.
+    """
+    chosen = (style_uid or "").strip()
+    if not chosen:
+        return ""
+    from packages.db.models.effect_style import EffectStyle
+
+    style = await session.get(EffectStyle, chosen)
+    if style is not None and style.kind == "cut" and style.system_prompt:
+        log.info("cut_style_applied", project_uid=project_uid, style_uid=chosen,
+                 style_name=style.name, prompt_chars=len(style.system_prompt))
+        return str(style.system_prompt)
+    log.warning("cut_style_missing_or_not_ready", project_uid=project_uid, style_uid=chosen)
+    return ""
+
+
+async def plan_speech_local(ctx: dict[str, Any], *, job_id: str, project_uid: str, tenant_slug: str, style_uid: str = "") -> dict:
+    """Local-render speech modes (R17): transcribe with speakers, pick by segment.
+
+    ``speech_scenes``     -> one timeline.json (same schema as talking_head,
+                             mode tag differs) — the desktop renders one video
+                             with the ORIGINAL audio.
+    ``speech_highlights`` -> highlights/hNN.json per highlight + an index that
+                             embeds every timeline, so the desktop needs no new
+                             endpoint to fetch them (GET local-timeline returns
+                             the index).
+
+    Only WAVs ever reach this task — same privacy posture as talking_head.
+    """
+    from packages.video.speech_select import (
+        picks_to_cuts,
+        select_highlights,
+        select_scenes,
+    )
+    from packages.video.timeline import (
+        build_captions_for_cuts,
+        build_clip_boundaries,
+        filter_short_cuts,
+        localize_cuts,
+        remove_overlapping_cuts,
+        resnap_selected_cuts,
+    )
+
+    log.info("task_start", task="plan_speech_local", project_uid=project_uid)
+    await _video_progress(job_id, 8, "transcribe", "กำลังเตรียมถอดเสียง…")
+    session = await _tenant_session(tenant_slug)
+    _usage_token = None
+    try:
+        if await _abort_if_cancelled(session, project_uid, job_id):
+            return {"cancelled": True}
+
+        await _pull_project_files(project_uid)
+
+        root = data_root()
+        output_dir = root / "video_outputs" / project_uid
+        audio_files = sorted((output_dir / "audio").glob("audio_*.wav"))
+        if not audio_files:
+            raise ValueError("No audio files to transcribe — upload them first")
+        proj = await _get_video_project(session, project_uid)
+        if proj.mode not in ("speech_scenes", "speech_highlights"):
+            raise ValueError(f"plan_speech_local got mode {proj.mode}")
+        tenant_id = await _get_tenant_id_by_slug(tenant_slug)
+        _usage_token = _set_video_usage_ctx(proj, tenant_id, project_uid)
+
+        clips_meta = (proj.local_meta or {}).get("clips", [])
+        if not clips_meta:
+            raise ValueError("local_meta.clips missing — create the project with clip metadata")
+
+        # One Scribe request per clip, however long the clip is: Scribe accepts
+        # 3 GB / 10 h per request and parallelises anything over 8 minutes on
+        # its own side, so a 2 h WAV (~230 MB) travels fine in one piece. An
+        # earlier revision chunked at 30 min for an upload ceiling that does
+        # not exist; the chunks were uploaded serially, so they bought no speed
+        # either — and "คลิป 1/3" read to the user as three source clips.
+        _t_progress = _talking_transcribe_callbacks(
+            job_id, base_progress=8, transcribe_span=42,
+        )
+
+        async def _t_abort() -> bool:
+            return await _abort_if_cancelled(session, project_uid, job_id)
+
+        # Scribe is charged per second of audio, and a re-run after an AI or
+        # render failure would pay for the same hour twice. The transcript is
+        # already written below; reuse it when the audio it came from is
+        # byte-identical (size + mtime of every WAV), which is exactly the
+        # "press try again" case and never the "user changed the clips" one.
+        transcript_path = output_dir / "transcript.json"
+        stamp_path = output_dir / "transcript_audio.json"
+        stamp = [[p.name, p.stat().st_size, int(p.stat().st_mtime)] for p in audio_files]
+        transcript = None
+        if transcript_path.exists() and stamp_path.exists():
+            try:
+                if json.loads(stamp_path.read_text(encoding="utf-8")) == stamp:
+                    transcript = json.loads(transcript_path.read_text(encoding="utf-8"))
+                    log.info("transcript_reused", project_uid=project_uid,
+                             segments=len(transcript.get("segments") or []))
+                    await _t_progress("ใช้ผลถอดเสียงเดิม (ไม่คิดเครดิตซ้ำ)")
+            except (OSError, ValueError) as exc:
+                log.warning("transcript_reuse_failed", error=str(exc))
+                transcript = None
+
+        if transcript is None:
+            transcript = await run_transcription(
+                audio_files,
+                keyterms=_project_keyterms(proj),
+                diarize=True,  # per-mode: speaker labels feed the selector
+                project_uid=project_uid,
+                on_progress=_t_progress,
+                should_abort=_t_abort,
+            )
+            if transcript is None:
+                return {"cancelled": True}
+            await _record_stt(transcript)
+            stamp_path.write_text(json.dumps(stamp), encoding="utf-8")
+
+        transcript_path.write_text(json.dumps(transcript, ensure_ascii=False, indent=2), encoding="utf-8")
+        await _update_video(session, project_uid, transcript_path=str(transcript_path.relative_to(root)))
+
+        segments = transcript["segments"]
+        clip_durations = [float(c["durationSec"]) for c in clips_meta]
+        boundaries = build_clip_boundaries(clip_durations)
+        total_duration = boundaries[-1]["end"] if boundaries else 0.0
+        first = clips_meta[0]
+        source_info = {
+            "width": int(first.get("width", 0)),
+            "height": int(first.get("height", 0)),
+            "fps": int(first.get("fps", 30)),
+        }
+        sources = [
+            {"id": str(c["id"]), "file": f"normalized/norm_{i:03d}.mp4"}
+            for i, c in enumerate(clips_meta)
+        ]
+        all_words = [
+            {"word": w["word"], "start": w["start"], "end": w["end"]}
+            for seg in segments
+            for w in seg.get("words", [])
+        ]
+
+        await _video_progress(job_id, 55, "select", "AI กำลังเลือกช่วงเด่นจากคำพูด…")
+
+        if proj.mode == "speech_scenes":
+            picks = await select_scenes(
+                segments,
+                brief=proj.brief or "",
+                target_duration_sec=proj.target_duration_sec,
+                style_prompt=await _load_cut_style_prompt(session, style_uid, project_uid),
+                project_uid=project_uid,
+            )
+            cuts = picks_to_cuts(picks, segments, source_duration=total_duration)
+            cuts = resnap_selected_cuts(cuts, segments, source_duration=total_duration)
+            cuts = filter_short_cuts(cuts)
+            cuts = remove_overlapping_cuts(cuts)
+            if not cuts:
+                raise ValueError(
+                    "ช่วงที่ AI เลือกสั้นเกินไปทุกช่วง เลยไม่เหลืออะไรให้ตัด — "
+                    "ลองตั้งความยาวให้ยาวขึ้น หรือใช้โหมดตัดช่วงเงียบแทน"
+                )
+            render_cuts = filter_short_cuts(localize_cuts(cuts, boundaries))
+            timeline = {
+                "mode": "speech_scenes",
+                "editMode": "full",
+                "sources": sources,
+                "timeline": render_cuts,
+                "captions": build_captions_for_cuts(segments, cuts),
+                "words": all_words,
+                "captionStyle": proj.caption_style,
+                "output": {
+                    **source_info,
+                    "targetDurationSec": proj.target_duration_sec,
+                    "maxDurationSec": round(sum(float(c["out"]) - float(c["in"]) for c in cuts), 1),
+                    "sourceDurationSec": round(total_duration, 1),
+                    "clipCount": len(clip_durations),
+                },
+            }
+            timeline_path = output_dir / "timeline.json"
+            timeline_path.write_text(json.dumps(timeline, ensure_ascii=False, indent=2), encoding="utf-8")
+            await _update_video(session, project_uid, timeline_path=str(timeline_path.relative_to(root)))
+            await _push_project_files(project_uid)
+            count = len(render_cuts)
+            await _update_job(
+                job_id, "ok", 100,
+                result={"step": "timeline_ready",
+                        "message": f"เลือกช่วงเสร็จแล้ว ({count} ช่วง) พร้อม render บนเครื่อง",
+                        "cuts": count},
+            )
+            log.info("plan_speech_scenes_done", project_uid=project_uid, cuts=count)
+            return {"cuts": count}
+
+        # speech_highlights — N standalone windows, each its own mini-timeline.
+        # The WAV is what the edge check reads. Only for a single-clip source:
+        # with several clips the transcript runs on a combined timeline while
+        # each WAV starts at zero, and mapping cut -> file per edge buys
+        # nothing here (this mode is one long recording by definition).
+        edge_wav = str(audio_files[0]) if len(audio_files) == 1 else None
+        picks = await select_highlights(
+            segments,
+            brief=proj.brief or "",
+            preferred_len_sec=proj.target_duration_sec,
+            source_duration=total_duration,
+            wav_path=edge_wav,
+            project_uid=project_uid,
+        )
+        hl_dir = output_dir / "highlights"
+        hl_dir.mkdir(parents=True, exist_ok=True)
+        for stale in hl_dir.glob("h*.json"):
+            stale.unlink(missing_ok=True)
+
+        items: list[dict[str, Any]] = []
+        for n, p in enumerate(picks, start=1):
+            hid = f"h{n:02d}"
+            # The tightened cut list — the window with its silences, stumbles
+            # and hesitations already removed by gate_highlights (the same
+            # silence-cut ตัดช่วงเงียบ runs on whole clips).
+            window = list(p.get("cuts") or [
+                {"type": "cut", "source": "clip0", "in": p["srcIn"], "out": p["srcOut"]}
+            ])
+            seg_slice = segments[int(p["segFrom"]): int(p["segTo"]) + 1]
+            speakers = sorted({s0["speaker"] for s0 in seg_slice if s0.get("speaker")})
+            h_render_cuts = filter_short_cuts(localize_cuts(window, boundaries))
+            h_timeline = {
+                "mode": "speech_highlights",
+                "editMode": "full",
+                "sources": sources,
+                "timeline": h_render_cuts,
+                "captions": build_captions_for_cuts(segments, window),
+                "words": all_words,
+                "captionStyle": proj.caption_style,
+                "output": {
+                    **source_info,
+                    "targetDurationSec": None,
+                    "maxDurationSec": p["durationSec"],
+                    "sourceDurationSec": round(total_duration, 1),
+                    "clipCount": len(clip_durations),
+                },
+            }
+            (hl_dir / f"{hid}.json").write_text(
+                json.dumps(h_timeline, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+            items.append({
+                "id": hid,
+                "title": str(p.get("title") or ""),
+                "why": str(p.get("why") or ""),
+                "score": int(p.get("score", 0)),
+                "srcIn": p["srcIn"],
+                "srcOut": p["srcOut"],
+                # KEPT length after the in-window silence cut — what hNN.mp4
+                # actually runs, not the raw window span.
+                "durationSec": p["durationSec"],
+                "speakers": speakers,
+                "video": f"highlights/{hid}.mp4",
+                "srt": f"highlights/{hid}.srt",
+                "timeline": h_timeline,
+            })
+
+        index = {"mode": "speech_highlights", "count": len(items), "items": items}
+        index_path = hl_dir / "index.json"
+        index_path.write_text(json.dumps(index, ensure_ascii=False, indent=2), encoding="utf-8")
+        await _update_video(session, project_uid, timeline_path=str(index_path.relative_to(root)))
+        await _push_project_files(project_uid)
+
+        await _update_job(
+            job_id, "ok", 100,
+            result={"step": "timeline_ready",
+                    "message": f"เลือกไฮไลต์เสร็จแล้ว ({len(items)} คลิป) พร้อม render บนเครื่อง",
+                    "cuts": len(items)},
+        )
+        log.info("plan_speech_highlights_done", project_uid=project_uid, highlights=len(items))
+        return {"highlights": len(items)}
+    except Exception as exc:
+        ts = await _tenant_session(tenant_slug)
+        try:
+            if await _abort_if_cancelled(ts, project_uid, job_id):
+                return {"cancelled": True}
+            await _update_video(ts, project_uid, status="error", error_msg=format_exception_message(exc))
+        finally:
+            await ts.close()
+        await _update_job(
+            job_id, "error", 0,
+            result={"step": "error", "message": format_exception_message(exc)},
+            error=format_exception_message(exc),
+        )
+        raise
+    finally:
+        await session.close()
+        if _usage_token is not None:
+            from packages.llm.usage import reset_usage_ctx
+
+            reset_usage_ctx(_usage_token)
+
+
 # ── WorkerSettings ────────────────────────────────────────────────────────────
 
 
@@ -2205,6 +2511,7 @@ class WorkerSettings:
         distill_style_local,
         reedit_dub_scenes_local,
         plan_talking_local,
+        plan_speech_local,
         render_dub_silent,
         plan_dub_timeline,
     ]

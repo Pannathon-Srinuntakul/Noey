@@ -1,12 +1,10 @@
 """Tests for duration-based dub_first Vision sample budget."""
 
-import math
 import pathlib
 
 from packages.video.scene import (
     DUB_MAX_BUDGET_FRAMES,
     DUB_MAX_CLIP_SEC,
-    DUB_SCENE_INTERVAL_SEC,
     DUB_UPLOAD_TOLERANCE_SEC,
     budget_sample_windows,
     build_vision_content,

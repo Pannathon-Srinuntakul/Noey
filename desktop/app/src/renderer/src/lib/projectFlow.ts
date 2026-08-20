@@ -1,6 +1,13 @@
 /** Wizard step machine (dub_first + talking_head) — resumable from project.json. */
 
-export type ProjectMode = 'dub_first' | 'talking_head' | 'highlight'
+export type ProjectMode =
+  | 'dub_first'
+  | 'talking_head'
+  // ตัดฉากเด่นไม่พากย์ (video-driven) — NOT the R17 long-form highlights.
+  | 'highlight'
+  // R17 speech modes: decided from the transcript, original audio kept.
+  | 'speech_highlights'
+  | 'speech_scenes'
 
 export type ProjectStep =
   /** Copying + (when the codec needs it) transcoding the source clips. Runs in
@@ -16,6 +23,8 @@ export type ProjectStep =
   | 'final_rendering'
   | 'extracting_audio'
   | 'transcribing'
+  /** R17 speech modes: the LLM reading the transcript and picking ranges. */
+  | 'selecting'
   | 'rendering'
   | 'done'
   | 'error'
@@ -50,9 +59,22 @@ export const HL_STEP_ORDER: ProjectStep[] = [
   'done'
 ]
 
+// R17 speech modes share one shape: talking_head's audio chain plus a visible
+// AI-selection stage between transcribe and render.
+export const SPEECH_STEP_ORDER: ProjectStep[] = [
+  'importing',
+  'imported',
+  'extracting_audio',
+  'transcribing',
+  'selecting',
+  'rendering',
+  'done'
+]
+
 export function stepOrderFor(mode: ProjectMode | undefined): ProjectStep[] {
   if (mode === 'talking_head') return TH_STEP_ORDER
   if (mode === 'highlight') return HL_STEP_ORDER
+  if (mode === 'speech_highlights' || mode === 'speech_scenes') return SPEECH_STEP_ORDER
   return STEP_ORDER
 }
 
@@ -65,7 +87,8 @@ export const STEP_LABELS: Record<ProjectStep, string> = {
   planning: 'กำลังวางแผน timeline',
   final_rendering: 'กำลัง render วิดีโอสุดท้าย',
   extracting_audio: 'กำลังแยกเสียงจากคลิป',
-  transcribing: 'ถอดเสียง + AI ตรวจวิดีโอ',
+  transcribing: 'กำลังถอดเสียง',
+  selecting: 'AI กำลังเลือกช่วงเด่น',
   rendering: 'กำลัง render วิดีโอ',
   done: 'เสร็จแล้ว',
   error: 'เกิดข้อผิดพลาด'
@@ -84,7 +107,8 @@ export const SHORT_STEP_LABELS: Record<ProjectStep, string> = {
   planning: 'วางแผน',
   final_rendering: 'เรนเดอร์',
   extracting_audio: 'แยกเสียง',
-  transcribing: 'วิเคราะห์เสียงพูด',
+  transcribing: 'ถอดเสียง',
+  selecting: 'เลือกช่วงเด่น',
   rendering: 'เรนเดอร์',
   done: 'เสร็จแล้ว',
   error: 'ผิดพลาด'
@@ -178,6 +202,8 @@ const RESUME_CHECKPOINT: Partial<Record<ProjectStep, ProjectStep>> = {
   // the stored timeline (fetched from the server on resume).
   extracting_audio: 'imported',
   transcribing: 'imported',
+  // selecting died mid-LLM-call: transcript + selection both restart.
+  selecting: 'imported',
   rendering: 'rendering'
 }
 
@@ -203,6 +229,7 @@ export function isBusy(step: ProjectStep): boolean {
     step === 'final_rendering' ||
     step === 'extracting_audio' ||
     step === 'transcribing' ||
+    step === 'selecting' ||
     step === 'rendering'
   )
 }

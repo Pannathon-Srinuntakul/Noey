@@ -138,8 +138,9 @@ async def create_local_project(
     body: LocalProjectIn,
     session: AsyncSession = Depends(db_session),
 ) -> LocalProjectOut:
-    if body.mode not in ("dub_first", "talking_head", "highlight"):
-        raise HTTPException(400, "local-render รองรับเฉพาะโหมด dub_first / talking_head / highlight")
+    allowed = ("dub_first", "talking_head", "highlight", "speech_highlights", "speech_scenes")
+    if body.mode not in allowed:
+        raise HTTPException(400, f"local-render รองรับเฉพาะโหมด {', '.join(allowed)}")
 
     proj = VideoProject(
         user_id=auth.user_id,
@@ -442,18 +443,23 @@ async def transcribe_audio(
     auth: CurrentUser,
     session: AsyncSession = Depends(db_session),
     files: list[UploadFile] = File(...),
+    style_uid: str = Form(""),
 ) -> AnalyzeFramesOut:
-    """talking_head: receive speech WAVs → transcribe + plan on the server → timeline.
+    """Speech modes: receive speech WAVs → transcribe + plan on the server.
 
-    Audio only. The proxy MP4s this endpoint used to accept existed solely for
-    the Gemini per-clip review; ElevenLabs Scribe decides every cut from word
-    timings, so no video leaves the creator's machine in this mode. Older
-    desktop builds that still attach ``video_files`` are unaffected — FastAPI
-    ignores multipart fields the signature does not declare.
+    talking_head (silence cut) plus the R17 speech modes — all three decide
+    their cuts from word timings, so no video ever leaves the creator's
+    machine here. ``style_uid`` is only read by ``speech_scenes`` (a saved
+    kind="cut" style); the other modes ignore it. Older desktop builds that
+    still attach ``video_files`` are unaffected — FastAPI ignores multipart
+    fields the signature does not declare.
     """
     proj = await _get_local_project(session, uid, auth.user_id)
-    if proj.mode != "talking_head":
-        raise HTTPException(400, "transcribe-audio ใช้ได้เฉพาะโหมด talking_head")
+    speech_modes = ("talking_head", "speech_scenes", "speech_highlights")
+    if proj.mode not in speech_modes:
+        raise HTTPException(
+            400, f"transcribe-audio ใช้ได้เฉพาะโหมดที่ตัดจากเสียง ({', '.join(speech_modes)})"
+        )
     if proj.status not in RESTARTABLE_STATUSES:
         raise HTTPException(400, f"โปรเจกต์นี้ยังทำงานอยู่ (สถานะ {proj.status}) — กดหยุดงานก่อนถ้าจะเริ่มใหม่")
 
@@ -496,7 +502,13 @@ async def transcribe_audio(
     proj.job_id = job_id
     await session.commit()
 
-    await _enqueue(job_id, "plan_talking_local", project_uid=uid, tenant_slug=auth.tenant_slug)
+    if proj.mode == "talking_head":
+        await _enqueue(job_id, "plan_talking_local", project_uid=uid, tenant_slug=auth.tenant_slug)
+    else:
+        await _enqueue(
+            job_id, "plan_speech_local",
+            project_uid=uid, tenant_slug=auth.tenant_slug, style_uid=style_uid.strip(),
+        )
     return AnalyzeFramesOut(job_id=job_id)
 
 

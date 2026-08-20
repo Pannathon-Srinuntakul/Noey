@@ -9,6 +9,7 @@ import { registerMediaProtocol, registerMediaScheme } from './media'
 import { registerLogIpc } from './logger'
 import { registerApiProxyIpc } from './apiProxy'
 import { registerLanIpc, stopLanReceive } from './lanReceive'
+import { registerRemoteIpc, restoreRemoteMode, stopRemote } from './remoteAccess'
 import { registerNotifyIpc } from './notify'
 import { loadPrefs, registerPrefsIpc } from './prefs'
 import { registerStorageIpc } from './storage'
@@ -132,12 +133,18 @@ app.whenReady().then(async () => {
   registerAuthIpc()
   registerProjectsIpc()
   registerLanIpc()
+  registerRemoteIpc()
   registerNotifyIpc()
   registerPrefsIpc()
   registerStorageIpc()
   registerUnsavedIpc()
 
   createWindow()
+
+  // Phone-remote mode is a switch the user left on, not a session — bring it
+  // back so a saved link on the phone still answers after a restart. After
+  // the window exists, so the status event has somewhere to land.
+  void restoreRemoteMode()
 
   app.on('activate', function () {
     // On macOS it's common to re-create a window in the app when the
@@ -150,6 +157,8 @@ app.whenReady().then(async () => {
 // released and no half-written .part files keep growing.
 app.on('before-quit', () => {
   void stopLanReceive(null)
+  // 'quit', not 'manual': the mode must survive the restart it is quitting for.
+  void stopRemote('quit')
 })
 
 // Quit when all windows are closed, except on macOS. There, it's common

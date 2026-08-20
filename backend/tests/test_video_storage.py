@@ -20,7 +20,7 @@ def test_collect_project_dirs_includes_upload_and_output(tmp_path: Path, monkeyp
     output_root = tmp_path / "video_outputs" / uid
     output_root.mkdir(parents=True)
     (output_root / "upload_sources.json").write_text(
-        json.dumps([f"video_uploads/legacy-upload-id/clip_000.mp4"]),
+        json.dumps(["video_uploads/legacy-upload-id/clip_000.mp4"]),
         encoding="utf-8",
     )
 
