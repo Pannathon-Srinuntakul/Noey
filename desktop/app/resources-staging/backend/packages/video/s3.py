@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 from packages.core.logging import get_logger
 
 if TYPE_CHECKING:
-    import boto3 as _boto3_type
+    pass
 
 log = get_logger(__name__)
 
@@ -93,6 +93,15 @@ def _sync_download_prefix(prefix: str, local_dir: pathlib.Path) -> int:
             if not rel:
                 continue
             dest = local_dir / rel
+            # Already here and the same size: skip it. On a single-host setup
+            # (API and worker on one machine) every file is local the moment it
+            # is written, and re-downloading it is pure risk — a 145 MB WAV
+            # pulled back over the internet is what "RequestCanceled" looked
+            # like, and it failed the whole job before a single word was
+            # transcribed. Size is the right check here: these files are
+            # written once and never edited in place.
+            if dest.exists() and dest.stat().st_size == int(obj.get("Size", -1)):
+                continue
             dest.parent.mkdir(parents=True, exist_ok=True)
             client.download_file(bucket, key, str(dest))
             count += 1
@@ -272,11 +281,20 @@ async def resolve_stored_output(project_uid: str, stored_rel_path: str) -> pathl
 
 
 async def pull_project_files(project_uid: str) -> None:
-    """Download uploads + outputs for a project. No-op when S3 disabled."""
+    """Download uploads + outputs for a project. No-op when S3 disabled.
+
+    A failed pull is logged and swallowed rather than raised: the pull is a
+    convenience for multi-host setups, and on a single host the files it would
+    fetch are already on disk. Letting a network hiccup here abort the task
+    threw away a whole run before any work had started.
+    """
     from packages.video.storage import output_dir, upload_dir
 
-    await pull_uploads(project_uid, upload_dir(project_uid))
-    await pull_outputs(project_uid, output_dir(project_uid))
+    try:
+        await pull_uploads(project_uid, upload_dir(project_uid))
+        await pull_outputs(project_uid, output_dir(project_uid))
+    except Exception as exc:  # noqa: BLE001 — never fail a job on a sync hiccup
+        log.warning("s3_pull_failed", project_uid=project_uid, error=str(exc))
 
 
 async def push_project_files(project_uid: str) -> None:

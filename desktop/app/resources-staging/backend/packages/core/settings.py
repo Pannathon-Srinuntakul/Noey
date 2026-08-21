@@ -61,6 +61,9 @@ class Settings(BaseSettings):
     # moved on (+1.2 on LVBench), and it is the axis this call lives or dies by.
     # Override via DUB_VISION_MODEL.
     dub_vision_model: str = "gemini-3.1-pro-preview"
+    # Text-only segment selection for the speech modes (R17). Empty → falls
+    # back to dub_vision_model. Override via SPEECH_SELECT_MODEL.
+    speech_select_model: str = ""
     dub_vision_timeout_sec: int = 1200  # video inference is slower than Files-API frames
     # Thinking depth for the dub cut/re-edit calls, sent as `reasoning_effort`
     # which LiteLLM maps to Gemini's `thinking_level` (minimal|low|medium|high).
@@ -135,7 +138,10 @@ class Settings(BaseSettings):
     elevenlabs_api_key: str | None = None
     elevenlabs_stt_model: str = "scribe_v2"
     elevenlabs_language: str = "th"       # ISO-639-1; "" = auto-detect (risk of drift)
-    elevenlabs_stt_timeout_sec: int = 900
+    # One request per clip, no chunking — a 2 h upload plus Scribe's own
+    # processing has to fit inside this, so it is sized for the longest clip
+    # the app accepts (DUB_MAX_CLIP_SEC), not for a typical one.
+    elevenlabs_stt_timeout_sec: int = 2400
     # Character-level timings let word bounds be tightened past the word envelope
     # (leading breath / trailing tone decay). "word" halves the response size.
     elevenlabs_timestamps_granularity: str = "character"  # "character" | "word"

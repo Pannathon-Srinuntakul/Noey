@@ -218,6 +218,23 @@ def output_basename(stored_path: str) -> str:
     return pathlib.Path(stored_path.replace("\\", "/")).name
 
 
+def output_relpath(project_uid: str, stored_path: str) -> str:
+    """Path relative to the project's outputs dir, subdirectories intact.
+
+    ``push_outputs`` uploads via rglob, so a file in a subdirectory keeps that
+    subdirectory in its key (``outputs/highlights/index.json``). Resolving it
+    with ``output_basename`` looked for ``outputs/index.json`` instead and
+    always 404'd — which is every speech_highlights project on a deploy where
+    the API and the worker do not share a filesystem.
+    """
+    norm = stored_path.replace("\\", "/")
+    marker = f"video_outputs/{project_uid}/"
+    idx = norm.find(marker)
+    if idx >= 0:
+        return norm[idx + len(marker):]
+    return pathlib.Path(norm).name
+
+
 def _sync_output_exists(key: str) -> bool:
     from botocore.exceptions import ClientError
 
@@ -277,7 +294,7 @@ async def resolve_stored_output(project_uid: str, stored_rel_path: str) -> pathl
     local = data_root() / stored_rel_path
     if local.is_file():
         return local
-    return await ensure_local_output(project_uid, output_basename(stored_rel_path))
+    return await ensure_local_output(project_uid, output_relpath(project_uid, stored_rel_path))
 
 
 async def pull_project_files(project_uid: str) -> None:

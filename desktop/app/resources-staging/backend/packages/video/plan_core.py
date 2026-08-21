@@ -45,6 +45,7 @@ async def build_talking_head_timeline(
     source_info: dict[str, Any],
     sources: list[dict[str, Any]],
     silence_gaps: list[dict[str, Any]] | None = None,
+    wav_path: str | None = None,
     on_progress: ProgressFn | None = None,
 ) -> dict[str, Any]:
     """Transcript segments → talking_head timeline dict (same schema as plan_edit).
@@ -57,6 +58,16 @@ async def build_talking_head_timeline(
     silent spans between speech segments worth keeping — e.g. a wordless
     product-reveal beat. They are merged in as their own cuts alongside the
     speech cuts before mechanical cleanup.
+
+    ``wav_path`` turns on the waveform pass — the same one speech_highlights
+    runs, for the same reason. Everything above reasons about word timings, and
+    Scribe stretches a trailing word over the pause after it: measured on real
+    audio, a one-syllable word claimed 1.85 s while the room went quiet after
+    0.3 s. To a cutter reading timestamps there is no pause there at all, which
+    is how a mode named "ตัดช่วงเงียบ" kept ~20% of some clips as silence. The
+    waveform sees it, so it decides: first remove the pauses inside kept
+    ranges, then verify no edge — new or old — sits on live speech. Omit it and
+    the behaviour is exactly as before.
     """
 
     async def _progress(msg: str) -> None:
@@ -99,6 +110,19 @@ async def build_talking_head_timeline(
             "ช่วงที่มีเสียงพูดสั้นเกินไปทุกช่วง (ต่ำกว่า 1 วินาที) เลยไม่เหลืออะไรให้ตัด — "
             "ลองใช้โหมดตัดฉากเด่น หรือใช้คลิปที่พูดต่อเนื่องกว่านี้"
         )
+
+    if wav_path:
+        from packages.video.audio_edges import (
+            remove_internal_silence,
+            snap_cuts_to_silence,
+        )
+
+        before = cuts_duration(cuts)
+        cuts = remove_internal_silence(cuts, wav_path)
+        cuts = snap_cuts_to_silence(cuts, wav_path)
+        cuts = filter_short_cuts(cuts)
+        log.info("waveform_pass", removed_sec=round(before - cuts_duration(cuts), 1),
+                 cuts=len(cuts))
 
     render_cuts = filter_short_cuts(localize_cuts(cuts, boundaries))
     kept_sec = cuts_duration(render_cuts)

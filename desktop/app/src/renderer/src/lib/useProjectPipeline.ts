@@ -1316,12 +1316,54 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
    * rewrote `step` back to the checkpoint underneath a live run (observed
    * 2026-08-13: two bootstraps mid-run right after "เริ่มตัดต่อ").
    */
+  /**
+   * "ลองใหม่" when the AI half already finished and the run died after it.
+   *
+   * `fail()` overwrites `step` with 'error', so the stage that broke is not
+   * recoverable from the project — but the server plan is: if it is there, the
+   * transcription and the selection both succeeded and re-running from the top
+   * would pay Scribe and Gemini a second time for a result already sitting in
+   * S3. That is the whole cost of a speech run. Observed live on a
+   * speech_highlights project whose plan was complete and whose only failure
+   * was the fetch of it (2026-08-22).
+   *
+   * Speech modes only. dub_first's plan (edit_script) is followed by TWO
+   * renders, and with the failed step erased there is no way to tell a break
+   * before the silent render from one after the voiceover — resuming would
+   * re-render over finished work.
+   *
+   * Returns false when there is no usable plan; the caller then starts the run
+   * properly.
+   */
+  const resumeFromServerPlan = async (): Promise<boolean> => {
+    const current = projectRef.current
+    const remoteUid = current.remote?.uid
+    const currentMode: ProjectMode = current.mode ?? 'dub_first'
+    if (!remoteUid || !isSpeechMode(currentMode)) return false
+
+    setProgressMsg('กำลังตรวจว่ามีแผนเดิมบนเซิร์ฟเวอร์…')
+    const plan = await getLocalTimeline(session, remoteUid).catch(() => null)
+    void window.noey.log.write(
+      'useProjectPipeline',
+      `retry resume uid=${current.uid} mode=${currentMode} plan=${plan ? 'found' : 'none'}`
+    )
+    if (!plan) return false
+
+    if (currentMode === 'speech_highlights') {
+      await runRenderHighlights(plan as unknown as HighlightIndex, remoteUid)
+    } else {
+      await runRenderTimeline(plan as DubTimeline, remoteUid)
+    }
+    return true
+  }
+
   const retry = async (): Promise<void> => {
     if (pipelineRef.current) return
     void window.noey.log.write('useProjectPipeline', `retry uid=${project.uid} step=${step}`)
     setError(null)
     const run = (async () => {
       await patchProject({ step: 'imported', error: undefined })
+      if (await resumeFromServerPlan()) return
       if (isSpeechMode(mode)) await runTalkingHead()
       else await runAnalyze()
     })()

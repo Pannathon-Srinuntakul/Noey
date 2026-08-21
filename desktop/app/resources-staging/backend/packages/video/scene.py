@@ -16,14 +16,17 @@ log = get_logger(__name__)
 
 MAX_FRAMES = 15  # cap Claude Vision payload (talking_head)
 # dub_first: evenly-spaced time slots scale with clip length (no early cap).
-DUB_MAX_CLIP_SEC = 20 * 60  # upload + sampling ceiling (20 minutes)
-DUB_UPLOAD_TOLERANCE_SEC = 5.0  # ffprobe/container slack for round "20:00" exports
-# Total across ALL clips in one project, any clip count — dub_first only ever
-# selects ~45-90s of highlights, so 100+ minutes of raw footage in one project
-# was never a real use case; this also protects generate_dub_edit_script_video's
-# single-bundled-call architecture (every clip goes in one Gemini request) from
-# the token/timeout ceiling that scales with total footage, not clip count.
-DUB_FIRST_MAX_TOTAL_SEC = 20 * 60 + 10  # 20 min + tolerance for near-cap exports
+# Raised 20 min → 2 h on 2026-08-18 (owner decision): the proxy runs ~60 KB/s
+# and Gemini reads ~66 tok/s of footage, so 2 h ≈ 430 MB upload / ~480k input
+# tokens — heavy but within the model's context. The desktop wizard warns past
+# 40 min (SOFT_CAP_SEC) instead of blocking; this ceiling is the hard stop and
+# must match the wizard's `capSecFor('highlight')`.
+DUB_MAX_CLIP_SEC = 2 * 60 * 60  # upload + sampling ceiling per clip
+DUB_UPLOAD_TOLERANCE_SEC = 5.0  # ffprobe/container slack for round exports
+# Total across ALL clips in one project — protects the single-bundled-call
+# architecture (every clip goes in one Gemini request) from the token/timeout
+# ceiling that scales with total footage, not clip count.
+DUB_FIRST_MAX_TOTAL_SEC = 2 * 60 * 60 + 10  # 2 h + tolerance for near-cap exports
 DUB_SCENE_INTERVAL_SEC = 15  # ~1 slot every 15s; capped by DUB_MAX_BUDGET_FRAMES
 DUB_MAX_BUDGET_FRAMES = 30  # hard cap; frames distributed evenly when clip hits cap
 DUB_SAMPLES_PER_SCENE = 1  # one JPEG per slot
