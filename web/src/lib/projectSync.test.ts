@@ -53,3 +53,27 @@ describe('a rejected upload', () => {
     expect(SOURCE).toContain('authedFetch')
   })
 })
+
+describe('the back-fill for projects that predate the sync', () => {
+  it('exists and keys off project.json', () => {
+    // Every push point is a pipeline TRANSITION, which never fires again for a
+    // project already resting at waiting_vo or done. Without a catch-up, every
+    // project finished before those transitions learned to sync stays on one
+    // machine for good — which is what production looked like on 2026-09-08.
+    expect(SOURCE).toContain('export async function backfillUnsyncedProjects')
+    expect(SOURCE).toMatch(/f\.path === 'project\.json'/)
+  })
+
+  it('runs on mount, after the restore', () => {
+    const jobs = readFileSync(resolve(__dirname, 'jobs.tsx'), 'utf8')
+    expect(jobs).toContain('backfillUnsyncedProjects')
+    expect(jobs.indexOf('restoreMissingProjects(session)')).toBeLessThan(
+      jobs.indexOf('backfillUnsyncedProjects(session)')
+    )
+  })
+
+  it('skips a project with no server row rather than guessing one', () => {
+    const body = SOURCE.slice(SOURCE.indexOf('export async function backfillUnsyncedProjects'))
+    expect(body).toContain('if (!remoteUid) continue')
+  })
+})

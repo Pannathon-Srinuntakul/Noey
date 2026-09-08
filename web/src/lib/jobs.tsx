@@ -151,9 +151,20 @@ export function JobsProvider({
   useEffect(() => {
     let cancelled = false
     void (async () => {
-      const { restoreMissingProjects } = await import('./projectSync')
+      const { restoreMissingProjects, backfillUnsyncedProjects } = await import('./projectSync')
       const restored = await restoreMissingProjects(session)
       if (restored > 0 && !cancelled) reload()
+      if (cancelled) return
+
+      // Then the other direction. Every push point is a pipeline TRANSITION,
+      // which never fires again for a project already resting at waiting_vo or
+      // done — so a project finished before its transition learned to sync
+      // stays on one machine for good. This is the one-time catch-up, and it
+      // is a no-op for a project the server already has.
+      const pushed = await backfillUnsyncedProjects(session)
+      if (pushed > 0) {
+        void window.noey.log.write('projectSync', `backfilled ${pushed} project(s)`)
+      }
     })()
     return () => {
       cancelled = true

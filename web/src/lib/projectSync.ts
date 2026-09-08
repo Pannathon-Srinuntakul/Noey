@@ -23,6 +23,7 @@ import {
   listDir,
   projectDirPath,
   projectFilePath,
+  readJson,
   writeFileAtomic,
   SERVER_MANIFEST
 } from '../platform/fs'
@@ -219,6 +220,59 @@ export async function deleteProjectFile(
   if (!res.ok && res.status !== 404) {
     throw new ApiError(res.status, `ลบ ${rel} บนเซิร์ฟเวอร์ไม่สำเร็จ`)
   }
+}
+
+/**
+ * Upload projects this browser holds that the server does not.
+ *
+ * The push points are all pipeline TRANSITIONS, which is right for a project
+ * being worked on and useless for one that is already resting: a project that
+ * reached `waiting_vo` or `done` before its transition learned to sync sits
+ * there for good, complete on one machine and absent everywhere else. That is
+ * exactly the state every project made before 2026-09-08 is in.
+ *
+ * `project.json` is the marker, because it is the file `restoreMissingProjects`
+ * needs and the one every sync writes first. Its absence on the server means
+ * this project has never been synced at all.
+ *
+ * Runs once per session, after the restore. Best-effort and serialised: a
+ * back-fill is a bulk upload, and doing several at once would saturate the
+ * connection the user is trying to work over.
+ */
+export async function backfillUnsyncedProjects(
+  session: ApiSession,
+  onProgress?: (name: string, done: number, total: number) => void
+): Promise<number> {
+  const uids = await listProjectUids()
+  const pending: { uid: string; remoteUid: string }[] = []
+
+  for (const uid of uids) {
+    const project = await readJson<{ remote?: { uid?: string }; step?: string }>(
+      projectFilePath(uid, 'project.json')
+    )
+    const remoteUid = project?.remote?.uid
+    if (!remoteUid) continue
+    try {
+      const remote = await serverManifest(session, remoteUid, uid)
+      if (!remote.some((f) => f.path === 'project.json')) {
+        pending.push({ uid, remoteUid })
+      }
+    } catch {
+      // A project whose manifest cannot be read is left alone.
+    }
+  }
+
+  let done = 0
+  for (const entry of pending) {
+    try {
+      await pushProjectFiles(session, entry.uid, entry.remoteUid)
+      done += 1
+      onProgress?.(entry.uid, done, pending.length)
+    } catch {
+      // One project that cannot be uploaded must not stop the rest.
+    }
+  }
+  return done
 }
 
 /** Fetch one file the local store does not have. */
