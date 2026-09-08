@@ -23,7 +23,13 @@ export function Progress({
 }: ProgressProps): React.JSX.Element {
   return (
     <div className={className}>
-      <div className="flex items-center gap-2">
+      {/* Wraps below `sm`. Labels are shrink-0 + whitespace-nowrap and
+          connectors have a 20px floor, so the rail has a hard min-content
+          width — a 5-stage speech run is ~470px, against ~310px of card at
+          390, and the overflow scrolled the whole page sideways. Wrapped, the
+          connectors would draw stray dashes between rows, so they only appear
+          once the row is a single line again. */}
+      <div className="flex flex-wrap items-center gap-2">
         {/* Connectors are direct siblings of the labels so `flex-1` has room to
             grow — nesting each pair in its own span left them at a fixed 20px
             and bunched every step against the left edge. */}
@@ -35,7 +41,7 @@ export function Progress({
               {i > 0 ? (
                 <span
                   className={cn(
-                    'h-px min-w-[20px] flex-1',
+                    'hidden h-px min-w-[20px] flex-1 sm:block',
                     i <= currentIndex ? 'bg-accent' : 'bg-border-faint'
                   )}
                 />

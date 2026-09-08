@@ -2,7 +2,12 @@
 <html lang="th">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- `viewport-fit=cover` is what makes env(safe-area-inset-*) resolve to
+         anything but 0 — the shell uses it to clear the home indicator. -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
     <title>Noey Video Edit</title>
     <link rel="icon" type="image/svg+xml" href="/noey-mark.svg" />
     <!--

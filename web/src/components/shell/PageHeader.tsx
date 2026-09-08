@@ -31,14 +31,19 @@ export function PageHeader({
           <button
             type="button"
             onClick={onBack}
-            className="inline-flex items-center gap-[7px] text-sm text-muted transition-colors duration-state ease-out hover:text-ink"
+            // 20px tall and hover-only: half the touch floor, and a mistap on
+            // a phone produced no feedback at all.
+            className="-ml-2 inline-flex min-h-11 items-center gap-[7px] rounded-md px-2 text-sm text-muted transition-colors duration-state ease-out hover:text-ink active:bg-[rgb(243_242_242_/_0.06)] md:-ml-1 md:min-h-0 md:px-1"
           >
             <ArrowLeft size={14} />
             {backLabel}
           </button>
         ) : null}
         <h1
-          className={`truncate text-[26px] font-semibold leading-[1.15] text-ink sm:text-[34px] ${
+          // Wraps below `sm` rather than truncating: a generated 32-char
+          // project name was cut to a few characters with no tooltip and no
+          // second line.
+          className={`text-[22px] font-semibold leading-[1.2] text-ink sm:truncate sm:text-[34px] sm:leading-[1.15] ${
             backLabel ? 'mt-1.5' : ''
           }`}
         >

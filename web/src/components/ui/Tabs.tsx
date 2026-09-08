@@ -19,7 +19,13 @@ export interface TabsProps {
 /** Underline tabs on a divider — never a pill, that shape belongs to Chip. */
 export function Tabs({ items, activeKey, onChange, className }: TabsProps): React.JSX.Element {
   return (
-    <div className={cn('flex gap-5 border-b border-divider', className)}>
+    // Scrolls rather than wraps: the button is hard-set to h-[34px], so a
+    // label that wrapped to two lines spilled over the active underline and
+    // into the panel below. Settings' four Thai labels are ~408px against
+    // 350px of pane at 390.
+    <div
+      className={cn('scroll-ghost flex gap-5 overflow-x-auto border-b border-divider', className)}
+    >
       {items.map((item) => {
         const isActive = item.key === activeKey
         const tab = (
@@ -30,7 +36,7 @@ export function Tabs({ items, activeKey, onChange, className }: TabsProps): Reac
             aria-selected={isActive}
             onClick={() => onChange(item.key)}
             className={cn(
-              'flex h-[34px] items-center text-sm transition-colors duration-state ease-out disabled:cursor-not-allowed',
+              'flex h-[34px] shrink-0 items-center whitespace-nowrap text-sm transition-colors duration-state ease-out disabled:cursor-not-allowed',
               item.disabled
                 ? 'text-[rgb(243_242_242_/_0.4)]'
                 : isActive

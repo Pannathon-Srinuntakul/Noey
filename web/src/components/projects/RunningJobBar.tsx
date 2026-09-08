@@ -36,8 +36,12 @@ export function RunningJobBar({ job }: { job: ProjectPipeline }): React.JSX.Elem
   })
 
   return (
-    <div className="flex items-center gap-5 rounded-md border border-accent bg-surface p-5">
-      <div className="h-28 w-16 shrink-0 overflow-hidden rounded-sm bg-media">
+    // Stacks below `sm`: a 64px thumb, a ~127px button column and 40px of
+    // padding left the middle ~79px at 390, which the stage rail then
+    // overflowed into the projects list — giving the whole page a horizontal
+    // scrollbar for as long as any job ran.
+    <div className="flex flex-col items-stretch gap-4 rounded-md border border-accent bg-surface p-4 sm:flex-row sm:items-center sm:gap-5 sm:p-5">
+      <div className="h-20 w-[46px] shrink-0 overflow-hidden rounded-sm bg-media sm:h-28 sm:w-16">
         {previewFile ? (
           <video
             key={`${job.project.uid}-${previewFile}-${job.mediaKey}`}
@@ -57,7 +61,7 @@ export function RunningJobBar({ job }: { job: ProjectPipeline }): React.JSX.Elem
           <span className="shrink-0 text-sm text-muted">{MODE_LABEL[mode]}</span>
         </div>
 
-        <div className="my-3 flex items-center gap-2">
+        <div className="my-3 flex flex-wrap items-center gap-2">
           {/* Connectors are siblings of the labels so `flex-1` can stretch —
               nested, they collapse to their min width and bunch the steps at
               the left of the bar (same fix as the Progress primitive). */}
@@ -66,7 +70,7 @@ export function RunningJobBar({ job }: { job: ProjectPipeline }): React.JSX.Elem
               {i > 0 ? (
                 <span
                   className={cn(
-                    'h-px min-w-[20px] flex-1',
+                    'hidden h-px min-w-[20px] flex-1 sm:block',
                     i <= currentIndex ? 'bg-accent' : 'bg-border-faint'
                   )}
                 />
@@ -96,7 +100,7 @@ export function RunningJobBar({ job }: { job: ProjectPipeline }): React.JSX.Elem
         </p>
       </div>
 
-      <div className="flex shrink-0 flex-col gap-2">
+      <div className="flex shrink-0 flex-row gap-2 sm:flex-col">
         <Button
           variant="secondary"
           onClick={() => navigate({ name: 'progress', uid: job.project.uid })}

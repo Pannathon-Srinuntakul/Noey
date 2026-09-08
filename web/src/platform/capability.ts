@@ -138,7 +138,15 @@ async function probeAudioEncoder(): Promise<boolean> {
 export async function detectCapabilities(): Promise<Capabilities> {
   const missing: string[] = []
 
-  const hasOpfs = typeof navigator !== 'undefined' && !!navigator.storage?.getDirectory
+  // Not just "is there an OPFS" — can this browser WRITE to it? Safari has
+  // the directory API and no `createWritable`, so the old check let an iPhone
+  // all the way to "เริ่มตัดต่อ" before failing on the first write. The probe
+  // resolves to the worker fallback where that is what works.
+  let hasOpfs = typeof navigator !== 'undefined' && !!navigator.storage?.getDirectory
+  if (hasOpfs) {
+    const { writeCapability } = await import('./opfsWrite')
+    hasOpfs = (await writeCapability()) !== 'none'
+  }
   if (!hasOpfs) missing.push('ที่เก็บไฟล์ของเว็บ')
 
   const hasServiceWorker = typeof navigator !== 'undefined' && 'serviceWorker' in navigator

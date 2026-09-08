@@ -164,7 +164,9 @@ function CaptionPreviewLightbox({
       <CaptionPreviewFrame
         style={style}
         previewThumb={previewThumb}
-        className="h-[min(84vh,900px)] aspect-[9/16]"
+        // Constrained on BOTH axes: sized from height alone, the 9:16 frame
+        // came out wider than a phone and spilled past the backdrop padding.
+        className="aspect-[9/16] max-h-[84dvh] max-w-full"
       />
       <p className="text-sm text-muted">แถบจางล่างคือที่ที่ TikTok วาง UI ทับ — กด Esc เพื่อปิด</p>
     </div>,
@@ -185,7 +187,9 @@ export function CaptionPanel({
   const [expanded, setExpanded] = useState(false)
 
   return (
-    <div className="flex gap-6">
+    // Preview above the controls below `lg`: a fixed 210px preview column
+    // left 76px for every control at 390.
+    <div className="flex flex-col gap-5 lg:flex-row lg:gap-6">
       <div className="flex min-w-0 flex-1 flex-col gap-4">
         <div>
           <FieldLabel>ฟอนต์</FieldLabel>
@@ -280,7 +284,7 @@ export function CaptionPanel({
         </div>
       </div>
 
-      <div className="flex w-[210px] shrink-0 flex-col items-center gap-2">
+      <div className="flex w-full shrink-0 flex-col items-center gap-2 lg:w-[210px]">
         <p className="self-start text-sm text-muted">พรีวิว 9:16</p>
         <button
           type="button"

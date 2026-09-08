@@ -2702,8 +2702,10 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
             {/* Below `lg` the inspector goes under the stage instead of beside
                 it: 360px of panel next to a 9:16 preview leaves the video a
                 sliver. The whole middle scrolls as one column there. */}
-            <div className="flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
-              <div className="flex min-w-0 flex-1 flex-col items-center justify-center gap-2 px-5 py-3">
+            <div className="flex min-h-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
+              {/* A floor for the stage: stacked, the inspector's 210px minimum
+                  took the rest and left the preview a ~94px sliver. */}
+              <div className="flex min-h-[46dvh] min-w-0 flex-1 flex-col items-center justify-center gap-2 px-5 py-3 lg:min-h-0">
                 <div
                   className="group/stage relative flex h-full min-h-0 max-w-full flex-1 items-center justify-center"
                   style={{ width: 'auto', aspectRatio: '9 / 16' }}
@@ -2780,7 +2782,7 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
               </div>
 
               {/* inspector — R3 right rail */}
-              <aside className="flex max-h-[52%] min-h-[210px] w-full shrink-0 flex-col overflow-hidden border-t border-divider lg:max-h-none lg:min-h-0 lg:w-[360px] lg:border-l lg:border-t-0">
+              <aside className="flex min-h-[210px] w-full shrink-0 flex-col overflow-hidden border-t border-divider lg:max-h-none lg:min-h-0 lg:w-[360px] lg:border-l lg:border-t-0">
                 <div className="shrink-0 border-b border-divider px-4 py-3">
                   <p className="text-[13px] text-muted">ฉากที่เลือกอยู่</p>
                   {selectedCut ? (

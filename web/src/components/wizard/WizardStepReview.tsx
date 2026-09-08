@@ -63,7 +63,7 @@ export function WizardStepReview({
           {rows.map((row, i) => (
             <div
               key={row.key}
-              className={`flex items-center justify-between gap-4 px-5 py-3.5 ${
+              className={`flex flex-col items-start gap-1 px-5 py-3.5 xl:flex-row xl:items-center xl:justify-between xl:gap-4 ${
                 i < rows.length - 1 ? 'border-b border-divider' : ''
               }`}
             >
@@ -71,7 +71,7 @@ export function WizardStepReview({
               <span className="flex min-w-0 items-center gap-3">
                 {/* Only the source row is a count + clock; the rest is prose. */}
                 <span
-                  className={`truncate text-[15px] text-ink ${
+                  className={`min-w-0 text-[15px] text-ink xl:truncate ${
                     row.key === 'sources' ? 'tabular-nums' : ''
                   }`}
                 >

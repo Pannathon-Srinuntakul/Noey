@@ -118,9 +118,21 @@ body {
 }
 
 #root {
+  /* `dvh` with a `vh` fallback for anything that does not know it.
+   *
+   * `vh` is the LARGE viewport: on a 390x844 iPhone with the URL bar showing,
+   * the shell lays 844px into ~745px of visible area. Every scroller here is
+   * an INNER pane (AppShell's main is overflow-hidden) and `body` is
+   * overflow:hidden, so no gesture retracts the toolbar — the bottom ~100px is
+   * permanently unreachable, taking the wizard's ถัดไป, the recorder's
+   * controls and every dialog footer with it. */
   height: 100vh;
+  height: 100dvh;
   display: flex;
   flex-direction: column;
+  /* Home-indicator clearance. Paired with viewport-fit=cover in index.html;
+   * without that meta these resolve to 0 and nothing changes. */
+  padding-bottom: env(safe-area-inset-bottom);
 }
 
 /* Dialog panel enter transition (ui/Dialog.tsx) — a CSS mount animation

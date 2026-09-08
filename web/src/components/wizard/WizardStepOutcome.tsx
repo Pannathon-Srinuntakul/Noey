@@ -99,12 +99,21 @@ function Row({
   return (
     <div
       className={cn(
-        'flex gap-5 px-[18px]',
+        // STACKS below `lg`. It used to be a row at every width with a
+        // `w-full shrink-0` label: the label took 100% and refused to shrink,
+        // and the control cell — `min-w-0 flex-1`, i.e. flex-basis 0 — was
+        // therefore laid out at exactly 0px, twenty pixels past the right
+        // edge. Every control in step 2 was invisible.
+        //
+        // `lg`, not `sm`: at 768 the 208px nav rail is back in flow, leaving
+        // ~560px, and a 132px label plus gap would put the เสียง rail into
+        // 292px it does not fit.
+        'flex flex-col gap-2 px-[18px] lg:flex-row lg:gap-5',
         first ? '' : 'border-t border-divider',
-        align === 'center' ? 'items-center py-[11px]' : 'py-[13px]'
+        align === 'center' ? 'py-[11px] lg:items-center' : 'py-[13px]'
       )}
     >
-      <div className={cn('w-full shrink-0 sm:w-[132px]', align === 'top' && 'sm:pt-[2px]')}>
+      <div className={cn('w-full shrink-0 lg:w-[132px]', align === 'top' && 'lg:pt-[2px]')}>
         <p className="text-sm text-ink-2">{label}</p>
         {hint ? <p className="mt-[3px] text-[12.5px] text-muted">{hint}</p> : null}
       </div>

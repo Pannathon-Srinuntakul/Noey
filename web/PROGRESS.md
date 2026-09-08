@@ -866,3 +866,101 @@ previous run's `clip_004` correctly gone, a real `pushProjectFiles` (6 files,
 18.6 MB, no `.part` uploaded), `extract-proxy` succeeding with
 `upload_sources.json` deliberately deleted from the store, and the delete
 manifest fix exercised against all three payload shapes.
+
+---
+
+## Gate 18 — Safari, and every screen at every width (2026-09-09)
+
+Two reports from the live build, one after the other.
+
+### iPhone: `c.createWritable is not a function`
+
+The owner reached step 3 of the wizard on an iPhone, pressed เริ่มตัดต่อ, and
+got that error on screen. iOS Safari implements OPFS but NOT
+`FileSystemFileHandle.createWritable()` — and every write in the app went
+through that one call (`fs.ts` × 4). The capability gate had waved the phone
+through because it only asked whether `navigator.storage.getDirectory` existed,
+never whether a write would work.
+
+Safari's own write API is `createSyncAccessHandle()`, which the spec allows
+only inside a Worker. So `opfsWriteWorker.ts` is a message pump over the sync
+API and `opfsWrite.ts` routes to it when `createWritable` is missing; Chrome
+and Firefox keep the fast path untouched. The gate now probes by WRITING, not
+by feature-sniffing.
+
+Only the file write moved threads. Decode, encode, captions, the mix — all
+still on the user's own device, and the phone had already proved it can encode:
+the gate's probe is a real H.264 encode of real frames (`capability.ts:62`),
+which is how it got as far as the wizard in the first place.
+
+**A worse bug fell out of testing it.** The first probe froze the tab outright.
+A sync access handle is an EXCLUSIVE lock held until `close()`, so an
+interrupted write leaves one open and re-opening that path waits for ever —
+with no error, no log, nothing. For a Safari user that reads as: a render
+fails once, they press render again, the app hangs permanently. `begin` now
+closes any handle still open on that path first. Two more found the same way:
+the message id and the file id were the same value (a reply could resolve the
+wrong promise), and an aborted stream never released its handle.
+
+Verified in a real browser on the worker path: whole-file write round-trips;
+**out-of-order positional writes land correctly** (`[9,9,9,9]@8` then
+`[1..8]@0` reads back in order — this is what the muxer does when it patches
+moov after the media, and getting it wrong corrupts every MP4); re-opening a
+locked path recovers instead of hanging; no `.part` left behind. The production
+build emits `opfsWriteWorker-*.js` as its own chunk.
+
+### "responsive แต่ละหน้า เหมือนยังไม่สมบูรณ์ ... บางหน้ามันไม่สวยเลย"
+
+Correct, and my first answer was too quick — I grepped for fixed widths, found
+three, and called it nearly done. A 16-agent sweep (8 surfaces × audit +
+adversarial verify, Opus 5 at high effort) found **108 findings, 74 distinct
+after dedup**, across four severities.
+
+Nearly all of them were two shapes:
+
+- an unprefixed `w-[NNNpx]` in a row that cannot wrap;
+- `w-full shrink-0` beside a `flex-1` sibling — which by the flexbox spec lays
+  that sibling out at **exactly 0px**, because the scaled shrink factors sum to
+  zero. Wizard step 2 rendered every one of its controls at zero width, twenty
+  pixels past the right edge, at every width below `lg`.
+
+The root cause behind several: `#root { height: 100vh }` with
+`body { overflow: hidden }`. `vh` is the LARGE viewport, so a 390×844 iPhone
+laid 844px into ~745px of visible area — and since every scroller is an inner
+pane, no gesture retracts the toolbar. The bottom ~100px was permanently lost,
+taking the wizard's ถัดไป, the recorder's controls and every dialog footer with
+it. Now `dvh` with a `vh` fallback, `viewport-fit=cover`, and
+`env(safe-area-inset-bottom)`.
+
+Fixed, worst first: the Dialog footer (every confirm in the app), Tabs, the
+Segmented rails, the Progress and RunningJobBar step rails (which gave the
+whole project list a horizontal scrollbar for as long as a job ran),
+VideoModal's 320px playlist rail (a 9:16 clip rendered **20px wide** beside its
+own playlist at 390), JobProgressPage's 300px sidebar (progress column starved
+to ~2px), ShotSwapReview's four 9:16 cards at ~54px each, CaptionPanel,
+VoiceoverPage (stacked with `overflow-hidden`, so the record button was
+off-screen and unreachable), EffectsStudioPage, the TimelineEditor's toolbar
+and inspector, and the rest.
+
+Touch and iOS: Switch (20×36) and Checkbox (18×18) get 44px tap targets via a
+`before:` pseudo-element, so nothing moves on screen; Tooltip wraps and opens
+on TAP (a disabled control cannot take focus and a phone has no hover, so every
+"why is this greyed out" reason was previously unreachable); the nav drawer no
+longer paints over its own toggle; Input and Textarea are 16px on a phone,
+because below that Safari zooms the layout viewport on focus and never zooms
+back.
+
+### Measured, not reasoned
+
+An iframe harness loaded the real app at **360 / 390 / 430 / 768 / 834 / 1024 /
+1280 / 1440** and clicked through seven routes at each, reading
+`documentElement.scrollWidth - clientWidth` and naming the widest offending
+element. **Zero horizontal overflow, every route, every width.**
+
+`responsive.test.ts` keeps it there: no unprefixed fixed width ≥340px in any
+reachable screen, no `w-full shrink-0` without a breakpoint width, `dvh` +
+safe-area on `#root`, `viewport-fit=cover` in the HTML, and a 16px floor on
+form fields.
+
+Test state: web `tsc` clean · **542 vitest** · `eslint` 0 errors · production
+build clean. Backend and desktop untouched by this gate.

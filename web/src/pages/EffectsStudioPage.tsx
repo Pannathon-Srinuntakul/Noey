@@ -821,8 +821,11 @@ function StylesTab({
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
-      <div className="scroll-ghost min-h-0 min-w-0 flex-1 overflow-y-auto py-5 pl-8 pr-6">
+    // Stacked below `lg` the two panes each resolved to 0 height inside an
+    // overflow-hidden parent, clipping the detail panel with nothing to
+    // scroll. The whole column scrolls as one there instead.
+    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
+      <div className="scroll-ghost min-w-0 flex-1 py-5 pl-5 pr-5 sm:pl-8 sm:pr-6 lg:min-h-0 lg:overflow-y-auto">
         {error && <p className="mb-3 text-sm text-error">{error}</p>}
 
         {loading ? (

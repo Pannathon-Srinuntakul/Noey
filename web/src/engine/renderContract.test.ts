@@ -87,7 +87,9 @@ describe('a re-render leaves nothing from the previous run', () => {
   it('render-highlights clears highlights/ first', () => {
     // A re-plan can produce FEWER highlights; the extras stayed on disk, in
     // the export list and on S3 against the quota.
-    expect(read('jobs/renderHighlights.ts')).toContain("deleteDir(projectFilePath(uid, 'highlights'))")
+    expect(read('jobs/renderHighlights.ts')).toContain(
+      "deleteDir(projectFilePath(uid, 'highlights'))"
+    )
   })
 })
 

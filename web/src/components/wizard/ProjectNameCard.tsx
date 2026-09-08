@@ -97,7 +97,7 @@ export function ProjectNameCard({
         ใช้ในหน้าโปรเจกต์ และชื่อไฟล์ที่ส่งออก · เปลี่ยนทีหลังได้
       </p>
       {state.files.length > 0 ? (
-        <div className="mt-3 flex items-center gap-[9px] border-t border-[rgb(243_242_242_/_0.1)] pt-3">
+        <div className="mt-3 flex flex-wrap items-center gap-x-[9px] gap-y-2 border-t border-[rgb(243_242_242_/_0.1)] pt-3">
           {/* Only as many as fit — the strip is orientation, not an inventory;
               the full list with its ordering lives in step 1. */}
           {state.files.slice(0, 6).map((clip) => (

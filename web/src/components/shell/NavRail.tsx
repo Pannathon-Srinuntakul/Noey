@@ -56,8 +56,12 @@ export function NavRail({
       aria-hidden={overlay && !open}
       className={cn(
         'flex w-52 shrink-0 flex-col gap-5 border-r border-divider bg-surface px-3 py-5',
+        // `top-[38px]`, not `inset-y-0`: the drawer used to cover the title
+        // bar, which is where its own toggle lives — opening it made the
+        // button that closes it unclickable, and the strip beside it belonged
+        // to neither drawer nor scrim and swallowed taps.
         overlay &&
-          'fixed inset-y-0 left-0 z-40 shadow-[8px_0_24px_rgb(0_0_0_/_0.45)] transition-transform duration-150 ease-out',
+          'fixed bottom-0 left-0 top-[38px] z-40 shadow-[8px_0_24px_rgb(0_0_0_/_0.45)] transition-transform duration-150 ease-out',
         overlay && (open ? 'translate-x-0' : '-translate-x-full')
       )}
     >
@@ -77,7 +81,7 @@ export function NavRail({
               aria-current={active ? 'page' : undefined}
               onClick={() => go(item.route)}
               className={cn(
-                'flex h-10 items-center gap-2.5 rounded-md px-2.5 text-[15px] transition-colors duration-state ease-out',
+                'flex h-11 items-center gap-2.5 rounded-md px-2.5 text-[15px] transition-colors duration-state ease-out md:h-10',
                 active
                   ? 'bg-accent-nav font-semibold text-accent shadow-[inset_2px_0_0_var(--color-accent)]'
                   : 'text-ink-3 hover:bg-[rgb(243_242_242_/_0.06)]'
@@ -107,7 +111,9 @@ export function NavRail({
                   onNavigate?.()
                 }}
                 className={cn(
-                  'flex h-9 items-center gap-2 rounded-md px-2.5 text-[14px] transition-colors duration-state ease-out',
+                  // 44px in the overlay drawer, where these are touched; the
+                  // design's 36px from `md` up, where they are clicked.
+                  'flex h-11 items-center gap-2 rounded-md px-2.5 text-[14px] transition-colors duration-state ease-out md:h-9',
                   // Deliberately quieter than the nav rows above: a neutral
                   // wash, no accent tint and no inset bar, so "where am I"
                   // reads at two levels and the accent bar stays the nav's.

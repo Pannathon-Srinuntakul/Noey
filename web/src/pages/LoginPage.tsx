@@ -100,8 +100,12 @@ export default function LoginPage({
   }
 
   return (
-    <div className="flex flex-1 items-center justify-center">
-      <div className="w-[420px]">
+    // `items-safe-center` keeps the TOP reachable: plain centring pushes the
+    // overflow past the start edge, so on a short viewport (a phone in
+    // landscape, or with the keyboard up) the top of the card could not be
+    // scrolled to at all.
+    <div className="flex flex-1 items-safe-center justify-center overflow-y-auto px-5 py-8">
+      <div className="w-full max-w-[420px]">
         <div className="mb-8 flex items-center gap-2.5">
           <BrandMark size={26} className="text-accent" />
           <span className="font-display text-[28px] text-ink">Noey Video Edit</span>

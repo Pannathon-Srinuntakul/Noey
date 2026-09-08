@@ -518,12 +518,18 @@ export function ShotSwapReview({
                 )}
               </p>
 
-              <div className="mt-[22px] flex min-h-0 flex-1 items-stretch justify-center gap-5 pb-1">
+              {/* A swipeable strip below `sm`: four 9:16 cards in a
+                  non-wrapping centred row came out ~54px wide each at 390 —
+                  vertical slivers of the shots you are choosing between. */}
+              <div className="mt-[22px] flex min-h-0 flex-1 items-stretch gap-3 overflow-x-auto pb-1 sm:justify-center sm:gap-5 sm:overflow-visible">
                 {options.map((opt, i) => {
                   const chosen = isChosen(opt)
                   const replaced = !chosen && opt.altIndex === null && diffCountFor(picks, segIndex)
                   return (
-                    <div key={i} className="flex min-h-0 flex-col">
+                    <div
+                      key={i}
+                      className="flex min-h-0 w-[46vw] max-w-[210px] shrink-0 flex-col sm:w-auto sm:max-w-none sm:flex-1 sm:shrink"
+                    >
                       {/* A div, not a <button>: the play control sits on top of
                           the picture, and a button inside a button is invalid
                           HTML — the browser swallowed the inner one, so the
@@ -631,8 +637,8 @@ export function ShotSwapReview({
         ) : null}
 
         {/* ── footer ── one commit button, one place, label follows state ── */}
-        <div className="flex shrink-0 items-center gap-4 px-6 pb-[22px] pt-5">
-          <span className="min-w-0 text-[13.5px] text-muted">
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-x-4 gap-y-3 px-6 pb-[22px] pt-5">
+          <span className="w-full min-w-0 text-[13.5px] text-muted sm:w-auto sm:flex-1">
             {diffCount > 0 ? (
               <>
                 <span className="text-ink-2">เปลี่ยนแล้ว {diffCount} ช็อต</span> · {regimeNote} ·

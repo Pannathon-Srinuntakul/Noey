@@ -43,7 +43,7 @@ export function FirstRunPanel({
 } = {}): React.JSX.Element {
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-5">
-      <div className="grid grid-cols-3 gap-5">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 lg:gap-5">
         {MODES.map(({ icon: Icon, title, blurb }) => (
           <div key={title} className="rounded-md border border-divider px-[18px] py-[18px]">
             <div className="flex items-center gap-2">

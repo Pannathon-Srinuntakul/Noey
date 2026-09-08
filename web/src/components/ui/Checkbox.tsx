@@ -14,8 +14,10 @@ export interface CheckboxProps {
   indicatorOnly?: boolean
 }
 
+// 18px box, 44px tap target — see the same treatment on Switch.
 const BOX =
-  'flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[3px] border transition-colors duration-state ease-out'
+  'relative flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[3px] border transition-colors duration-state ease-out ' +
+  "before:absolute before:left-1/2 before:top-1/2 before:h-11 before:w-11 before:-translate-x-1/2 before:-translate-y-1/2 before:content-['']"
 
 export function Checkbox({
   checked,

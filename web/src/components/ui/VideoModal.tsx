@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { ChevronLeft, ChevronRight, X } from 'lucide-react'
 import { cn } from '../../lib/cn'
 import { VideoPlayer } from './VideoPlayer'
+import { useIsNarrow } from '../../lib/useMediaQuery'
 
 /**
  * The app's big-screen player: one clip, as large as the window allows, in a
@@ -64,6 +65,8 @@ export interface VideoModalProps {
  * many highlights there are; ROW_H doubles as the scroll arithmetic below. */
 const RAIL_W = 320
 const ROW_H = 52
+/** How tall the rail is when it sits UNDER the video instead of beside it. */
+const RAIL_STRIP_H = 168
 
 function clockOf(sec: number): string {
   const s = Math.max(0, Math.round(sec))
@@ -84,6 +87,9 @@ export function VideoModal({
   index = 0,
   onIndexChange
 }: VideoModalProps): React.JSX.Element | null {
+  // Below `lg` the playlist is a strip under the video, not a column beside
+  // it — see the geometry below.
+  const narrow = useIsNarrow()
   const hasList = !!playlist && playlist.length > 1
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const railRef = useRef<HTMLDivElement | null>(null)
@@ -180,15 +186,21 @@ export function VideoModal({
   //
   // The free width is the window minus the rail and the backdrop padding; the
   // free height is the R9 figure. Whichever runs out first decides the size.
-  const freeW = `calc(100vw - ${(hasList ? RAIL_W : 0) + 50}px)`
-  const videoW = `min(calc((100vh - 100px) * ${aspect}), ${freeW})`
-  const videoH = `min(calc(100vh - 100px), calc(${freeW} / ${aspect}))`
+  // Below `lg` the rail moves UNDER the video, so it must not be subtracted
+  // from the width: reserving 320px at 390 left the clip 20px wide — a 9:16
+  // video rendered as a vertical thread beside its own playlist.
+  const railBeside = hasList && !narrow
+  const pad = narrow ? 26 : 50
+  const chrome = narrow ? 100 + RAIL_STRIP_H : 100
+  const freeW = `calc(100vw - ${(railBeside ? RAIL_W : 0) + pad}px)`
+  const videoW = `min(calc((100dvh - ${chrome}px) * ${aspect}), ${freeW})`
+  const videoH = `min(calc(100dvh - ${chrome}px), calc(${freeW} / ${aspect}))`
 
   return createPortal(
     // Backdrop at 90% (R9): the cards behind used to read through the old 72%
     // and competed with the clip.
     <div
-      className="fixed inset-0 z-[120] flex items-center justify-center bg-[rgb(9_8_7_/_0.9)] p-6"
+      className="fixed inset-0 z-[120] flex items-center justify-center bg-[rgb(9_8_7_/_0.9)] p-3 sm:p-6"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) closeWithPosition()
       }}
@@ -216,7 +228,7 @@ export function VideoModal({
             the video any height. 100px = the 26px above the box + its 46px
             header + 28px below it, measured off the R9 frame at 1280×800 —
             the same figure with or without a playlist now (R17c.2). */}
-        <div className="flex min-h-0 items-stretch">
+        <div className="flex min-h-0 flex-col items-stretch lg:flex-row">
           <VideoPlayer
             mediaKey={mediaKey}
             videoRef={videoRef}
@@ -242,8 +254,10 @@ export function VideoModal({
 
           {hasList && playlist ? (
             <div
-              className="flex min-h-0 shrink-0 flex-col border-l border-[rgb(243_242_242_/_0.1)]"
-              style={{ width: RAIL_W, height: videoH }}
+              className="flex min-h-0 shrink-0 flex-col border-t border-[rgb(243_242_242_/_0.1)] lg:border-l lg:border-t-0"
+              style={
+                narrow ? { width: '100%', height: RAIL_STRIP_H } : { width: RAIL_W, height: videoH }
+              }
             >
               <div className="flex h-[42px] shrink-0 items-center justify-between border-b border-[rgb(243_242_242_/_0.1)] px-4">
                 <span className="text-[13.5px] text-ink-2">ไฮไลต์ทั้งหมด</span>

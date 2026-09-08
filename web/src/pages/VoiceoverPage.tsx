@@ -265,7 +265,15 @@ export default function VoiceoverPage({ uid }: { uid: string }): React.JSX.Eleme
           พากย์แล้ว <span className="tabular-nums">{recordedCount}</span> จาก{' '}
           <span className="tabular-nums">{lines.length}</span> ประโยค
         </p>
-        <span className="min-w-0 flex-1 truncate text-sm text-muted">
+        {/* Its own line on a phone. Truncated in the toolbar row it was
+            ~10px wide at 360, so a denied microphone permission — the one
+            message on this screen that has to be read — showed nothing. */}
+        <span
+          className={cn(
+            'order-last w-full min-w-0 text-sm md:order-none md:w-auto md:flex-1 md:truncate',
+            recorder.micError ? 'text-error' : 'text-muted'
+          )}
+        >
           {recorder.micError ??
             (recorder.micLabel ? `ไมค์: ${recorder.micLabel}` : 'กด Space เพื่อเริ่ม–หยุดอัด')}
         </span>
@@ -290,23 +298,27 @@ export default function VoiceoverPage({ uid }: { uid: string }): React.JSX.Eleme
 
       {/* Below `lg` the line list goes under the preview: 520px of script beside
           a 250px video needs 800px of width before either is usable. */}
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
+      {/* Below `lg` the column SCROLLS. It used to be overflow-hidden while
+          stacked, so a 444px video plus the recorder pushed the record button
+          and the take list off the bottom of a phone with no way to reach
+          them. */}
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
         {/* Left: the cut, playing the line you are about to voice (R5 screen 4).
             Recording to picture is the whole point — without it you are reading
             a script and hoping it lands. Seeks to the line's own in-point
             whenever the selection changes; muted, because the cut's own audio
             would otherwise be picked up by the microphone. */}
-        <div className="flex min-w-0 flex-1 flex-col items-center justify-center gap-3 p-6">
+        <div className="flex min-w-0 shrink-0 flex-col items-center justify-center gap-3 p-4 lg:min-h-0 lg:flex-1 lg:shrink lg:p-6">
           {previewFile ? (
             <VideoPlayer
               videoRef={stageVideoRef}
               mediaKey={`${uid}-${previewFile}-${job.mediaKey}`}
               src={window.noey.media.urlFor(uid, previewFile)}
               muted
-              className="aspect-[9/16] w-full max-w-[250px] shrink-0 rounded-md lg:h-[444px] lg:w-[250px]"
+              className="aspect-[9/16] h-[38dvh] w-auto max-w-full shrink-0 rounded-md sm:h-[46dvh] lg:h-[min(70dvh,444px)] lg:w-auto"
             />
           ) : (
-            <div className="aspect-[9/16] w-full max-w-[250px] shrink-0 rounded-md bg-media lg:h-[444px] lg:w-[250px]" />
+            <div className="aspect-[9/16] h-[38dvh] w-auto max-w-full shrink-0 rounded-md bg-media sm:h-[46dvh] lg:h-[min(70dvh,444px)] lg:w-auto" />
           )}
           {active ? (
             <p className="text-[13px] tabular-nums text-muted">
@@ -466,7 +478,7 @@ export default function VoiceoverPage({ uid }: { uid: string }): React.JSX.Eleme
                       }}
                       title="ฟังเทคนี้"
                       aria-label={`ฟังเทคประโยคที่ ${i + 1}`}
-                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded border border-border text-muted transition-colors duration-state ease-out hover:border-border-strong hover:text-ink"
+                      className="flex h-10 w-10 shrink-0 items-center justify-center rounded border border-border text-muted transition-colors duration-state ease-out hover:border-border-strong hover:text-ink sm:h-7 sm:w-7"
                     >
                       <Play size={13} />
                     </button>

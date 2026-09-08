@@ -32,7 +32,12 @@ export function Switch({
         disabled={isDisabled}
         onClick={() => onChange(!checked)}
         className={cn(
-          'flex h-5 w-9 shrink-0 items-center rounded-full border p-[3px] transition-colors duration-state ease-out disabled:cursor-not-allowed',
+          // The pill stays 20x36; `before:` grows the TAP target to 44px
+          // without moving anything on screen. Several call sites pass no
+          // `id`, so the label is not a second target and this pill is the
+          // only one there is.
+          'relative flex h-5 w-9 shrink-0 items-center rounded-full border p-[3px] transition-colors duration-state ease-out disabled:cursor-not-allowed',
+          "before:absolute before:left-1/2 before:top-1/2 before:h-11 before:w-11 before:-translate-x-1/2 before:-translate-y-1/2 before:content-['']",
           checked ? 'border-accent bg-[rgb(217_164_65_/_0.25)]' : 'border-border bg-transparent',
           isDisabled && 'border-border-faint bg-transparent'
         )}

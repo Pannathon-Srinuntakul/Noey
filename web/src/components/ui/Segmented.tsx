@@ -57,7 +57,11 @@ export function Segmented({
       aria-label={ariaLabel}
       onKeyDown={onKeyDown}
       className={cn(
-        'inline-flex h-[34px] shrink-0 items-center rounded-md border border-border-faint',
+        // Wraps. The web copy added `shrink-0`, which desktop does not have, so the
+        // rail had one intrinsic width and could neither shrink nor wrap: the
+        // เสียง rail is ~424px against ~314px of control cell at 390. Each option
+        // keeps its own h-[34px], so a wrapped row still looks like a rail.
+        'inline-flex min-h-[34px] max-w-full flex-wrap items-center rounded-md border border-border-faint',
         className
       )}
     >

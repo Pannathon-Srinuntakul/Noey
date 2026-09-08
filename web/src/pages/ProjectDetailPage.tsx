@@ -420,7 +420,7 @@ export default function ProjectDetailPage({ uid }: { uid: string }): React.JSX.E
                       type="button"
                       onClick={() => setSelectedHighlight(h.id)}
                       className={cn(
-                        'flex items-center gap-3 px-5 py-2.5 text-left transition-colors duration-state ease-out',
+                        'flex flex-col items-start gap-1 px-5 py-2.5 text-left sm:flex-row sm:items-center sm:gap-3 transition-colors duration-state ease-out',
                         i > 0 && 'border-t border-divider',
                         selected
                           ? 'border-l-2 border-l-accent bg-accent-tint'

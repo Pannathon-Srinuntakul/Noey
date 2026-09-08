@@ -60,8 +60,12 @@ const FIELD_DISABLED =
  * Not called `size`: that is a real `<input>` attribute (character width) and is
  * already part of `InputHTMLAttributes`.
  */
+// 16px on a phone, the design's 15px from `sm` up. Mobile Safari zooms the
+// LAYOUT viewport whenever a focused form control computes below 16px, and it
+// does not zoom back out on blur — the user is left pinching their way back on
+// every field in the app.
 const FIELD_SIZE = {
-  md: 'h-10 text-[15px]',
+  md: 'h-10 text-[16px] sm:text-[15px]',
   lg: 'h-11 text-[16px]'
 } as const
 
@@ -124,7 +128,8 @@ export function Textarea({
         id={id}
         disabled={disabled === true}
         className={cn(
-          'min-h-16 w-full resize-none rounded-md border bg-transparent px-3 py-2.5 text-[15px] leading-[1.5] text-ink outline-none transition-colors duration-state ease-out',
+          // See FIELD_SIZE: 16px on a phone or Safari zooms on focus.
+          'min-h-16 w-full resize-none rounded-md border bg-transparent px-3 py-2.5 text-[16px] leading-[1.5] text-ink outline-none transition-colors duration-state ease-out sm:text-[15px]',
           error ? 'border-error' : FIELD_BORDER,
           FIELD_DISABLED,
           className

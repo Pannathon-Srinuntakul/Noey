@@ -446,7 +446,7 @@ export default function WizardPage({
               : 'กด Esc เพื่อยกเลิก'}
           </span>
         )}
-        <div className="flex shrink-0 items-center gap-3">
+        <div className="flex min-w-0 flex-wrap items-center justify-end gap-x-3 gap-y-2">
           {step === 1 ? (
             <Button variant="ghost" onClick={() => void cancel()}>
               ยกเลิก

@@ -129,7 +129,7 @@ function ClipRow({
         transition,
         opacity: isDragging ? 0.55 : 1
       }}
-      className="flex items-center gap-2.5 border-b border-divider px-5 py-3"
+      className="flex flex-wrap items-center gap-2.5 border-b border-divider px-3 py-3 sm:flex-nowrap sm:px-5"
     >
       <button
         type="button"
@@ -147,7 +147,9 @@ function ClipRow({
         className="h-16 w-9 rounded-[3px] bg-media"
       />
 
-      <span className="min-w-0 flex-1">
+      {/* `basis-40`: four shrink-0 neighbours crushed the filename to ~100px
+          on a phone. With a basis the row wraps instead. */}
+      <span className="min-w-0 flex-1 basis-40">
         <span className="block truncate text-[15px] text-ink">{clip.name}</span>
         <span className="block text-[13px] tabular-nums text-muted">{metaLine(clip)}</span>
       </span>

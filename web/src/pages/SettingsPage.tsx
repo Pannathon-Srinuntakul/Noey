@@ -167,7 +167,10 @@ function UsageTab({ session }: { session: Session }): React.JSX.Element {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex gap-4">
+      {/* Stacks on a phone: the quota card is flex-1 next to a `sm:w-[300px]`
+          sibling that is w-full below sm, which squeezed the quota — the one
+          number on the page — to its min-content. */}
+      <div className="flex flex-col gap-4 sm:flex-row">
         {/* The quota is the one card on this page that carries the accent —
          * accent border and accent figure, per R5. */}
         <div className="flex-1 rounded-md border border-accent p-5">
@@ -504,7 +507,10 @@ function AccountTab({
   return (
     <div className="flex flex-col gap-4">
       <Section title={name}>
-        <p className="text-sm text-muted" style={{ userSelect: 'text' }}>
+        {/* `break-words`, not `break-all`: it breaks an unbreakable string
+            only when it would overflow. A long address has no natural break
+            and pushed the whole card past the viewport. */}
+        <p className="break-words text-sm text-muted" style={{ userSelect: 'text' }}>
           {session.profile.email}
         </p>
         <div className="mt-3.5">

@@ -23,6 +23,8 @@
  * makes.
  */
 
+import type { MuxChunk } from './opfsWrite'
+
 /** Scheme for a file inside the project store. */
 export const FS_SCHEME = 'noeyfs://'
 
@@ -168,6 +170,15 @@ export async function writeFileAtomic(
   path: string,
   data: Uint8Array | Blob | ReadableStream<Uint8Array>
 ): Promise<string> {
+  // Safari has OPFS but no `createWritable` on the main thread, so every write
+  // in the app threw `createWritable is not a function` there. The worker path
+  // uses `createSyncAccessHandle` and keeps the same atomic contract.
+  const { workerWriteFile, writeCapability } = await import('./opfsWrite')
+  if ((await writeCapability()) === 'worker') {
+    await workerWriteFile(path, data)
+    return path
+  }
+
   const { segments, name } = splitFsPath(path)
   const dir = await dirFor(segments, { create: true })
   if (!dir) throw new Error(`cannot create directory for ${path}`)
@@ -206,10 +217,16 @@ export async function writeFileAtomic(
  * that swaps it in, so the atomic contract above still holds.
  */
 export async function openStagedWrite(path: string): Promise<{
-  writable: FileSystemWritableFileStream
+  // Both paths accept the muxer's `{type,data,position}` chunks: an OPFS
+  // `FileSystemWritableFileStream` understands them natively, and the worker
+  // fallback translates them into positional sync writes.
+  writable: WritableStream<MuxChunk>
   publish: () => Promise<string>
   discard: () => Promise<void>
 }> {
+  const { workerStagedWrite, writeCapability } = await import('./opfsWrite')
+  if ((await writeCapability()) === 'worker') return workerStagedWrite(path)
+
   const { segments, name } = splitFsPath(path)
   const dir = await dirFor(segments, { create: true })
   if (!dir) throw new Error(`cannot create directory for ${path}`)

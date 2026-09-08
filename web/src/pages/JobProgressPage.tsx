@@ -106,7 +106,10 @@ export default function JobProgressPage({ uid }: { uid: string }): React.JSX.Ele
         }
       />
 
-      <div className="scroll-ghost flex min-h-0 flex-1 gap-6 overflow-y-auto px-8 pb-8 pt-6">
+      {/* Stacks below `lg`. A 300px `shrink-0` panel in an unprefixed row left
+          the progress column ~2px at 390 — the thing the screen exists to
+          show. */}
+      <div className="scroll-ghost flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-5 pb-8 pt-6 lg:flex-row lg:px-8">
         <div className="flex min-w-0 flex-1 flex-col gap-4">
           <div className="rounded-md border border-accent p-5">
             <Progress
@@ -144,7 +147,7 @@ export default function JobProgressPage({ uid }: { uid: string }): React.JSX.Ele
           </div>
         </div>
 
-        <div className="w-[300px] shrink-0 rounded-md border border-divider px-5 py-[18px]">
+        <div className="w-full shrink-0 rounded-md border border-divider px-5 py-[18px] lg:w-[300px]">
           <p className="mb-3 text-[15px] font-semibold text-ink">ไฟล์ต้นฉบับ</p>
           <div className="flex flex-col gap-2.5 text-sm text-muted">
             {clips.length === 0 ? (
