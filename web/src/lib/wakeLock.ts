@@ -23,12 +23,19 @@ let holders = 0
 async function take(): Promise<void> {
   const api = (navigator as { wakeLock?: { request(type: 'screen'): Promise<WakeLockSentinel> } })
     .wakeLock
-  if (!api || sentinel) return
+  if (!api) {
+    void window.noey.log.write('wakeLock', 'not supported by this browser')
+    return
+  }
+  if (sentinel) return
   try {
     sentinel = await api.request('screen')
-  } catch {
-    // Denied, or the tab is already hidden. Not an error worth surfacing:
-    // the render carries on either way.
+    void window.noey.log.write('wakeLock', 'held')
+  } catch (err) {
+    // Denied, or the tab is already hidden. Not an error worth surfacing to the
+    // user: the render carries on either way. It goes in the log because "did
+    // the screen actually stay awake on that phone" is otherwise unanswerable.
+    void window.noey.log.write('wakeLock', `refused: ${String(err)}`)
   }
 }
 

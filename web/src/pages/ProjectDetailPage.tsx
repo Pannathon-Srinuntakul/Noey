@@ -310,11 +310,16 @@ export default function ProjectDetailPage({ uid }: { uid: string }): React.JSX.E
           )}
         </div>
 
-        {/* Scrolls: the column was built to fit one screen, but a
-            speech_highlights project adds a whole highlights list on top of the
-            usual cards and the bottom panels fell off the fold with no way to
-            reach them (body itself is overflow:hidden). */}
-        <div className="scroll-ghost flex min-w-0 flex-1 flex-col gap-4 overflow-y-auto">
+        {/* Its OWN scroller only from `lg`, where it sits beside the preview and
+            has a column of its own to fill.
+            Stacked, it must not be one. The parent's height is definite (a
+            `flex-1` of the `100dvh` shell), so `flex-1` here means "whatever is
+            left after the 480px preview" — on a 390x844 iPhone that is ~39px,
+            and `overflow-y-auto` sets `min-height: 0`, so nothing stops it. Every
+            button on this page — แก้ไขวิดีโอ included — was laid out inside a
+            39px scroller nobody can see, let alone scroll (live report
+            2026-09-09). Auto height here, and the outer column scrolls. */}
+        <div className="scroll-ghost flex min-w-0 flex-col gap-4 lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
           {/* An editor's AI job keeps running after you leave it (lib/fxJobs).
               Without this row the app looked idle while it worked, so the only
               way to know was to walk back into the editor. */}

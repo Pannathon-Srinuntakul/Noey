@@ -84,12 +84,17 @@ export async function mixMusicOnto(
   if (copied) return copied
 
   const reader = await openVideo(video)
+  const frames = Math.max(1, Math.round(info.durationSec * opts.fps))
+  // Sequential, like every other full-clip pass in the engine — a seek per
+  // frame is roughly 13x slower on a long source.
+  const stamps: number[] = []
+  for (let f = 0; f < frames; f++) stamps.push(f / opts.fps)
+  const pass = reader.framesAt(stamps)
   try {
-    const frames = Math.max(1, Math.round(info.durationSec * opts.fps))
     const out = await encodeVideo(
       frames,
-      async (ctx, _i, timeSec) => {
-        const frame = await reader.frameAt(timeSec)
+      async (ctx) => {
+        const frame = (await pass.next()).value ?? null
         if (!frame) return false
         ctx.drawImage(frame, 0, 0, opts.width, opts.height)
         return true
@@ -99,6 +104,7 @@ export async function mixMusicOnto(
     if (!out) throw new Error('ผสมเสียงไม่สำเร็จ')
     return out
   } finally {
+    await pass.return(undefined).catch(() => undefined)
     reader.close()
   }
 }

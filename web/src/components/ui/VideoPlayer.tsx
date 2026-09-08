@@ -106,10 +106,20 @@ export function VideoPlayer({
   const [expanded, setExpanded] = useState(false)
   const [handoffSec, setHandoffSec] = useState(0)
 
+  // A touch screen has no hover, and the pointer events it DOES send are the
+  // opposite of what this overlay was built on: `pointerenter`/`pointermove`
+  // only fire while a finger is down, and `pointerleave` fires the instant it
+  // lifts. So on a phone the transport appeared only while pressing and held
+  // and vanished on release — "ต้องจิ้มค้างไว้ถึงจะขึ้น หากปล่อยก็หายเลย"
+  // (live report 2026-09-09). Touch gets tap-to-reveal instead, and a longer
+  // grace period, because there is no pointer resting on the frame to keep it
+  // up.
+  const coarse = useRef(false)
+
   const show = (): void => {
     setVisible(true)
     window.clearTimeout(timer.current)
-    timer.current = window.setTimeout(() => setVisible(false), 2000)
+    timer.current = window.setTimeout(() => setVisible(false), coarse.current ? 4000 : 2000)
   }
   const hide = (): void => {
     window.clearTimeout(timer.current)
@@ -169,12 +179,21 @@ export function VideoPlayer({
 
   return (
     <div
-      onPointerEnter={show}
+      onPointerDown={(e) => {
+        coarse.current = e.pointerType === 'touch'
+      }}
+      onPointerEnter={(e) => {
+        if (e.pointerType !== 'touch') show()
+      }}
       onPointerMove={(e) => {
-        show()
+        if (e.pointerType !== 'touch') show()
         onPointerMove?.(e)
       }}
-      onPointerLeave={hide}
+      onPointerLeave={(e) => {
+        // On touch this fires on lift, which is exactly when the transport
+        // needs to STAY up. Its own timer takes it away.
+        if (e.pointerType !== 'touch') hide()
+      }}
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerCancel}
       className={cn('relative overflow-hidden bg-media', className)}
@@ -189,7 +208,19 @@ export function VideoPlayer({
         preload={preload}
         className="absolute inset-0 h-full w-full object-contain"
         style={videoStyle}
-        onClick={toggle}
+        onClick={() => {
+          // Touch: a tap on the picture is how you REACH the controls, so it
+          // reveals them (and hides them again) rather than starting playback —
+          // otherwise the one gesture a phone has would fire two actions at
+          // once. Play/pause is the ring in the transport, which is now
+          // reachable. A mouse keeps click-to-play; it has hover to reveal.
+          if (coarse.current) {
+            if (visible) hide()
+            else show()
+            return
+          }
+          toggle()
+        }}
         onLoadedMetadata={(e) => {
           const el = e.currentTarget
           setDuration(el.duration || 0)
@@ -263,11 +294,18 @@ export function VideoPlayer({
         playing={playing}
         currentSec={current}
         durationSec={duration}
-        onTogglePlay={toggle}
+        // Re-arm the auto-hide on every use: with nothing hovering the frame on
+        // a phone, the 4s timer started by the reveal tap would otherwise take
+        // the bar away mid-scrub.
+        onTogglePlay={() => {
+          toggle()
+          show()
+        }}
         onSeek={(sec) => {
           const el = videoRef.current
           if (el) el.currentTime = sec
           setCurrent(sec)
+          show()
         }}
         onScrubStart={() => {
           scrubbing.current = true

@@ -43,7 +43,19 @@ export function PageHeader({
           // Wraps below `sm` rather than truncating: a generated 32-char
           // project name was cut to a few characters with no tooltip and no
           // second line.
-          className={`text-[22px] font-semibold leading-[1.2] text-ink sm:truncate sm:text-[34px] sm:leading-[1.15] ${
+          //
+          // `break-words` is what makes wrapping actually apply here. Project
+          // names are generated from the source filename and carry no spaces
+          // at all — `quality_restoration_25690818174324447` is ONE word, so
+          // normal wrapping has nowhere to break and it ran straight off the
+          // right edge of an iPhone (live report 2026-09-09). Capped at two
+          // lines so a long name cannot push the whole page down; the full name
+          // stays reachable as the element's own title.
+          title={title}
+          // `line-clamp-1` above `sm`, not `truncate`: they fight over
+          // `overflow` and Tailwind, not the class order here, decides which
+          // wins. Same one line with an ellipsis, one utility family.
+          className={`line-clamp-2 break-words text-[22px] font-semibold leading-[1.2] text-ink sm:line-clamp-1 sm:text-[34px] sm:leading-[1.15] ${
             backLabel ? 'mt-1.5' : ''
           }`}
         >

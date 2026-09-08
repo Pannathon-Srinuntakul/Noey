@@ -8,6 +8,7 @@ import { isBusy } from '../lib/projectFlow'
 import { DUB_DURATION_AUTO, DUB_DURATION_FIXED } from '../lib/dubBrief'
 import { UI_MODE_LABEL } from '../lib/wizardState'
 import { Bar, TaskBreakdown } from '../components/settings/TaskBreakdown'
+import { DiagnosticsTab } from '../components/settings/DiagnosticsTab'
 import { PageHeader } from '../components/shell/PageHeader'
 import { Button } from '../components/ui/Button'
 import { Chip } from '../components/ui/Chip'
@@ -27,12 +28,15 @@ const DEFAULT_DURATION_CHOICES = [
   ...DUB_DURATION_AUTO.filter((c) => c.value !== 'music')
 ]
 
-type TabKey = 'usage' | 'storage' | 'defaults' | 'account'
+type TabKey = 'usage' | 'storage' | 'defaults' | 'diagnostics' | 'account'
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: 'usage', label: 'เครดิตและการใช้งาน' },
   { key: 'storage', label: 'ที่เก็บไฟล์' },
   { key: 'defaults', label: 'ค่าเริ่มต้นของงานใหม่' },
+  // A phone has no console, and a render that stops on a phone is exactly the
+  // case that needs one (see DiagnosticsTab).
+  { key: 'diagnostics', label: 'บันทึกการทำงาน' },
   { key: 'account', label: 'บัญชี' }
 ]
 
@@ -556,6 +560,7 @@ export default function SettingsPage({
           {tab === 'usage' ? <UsageTab session={session} /> : null}
           {tab === 'storage' ? <StorageTab /> : null}
           {tab === 'defaults' ? <DefaultsTab /> : null}
+          {tab === 'diagnostics' ? <DiagnosticsTab /> : null}
           {tab === 'account' ? <AccountTab session={session} onLogout={onLogout} /> : null}
         </div>
       </div>

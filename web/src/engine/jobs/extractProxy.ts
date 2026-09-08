@@ -90,11 +90,23 @@ registerJob('extract-proxy', async (job, emit: ProgressCallback): Promise<Sideca
     const frames = Math.max(1, Math.round(info.durationSec * PROXY_FPS))
 
     const reader = await openVideo(blob)
+    // ONE sequential decode pass, not a seek per frame.
+    //
+    // `frameAt` is random access: every call re-seeks and re-walks the GOP from
+    // the last keyframe, so the cost is quadratic-ish in clip length. Measured
+    // on a 12-second clip: 22.6 s through `frameAt`, which extrapolates to
+    // ~9 minutes for a 5-minute source on a fast desktop and several times that
+    // on a phone — the progress bar sits at 25% long enough to read as a hang
+    // (live report from an iPhone, 2026-09-09). `transcode` and `cutRender`
+    // already do it this way; this job was missed in the port.
+    const stamps: number[] = []
+    for (let f = 0; f < frames; f++) stamps.push(f / PROXY_FPS)
+    const pass = reader.framesAt(stamps)
     try {
       const out = await encodeVideo(
         frames,
-        async (ctx, _i, timeSec) => {
-          const frame = await reader.frameAt(timeSec)
+        async (ctx) => {
+          const frame = (await pass.next()).value ?? null
           if (!frame) return false
           ctx.drawImage(frame, 0, 0, width, height)
           return true
@@ -114,6 +126,7 @@ registerJob('extract-proxy', async (job, emit: ProgressCallback): Promise<Sideca
       if (!out) throw new Error('สร้างไฟล์ตัวอย่างไม่สำเร็จ')
       await writeFileAtomic(projectFilePath(uid, `proxy/${src.id}.mp4`), out)
     } finally {
+      await pass.return(undefined).catch(() => undefined)
       reader.close()
     }
 

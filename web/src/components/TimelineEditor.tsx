@@ -579,10 +579,18 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
   // while paused, because then it is the only thing to act on.
   const [transportOn, setTransportOn] = useState(false)
   const transportTimer = useRef<number | undefined>(undefined)
+  // See ui/VideoPlayer: on a touch screen `pointermove` only fires while a
+  // finger is down and `pointerleave` fires on lift, so a hover-driven overlay
+  // is visible exactly while it is being pressed. Touch gets a longer grace
+  // period and never gets hidden by `pointerleave`.
+  const coarsePointer = useRef(false)
   const showTransport = (): void => {
     setTransportOn(true)
     window.clearTimeout(transportTimer.current)
-    transportTimer.current = window.setTimeout(() => setTransportOn(false), 2000)
+    transportTimer.current = window.setTimeout(
+      () => setTransportOn(false),
+      coarsePointer.current ? 4000 : 2000
+    )
   }
   useEffect(() => () => window.clearTimeout(transportTimer.current), [])
 
@@ -2709,8 +2717,16 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
                 <div
                   className="group/stage relative flex h-full min-h-0 max-w-full flex-1 items-center justify-center"
                   style={{ width: 'auto', aspectRatio: '9 / 16' }}
-                  onPointerMove={showTransport}
-                  onPointerLeave={() => setTransportOn(false)}
+                  onPointerDown={(e) => {
+                    coarsePointer.current = e.pointerType === 'touch'
+                    if (e.pointerType === 'touch') showTransport()
+                  }}
+                  onPointerMove={(e) => {
+                    if (e.pointerType !== 'touch') showTransport()
+                  }}
+                  onPointerLeave={(e) => {
+                    if (e.pointerType !== 'touch') setTransportOn(false)
+                  }}
                 >
                   {/* Two elements so the "next" edited-mode segment can be pre-seeked hidden, then swapped in instantly. */}
                   {/* Clicking the picture toggles playback, the way every video

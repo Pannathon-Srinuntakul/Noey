@@ -964,3 +964,170 @@ form fields.
 
 Test state: web `tsc` clean · **542 vitest** · `eslint` 0 errors · production
 build clean. Backend and desktop untouched by this gate.
+
+---
+
+## Gate 19 — What the width sweep could not see (2026-09-09)
+
+Three reports off the same iPhone screenshot: no way to reach ตัดต่อ on the
+project page, the project name running off the right edge, and a play/pause
+overlay that only appeared while a finger was held on it.
+
+### Panes laid out at zero height
+
+Gate 18 measured `scrollWidth - clientWidth` at eight widths and found nothing.
+It could not: this is a VERTICAL collapse and it overflows nothing.
+
+Every two-column screen is written the same way — a container that is a row from
+`lg` and a scrolling column below it. Its height is definite (a `flex-1` of the
+`100dvh` shell), so a direct child asking for `flex-1` gets only what its
+siblings leave over, and an `overflow-*` on that child drops its
+`min-height: auto` floor to 0. Put a fixed-height sibling next to it and the
+pane is laid out at nothing, with its own scrollbar, holding all the content.
+
+Measured in the real app at 390×745, before → after:
+
+    ProjectDetailPage  right pane   0px  →  689px   (outer scrolls 508 → 1245)
+
+**Zero.** แก้ไขวิดีโอ, ปรับช็อต, อัดเสียงพากย์, the script panel and ลบโปรเจกต์
+were all laid out inside a 0px box. After the fix the button lands at y=249 once
+the column is scrolled. The same shape was in `WizardStepReview` and
+`VoiceoverPage` (whose pane used `overflow-hidden`, so it clipped instead of
+scrolling — no scrollbar to hint anything was missing).
+
+Fix in all three: stacked, the pane sizes to its CONTENT and the container
+scrolls; from `lg` it is a real column and scrolls on its own. VoiceoverPage's
+line list keeps a `50dvh` cap of its own so a 30-line script does not turn the
+page into an endless scroll and drag the preview off screen.
+
+### A name with no spaces in it
+
+`quality_restoration_25690818174324447` is ONE word. `sm:truncate` only applies
+from `sm`, and below it nothing could break the string, so 79px of the name ran
+past its box and pushed the page 59px wide. Gate 18's sweep used the real
+projects, whose names are short. Now `break-words`, clamped to two lines, full
+name on the element's `title`. Measured: 79px → 0, page overflow 59px → 0.
+
+### A hover overlay on a device with no hover
+
+The transport was wired to `pointerenter`/`pointermove`/`pointerleave`. A touch
+screen fires the first two only while a finger is DOWN and the last one the
+instant it lifts — so it was visible exactly while being pressed. Touch now gets
+tap-to-reveal, a 4s grace period, and never gets hidden by `pointerleave`; a
+tap on the picture reveals the chrome instead of toggling playback, because one
+gesture cannot mean two things. Mouse behaviour is untouched. Same fix in
+`TimelineEditor`'s own stage.
+
+Driven with the event sequence an iPhone actually sends:
+
+    mouse   hover → VISIBLE    leave → hidden      (unchanged)
+    touch   tap   → VISIBLE    lift  → VISIBLE     (was: hidden)
+            still visible 1.75s later · play ring works · second tap hides it
+
+### Held by tests
+
+`responsive.test.ts` gains two rules, both mutation-checked (revert the fix, the
+test fails): a direct child of a stacking container may not combine an
+unprefixed `flex-1` with an unprefixed `overflow-*`, and every
+`onPointerEnter`/`onPointerLeave` must branch on `pointerType`.
+
+Test state: web `tsc` clean · **575 vitest** · `eslint` 0 errors. Backend and
+desktop untouched by this gate.
+
+### Why gate 18 missed all three
+
+Not effort — the wrong metric. That sweep measured
+`documentElement.scrollWidth - clientWidth` and nothing else:
+
+- a pane laid out at 0px OVERFLOWS NOTHING, so the number stayed clean;
+- the long-name overflow needed a long name, and the harness clicked through
+  the owner's real projects, whose names are short;
+- no pointer event of any kind was ever dispatched, so an interaction defect
+  could not be found at all.
+
+Source-reading agents cannot find the first one either — `clientHeight === 0`
+exists only at run time.
+
+`scripts/mobile-probe.js` is the corrected instrument: it looks for content the
+layout squeezed OUT of existence (`clientHeight <= 4` holding controls, a
+scroller under 60px holding much more) and for controls no scroll position can
+bring on screen, plus the width metric. Re-run it after any layout change.
+
+Re-swept with it after the fixes — every reachable screen, 8 widths
+(320/360/390/430/540/768/834/1023, short viewports on the phone sizes):
+
+    projects · project detail (both projects) · timeline editor
+    voiceover · settings · style studio · wizard steps 1–3
+    export modal · big-screen player · shot swap · confirm dialog
+    keyboard-shortcut dialog · caption tab
+
+**0 collapsed · 0 starved · 0 unreachable · 0 horizontal overflow.**
+Wizard step 3's pane measures 676px with the outer column scrolling 543 → 1046;
+the big-screen player renders its clip at 266×473 instead of a sliver.
+
+NOT measured, and not claimed: JobProgressPage and RunningJobBar (need a live
+render), the voiceover recorder mid-recording, the speech_highlights rail (no
+such project locally), and real iOS Safari — everything above is Chrome at a
+narrow viewport, so `dvh`, the safe-area inset and the 16px zoom floor are still
+only reasoned about.
+
+---
+
+## Gate 20 — "เปลี่ยนหน้าไปหน้าอื่น มันหยุดเลย" (2026-09-09)
+
+The 13x decode fix landed the diagnosis: a SHORT clip renders through to the
+end on the phone, so the 25% hang really was time, not a stall. The next report
+is different — leaving the screen mid-render stops it, and merely opening the
+project's own detail page is enough.
+
+### What was measured, and what it ruled out
+
+- **The engine does not block the main thread.** `PerformanceObserver
+  ('longtask')` over a full `extract-proxy`: **0 long tasks, 0 ms blocked** in a
+  1.2 s job. WebCodecs does its work off-thread; JS only orchestrates. So this
+  is NOT the missing Web Worker (`src/engine/worker.ts`, planned, never built).
+- **A playing `<video>` alongside an encode costs nothing on desktop.** Same job
+  twice, alone vs. with a 1080x1920 `<video>` playing: 2168 ms vs 2000 ms,
+  identical progress cadence. **0.92x — no contention.**
+- **Nothing in the app cancels on navigation.** `PipelineHost` is mounted per
+  project at provider level, outside the router (`jobs.tsx`), and the only
+  `abort()` calls are the explicit หยุดงาน path.
+
+So it is iOS-specific, and it cannot be reproduced or diagnosed from this
+machine. Guessing at the cause would be the same mistake as gate 18.
+
+### The instrument instead
+
+Three candidate stories, indistinguishable from outside: iOS discarded the tab,
+the job threw, or the job stalled. What was missing to tell them apart is a log
+that survives the page and can be read ON the phone — the ring buffer was in
+memory only, and a phone has no console.
+
+- `platform/misc.ts` — the log ring persists to `localStorage` (400 lines,
+  flushed at most 1/s and always on `pagehide`/hidden, which are the last events
+  iOS delivers).
+- `lib/lifecycleTrace.ts` — records `boot` / `hidden` / `visible · away Ns` /
+  `pagehide · persisted=` / `frozen` / `resumed`.
+- `engine/index.ts` — `job start`, a heartbeat every 3 s, and `job end ok` /
+  `job end FAILED <reason>`.
+- `wakeLock.ts` — logs whether the screen lock was actually granted.
+- Settings → **บันทึกการทำงาน** — read it, copy it, clear it, on the device.
+
+Reading it: a `boot` line BETWEEN a job start and its end means the browser
+threw the tab away (nothing in the app re-creates the page). `hidden` with no
+progress after is iOS throttling a background tab — expected. A gap between
+heartbeats with neither is a real stall.
+
+Verified in a browser: the trace survives a reload and reads back out of
+storage, and it already caught something true — `wakeLock refused:
+NotAllowedError ... page is not visible`, which is the correct refusal for an
+unfocused tab and confirms the lock is being requested at all.
+
+### What is true regardless
+
+No web API lets a page keep working after the browser suspends it, and a PWA
+does not change that: an installed PWA is the same engine in a standalone
+window, iOS suspends it the same way, service workers cannot run long compute
+(and have no WebCodecs guarantee), and Background Sync does not exist on iOS at
+all. Wake Lock — already held for every job — is the only lever, and it only
+covers the screen dimming while the user is watching.

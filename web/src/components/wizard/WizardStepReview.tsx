@@ -49,10 +49,16 @@ export function WizardStepReview({
 
   return (
     <div className="scroll-ghost flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-5 py-6 lg:flex-row lg:overflow-hidden lg:px-10">
-      {/* Scrolls as a column: the cards above the brief are fixed-height, so on
-          a short window the brief was the only thing that could shrink — and it
-          collapsed to a single clipped line with nowhere to scroll to. */}
-      <div className="scroll-ghost flex min-w-0 flex-1 flex-col gap-4 overflow-y-auto">
+      {/* Its own scroller from `lg` only, where it is a real column beside the
+          sidebar: there the cards above the brief are fixed-height, so on a
+          short window the brief was the only thing that could shrink — and it
+          collapsed to a clipped line with nowhere to scroll to.
+          Stacked it must NOT be one. The parent's height is definite, the
+          sidebar below is `shrink-0`, and `overflow-y-auto` sets
+          `min-height: 0` — so on a phone this pane took whatever the sidebar
+          left over, which can be nothing (same shape as the detail page's
+          hidden buttons, 2026-09-09). */}
+      <div className="scroll-ghost flex min-w-0 flex-col gap-4 lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
         <ProjectNameCard
           state={state}
           onChangeName={onChangeName}

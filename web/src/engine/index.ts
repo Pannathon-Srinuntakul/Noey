@@ -81,10 +81,31 @@ function jobCommand(command: string): JobCommandApi {
         const controller = new AbortController()
         if (projectDir) aborters.set(projectDir, controller)
 
+        // A heartbeat in the persisted log, at most one line per few seconds.
+        //
+        // Without it a job that stops making progress and a job that was killed
+        // with the page look the same afterwards: silence. With it, a gap
+        // between two heartbeats is a stall, and a `lifecycle boot` line inside
+        // that gap says the browser discarded the tab instead
+        // ("เปลี่ยนหน้าไปหน้าอื่น มันหยุดเลย", live from an iPhone 2026-09-09 —
+        // reproduced on neither desktop Chrome nor any test here).
+        let lastBeat = 0
+        const HEARTBEAT_MS = 3000
+        void window.noey.log.write('engine', `job start ${command} ${projectDir ?? '-'}`)
+
         // Stamped with projectDir on the way out, so a listener that passed one
         // hears only its own project — same reason the desktop main process
         // stamps it.
         const emit: ProgressCallback = (evt) => {
+          const now = Date.now()
+          if (now - lastBeat > HEARTBEAT_MS) {
+            lastBeat = now
+            const e = evt as { stage?: unknown; message?: unknown }
+            void window.noey.log.write(
+              'engine',
+              `${command} · ${String(e.stage ?? '')} · ${String(e.message ?? '')}`
+            )
+          }
           const stamped = projectDir ? { ...evt, projectDir } : evt
           for (const l of listeners) {
             if (l.projectDir && stamped.projectDir !== l.projectDir) continue
@@ -102,7 +123,12 @@ function jobCommand(command: string): JobCommandApi {
           // The signal goes IN with the job — jobs read `job.signal`, and
           // without this `cancel()` aborted a controller nothing was watching,
           // so หยุดงาน left the encode running to completion.
-          return await runner({ ...spec, signal: controller.signal }, emit)
+          const result = await runner({ ...spec, signal: controller.signal }, emit)
+          void window.noey.log.write('engine', `job end ${command} ok`)
+          return result
+        } catch (err) {
+          void window.noey.log.write('engine', `job end ${command} FAILED ${String(err)}`)
+          throw err
         } finally {
           releaseScreen()
           if (projectDir && aborters.get(projectDir) === controller) {

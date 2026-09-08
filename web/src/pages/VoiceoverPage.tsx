@@ -335,7 +335,13 @@ export default function VoiceoverPage({ uid }: { uid: string }): React.JSX.Eleme
         </div>
 
         {/* Right: the line being voiced, its recorder, and every line. */}
-        <div className="flex min-h-0 w-full flex-1 shrink-0 flex-col overflow-hidden border-t border-divider lg:w-[520px] lg:flex-none lg:border-l lg:border-t-0">
+        {/* Stacked, this pane sizes to its content and the OUTER column scrolls.
+            It used to be `flex-1 overflow-hidden`: a definite-height parent
+            hands a `flex-1` child only the leftover height, `overflow-hidden`
+            drops its `min-height` floor to 0, and the recorder block alone is
+            taller than what a phone leaves after the preview — so ทุกประโยค was
+            clipped to nothing with no scrollbar to reach it. */}
+        <div className="flex w-full shrink-0 flex-col border-t border-divider lg:min-h-0 lg:w-[520px] lg:flex-none lg:overflow-hidden lg:border-l lg:border-t-0">
           {active ? (
             <div className="shrink-0 border-b border-divider px-6 py-5">
               <p className="text-sm tabular-nums text-muted">
@@ -419,7 +425,14 @@ export default function VoiceoverPage({ uid }: { uid: string }): React.JSX.Eleme
           )}
 
           <p className="shrink-0 px-6 pt-4 pb-2 text-[15px] font-semibold text-ink">ทุกประโยค</p>
-          <div ref={listRef} className="scroll-ghost min-h-0 flex-1 overflow-y-auto px-4 pb-4">
+          {/* Stacked, the pane is auto-height, so this list needs a CAP of its
+              own or a 30-line script turns the page into an endless scroll and
+              `scrollIntoView` drags the preview off screen with it. From `lg`
+              it fills the rail as before. */}
+          <div
+            ref={listRef}
+            className="scroll-ghost max-h-[50dvh] overflow-y-auto px-4 pb-4 lg:max-h-none lg:min-h-0 lg:flex-1"
+          >
             {lines.map((line, i) => {
               const take = takes[String(line.lineId)]
               // Compare against the resolved selection, not the raw state —

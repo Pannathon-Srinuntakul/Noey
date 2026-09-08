@@ -106,17 +106,26 @@ registerJob('filmstrip', async (job, emit: ProgressCallback): Promise<SidecarEve
       const ctx = canvas.getContext('2d', { alpha: false })
       if (!ctx) throw new Error('เปิดพื้นที่วาดภาพไม่ได้')
 
+      // One sequential pass over the tile timestamps. `frameAt` re-seeks and
+      // re-walks the GOP for every tile, which on a long source is the
+      // difference between a strip that appears and an editor that looks
+      // frozen — the same fix `transcode` and `cutRender` already carry.
+      const stamps: number[] = []
+      for (let t = 0; t < count; t++) {
+        stamps.push(Math.min((t + 0.5) / rate, info.durationSec - 0.01))
+      }
+      const pass = reader.framesAt(stamps)
       try {
         for (let t = 0; t < count; t++) {
           throwIfAborted(signal)
-          const at = (t + 0.5) / rate
-          const frame = await reader.frameAt(Math.min(at, info.durationSec - 0.01))
+          const frame = (await pass.next()).value ?? null
           if (!frame) break
           ctx.drawImage(frame, 0, 0, tileWidth, tileHeight)
           const jpeg = await canvas.convertToBlob({ type: 'image/jpeg', quality: JPEG_QUALITY })
           await writeFileAtomic(`${dir}/t_${String(t + 1).padStart(5, '0')}.jpg`, jpeg)
         }
       } finally {
+        await pass.return(undefined).catch(() => undefined)
         reader.close()
       }
 

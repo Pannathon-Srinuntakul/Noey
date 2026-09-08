@@ -70,22 +70,75 @@ export const prefs = {
 }
 
 // ── log ──────────────────────────────────────────────────────────────────────
-// The desktop writes to userData/logs/app.log. Here it goes to the console plus
-// a small ring buffer, so a bug report can still carry recent history.
-const LOG_MAX = 500
-const ring: string[] = []
+// The desktop writes to userData/logs/app.log. Here it goes to the console, a
+// ring buffer, and — the part that matters on a phone — localStorage.
+//
+// An in-memory ring dies with the page, which is exactly the case we need to
+// tell apart. When a render stops on an iPhone there are three possible
+// stories and they look identical from the outside: iOS discarded the tab and
+// reloaded it, the job threw, or the job is still "running" and simply stopped
+// making progress. A log that survives the page answers that in one look —
+// a `boot` line after a `job start` with no `job end` means the page was
+// killed; a gap between heartbeats with no boot line means it stalled.
+//
+// Kept small on purpose: this is written from a render loop, and localStorage
+// is synchronous.
+const LOG_MAX = 400
+const LOG_KEY = 'noey.log'
+/** Flush at most this often — a render emits progress far faster than this. */
+const FLUSH_MS = 1000
+
+const ring: string[] = (() => {
+  try {
+    const raw = localStorage.getItem(LOG_KEY)
+    return raw ? (JSON.parse(raw) as string[]).slice(-LOG_MAX) : []
+  } catch {
+    return []
+  }
+})()
+
+let flushTimer: number | undefined
+let dirty = false
+
+function flushLog(): void {
+  if (!dirty) return
+  dirty = false
+  try {
+    localStorage.setItem(LOG_KEY, JSON.stringify(ring))
+  } catch {
+    // Quota or private mode: the in-memory ring still works.
+  }
+}
+
+function scheduleFlush(): void {
+  dirty = true
+  if (flushTimer !== undefined) return
+  flushTimer = window.setTimeout(() => {
+    flushTimer = undefined
+    flushLog()
+  }, FLUSH_MS)
+}
+
+if (typeof window !== 'undefined') {
+  // `pagehide` is the last event iOS reliably delivers before it suspends or
+  // discards a tab — `beforeunload` and `unload` are not fired there.
+  window.addEventListener('pagehide', flushLog)
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') flushLog()
+  })
+}
 
 export const log = {
   write: async (scope: string, message: string): Promise<void> => {
     const line = `${new Date().toISOString()} [${scope}] ${message}`
     ring.push(line)
     if (ring.length > LOG_MAX) ring.shift()
-
+    scheduleFlush()
     console.debug(line)
   },
   openFolder: async (): Promise<void> => {
     // No folder to open. Dump what we have so it can be copied out.
-
+    flushLog()
     console.log(ring.join('\n'))
   }
 }
@@ -93,6 +146,13 @@ export const log = {
 /** Recent log lines, for a diagnostics view. */
 export function recentLogLines(): string[] {
   return [...ring]
+}
+
+/** Drop the persisted history — the diagnostics view's "clear". */
+export function clearLogLines(): void {
+  ring.length = 0
+  dirty = true
+  flushLog()
 }
 
 // ── notifications ────────────────────────────────────────────────────────────
