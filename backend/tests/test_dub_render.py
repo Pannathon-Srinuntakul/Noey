@@ -19,7 +19,13 @@ from packages.video.dub_render import (
     trim_segments_silent,
     write_dub_script_txt,
 )
-from packages.video.ffmpeg_bin import ffmpeg_cmd, has_audio_stream, media_duration
+from packages.video.ffmpeg_bin import (
+    ffmpeg_cmd,
+    ffprobe_cmd,
+    geometries_match,
+    has_audio_stream,
+    media_duration,
+)
 
 
 @pytest.fixture(scope="module")
@@ -184,3 +190,167 @@ def test_mix_audio_layers_music_only_no_vo(
 def test_mix_audio_layers_raises_with_no_layers(sample_clip: Path, tmp_path: Path) -> None:
     with pytest.raises(ValueError):
         mix_audio_layers(sample_clip, None, None, tmp_path / "nope.mp4")
+
+
+# ── mixed-source geometry (the green/stutter concat bug, 2026-09-07) ──────────
+#
+# Two sources of different size, one cut from each, joined with the concat
+# demuxer under `-c copy`: the output changes resolution MID-STREAM while its
+# container header keeps advertising the first clip's size. ffmpeg exits 0 and
+# its own decoder copes, so nothing upstream ever noticed — see
+# ffmpeg_bin.conform_video for the measurement this test locks in.
+
+
+@pytest.fixture(scope="module")
+def portrait_clip(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    out = tmp_path_factory.mktemp("geo") / "portrait.mp4"
+    subprocess.run(
+        [ffmpeg_cmd(), "-y", "-f", "lavfi", "-i", "testsrc2=size=240x426:rate=30:duration=3",
+         "-pix_fmt", "yuv420p", "-c:v", "libx264", "-an", str(out)],
+        check=True, capture_output=True,
+    )
+    return out
+
+
+@pytest.fixture(scope="module")
+def landscape_clip(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    out = tmp_path_factory.mktemp("geo") / "landscape.mp4"
+    subprocess.run(
+        [ffmpeg_cmd(), "-y", "-f", "lavfi", "-i", "testsrc2=size=426x240:rate=30:duration=3",
+         "-pix_fmt", "yuv420p", "-c:v", "libx264", "-an", str(out)],
+        check=True, capture_output=True,
+    )
+    return out
+
+
+def _frame_sizes(path: Path) -> set[str]:
+    """Every DECODED frame size in the file — not the header's claim."""
+    out = subprocess.run(
+        [ffprobe_cmd(), "-v", "error", "-select_streams", "v:0",
+         "-show_entries", "frame=width,height", "-of", "csv=p=0", str(path)],
+        check=True, capture_output=True, text=True,
+    ).stdout
+    return {line.strip() for line in out.splitlines() if line.strip()}
+
+
+def test_geometries_match_spots_a_mixed_source_cut(portrait_clip: Path, landscape_clip: Path) -> None:
+    assert geometries_match([portrait_clip, portrait_clip]) is True
+    assert geometries_match([portrait_clip, landscape_clip]) is False
+
+
+def test_unconformed_trims_change_resolution_mid_stream(
+    tmp_path: Path, portrait_clip: Path, landscape_clip: Path
+) -> None:
+    """The bug itself: without a target geometry the two cuts stay different."""
+    clips_dir = tmp_path / "clips"
+    prepare_clips_dir(clips_dir)
+    norm = [portrait_clip, landscape_clip]
+    segs = [
+        {"sourceClip": "clip0", "sourceIn": 0.0, "sourceOut": 1.0},
+        {"sourceClip": "clip1", "sourceIn": 0.0, "sourceOut": 1.0},
+    ]
+    paths = [trim_one_segment(norm, s, clips_dir, i, 2) for i, s in enumerate(segs)]
+    assert geometries_match(paths) is False
+
+
+def test_conformed_trims_concat_to_one_resolution(
+    tmp_path: Path, portrait_clip: Path, landscape_clip: Path
+) -> None:
+    clips_dir = tmp_path / "clips"
+    norm = [portrait_clip, landscape_clip]
+    segs = [
+        {"sourceClip": "clip0", "sourceIn": 0.0, "sourceOut": 1.0},
+        {"sourceClip": "clip1", "sourceIn": 0.0, "sourceOut": 1.0},
+    ]
+    paths = trim_segments_silent(norm, segs, clips_dir)
+
+    # Every clip conformed to the FIRST segment's source, so a single-source
+    # project is conformed to itself and nothing about it changes.
+    assert geometries_match(paths) is True
+
+    out = tmp_path / "joined.mp4"
+    concat_stream_copy(paths, out, tmp_path / "list.txt")
+    assert _frame_sizes(out) == {"240,426"}
+
+
+def test_concat_refuses_to_stream_copy_a_mismatch(
+    tmp_path: Path, portrait_clip: Path, landscape_clip: Path
+) -> None:
+    """Safety net: a caller that skipped conforming still gets ONE resolution."""
+    clips_dir = tmp_path / "clips"
+    prepare_clips_dir(clips_dir)
+    norm = [portrait_clip, landscape_clip]
+    segs = [
+        {"sourceClip": "clip0", "sourceIn": 0.0, "sourceOut": 1.0},
+        {"sourceClip": "clip1", "sourceIn": 0.0, "sourceOut": 1.0},
+    ]
+    paths = [trim_one_segment(norm, s, clips_dir, i, 2) for i, s in enumerate(segs)]
+    out = tmp_path / "joined.mp4"
+    concat_stream_copy(paths, out, tmp_path / "list.txt")
+    assert len(_frame_sizes(out)) == 1
+
+
+# ── rotated sources (found by rendering a real project, 2026-09-07) ───────────
+#
+# A phone clip is stored landscape with a display matrix instead of being
+# re-encoded. ffprobe reports the CODED size; ffmpeg's filter graph applies the
+# rotation, so a trim of it writes the ROTATED size. Comparing the two silently
+# compares different things: the conform read 1920x1080 as the target and
+# pushed the portrait clip to landscape — the opposite of the intended fix.
+
+
+@pytest.fixture(scope="module")
+def rotated_clip(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """1920x1080 coded, rotation 90 -> decodes as 1080x1920."""
+    base = tmp_path_factory.mktemp("geo") / "rotated_base.mp4"
+    subprocess.run(
+        [ffmpeg_cmd(), "-y", "-f", "lavfi", "-i", "testsrc2=size=426x240:rate=30:duration=3",
+         "-pix_fmt", "yuv420p", "-c:v", "libx264", "-an", str(base)],
+        check=True, capture_output=True,
+    )
+    out = base.with_name("rotated.mp4")
+    # `-display_rotation` is an INPUT option and writes a real display matrix;
+    # the legacy `-metadata rotate=90` is ignored by current ffmpeg, which is
+    # how the first version of this fixture quietly tested nothing.
+    subprocess.run(
+        [ffmpeg_cmd(), "-y", "-display_rotation", "90", "-i", str(base),
+         "-c", "copy", str(out)],
+        check=True, capture_output=True,
+    )
+    return out
+
+
+def test_display_size_applies_the_rotation(rotated_clip: Path, portrait_clip: Path) -> None:
+    from packages.video.ffmpeg_bin import display_size, video_stream_info
+
+    rot = video_stream_info(rotated_clip)
+    assert (rot["width"], rot["height"]) == (426, 240)      # coded: landscape
+    assert display_size(rot) == (240, 426)                   # decoded: portrait
+
+    plain = video_stream_info(portrait_clip)
+    assert display_size(plain) == (plain["width"], plain["height"])
+
+
+def test_target_geometry_is_what_the_render_actually_produces(rotated_clip: Path) -> None:
+    from packages.video.ffmpeg_bin import target_geometry
+
+    g = target_geometry([rotated_clip])
+    assert (g.width, g.height) == (240, 426)
+
+
+def test_a_rotated_first_source_conforms_the_others_the_right_way(
+    tmp_path: Path, rotated_clip: Path, landscape_clip: Path
+) -> None:
+    """The exact shape of the real project: rotated .mov first, plain clip second."""
+    clips_dir = tmp_path / "clips"
+    norm = [rotated_clip, landscape_clip]
+    segs = [
+        {"sourceClip": "clip0", "sourceIn": 0.0, "sourceOut": 1.0},
+        {"sourceClip": "clip1", "sourceIn": 0.0, "sourceOut": 1.0},
+    ]
+    paths = trim_segments_silent(norm, segs, clips_dir)
+    assert _frame_sizes(paths[0]) == {"240,426"}
+    # ...and the plain landscape clip is letterboxed into that portrait frame,
+    # not left landscape for the concat to trip over.
+    assert _frame_sizes(paths[1]) == {"240,426"}
+    assert geometries_match(paths) is True

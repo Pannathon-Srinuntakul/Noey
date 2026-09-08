@@ -1,0 +1,265 @@
+@import 'tailwindcss';
+@import '@fontsource/noto-sans-thai/300.css';
+@import '@fontsource/noto-sans-thai/400.css';
+@import '@fontsource/noto-sans-thai/500.css';
+@import '@fontsource/noto-sans-thai/600.css';
+@import '@fontsource/noto-sans-thai/700.css';
+/* Caption font picker previews — same 4 fonts bundled for ffmpeg burn-in
+   (backend/data/fonts/), loaded here too so the chip labels render in the
+   real typeface instead of the UI's default font. */
+@import '@fontsource/kanit/700.css';
+@import '@fontsource/prompt/700.css';
+@import '@fontsource/sarabun/700.css';
+@import '@fontsource/anuphan/700.css';
+@import './base.css';
+
+/* ── Design tokens — see desktop/design/HANDOFF.md §2 ────────────────────
+ * Dark is the default and only app theme. Values are literal, not
+ * placeholders — do not "tune" them without checking the mockups first. */
+@theme {
+  /* ground + surfaces */
+  --color-ground: #171614;
+  --color-surface: #211f1d;
+  --color-surface-2: #2a2825;
+  --color-media: #000000;
+
+  /* text */
+  --color-ink: #f3f2f2;
+  --color-ink-2: #e4e2df;
+  --color-ink-3: #d6d3cf;
+  --color-muted: #a3a09c;
+
+  /* accent (gold) */
+  --color-accent: #d9a441;
+  --color-accent-press: #c28d41;
+  --color-accent-hover-text: #f0c274;
+  --color-accent-tint: rgb(217 164 65 / 0.12);
+  --color-accent-tint-hover: rgb(217 164 65 / 0.2);
+  --color-accent-tint-press: rgb(217 164 65 / 0.28);
+  --color-accent-nav: rgb(217 164 65 / 0.14);
+
+  /* status — these only */
+  --color-ok: #68b184;
+  --color-error: #e08b84;
+  --color-error-tint: rgb(224 139 132 / 0.12);
+
+  /* lines */
+  --color-divider: rgb(243 242 242 / 0.12);
+  --color-border: rgb(243 242 242 / 0.22);
+  --color-border-strong: rgb(243 242 242 / 0.34);
+  --color-border-faint: rgb(243 242 242 / 0.14);
+
+  /* burned-in caption palette — mirrors lib/captionStyle.ts */
+  --color-cap-white: #ffffff;
+  --color-cap-black: #000000;
+  --color-cap-yellow: #ffeb3b;
+  --color-cap-red: #ff3b30;
+  --color-cap-green: #00e676;
+  --color-cap-blue: #2196f3;
+  --color-cap-border-brown: #5b3a1a;
+
+  /* type */
+  --font-sans: 'Noto Sans Thai', system-ui, sans-serif;
+  --font-display: 'Cormorant Garamond', serif; /* wordmark + avatar initial only */
+  --text-page: 34px;
+  --text-section: 24px;
+  --text-item: 17px;
+  --text-body: 15px;
+  --text-meta: 14px;
+  --text-fig: 13px; /* floor for Thai text — never go below this */
+
+  /* spacing — restates Tailwind's default scale at these steps; only these
+   * steps are sanctioned by the design, not a license to use others. */
+  --spacing-1: 4px;
+  --spacing-2: 8px;
+  --spacing-3: 12px;
+  --spacing-4: 16px;
+  --spacing-5: 20px;
+  --spacing-8: 32px;
+  --spacing-10: 40px;
+
+  /* radius — overrides Tailwind defaults */
+  --radius-sm: 3px; /* timeline blocks, thumbnails */
+  --radius-md: 4px; /* everything else */
+  --radius-full: 999px; /* avatar, transport button */
+
+  /* elevation — modals only */
+  --shadow-modal: 0 12px 32px rgb(0 0 0 / 0.5);
+
+  /* motion — overrides Tailwind's built-in ease-out / adds named durations */
+  --ease-out: cubic-bezier(0.2, 0, 0, 1);
+  --duration-state: 120ms; /* hover, selection, toggles, chevrons */
+  --duration-panel: 200ms; /* modals, panels, collapse */
+}
+
+/* HANDOFF §3: "Focus ring everywhere". Explicit and token-based — without
+ * this, Chromium's default outline follows the OS accent color instead,
+ * so it's gold by accident on some machines and blue (or anything else) on
+ * others.
+ *
+ * This rule is UNLAYERED, so it beats every Tailwind utility no matter the
+ * specificity (layered styles always lose to unlayered ones) — `outline-none`
+ * on an element does nothing here. Opting out is therefore explicit:
+ * `data-focus-ring="none"`, for the inner control of a field that draws the
+ * ring on its wrapper instead (the login password box). Two rings on one field
+ * is the bug this attribute exists to prevent. */
+*:focus-visible:not([data-focus-ring='none']) {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+body {
+  overflow: hidden;
+  background: var(--color-ground);
+  /* Global default until the shell rebuild (chunk 2) scopes this to chrome
+   * only and per-screen chunks (4, 10) opt copyable text back in with
+   * `user-select: text` — see desktop/design/PLAN.md §"Cross-cutting rules". */
+  user-select: none;
+}
+
+#root {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Dialog panel enter transition (ui/Dialog.tsx) — a CSS mount animation
+ * rather than a JS-toggled class, so the component needs no post-mount
+ * setState. */
+@keyframes noey-dialog-enter {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+.noey-dialog-enter {
+  animation: noey-dialog-enter var(--duration-panel) var(--ease-out);
+}
+
+/* ── Custom scrollbars — themed everywhere per HANDOFF §4 ────────────────── */
+
+:root {
+  --sb-dark-track: transparent;
+  --sb-dark-thumb: rgb(243 242 242 / 0.22);
+  --sb-dark-thumb-hover: rgb(243 242 242 / 0.34);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--sb-dark-thumb) var(--sb-dark-track);
+}
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: var(--sb-dark-track);
+  border-radius: 99px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--sb-dark-thumb);
+  border-radius: 99px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--sb-dark-thumb-hover);
+}
+::-webkit-scrollbar-corner {
+  background: var(--sb-dark-track);
+}
+
+/* Light override — light/cream cards (ProjectCard, script lists on white bg). */
+:root {
+  --sb-light-track: #f1f1f1;
+  --sb-light-thumb: #c7c7c7;
+  --sb-light-thumb-hover: #a3a3a3;
+}
+.scroll-light,
+.scroll-light * {
+  scrollbar-color: var(--sb-light-thumb) var(--sb-light-track);
+}
+.scroll-light::-webkit-scrollbar-track {
+  background: var(--sb-light-track);
+}
+.scroll-light::-webkit-scrollbar-thumb {
+  background: var(--sb-light-thumb);
+}
+.scroll-light::-webkit-scrollbar-thumb:hover {
+  background: var(--sb-light-thumb-hover);
+}
+.scroll-light::-webkit-scrollbar-corner {
+  background: var(--sb-light-track);
+}
+
+/* Ghost scrollbar — transparent track (scene sequence list). */
+.scroll-ghost {
+  scrollbar-color: var(--sb-dark-thumb) transparent;
+}
+.scroll-ghost::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scroll-ghost::-webkit-scrollbar-corner {
+  background: transparent;
+}
+.scroll-ghost::-webkit-scrollbar-thumb {
+  background: var(--sb-dark-thumb);
+  border-radius: 99px;
+}
+.scroll-ghost::-webkit-scrollbar-thumb:hover {
+  background: var(--sb-dark-thumb-hover);
+}
+
+/* Fully hidden scrollbar — timeline editor main lane (overrides global * rules). */
+.scroll-none {
+  -ms-overflow-style: none;
+  scrollbar-width: none !important;
+  scrollbar-color: transparent transparent !important;
+}
+.scroll-none::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+  background: transparent !important;
+}
+.scroll-none::-webkit-scrollbar-thumb,
+.scroll-none::-webkit-scrollbar-track,
+.scroll-none::-webkit-scrollbar-corner {
+  display: none !important;
+  background: transparent !important;
+}
+
+/** Clip the horizontal scrollbar gutter on Windows/Chromium. */
+.scroll-none-clip {
+  overflow: hidden;
+}
+.scroll-none-clip > .scroll-none {
+  margin-bottom: -14px;
+  padding-bottom: 14px;
+}
+
+
+/** Seek/slider head. Global on purpose: `.noey-slider` is used by the Slider
+ * primitive AND by the video transports, and while this lived in Slider.tsx's
+ * inline <style> a transport on a page with no Slider mounted had NO head at
+ * all — the rail looked like a plain line and could not be dragged (live
+ * report 2026-08-13). */
+.noey-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 13px;
+  height: 13px;
+  border-radius: 999px;
+  background: var(--color-ink);
+  cursor: pointer;
+  margin-top: 0;
+  /* A 3px rail is a 3px hit target; pad the head so it is grabbable. */
+  box-shadow: 0 0 0 4px transparent;
+}
+.noey-slider {
+  cursor: pointer;
+}
+.noey-slider:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 2px rgb(217 164 65 / 0.35);
+}

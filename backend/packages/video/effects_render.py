@@ -73,12 +73,18 @@ def _clip_index_for(global_time: float, boundaries: list[float]) -> tuple[int, f
 
 
 def _clamp_transforms_to_cuts(doc: EffectsDoc, clip_durations_sec: list[float]) -> EffectsDoc:
-    """Keep every transform inside the cut it starts in.
+    """Keep every non-transition transform inside the cut it starts in.
 
     A zoom that runs past a cut plays as a mistake: the shot changes mid-move.
     The window is clamped rather than dropped, and an instance that would be
     left shorter than a few frames is passed through untouched (better a small
     overshoot than a zoom that silently disappears).
+
+    Transforms whose registry entry sets ``straddlesCut`` are exempt: a
+    transition is authored to sit ON the join, so clamping it to the outgoing
+    shot deletes the half of the move that belongs to the incoming one. Driven
+    off the registry rather than a hardcoded component id so a future transition
+    is covered the day it is added.
     """
     if not clip_durations_sec:
         return doc
@@ -88,7 +94,9 @@ def _clamp_transforms_to_cuts(doc: EffectsDoc, clip_durations_sec: list[float]) 
 
     instances = []
     for inst in doc.instances:
-        if inst.kind != "transform":
+        if inst.kind != "transform" or (transform_entry(inst.componentId) or {}).get(
+            "straddlesCut"
+        ):
             instances.append(inst)
             continue
         _, _, b_end = _clip_index_for(inst.startSec, boundaries)

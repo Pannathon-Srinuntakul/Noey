@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="th">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Noey Video Edit</title>
+    <link rel="icon" type="image/svg+xml" href="/noey-mark.svg" />
+    <!--
+      No `media:` scheme here — project files are served by the service worker
+      from this origin instead. `worker-src` covers both the render worker and
+      the media worker. `'wasm-unsafe-eval'` is for the AAC fallback encoder,
+      which is WebAssembly: naming `script-src` at all blocks WASM compilation
+      without it, and the fallback exists precisely for the browsers whose
+      native AudioEncoder has no AAC.
+
+      `%BACKEND_ORIGIN%` is substituted at build time from VITE_BACKEND_URL by
+      the plugin in vite.config.ts. Vite does not expand env into HTML on its
+      own, so this used to be a hard-coded origin — which silently blocked
+      every request on any other deployment, before it left the page, with the
+      UI reporting only "เชื่อมต่อ server ไม่ได้".
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; worker-src 'self' blob:; connect-src 'self' blob: %BACKEND_ORIGIN% http://127.0.0.1:8000 http://localhost:8000"
+    />
+  </head>
+
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

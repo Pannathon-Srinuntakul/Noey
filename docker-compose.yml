@@ -44,8 +44,13 @@ services:
       # port, so inheriting it from env_file would break this connection.
       POSTGRES_PORT: "5432"
       REDIS_URL: redis://redis:6379/0
-      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:5174}
+      # Where uploads, renders and web project files live. Must be the SAME
+      # volume the worker mounts — see the `noey_data` note below.
+      DATA_DIR: /data
       PORT: "8000"
+    volumes:
+      - noey_data:/data
     depends_on:
       postgres:
         condition: service_healthy
@@ -59,31 +64,49 @@ services:
     container_name: noey_worker
     restart: unless-stopped
     command: ["python", "-m", "services.worker"]
-    env_file: .env
+    # BOTH files, same as api. Loading only the root .env left the worker — the
+    # process that runs every transcription and render — without
+    # ELEVENLABS_API_KEY, so every talking_head and speech mode failed while the
+    # API looked correctly configured.
+    env_file:
+      - .env
+      - ./backend/.env
     environment:
       POSTGRES_HOST: postgres
       POSTGRES_PORT: "5432"   # see the api service — host publish port is separate
       REDIS_URL: redis://redis:6379/0
+      DATA_DIR: /data
+    volumes:
+      - noey_data:/data
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
 
+  # The browser build — web/, not the legacy frontend/ dashboard, which is what
+  # this service used to build and ship.
+  #
+  # VITE_BACKEND_URL is a BUILD argument: it is compiled into the bundle and
+  # into the page's Content-Security-Policy, so changing it needs
+  # `docker compose build web`, not a restart.
   web:
     build:
-      context: ./frontend
+      context: ./web
       args:
-        VITE_API_URL: http://localhost:8000
+        VITE_BACKEND_URL: http://localhost:8000
     container_name: noey_web
     restart: unless-stopped
     depends_on:
       - api
-    environment:
-      PORT: "3000"
     ports:
-      - "3000:3000"
+      - "5174:80"
 
 volumes:
   noey_pgdata:
   noey_redis_data:
+  # Uploads, renders and web project files. api and worker BOTH mount it: the
+  # worker writes what the API serves, and without a shared volume every
+  # transcode reported success while the download 404'd forever. Named, so a
+  # `docker compose up` after a rebuild does not take a user's footage with it.
+  noey_data:

@@ -14,6 +14,7 @@ import { registerNotifyIpc } from './notify'
 import { loadPrefs, registerPrefsIpc } from './prefs'
 import { registerStorageIpc } from './storage'
 import { attachUnsavedGuard, registerUnsavedIpc } from './unsavedGuard'
+import { registerTasteLogIpc } from './tasteLog'
 
 // Privileged scheme registration must happen before app is ready.
 registerMediaScheme()
@@ -138,6 +139,7 @@ app.whenReady().then(async () => {
   registerPrefsIpc()
   registerStorageIpc()
   registerUnsavedIpc()
+  registerTasteLogIpc()
 
   createWindow()
 

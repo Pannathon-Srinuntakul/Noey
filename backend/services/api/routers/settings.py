@@ -1,15 +1,30 @@
-"""User-editable settings — LLM model/endpoint (global from env + DB)."""
+"""User-editable settings — LLM model/endpoint (global from env + DB).
+
+ADMIN ONLY, and deliberately so. The body of this endpoint used to name the
+exact model id and which vendors have keys configured — the two facts the
+product must never hand to a user. It was also reachable with no credentials
+at all, so a browser address bar was enough.
+
+Two changes: every handler now requires an authenticated admin, and the
+non-admin view of "is the AI set up?" is a single boolean. Nothing in the
+product needs more than that.
+"""
 
 import os
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.db.config import effective_llm, get_or_create_setting
-from services.api.deps import db_session
+from services.api.deps import CurrentUser, db_session
 from services.api.schemas import SettingsIn, SettingsOut
 
 router = APIRouter(prefix="/settings", tags=["settings"])
+
+
+def _require_admin(auth: CurrentUser) -> None:
+    if not auth.user.is_admin:
+        raise HTTPException(status_code=403, detail="admin only")
 
 
 async def _build_out(session: AsyncSession) -> SettingsOut:
@@ -25,13 +40,22 @@ async def _build_out(session: AsyncSession) -> SettingsOut:
     )
 
 
-@router.get("", response_model=SettingsOut)
-async def get_settings_endpoint(session: AsyncSession = Depends(db_session)) -> SettingsOut:
+@router.get("", response_model=SettingsOut, include_in_schema=False)
+async def get_settings_endpoint(
+    auth: CurrentUser,
+    session: AsyncSession = Depends(db_session),
+) -> SettingsOut:
+    _require_admin(auth)
     return await _build_out(session)
 
 
-@router.put("", response_model=SettingsOut)
-async def put_settings(body: SettingsIn, session: AsyncSession = Depends(db_session)) -> SettingsOut:
+@router.put("", response_model=SettingsOut, include_in_schema=False)
+async def put_settings(
+    body: SettingsIn,
+    auth: CurrentUser,
+    session: AsyncSession = Depends(db_session),
+) -> SettingsOut:
+    _require_admin(auth)
     row = await get_or_create_setting(session)
     if body.llm_model is not None:
         row.llm_model = body.llm_model or None

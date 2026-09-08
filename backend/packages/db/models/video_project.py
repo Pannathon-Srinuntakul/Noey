@@ -59,6 +59,13 @@ class VideoProject(Base):
     style_profile_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     product_marks: Mapped[list | None] = mapped_column(JSONB, nullable=True)
 
+    # User-chosen AI quality tiers — see packages/video/quality.py for what each
+    # maps to. Persisted (not just passed per request) so a worker retry, a
+    # resume, or "ให้ AI ตัดใหม่" repeats the choice the user paid for instead of
+    # silently dropping back to the default. NULL = never chose one.
+    engine: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    precision: Mapped[str | None] = mapped_column(String(16), nullable=True)
+
     # "local" = desktop app renders on the user's machine (video files never
     # reach the server; only frames/metadata do). NULL = classic server render.
     origin: Mapped[str | None] = mapped_column(String(16), nullable=True)

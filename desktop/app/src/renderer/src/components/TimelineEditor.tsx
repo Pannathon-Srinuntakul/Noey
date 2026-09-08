@@ -97,7 +97,6 @@ import {
   removedSpanStats,
   rulerStepSec,
   BEAT_SNAP_THRESHOLD_SEC,
-  snapCandidateToBeat,
   snapMusicOffsetToCut,
   snapToMarkers,
   cutBoundariesSec,
@@ -105,9 +104,13 @@ import {
   splitCutAt,
   voiceoverLineBlocks,
   type CaptionChipSpan,
-  type TrimEdge
+  type TrimEdge,
+  snapTrimToBeat
 } from '../lib/timelineMath'
 import { decodeAudioPeaks } from '../lib/waveform'
+import { createTimelineViewportStore, TimelineViewportContext } from '../lib/timelineViewport'
+import { useFilmstripStrips, type FilmstripStrip } from '../lib/useFilmstripStrips'
+import { FilmstripCanvas } from './FilmstripCanvas'
 import { OverlayTitleBarSpacer } from './OverlayTitleBarSpacer'
 import { CaptionPanel } from './wizard/CaptionPanel'
 import { Button } from './ui/Button'
@@ -538,25 +541,15 @@ function AiReeditDialog({
   )
 }
 
-interface Filmstrip {
-  /** Sparse — index `undefined` means that tile hasn't been generated yet (lazy). */
-  thumbs: (string | undefined)[]
-  /** Display width per tile at BASE_PX_PER_SEC — scaled by the current zoom. */
-  tileWidthPx: number
-}
-
-// A few extra seconds generated past each edge of the visible viewport, so a small
-// scroll doesn't show a blank gap while the next tile is still seeking in.
-const FILMSTRIP_PREFETCH_SEC = 6
-
 /** How long auto-follow stays out of the way after the user scrolls. */
 const FOLLOW_RESUME_MS = 4000
 
-/** Upper bound on thumbnails per source — see getFilmstripMeta. */
-const MAX_FILMSTRIP_TILES = 240
+/** Stable empty list — a fresh `[]` per render would restart the extraction. */
+const EMPTY_FILMSTRIP_CLIPS: { id: string; file: string }[] = []
 
-/** Paint captured tiles this often instead of once at the end of a pass. */
-const FILMSTRIP_PUBLISH_EVERY = 4
+/** Grabbable width for a scene block that is drawn narrower than this. It is an
+ * overlay, never the block's own width — see EditedCutBlock. */
+const MIN_BLOCK_HIT_PX = 14
 
 export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }: Props) {
   // AI re-edit runs at app level so leaving the editor doesn't kill it.
@@ -650,16 +643,17 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
   const sourceViewStateRef = useRef<ViewModePlaybackState | null>(null)
   const editedViewStateRef = useRef<ViewModePlaybackState | null>(null)
   const newCutCounter = useRef(0)
-  const [filmstrips, setFilmstrips] = useState<Record<string, Filmstrip>>({})
-  const filmstripsRef = useRef<Record<string, Filmstrip>>({})
-  useEffect(() => {
-    filmstripsRef.current = filmstrips
-  }, [filmstrips])
-  const filmstripVideoCache = useRef<Map<string, HTMLVideoElement>>(new Map())
-  const filmstripMetaCache = useRef<
-    Map<string, { duration: number; tileWidthPx: number; totalTiles: number }>
-  >(new Map())
-  const filmstripQueueRef = useRef<Map<string, Promise<void>>>(new Map())
+  // Thumbnail lanes: ffmpeg extracts every source's strip once (sidecar
+  // `filmstrip`), the lanes draw the decoded JPEGs into a canvas. Nothing about
+  // them lives in this component's state — see FilmstripCanvas.
+  const filmstripSources = editorApi.filmstripSources()
+  const strips = useFilmstripStrips(
+    filmstripSources?.localUid ?? null,
+    filmstripSources?.clips ?? EMPTY_FILMSTRIP_CLIPS
+  )
+  // Scroll is published to the lanes imperatively so it never re-renders the
+  // timeline; the store is per-mount so nothing survives a close/reopen.
+  const viewportStore = useMemo(() => createTimelineViewportStore(), [])
   const [isPlaying, setIsPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
@@ -817,7 +811,6 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
     setEditorPhase('loading')
     setPrepareHint('')
     setError(null)
-    setFilmstrips({})
     setPreviewSrc(null)
     setPreviewSource(null)
     editorApi
@@ -838,14 +831,11 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
           playRangeRef.current = { in: firstCut.in, out: firstCut.out }
           setPrepareHint('กำลังโหลดตัวอย่างเล่น…')
           await loadPreviewFor(firstCut.source)
-          if (cancelled) return
-          // Wait for the first scene's own thumbnail window before letting the
-          // user in — only this bounded window, never the whole clip.
-          setPrepareHint('กำลังโหลดภาพตัวอย่าง…')
-          const firstSourceDuration =
-            t.sources.find((s) => s.id === firstCut.source)?.durationSec ?? firstCut.out
-          await fillFilmstripRange(firstCut.source, firstSourceDuration, firstCut.in, firstCut.out)
         }
+        // The thumbnail lanes are no longer waited for: ffmpeg extracts them in
+        // its own process (see useFilmstripStrips) and each lane paints itself
+        // when its tiles decode. Blocking the editor on them was only necessary
+        // while capture ran on this thread.
         if (!cancelled) setEditorPhase('ready')
       })
       .catch((e) => {
@@ -1283,35 +1273,29 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
     paintTime(currentTimeRef.current)
   }, [pxPerSec, viewMode, editorPhase, cuts, videoDuration])
 
-  // Source mode: load filmstrip tiles for whatever's actually visible (plus a
-  // small prefetch margin). All lanes share the axis, so one visible window
-  // covers every file.
+  // Publish the scroll position to the filmstrip lanes.
+  //
+  // Deliberately NOT React state: a `setState` per scroll frame re-renders a
+  // 4,000-line timeline to move some thumbnails, which is most of what made
+  // scrolling stutter. The lanes subscribe and redraw their own canvas; nothing
+  // else in the tree hears about it. A ResizeObserver covers the window being
+  // resized without a scroll, which would otherwise leave lanes drawn to the
+  // old viewport width.
   useEffect(() => {
-    if (viewMode !== 'source' || editorPhase !== 'ready' || !timeline) return
     const el = viewportRef.current
     if (!el) return
-    let raf = 0
-    const handler = () => {
-      cancelAnimationFrame(raf)
-      raf = requestAnimationFrame(() => {
-        const px = pxPerSecRef.current
-        const startSec = Math.max((el.scrollLeft - HEADER_COL_PX) / px - FILMSTRIP_PREFETCH_SEC, 0)
-        const endSec =
-          (el.scrollLeft + el.clientWidth - HEADER_COL_PX) / px + FILMSTRIP_PREFETCH_SEC
-        for (const src of timeline.sources) {
-          const dur = getSourceDurationSec(src.id)
-          if (startSec >= dur) continue
-          queueFilmstripRange(src.id, dur, startSec, Math.min(endSec, dur))
-        }
-      })
+    const publish = (): void => {
+      viewportStore.set({ scrollLeft: el.scrollLeft, viewportWidth: el.clientWidth })
     }
-    handler()
-    el.addEventListener('scroll', handler, { passive: true })
+    publish()
+    el.addEventListener('scroll', publish, { passive: true })
+    const ro = new ResizeObserver(publish)
+    ro.observe(el)
     return () => {
-      cancelAnimationFrame(raf)
-      el.removeEventListener('scroll', handler)
+      el.removeEventListener('scroll', publish)
+      ro.disconnect()
     }
-  }, [viewMode, editorPhase, timeline, cuts, pxPerSec])
+  }, [viewportStore, editorPhase, viewMode])
 
   // Decode the attached music file client-side into a peak array for the
   // waveform canvas (shared with the wizard's MusicRangePicker).
@@ -1474,155 +1458,6 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
     const r = await editorApi.resolveSourcePreviewSrc(uid, sourceId)
     previewCache.current.set(sourceId, r)
     return r.src
-  }
-
-  async function getFilmstripVideo(sourceId: string): Promise<HTMLVideoElement | null> {
-    const cached = filmstripVideoCache.current.get(sourceId)
-    if (cached) return cached
-    try {
-      const src = await ensureSourceSrc(sourceId)
-      const video = document.createElement('video')
-      video.muted = true
-      video.playsInline = true
-      video.crossOrigin = 'anonymous'
-      video.src = src
-      await new Promise<void>((resolve, reject) => {
-        video.addEventListener('loadedmetadata', () => resolve(), { once: true })
-        video.addEventListener('error', () => reject(new Error('video load failed')), {
-          once: true
-        })
-      })
-      filmstripVideoCache.current.set(sourceId, video)
-      return video
-    } catch {
-      return null
-    }
-  }
-
-  function getFilmstripMeta(
-    sourceId: string,
-    video: HTMLVideoElement,
-    declaredDurationSec: number
-  ): { duration: number; tileWidthPx: number; totalTiles: number } {
-    const cached = filmstripMetaCache.current.get(sourceId)
-    if (cached) return cached
-    const duration =
-      video.duration > 0 && Number.isFinite(video.duration) ? video.duration : declaredDurationSec
-    // Tile math is anchored to BASE_PX_PER_SEC — zooming stretches the display,
-    // it never regenerates tiles.
-    const laneWidthPx = Math.max(duration * BASE_PX_PER_SEC, MIN_LANE_PX)
-    const ratio =
-      video.videoWidth && video.videoHeight ? video.videoWidth / video.videoHeight : 9 / 16
-    const tileWidthPx = Math.max(1, Math.round(IMG_LANE_PX * ratio))
-    // Capped: one tile per ~23px of lane means a 5-minute source wants ~530
-    // thumbnails, and every one of them is a seek + a canvas draw. The tiles
-    // are stretched to fill the lane at whatever zoom is current (see
-    // SourceLane), so a lower count only costs resolution — and below this cap
-    // nothing changes for the short clips this editor mostly sees.
-    const totalTiles = clamp(Math.ceil(laneWidthPx / tileWidthPx), 4, MAX_FILMSTRIP_TILES)
-    const meta = { duration, tileWidthPx, totalTiles }
-    filmstripMetaCache.current.set(sourceId, meta)
-    return meta
-  }
-
-  /** Fill only the thumbnail tiles overlapping [startSec, endSec] for one source,
-   *  skipping tiles already cached — never a whole clip up front. */
-  async function fillFilmstripRange(
-    sourceId: string,
-    declaredDurationSec: number,
-    startSec: number,
-    endSec: number
-  ) {
-    const video = await getFilmstripVideo(sourceId)
-    if (!video) return
-    const { duration, tileWidthPx, totalTiles } = getFilmstripMeta(
-      sourceId,
-      video,
-      declaredDurationSec
-    )
-    const tileDur = totalTiles > 0 ? duration / totalTiles : duration
-    const startIdx = clamp(Math.floor(startSec / Math.max(tileDur, 0.001)), 0, totalTiles - 1)
-    const endIdx = clamp(Math.ceil(endSec / Math.max(tileDur, 0.001)), 0, totalTiles - 1)
-
-    const existing = filmstripsRef.current[sourceId]
-    const thumbs: (string | undefined)[] =
-      existing?.thumbs && existing.thumbs.length === totalTiles
-        ? [...existing.thumbs]
-        : new Array(totalTiles).fill(undefined)
-
-    // Publishing only at the END of the loop is why a long source looked like
-    // it never loaded at all: ~60 seeks at ~150ms each is ten seconds of blank
-    // lane, and any scroll in the meantime queued another pass behind this one
-    // (live report 2026-08-13). Tiles now go on screen as they are captured,
-    // and a newer request for the same source cancels this one at the next
-    // tile instead of waiting it out.
-    const publish = (): void => {
-      setFilmstrips((prev) => ({ ...prev, [sourceId]: { thumbs: [...thumbs], tileWidthPx } }))
-    }
-    // Nothing missing in this window — the common case once a lane has been
-    // looked at, and the reason repeated requests (every cut block asks for
-    // its own window on mount, every scroll asks again) cost nothing.
-    let missing = false
-    for (let i = startIdx; i <= endIdx && !missing; i++) if (!thumbs[i]) missing = true
-    if (!missing) return
-
-    let pending = 0
-    try {
-      for (let i = startIdx; i <= endIdx; i++) {
-        if (thumbs[i]) continue
-        const t = totalTiles <= 1 ? 0 : (duration * i) / (totalTiles - 1)
-        await new Promise<void>((resolve) => {
-          const onSeeked = () => {
-            video.removeEventListener('seeked', onSeeked)
-            resolve()
-          }
-          video.addEventListener('seeked', onSeeked)
-          video.currentTime = clamp(t, 0, Math.max(duration - 0.05, 0))
-        })
-        const ratio =
-          video.videoWidth && video.videoHeight ? video.videoWidth / video.videoHeight : 9 / 16
-        const captureH = Math.min(video.videoHeight || 320, IMG_LANE_PX * 2)
-        const captureW = Math.max(1, Math.round(captureH * ratio))
-        const canvas = document.createElement('canvas')
-        canvas.width = captureW
-        canvas.height = captureH
-        const ctx = canvas.getContext('2d')
-        if (!ctx) break
-        ctx.drawImage(video, 0, 0, captureW, captureH)
-        thumbs[i] = canvas.toDataURL('image/jpeg', 0.82)
-        pending += 1
-        if (pending >= FILMSTRIP_PUBLISH_EVERY) {
-          pending = 0
-          publish()
-        }
-      }
-    } catch {
-      // Filmstrip is a visual aid only — lane still works without it.
-    }
-    if (pending > 0) publish()
-  }
-
-  /**
-   * Serialize fill requests per source — they share one hidden <video>.
-   *
-   * Requests are never superseded, they queue: in edited mode EVERY cut block
-   * asks for its own window on mount, so treating a newer request as "the only
-   * one that matters" left most blocks blank and made the lane look like it
-   * had loaded the wrong clip (live report 2026-08-13). A window whose tiles
-   * are already captured returns immediately, which is what keeps the queue
-   * cheap under scroll spam.
-   */
-  function queueFilmstripRange(
-    sourceId: string,
-    declaredDurationSec: number,
-    startSec: number,
-    endSec: number
-  ) {
-    const prev = filmstripQueueRef.current.get(sourceId) ?? Promise.resolve()
-    const next = prev
-      .catch(() => undefined)
-      .then(() => fillFilmstripRange(sourceId, declaredDurationSec, startSec, endSec))
-    filmstripQueueRef.current.set(sourceId, next)
   }
 
   async function loadPreviewFor(sourceId: string) {
@@ -2513,49 +2348,19 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
 
   // One frame per angle of the selected line. The angle buttons were black
   // rectangles — "2 มุม" with nothing to tell them apart (live report
-  // 2026-08-13). Captured from the same cached <video> elements the filmstrip
-  // uses, keyed by source+in so re-selecting a line is free and dragging a cut
-  // re-captures only that angle.
-  const [angleThumbs, setAngleThumbs] = useState<Record<string, string>>({})
-  const angleThumbKey = (cut: WorkingCut): string => `${cut.source}@${cut.in.toFixed(2)}`
-  const angleKeys = lineCuts.map(angleThumbKey).join('|')
-  useEffect(() => {
-    if (lineCuts.length === 0) return
-    let cancelled = false
-    void (async () => {
-      for (const cut of lineCuts) {
-        const key = angleThumbKey(cut)
-        if (cancelled || angleThumbs[key]) continue
-        const video = await getFilmstripVideo(cut.source)
-        if (!video || cancelled) return
-        // A hair into the cut: the first frame of a trim is often a fade or a
-        // transition frame, which reads as the black box this replaces.
-        const at = Math.max(0, Math.min(cut.in + 0.08, (video.duration || cut.out) - 0.05))
-        await new Promise<void>((resolve) => {
-          const onSeeked = () => {
-            video.removeEventListener('seeked', onSeeked)
-            resolve()
-          }
-          video.addEventListener('seeked', onSeeked)
-          video.currentTime = at
-        })
-        if (cancelled) return
-        const ratio =
-          video.videoWidth && video.videoHeight ? video.videoWidth / video.videoHeight : 9 / 16
-        const canvas = document.createElement('canvas')
-        canvas.height = 88
-        canvas.width = Math.max(1, Math.round(88 * ratio))
-        const ctx = canvas.getContext('2d')
-        if (!ctx) return
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
-        const url = canvas.toDataURL('image/jpeg', 0.8)
-        if (!cancelled) setAngleThumbs((prev) => (prev[key] ? prev : { ...prev, [key]: url }))
-      }
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [angleKeys])
+  // 2026-08-13).
+  //
+  // These used to be captured here, from a hidden <video> seeked per angle.
+  // They are now just a tile out of the source's extracted strip: the nearest
+  // sample to a hair past the cut's start (the very first frame of a trim is
+  // often a fade, which reads as the black box this replaces). No decode, no
+  // canvas, no state — a plain lookup that is correct the first time it paints.
+  const angleThumbUrl = (cut: WorkingCut): string | null => {
+    const strip = strips[cut.source]
+    if (!strip) return null
+    const idx = Math.round((cut.in + 0.08) / strip.tileSec - 0.5)
+    return strip.urlFor(clamp(idx, 0, strip.count - 1))
+  }
 
   // "ท่อนที่ตรงกับฉากนี้" has to mean it: selecting a scene moves the caption
   // cursor onto the first line inside that scene, if there is one. Typing in
@@ -2682,1056 +2487,1075 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
     'sticky left-0 z-40 flex h-full shrink-0 items-center gap-1.5 bg-ground pr-3 pl-3 text-[13px] text-ink-3'
 
   return (
-    <div className="fixed inset-0 z-100 flex flex-col bg-ground text-ink">
-      <OverlayTitleBarSpacer
-        label={`แก้ไขวิดีโอ${projectName ? ` — ${projectName}` : ''} · ${
-          isDub ? 'ตัดฉากเด่น' : 'ตัดช่วงเงียบ'
-        }`}
-        rightNote={draftSavedAt ? `บันทึกร่างอัตโนมัติ · ${draftSavedAt}` : undefined}
-      />
-      {/* header (R3): leave, history, what state the cut is in, then act */}
-      <div className="flex items-center gap-3 border-b border-divider px-6 py-3">
-        <Button variant="ghost" icon={<ArrowLeft size={16} />} onClick={() => void requestClose()}>
-          กลับไปหน้าโปรเจกต์
-        </Button>
-        <span className="h-5 w-px bg-divider" />
-        {undoStack.current.length > 0 ? (
-          <Button icon={<Undo2 size={15} />} onClick={undo} title={withShortcut('เลิกทำ', 'undo')}>
-            เลิกทำ
-          </Button>
-        ) : (
+    <TimelineViewportContext.Provider value={viewportStore}>
+      <div className="fixed inset-0 z-100 flex flex-col bg-ground text-ink">
+        <OverlayTitleBarSpacer
+          label={`แก้ไขวิดีโอ${projectName ? ` — ${projectName}` : ''} · ${
+            isDub ? 'ตัดฉากเด่น' : 'ตัดช่วงเงียบ'
+          }`}
+          rightNote={draftSavedAt ? `บันทึกร่างอัตโนมัติ · ${draftSavedAt}` : undefined}
+        />
+        {/* header (R3): leave, history, what state the cut is in, then act */}
+        <div className="flex items-center gap-3 border-b border-divider px-6 py-3">
           <Button
-            icon={<Undo2 size={15} />}
-            disabled
-            reasonAs="tooltip"
-            disabledReason="ยังไม่มีอะไรให้ย้อน"
+            variant="ghost"
+            icon={<ArrowLeft size={16} />}
+            onClick={() => void requestClose()}
           >
-            เลิกทำ
+            กลับไปหน้าโปรเจกต์
           </Button>
-        )}
-        {redoStack.current.length > 0 ? (
-          <Button icon={<Redo2 size={15} />} onClick={redo} title={withShortcut('ทำซ้ำ', 'undo')}>
-            ทำซ้ำ
-          </Button>
-        ) : (
-          <Button
-            icon={<Redo2 size={15} />}
-            disabled
-            reasonAs="tooltip"
-            disabledReason="ย้อนก่อนถึงจะทำซ้ำได้"
-          >
-            ทำซ้ำ
-          </Button>
-        )}
-
-        <p className="min-w-0 flex-1 truncate text-sm text-muted">
-          {editCount > 0 ? `แก้แล้ว ${editCount} อย่าง · ยังไม่ได้เรนเดอร์` : 'ยังไม่ได้แก้อะไร'}
-          {draftSavedAt ? ` · บันทึกร่างอัตโนมัติ ${draftSavedAt}` : ''}
-        </p>
-
-        <Button
-          variant="ghost"
-          icon={<HelpCircle size={16} />}
-          onClick={() => setShortcutsOpen(true)}
-          title={withShortcut('แป้นพิมพ์ลัด', 'shortcuts-help')}
-        >
-          แป้นพิมพ์ลัด
-        </Button>
-        {canAiReedit &&
-          (editorPhase === 'ready' && cuts.length > 0 ? (
-            <Button icon={<Sparkles size={16} />} onClick={() => setAiPanelOpen(true)}>
-              ให้ AI แก้ให้
+          <span className="h-5 w-px bg-divider" />
+          {undoStack.current.length > 0 ? (
+            <Button
+              icon={<Undo2 size={15} />}
+              onClick={undo}
+              title={withShortcut('เลิกทำ', 'undo')}
+            >
+              เลิกทำ
             </Button>
           ) : (
-            <Button icon={<Sparkles size={16} />} disabled disabledReason="ต้องมีอย่างน้อย 1 ฉาก">
-              ให้ AI แก้ให้
-            </Button>
-          ))}
-        {editorPhase === 'ready' && cuts.length > 0 ? (
-          <Button
-            variant="primary"
-            icon={<Save size={16} />}
-            loading={saving}
-            onClick={handleSave}
-            title={withShortcut('บันทึกและเรนเดอร์', 'save')}
-          >
-            {saving ? 'กำลังบันทึก…' : 'บันทึกและเรนเดอร์'}
-          </Button>
-        ) : (
-          <Button
-            variant="primary"
-            icon={<Save size={16} />}
-            disabled
-            disabledReason={cuts.length === 0 ? 'ต้องมีอย่างน้อย 1 ฉาก' : 'กำลังเตรียมวิดีโอ'}
-          >
-            บันทึกและเรนเดอร์
-          </Button>
-        )}
-      </div>
-
-      {shortcutsOpen && <ShortcutsSheet isDub={isDub} onClose={() => setShortcutsOpen(false)} />}
-
-      {/* Caption appearance — the same panel the wizard shows, reachable after
-          the cut. The style is stored on the project and burned in on the next
-          render, so nothing here re-renders anything on its own. */}
-      {captionStyleOpen && captionStyle && (
-        <Dialog
-          open
-          onClose={() => setCaptionStyleOpen(false)}
-          title="หน้าตาคำบรรยาย"
-          subtitle="มีผลกับการเรนเดอร์ครั้งถัดไป"
-          width={620}
-        >
-          <CaptionPanel
-            style={captionStyle}
-            onChange={(next) => {
-              if (sameCaptionStyle(next, captionStyleRef.current)) return
-              pushHistoryNow()
-              setCaptionStyle(next)
-              captionStyleRef.current = next
-              void editorApi.updateCaptionStyle(next)
-            }}
-            previewThumb={null}
-          />
-        </Dialog>
-      )}
-
-      {aiPanelOpen && (
-        <AiReeditDialog
-          lines={aiLines}
-          checked={aiChecked}
-          onToggle={toggleAiLine}
-          instruction={aiInstruction}
-          onInstructionChange={setAiInstruction}
-          busy={aiBusy}
-          errorMsg={aiError}
-          onSubmit={handleAiReedit}
-          onClose={() => {
-            if (!aiBusy) setAiPanelOpen(false)
-          }}
-        />
-      )}
-
-      {/* R3 sub-frame ง — the error bar names the failure, keeps the reassurance,
-          and offers retry + copy (text stays selectable for แจ้งปัญหา). */}
-      {error && (
-        <div className="mx-6 mt-3 rounded-lg border border-error/40 bg-error/10 px-4 py-3 select-text">
-          <p className="flex items-start gap-2 text-sm text-error">
-            <AlertTriangle size={15} className="mt-0.5 shrink-0" />
-            <span className="min-w-0">{error}</span>
-          </p>
-          <p className="mt-1 pl-6 text-[13px] text-muted">งานที่แก้ไว้ยังอยู่ในเครื่อง ไม่ได้หาย</p>
-          <div className="mt-2 flex items-center gap-2 pl-6">
-            {errorRetry === 'save' && (
-              <Button onClick={handleSave} loading={saving}>
-                ลองอีกครั้ง
-              </Button>
-            )}
-            <Button variant="ghost" onClick={copyErrorReport}>
-              คัดลอกข้อมูลแจ้งปัญหา
-            </Button>
             <Button
-              variant="ghost"
-              onClick={() => {
-                setError(null)
-                setErrorRetry(null)
-              }}
+              icon={<Undo2 size={15} />}
+              disabled
+              reasonAs="tooltip"
+              disabledReason="ยังไม่มีอะไรให้ย้อน"
             >
-              ปิด
+              เลิกทำ
             </Button>
-          </div>
-        </div>
-      )}
+          )}
+          {redoStack.current.length > 0 ? (
+            <Button icon={<Redo2 size={15} />} onClick={redo} title={withShortcut('ทำซ้ำ', 'undo')}>
+              ทำซ้ำ
+            </Button>
+          ) : (
+            <Button
+              icon={<Redo2 size={15} />}
+              disabled
+              reasonAs="tooltip"
+              disabledReason="ย้อนก่อนถึงจะทำซ้ำได้"
+            >
+              ทำซ้ำ
+            </Button>
+          )}
 
-      {editorPhase !== 'ready' ? (
-        /* R3 sub-frame ค — preparing. One-time per project, so say that. */
-        <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
-          <div className="h-1 w-56 overflow-hidden rounded-full bg-border-faint">
-            <div className="h-full w-1/3 animate-pulse rounded-full bg-accent" />
-          </div>
-          <p className="text-sm font-medium text-ink">กำลังเตรียมวิดีโอให้พร้อมแก้ไข</p>
-          <p className="max-w-xs text-[13px] text-muted">
-            ทำครั้งเดียวต่อโปรเจกต์ · ครั้งต่อไปจะเปิดได้ทันที
+          <p className="min-w-0 flex-1 truncate text-sm text-muted">
+            {editCount > 0 ? `แก้แล้ว ${editCount} อย่าง · ยังไม่ได้เรนเดอร์` : 'ยังไม่ได้แก้อะไร'}
+            {draftSavedAt ? ` · บันทึกร่างอัตโนมัติ ${draftSavedAt}` : ''}
           </p>
-          {prepareHint && (
-            <p className="flex items-center gap-1.5 text-[13px] text-muted">
-              <Loader2 size={13} className="animate-spin" /> {prepareHint}
-            </p>
+
+          <Button
+            variant="ghost"
+            icon={<HelpCircle size={16} />}
+            onClick={() => setShortcutsOpen(true)}
+            title={withShortcut('แป้นพิมพ์ลัด', 'shortcuts-help')}
+          >
+            แป้นพิมพ์ลัด
+          </Button>
+          {canAiReedit &&
+            (editorPhase === 'ready' && cuts.length > 0 ? (
+              <Button icon={<Sparkles size={16} />} onClick={() => setAiPanelOpen(true)}>
+                ให้ AI แก้ให้
+              </Button>
+            ) : (
+              <Button
+                icon={<Sparkles size={16} />}
+                disabled
+                reasonAs="tooltip"
+                disabledReason="ต้องมีอย่างน้อย 1 ฉาก"
+              >
+                ให้ AI แก้ให้
+              </Button>
+            ))}
+          {editorPhase === 'ready' && cuts.length > 0 ? (
+            <Button
+              variant="primary"
+              icon={<Save size={16} />}
+              loading={saving}
+              onClick={handleSave}
+              title={withShortcut('บันทึกและเรนเดอร์', 'save')}
+            >
+              {saving ? 'กำลังบันทึก…' : 'บันทึกและเรนเดอร์'}
+            </Button>
+          ) : (
+            <Button
+              variant="primary"
+              icon={<Save size={16} />}
+              disabled
+              reasonAs="tooltip"
+              disabledReason={cuts.length === 0 ? 'ต้องมีอย่างน้อย 1 ฉาก' : 'กำลังเตรียมวิดีโอ'}
+            >
+              บันทึกและเรนเดอร์
+            </Button>
           )}
         </div>
-      ) : !timeline ? null : (
-        <>
-          {/* middle: stage (centre) + inspector (right) */}
-          <div className="flex min-h-0 flex-1 overflow-hidden">
-            <div className="flex min-w-0 flex-1 flex-col items-center justify-center gap-2 px-5 py-3">
-              <div
-                className="group/stage relative flex h-full min-h-0 max-w-full flex-1 items-center justify-center"
-                style={{ width: 'auto', aspectRatio: '9 / 16' }}
-                onPointerMove={showTransport}
-                onPointerLeave={() => setTransportOn(false)}
+
+        {shortcutsOpen && <ShortcutsSheet isDub={isDub} onClose={() => setShortcutsOpen(false)} />}
+
+        {/* Caption appearance — the same panel the wizard shows, reachable after
+          the cut. The style is stored on the project and burned in on the next
+          render, so nothing here re-renders anything on its own. */}
+        {captionStyleOpen && captionStyle && (
+          <Dialog
+            open
+            onClose={() => setCaptionStyleOpen(false)}
+            title="หน้าตาคำบรรยาย"
+            subtitle="มีผลกับการเรนเดอร์ครั้งถัดไป"
+            width={620}
+          >
+            <CaptionPanel
+              style={captionStyle}
+              onChange={(next) => {
+                if (sameCaptionStyle(next, captionStyleRef.current)) return
+                pushHistoryNow()
+                setCaptionStyle(next)
+                captionStyleRef.current = next
+                void editorApi.updateCaptionStyle(next)
+              }}
+              previewThumb={null}
+            />
+          </Dialog>
+        )}
+
+        {aiPanelOpen && (
+          <AiReeditDialog
+            lines={aiLines}
+            checked={aiChecked}
+            onToggle={toggleAiLine}
+            instruction={aiInstruction}
+            onInstructionChange={setAiInstruction}
+            busy={aiBusy}
+            errorMsg={aiError}
+            onSubmit={handleAiReedit}
+            onClose={() => {
+              if (!aiBusy) setAiPanelOpen(false)
+            }}
+          />
+        )}
+
+        {/* R3 sub-frame ง — the error bar names the failure, keeps the reassurance,
+          and offers retry + copy (text stays selectable for แจ้งปัญหา). */}
+        {error && (
+          <div className="mx-6 mt-3 rounded-lg border border-error/40 bg-error/10 px-4 py-3 select-text">
+            <p className="flex items-start gap-2 text-sm text-error">
+              <AlertTriangle size={15} className="mt-0.5 shrink-0" />
+              <span className="min-w-0">{error}</span>
+            </p>
+            <p className="mt-1 pl-6 text-[13px] text-muted">
+              งานที่แก้ไว้ยังอยู่ในเครื่อง ไม่ได้หาย
+            </p>
+            <div className="mt-2 flex items-center gap-2 pl-6">
+              {errorRetry === 'save' && (
+                <Button onClick={handleSave} loading={saving}>
+                  ลองอีกครั้ง
+                </Button>
+              )}
+              <Button variant="ghost" onClick={copyErrorReport}>
+                คัดลอกข้อมูลแจ้งปัญหา
+              </Button>
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  setError(null)
+                  setErrorRetry(null)
+                }}
               >
-                {/* Two elements so the "next" edited-mode segment can be pre-seeked hidden, then swapped in instantly. */}
-                {/* Clicking the picture toggles playback, the way every video
+                ปิด
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {editorPhase !== 'ready' ? (
+          /* R3 sub-frame ค — preparing. One-time per project, so say that. */
+          <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
+            <div className="h-1 w-56 overflow-hidden rounded-full bg-border-faint">
+              <div className="h-full w-1/3 animate-pulse rounded-full bg-accent" />
+            </div>
+            <p className="text-sm font-medium text-ink">กำลังเตรียมวิดีโอให้พร้อมแก้ไข</p>
+            <p className="max-w-xs text-[13px] text-muted">
+              ทำครั้งเดียวต่อโปรเจกต์ · ครั้งต่อไปจะเปิดได้ทันที
+            </p>
+            {prepareHint && (
+              <p className="flex items-center gap-1.5 text-[13px] text-muted">
+                <Loader2 size={13} className="animate-spin" /> {prepareHint}
+              </p>
+            )}
+          </div>
+        ) : !timeline ? null : (
+          <>
+            {/* middle: stage (centre) + inspector (right) */}
+            <div className="flex min-h-0 flex-1 overflow-hidden">
+              <div className="flex min-w-0 flex-1 flex-col items-center justify-center gap-2 px-5 py-3">
+                <div
+                  className="group/stage relative flex h-full min-h-0 max-w-full flex-1 items-center justify-center"
+                  style={{ width: 'auto', aspectRatio: '9 / 16' }}
+                  onPointerMove={showTransport}
+                  onPointerLeave={() => setTransportOn(false)}
+                >
+                  {/* Two elements so the "next" edited-mode segment can be pre-seeked hidden, then swapped in instantly. */}
+                  {/* Clicking the picture toggles playback, the way every video
                     player does — the transport button was the only way before
                     (live report 2026-08-13). It sits on both elements because
                     which one is on top changes with every scene swap. */}
-                <video
-                  onClick={togglePlay}
-                  ref={videoARef}
-                  onTimeUpdate={(e) => isActiveVideoEvent(e) && onTimeUpdate()}
-                  onLoadedMetadata={(e) => isActiveVideoEvent(e) && onVideoLoadedMetadata()}
-                  onSeeked={(e) => isActiveVideoEvent(e) && syncTimeFromVideo()}
-                  onEnded={(e) => isActiveVideoEvent(e) && onVideoEnded()}
-                  onPlay={(e) => isActiveVideoEvent(e) && setIsPlaying(true)}
-                  onPause={(e) => isActiveVideoEvent(e) && setIsPlaying(false)}
-                  className="absolute inset-0 h-full w-full rounded-xl bg-black object-contain"
-                  style={{ opacity: 1 }}
-                />
-                <video
-                  onClick={togglePlay}
-                  ref={videoBRef}
-                  onTimeUpdate={(e) => isActiveVideoEvent(e) && onTimeUpdate()}
-                  onLoadedMetadata={(e) => isActiveVideoEvent(e) && onVideoLoadedMetadata()}
-                  onSeeked={(e) => isActiveVideoEvent(e) && syncTimeFromVideo()}
-                  onEnded={(e) => isActiveVideoEvent(e) && onVideoEnded()}
-                  onPlay={(e) => isActiveVideoEvent(e) && setIsPlaying(true)}
-                  onPause={(e) => isActiveVideoEvent(e) && setIsPlaying(false)}
-                  className="absolute inset-0 h-full w-full rounded-xl bg-black object-contain"
-                  style={{ opacity: 0 }}
-                />
-                {/* Caption under the playhead — same lines the inspector edits. */}
-                <div
-                  ref={captionOverlayRef}
-                  className="pointer-events-none absolute inset-x-0 bottom-[9%] z-10 px-6 text-center text-[15px] leading-snug font-bold whitespace-pre-wrap text-white"
-                  style={{ textShadow: '0 0 3px #000, 0 0 3px #000, 0 2px 6px rgba(0,0,0,.95)' }}
-                />
-                {/* Background music preview — muted/paused unless the playhead is
+                  <video
+                    onClick={togglePlay}
+                    ref={videoARef}
+                    onTimeUpdate={(e) => isActiveVideoEvent(e) && onTimeUpdate()}
+                    onLoadedMetadata={(e) => isActiveVideoEvent(e) && onVideoLoadedMetadata()}
+                    onSeeked={(e) => isActiveVideoEvent(e) && syncTimeFromVideo()}
+                    onEnded={(e) => isActiveVideoEvent(e) && onVideoEnded()}
+                    onPlay={(e) => isActiveVideoEvent(e) && setIsPlaying(true)}
+                    onPause={(e) => isActiveVideoEvent(e) && setIsPlaying(false)}
+                    className="absolute inset-0 h-full w-full rounded-xl bg-black object-contain"
+                    style={{ opacity: 1 }}
+                  />
+                  <video
+                    onClick={togglePlay}
+                    ref={videoBRef}
+                    onTimeUpdate={(e) => isActiveVideoEvent(e) && onTimeUpdate()}
+                    onLoadedMetadata={(e) => isActiveVideoEvent(e) && onVideoLoadedMetadata()}
+                    onSeeked={(e) => isActiveVideoEvent(e) && syncTimeFromVideo()}
+                    onEnded={(e) => isActiveVideoEvent(e) && onVideoEnded()}
+                    onPlay={(e) => isActiveVideoEvent(e) && setIsPlaying(true)}
+                    onPause={(e) => isActiveVideoEvent(e) && setIsPlaying(false)}
+                    className="absolute inset-0 h-full w-full rounded-xl bg-black object-contain"
+                    style={{ opacity: 0 }}
+                  />
+                  {/* Caption under the playhead — same lines the inspector edits. */}
+                  <div
+                    ref={captionOverlayRef}
+                    className="pointer-events-none absolute inset-x-0 bottom-[9%] z-10 px-6 text-center text-[15px] leading-snug font-bold whitespace-pre-wrap text-white"
+                    style={{ textShadow: '0 0 3px #000, 0 0 3px #000, 0 2px 6px rgba(0,0,0,.95)' }}
+                  />
+                  {/* Background music preview — muted/paused unless the playhead is
                     inside the music block's active window (see syncMusicAudio). */}
-                <audio ref={musicAudioRef} preload="auto" />
+                  <audio ref={musicAudioRef} preload="auto" />
 
-                {/* Transport overlaid on the footage (R3), not stacked under
+                  {/* Transport overlaid on the footage (R3), not stacked under
                     it — the video is the hero and the controls belong on it. */}
-                <VideoTransport
-                  className="rounded-b-xl"
-                  visible={transportVisible}
-                  playing={isPlaying}
-                  currentSec={currentTime}
-                  durationSec={getActiveDurationSec()}
-                  seekRef={seekbarRef}
-                  timeLabelRef={timeLabelRef}
-                  onTogglePlay={togglePlay}
-                  onSeek={(sec) => applyScrubTime(sec, true)}
-                  onScrubStart={() => {
-                    isScrubbingSeekbarRef.current = true
-                    pauseForScrub()
-                  }}
-                  onScrubEnd={() => {
-                    isScrubbingSeekbarRef.current = false
-                    resumeAfterScrub()
-                  }}
-                  onStepBack={() => nudgePlayhead(-FRAME_SEC)}
-                  onStepForward={() => nudgePlayhead(FRAME_SEC)}
-                  stepBackTitle={withShortcut('ถอย 1 เฟรม', 'frame-back')}
-                  stepForwardTitle={withShortcut('เดินหน้า 1 เฟรม', 'frame-back')}
-                  playTitle={withShortcut(isPlaying ? 'หยุด' : 'เล่น', 'play')}
-                  playDisabledReason={previewSrc ? undefined : 'ยังไม่มีวิดีโอให้เล่น'}
-                />
+                  <VideoTransport
+                    className="rounded-b-xl"
+                    visible={transportVisible}
+                    playing={isPlaying}
+                    currentSec={currentTime}
+                    durationSec={getActiveDurationSec()}
+                    seekRef={seekbarRef}
+                    timeLabelRef={timeLabelRef}
+                    onTogglePlay={togglePlay}
+                    onSeek={(sec) => applyScrubTime(sec, true)}
+                    onScrubStart={() => {
+                      isScrubbingSeekbarRef.current = true
+                      pauseForScrub()
+                    }}
+                    onScrubEnd={() => {
+                      isScrubbingSeekbarRef.current = false
+                      resumeAfterScrub()
+                    }}
+                    onStepBack={() => nudgePlayhead(-FRAME_SEC)}
+                    onStepForward={() => nudgePlayhead(FRAME_SEC)}
+                    stepBackTitle={withShortcut('ถอย 1 เฟรม', 'frame-back')}
+                    stepForwardTitle={withShortcut('เดินหน้า 1 เฟรม', 'frame-back')}
+                    playTitle={withShortcut(isPlaying ? 'หยุด' : 'เล่น', 'play')}
+                    playDisabledReason={previewSrc ? undefined : 'ยังไม่มีวิดีโอให้เล่น'}
+                  />
+                </div>
               </div>
-            </div>
 
-            {/* inspector — R3 right rail */}
-            <aside className="flex w-[360px] shrink-0 flex-col overflow-hidden border-l border-divider">
-              <div className="shrink-0 border-b border-divider px-4 py-3">
-                <p className="text-[13px] text-muted">ฉากที่เลือกอยู่</p>
-                {selectedCut ? (
-                  <p className="mt-0.5 min-w-0 text-sm text-muted">
-                    <span className="text-lg font-semibold text-ink">
-                      ฉาก {playOrderMap.get(selectedCut.id) ?? '–'}
-                    </span>{' '}
-                    จาก {cuts.length} · ยาว {(selectedCut.out - selectedCut.in).toFixed(2)} วิ ·{' '}
-                    {selectedCut.source} ที่ {fmtTime(selectedCut.in)}
-                  </p>
-                ) : (
-                  <p className="mt-0.5 text-sm text-muted">คลิกฉากบนเส้นเวลาเพื่อเลือก</p>
+              {/* inspector — R3 right rail */}
+              <aside className="flex w-[360px] shrink-0 flex-col overflow-hidden border-l border-divider">
+                <div className="shrink-0 border-b border-divider px-4 py-3">
+                  <p className="text-[13px] text-muted">ฉากที่เลือกอยู่</p>
+                  {selectedCut ? (
+                    <p className="mt-0.5 min-w-0 text-sm text-muted">
+                      <span className="text-lg font-semibold text-ink">
+                        ฉาก {playOrderMap.get(selectedCut.id) ?? '–'}
+                      </span>{' '}
+                      จาก {cuts.length} · ยาว {(selectedCut.out - selectedCut.in).toFixed(2)} วิ ·{' '}
+                      {selectedCut.source} ที่ {fmtTime(selectedCut.in)}
+                    </p>
+                  ) : (
+                    <p className="mt-0.5 text-sm text-muted">คลิกฉากบนเส้นเวลาเพื่อเลือก</p>
+                  )}
+                </div>
+
+                {showTabs && (
+                  <Tabs
+                    className="shrink-0 px-4"
+                    items={[
+                      { key: 'script', label: isHighlight ? 'โน้ตประกอบ' : 'เสียงพากย์' },
+                      captionLines
+                        ? { key: 'caption', label: 'คำบรรยายบนภาพ' }
+                        : {
+                            key: 'caption',
+                            label: 'คำบรรยายบนภาพ',
+                            disabled: true,
+                            disabledReason: 'โปรเจกต์นี้ไม่ได้เปิดคำบรรยาย'
+                          }
+                    ]}
+                    activeKey={activeInspectorTab}
+                    onChange={(k) => setInspectorTab(k as 'script' | 'caption')}
+                  />
                 )}
-              </div>
 
-              {showTabs && (
-                <Tabs
-                  className="shrink-0 px-4"
-                  items={[
-                    { key: 'script', label: isHighlight ? 'โน้ตประกอบ' : 'เสียงพากย์' },
-                    captionLines
-                      ? { key: 'caption', label: 'คำบรรยายบนภาพ' }
-                      : {
-                          key: 'caption',
-                          label: 'คำบรรยายบนภาพ',
-                          disabled: true,
-                          disabledReason: 'โปรเจกต์นี้ไม่ได้เปิดคำบรรยาย'
-                        }
-                  ]}
-                  activeKey={activeInspectorTab}
-                  onChange={(k) => setInspectorTab(k as 'script' | 'caption')}
-                />
-              )}
-
-              <div className="scroll-ghost min-h-0 flex-1 overflow-y-auto px-4 py-3">
-                {activeInspectorTab === 'script' && isDub ? (
-                  selectedCut ? (
+                <div className="scroll-ghost min-h-0 flex-1 overflow-y-auto px-4 py-3">
+                  {activeInspectorTab === 'script' && isDub ? (
+                    selectedCut ? (
+                      <>
+                        <p className="mb-1.5 text-[13px] text-muted">
+                          {isHighlight
+                            ? `โน้ตของฉากนี้ (ไม่บังคับ)`
+                            : `ประโยคพากย์ที่ ${cutLineId(selectedCut)}` +
+                              (lineCuts.length > 1
+                                ? ` — แก้ที่นี่ เปลี่ยนทั้ง ${lineCuts.length} มุม`
+                                : '')}
+                        </p>
+                        <Textarea
+                          value={lineScriptFor(cuts, cutLineId(selectedCut))}
+                          onChange={(e) => updateLineScript(cutLineId(selectedCut), e.target.value)}
+                          onFocus={beginEdit}
+                          onBlur={commitEdit}
+                          rows={4}
+                          placeholder={
+                            isHighlight
+                              ? 'พิมพ์โน้ตสำหรับฉากนี้…'
+                              : 'พิมพ์สคริปต์สำหรับประโยคนี้ (ใช้ร่วมทุกมุม)…'
+                          }
+                        />
+                        {!isHighlight && (
+                          <>
+                            <p className="mt-4 mb-1.5 text-[13px] text-muted">
+                              มุมของประโยคนี้{' '}
+                              <span className="font-semibold text-ink">{lineCuts.length} มุม</span>
+                            </p>
+                            <div className="flex items-center gap-1.5">
+                              {lineCuts.map((c) => (
+                                <button
+                                  key={c.id}
+                                  type="button"
+                                  onClick={() => void selectCut(c)}
+                                  title={`มุม ${cutIndexInLine(cuts, c)} · ${(c.out - c.in).toFixed(1)} วิ`}
+                                  className={`h-11 w-[26px] overflow-hidden rounded border bg-black transition-colors duration-state ${
+                                    c.id === selectedId
+                                      ? 'border-accent'
+                                      : 'border-border hover:border-border-strong'
+                                  }`}
+                                >
+                                  {angleThumbUrl(c) ? (
+                                    <img
+                                      src={angleThumbUrl(c) ?? undefined}
+                                      alt=""
+                                      className="h-full w-full object-cover"
+                                    />
+                                  ) : null}
+                                </button>
+                              ))}
+                              <button
+                                type="button"
+                                onClick={addMontageCut}
+                                title={withShortcut('เพิ่มมุมให้ประโยคนี้', 'add-angle')}
+                                className="flex h-11 w-[26px] items-center justify-center rounded border border-dashed border-border text-muted transition-colors duration-state hover:border-border-strong hover:text-ink"
+                              >
+                                <Plus size={12} />
+                              </button>
+                            </div>
+                          </>
+                        )}
+                      </>
+                    ) : (
+                      <p className="text-sm text-muted">เลือกฉากก่อนถึงจะแก้บทพากย์ได้</p>
+                    )
+                  ) : captionLines && captionLines.length > 0 && cursorLine ? (
                     <>
-                      <p className="mb-1.5 text-[13px] text-muted">
-                        {isHighlight
-                          ? `โน้ตของฉากนี้ (ไม่บังคับ)`
-                          : `ประโยคพากย์ที่ ${cutLineId(selectedCut)}` +
-                            (lineCuts.length > 1
-                              ? ` — แก้ที่นี่ เปลี่ยนทั้ง ${lineCuts.length} มุม`
-                              : '')}
-                      </p>
+                      {/* R7 order: header · text · timecodes+delete · prev/next */}
+                      <div className="mb-2 flex items-baseline justify-between gap-2">
+                        <p className="text-[13px] text-muted">ท่อนที่ตรงกับฉากนี้</p>
+                        <p className="shrink-0 text-[13px] tabular-nums text-muted">
+                          ท่อน {captionCursorIdx + 1} จาก {captionLines.length}
+                        </p>
+                      </div>
                       <Textarea
-                        value={lineScriptFor(cuts, cutLineId(selectedCut))}
-                        onChange={(e) => updateLineScript(cutLineId(selectedCut), e.target.value)}
+                        value={cursorLine.text}
+                        onChange={(e) => updateCaptionLine(cursorLine.id, { text: e.target.value })}
                         onFocus={beginEdit}
                         onBlur={commitEdit}
-                        rows={4}
-                        placeholder={
-                          isHighlight
-                            ? 'พิมพ์โน้ตสำหรับฉากนี้…'
-                            : 'พิมพ์สคริปต์สำหรับประโยคนี้ (ใช้ร่วมทุกมุม)…'
-                        }
+                        rows={2}
                       />
-                      {!isHighlight && (
-                        <>
-                          <p className="mt-4 mb-1.5 text-[13px] text-muted">
-                            มุมของประโยคนี้{' '}
-                            <span className="font-semibold text-ink">{lineCuts.length} มุม</span>
-                          </p>
-                          <div className="flex items-center gap-1.5">
-                            {lineCuts.map((c) => (
-                              <button
-                                key={c.id}
-                                type="button"
-                                onClick={() => void selectCut(c)}
-                                title={`มุม ${cutIndexInLine(cuts, c)} · ${(c.out - c.in).toFixed(1)} วิ`}
-                                className={`h-11 w-[26px] overflow-hidden rounded border bg-black transition-colors duration-state ${
-                                  c.id === selectedId
-                                    ? 'border-accent'
-                                    : 'border-border hover:border-border-strong'
-                                }`}
-                              >
-                                {angleThumbs[angleThumbKey(c)] ? (
-                                  <img
-                                    src={angleThumbs[angleThumbKey(c)]}
-                                    alt=""
-                                    className="h-full w-full object-cover"
-                                  />
-                                ) : null}
-                              </button>
-                            ))}
-                            <button
-                              type="button"
-                              onClick={addMontageCut}
-                              title={withShortcut('เพิ่มมุมให้ประโยคนี้', 'add-angle')}
-                              className="flex h-11 w-[26px] items-center justify-center rounded border border-dashed border-border text-muted transition-colors duration-state hover:border-border-strong hover:text-ink"
-                            >
-                              <Plus size={12} />
-                            </button>
-                          </div>
-                        </>
-                      )}
-                    </>
-                  ) : (
-                    <p className="text-sm text-muted">เลือกฉากก่อนถึงจะแก้บทพากย์ได้</p>
-                  )
-                ) : captionLines && captionLines.length > 0 && cursorLine ? (
-                  <>
-                    {/* R7 order: header · text · timecodes+delete · prev/next */}
-                    <div className="mb-2 flex items-baseline justify-between gap-2">
-                      <p className="text-[13px] text-muted">ท่อนที่ตรงกับฉากนี้</p>
-                      <p className="shrink-0 text-[13px] tabular-nums text-muted">
-                        ท่อน {captionCursorIdx + 1} จาก {captionLines.length}
-                      </p>
-                    </div>
-                    <Textarea
-                      value={cursorLine.text}
-                      onChange={(e) => updateCaptionLine(cursorLine.id, { text: e.target.value })}
-                      onFocus={beginEdit}
-                      onBlur={commitEdit}
-                      rows={2}
-                    />
-                    {/* Timecodes, not raw seconds (R7): the rest of the editor
+                      {/* Timecodes, not raw seconds (R7): the rest of the editor
                         speaks 0:22.4, so this field must too. Typing is parsed
                         back through parseTimecode, which also accepts a plain
                         number for anyone who prefers seconds. */}
-                    <div className="mt-3 flex items-center gap-2 text-sm">
-                      <TimecodeInput
-                        value={cursorLine.start}
-                        onFocus={beginEdit}
-                        onCommit={(v) => {
-                          updateCaptionLine(cursorLine.id, {
-                            start: clamp(v, 0, cursorLine.end)
-                          })
-                          commitEdit()
-                        }}
-                      />
-                      <span className="text-muted">ถึง</span>
-                      <TimecodeInput
-                        value={cursorLine.end}
-                        onFocus={beginEdit}
-                        onCommit={(v) => {
-                          updateCaptionLine(cursorLine.id, {
-                            end: Math.max(v, cursorLine.start)
-                          })
-                          commitEdit()
-                        }}
-                      />
+                      <div className="mt-3 flex items-center gap-2 text-sm">
+                        <TimecodeInput
+                          value={cursorLine.start}
+                          onFocus={beginEdit}
+                          onCommit={(v) => {
+                            updateCaptionLine(cursorLine.id, {
+                              start: clamp(v, 0, cursorLine.end)
+                            })
+                            commitEdit()
+                          }}
+                        />
+                        <span className="text-muted">ถึง</span>
+                        <TimecodeInput
+                          value={cursorLine.end}
+                          onFocus={beginEdit}
+                          onCommit={(v) => {
+                            updateCaptionLine(cursorLine.id, {
+                              end: Math.max(v, cursorLine.start)
+                            })
+                            commitEdit()
+                          }}
+                        />
+                        <Button
+                          className="ml-auto"
+                          variant="danger"
+                          icon={<Trash2 size={15} />}
+                          iconOnly
+                          aria-label="ลบท่อนนี้"
+                          title="ลบท่อนนี้"
+                          onClick={() => {
+                            deleteCaptionLine(cursorLine.id)
+                            setCaptionCursor((i) => Math.max(0, i - 1))
+                          }}
+                        />
+                      </div>
+                      <div className="mt-3 flex items-center gap-1.5 [&_button]:whitespace-nowrap">
+                        {captionCursorIdx > 0 ? (
+                          <Button
+                            icon={<ChevronLeft size={14} />}
+                            onClick={() => jumpToCaption(captionCursorIdx - 1)}
+                          >
+                            ก่อนหน้า
+                          </Button>
+                        ) : (
+                          <Button
+                            icon={<ChevronLeft size={14} />}
+                            disabled
+                            reasonAs="tooltip"
+                            disabledReason="นี่คือท่อนแรกแล้ว"
+                          >
+                            ก่อนหน้า
+                          </Button>
+                        )}
+                        {captionCursorIdx < captionLines.length - 1 ? (
+                          <Button
+                            icon={<ChevronRight size={14} />}
+                            onClick={() => jumpToCaption(captionCursorIdx + 1)}
+                          >
+                            ถัดไป
+                          </Button>
+                        ) : (
+                          <Button
+                            icon={<ChevronRight size={14} />}
+                            disabled
+                            reasonAs="tooltip"
+                            disabledReason="นี่คือท่อนสุดท้ายแล้ว"
+                          >
+                            ถัดไป
+                          </Button>
+                        )}
+                      </div>
+                      <p className="mt-2 text-[13px] text-muted">
+                        แก้คำที่ถอดเสียงผิดได้ · ลบท่อนที่ AI ฟังผิดได้
+                      </p>
+                      {captionStyle && (
+                        // Appearance row (R7): an "Aa" tile in the chosen font so
+                        // the choice is visible, the summary, and its own button.
+                        <div className="mt-4 flex items-center gap-3 border-t border-divider pt-3">
+                          <span
+                            className="flex h-9 w-[52px] shrink-0 items-center justify-center rounded border border-border bg-black text-[15px] font-bold"
+                            style={{ color: captionStyle.color, fontFamily: captionStyle.font }}
+                          >
+                            Aa
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-sm text-ink">
+                              {captionStyleSummary(captionStyle)}
+                            </span>
+                            <span className="block text-[13px] text-muted">
+                              หน้าตาคำบรรยายใช้กับทั้งคลิป
+                            </span>
+                          </span>
+                          <Button onClick={() => setCaptionStyleOpen(true)}>ปรับหน้าตา</Button>
+                        </div>
+                      )}
+                      {srtNote && <p className="mt-2 text-[13px] text-muted">{srtNote}</p>}
+                    </>
+                  ) : (
+                    <p className="text-sm text-muted">
+                      {captionLines
+                        ? 'ยังไม่มีท่อนคำบรรยายในโปรเจกต์นี้'
+                        : 'โปรเจกต์นี้ไม่ได้เปิดคำบรรยาย'}
+                    </p>
+                  )}
+                </div>
+
+                {/* Caption footer (R7): what the whole set is, and the export —
+                  pinned outside the scrolling body so it is always reachable. */}
+                {activeInspectorTab === 'caption' && captionLines && captionLines.length > 0 && (
+                  <div className="flex shrink-0 items-center justify-between gap-2 border-t border-divider px-4 py-3">
+                    <p className="min-w-0 truncate text-[13px] text-muted">
+                      <span className="tabular-nums">{captionLines.length}</span> ท่อน ·{' '}
+                      {isDub ? 'สร้างจากสคริปต์พากย์' : 'สร้างจากการถอดเสียง'}
+                    </p>
+                    <Button
+                      icon={<Download size={14} />}
+                      loading={srtBusy}
+                      onClick={exportSrt}
+                      title="บันทึกท่อนคำบรรยายที่แก้อยู่ตอนนี้เป็นไฟล์ .srt"
+                    >
+                      ส่งออก .srt
+                    </Button>
+                  </div>
+                )}
+
+                {/* pinned actions — แยกฉาก / ทำซ้ำ / ลบ (R3) */}
+                <div className="flex shrink-0 items-center gap-2 border-t border-divider px-4 py-3">
+                  <Button
+                    className="flex-1"
+                    icon={<Scissors size={14} />}
+                    onClick={splitAtPlayhead}
+                    title={withShortcut('แยกฉากตรงหัวเล่น', 'split')}
+                  >
+                    แยกฉาก
+                  </Button>
+                  {selectedCut ? (
+                    <>
                       <Button
-                        className="ml-auto"
+                        className="flex-1"
+                        icon={<Copy size={14} />}
+                        onClick={duplicateSelectedCut}
+                      >
+                        ทำซ้ำ
+                      </Button>
+                      <Button
                         variant="danger"
                         icon={<Trash2 size={15} />}
                         iconOnly
-                        aria-label="ลบท่อนนี้"
-                        title="ลบท่อนนี้"
-                        onClick={() => {
-                          deleteCaptionLine(cursorLine.id)
-                          setCaptionCursor((i) => Math.max(0, i - 1))
-                        }}
+                        aria-label="ลบฉากที่เลือก"
+                        onClick={deleteSelectedCut}
                       />
-                    </div>
-                    <div className="mt-3 flex items-center gap-1.5 [&_button]:whitespace-nowrap">
-                      {captionCursorIdx > 0 ? (
-                        <Button
-                          icon={<ChevronLeft size={14} />}
-                          onClick={() => jumpToCaption(captionCursorIdx - 1)}
-                        >
-                          ก่อนหน้า
-                        </Button>
-                      ) : (
-                        <Button
-                          icon={<ChevronLeft size={14} />}
-                          disabled
-                          reasonAs="tooltip"
-                          disabledReason="นี่คือท่อนแรกแล้ว"
-                        >
-                          ก่อนหน้า
-                        </Button>
-                      )}
-                      {captionCursorIdx < captionLines.length - 1 ? (
-                        <Button
-                          icon={<ChevronRight size={14} />}
-                          onClick={() => jumpToCaption(captionCursorIdx + 1)}
-                        >
-                          ถัดไป
-                        </Button>
-                      ) : (
-                        <Button
-                          icon={<ChevronRight size={14} />}
-                          disabled
-                          reasonAs="tooltip"
-                          disabledReason="นี่คือท่อนสุดท้ายแล้ว"
-                        >
-                          ถัดไป
-                        </Button>
-                      )}
-                    </div>
-                    <p className="mt-2 text-[13px] text-muted">
-                      แก้คำที่ถอดเสียงผิดได้ · ลบท่อนที่ AI ฟังผิดได้
-                    </p>
-                    {captionStyle && (
-                      // Appearance row (R7): an "Aa" tile in the chosen font so
-                      // the choice is visible, the summary, and its own button.
-                      <div className="mt-4 flex items-center gap-3 border-t border-divider pt-3">
-                        <span
-                          className="flex h-9 w-[52px] shrink-0 items-center justify-center rounded border border-border bg-black text-[15px] font-bold"
-                          style={{ color: captionStyle.color, fontFamily: captionStyle.font }}
-                        >
-                          Aa
-                        </span>
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-sm text-ink">
-                            {captionStyleSummary(captionStyle)}
-                          </span>
-                          <span className="block text-[13px] text-muted">
-                            หน้าตาคำบรรยายใช้กับทั้งคลิป
-                          </span>
-                        </span>
-                        <Button onClick={() => setCaptionStyleOpen(true)}>ปรับหน้าตา</Button>
-                      </div>
-                    )}
-                    {srtNote && <p className="mt-2 text-[13px] text-muted">{srtNote}</p>}
-                  </>
-                ) : (
-                  <p className="text-sm text-muted">
-                    {captionLines
-                      ? 'ยังไม่มีท่อนคำบรรยายในโปรเจกต์นี้'
-                      : 'โปรเจกต์นี้ไม่ได้เปิดคำบรรยาย'}
+                    </>
+                  ) : (
+                    <>
+                      <Button
+                        className="flex-1"
+                        icon={<Copy size={14} />}
+                        disabled
+                        reasonAs="tooltip"
+                        disabledReason="เลือกฉากก่อน"
+                      >
+                        ทำซ้ำ
+                      </Button>
+                      <Button
+                        variant="danger"
+                        icon={<Trash2 size={15} />}
+                        iconOnly
+                        aria-label="ลบฉากที่เลือก"
+                        disabled
+                        reasonAs="tooltip"
+                        disabledReason="เลือกฉากก่อน"
+                      />
+                    </>
+                  )}
+                </div>
+              </aside>
+            </div>
+
+            {/* timeline — toolbar · ruler+tracks (one scroll container) · hint */}
+            <div className="shrink-0 border-t border-divider">
+              <div className="flex items-center gap-2 px-4 py-2">
+                <div className="flex items-center gap-1 rounded-lg border border-border p-0.5">
+                  <button
+                    type="button"
+                    onClick={() => switchViewMode('edited')}
+                    title={withShortcut('ดูแบบตัดแล้ว', 'view-edited')}
+                    className={`rounded-md border px-2.5 py-1 text-[13px] font-medium transition-colors duration-state ${
+                      viewMode === 'edited'
+                        ? 'border-accent bg-accent-nav text-accent'
+                        : 'border-transparent text-muted hover:text-ink'
+                    }`}
+                  >
+                    ตัดแล้ว
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => switchViewMode('source')}
+                    title={withShortcut('ดูคลิปต้นฉบับ', 'view-source')}
+                    className={`rounded-md border px-2.5 py-1 text-[13px] font-medium transition-colors duration-state ${
+                      viewMode === 'source'
+                        ? 'border-accent bg-accent-nav text-accent'
+                        : 'border-transparent text-muted hover:text-ink'
+                    }`}
+                  >
+                    ต้นฉบับ
+                  </button>
+                </div>
+                {thStats && (
+                  <p className="text-[13px] text-muted">
+                    <span className="font-medium text-ink">ตัดช่วงเงียบ</span> · ตัดออกแล้ว{' '}
+                    {thStats.removedCount} ช่วง · {fmtTime(thStats.keptSec)} จาก{' '}
+                    {fmtTime(thStats.totalSec)}
                   </p>
                 )}
-              </div>
-
-              {/* Caption footer (R7): what the whole set is, and the export —
-                  pinned outside the scrolling body so it is always reachable. */}
-              {activeInspectorTab === 'caption' && captionLines && captionLines.length > 0 && (
-                <div className="flex shrink-0 items-center justify-between gap-2 border-t border-divider px-4 py-3">
-                  <p className="min-w-0 truncate text-[13px] text-muted">
-                    <span className="tabular-nums">{captionLines.length}</span> ท่อน ·{' '}
-                    {isDub ? 'สร้างจากสคริปต์พากย์' : 'สร้างจากการถอดเสียง'}
-                  </p>
-                  <Button
-                    icon={<Download size={14} />}
-                    loading={srtBusy}
-                    onClick={exportSrt}
-                    title="บันทึกท่อนคำบรรยายที่แก้อยู่ตอนนี้เป็นไฟล์ .srt"
-                  >
-                    ส่งออก .srt
-                  </Button>
-                </div>
-              )}
-
-              {/* pinned actions — แยกฉาก / ทำซ้ำ / ลบ (R3) */}
-              <div className="flex shrink-0 items-center gap-2 border-t border-divider px-4 py-3">
+                <span className="h-5 w-px bg-divider" />
+                {/* The key is drawn beside the label (R3), not hidden in a
+                  title= — a shortcut nobody can see is a shortcut nobody uses. */}
                 <Button
-                  className="flex-1"
                   icon={<Scissors size={14} />}
                   onClick={splitAtPlayhead}
                   title={withShortcut('แยกฉากตรงหัวเล่น', 'split')}
                 >
-                  แยกฉาก
+                  แยกที่หัวเล่น <ShortcutKey id="split" />
+                </Button>
+                <Button
+                  icon={<Plus size={14} />}
+                  onClick={addSceneAtPlayhead}
+                  title={withShortcut('เพิ่มฉากที่หัวเล่น', 'add-scene')}
+                >
+                  เพิ่มฉาก <ShortcutKey id="add-scene" />
                 </Button>
                 {selectedCut ? (
-                  <>
-                    <Button
-                      className="flex-1"
-                      icon={<Copy size={14} />}
-                      onClick={duplicateSelectedCut}
-                    >
-                      ทำซ้ำ
-                    </Button>
-                    <Button
-                      variant="danger"
-                      icon={<Trash2 size={15} />}
-                      iconOnly
-                      aria-label="ลบฉากที่เลือก"
-                      onClick={deleteSelectedCut}
-                    />
-                  </>
+                  <Button
+                    icon={<Trash2 size={14} />}
+                    onClick={deleteSelectedCut}
+                    title={withShortcut('ลบฉากที่เลือก แล้วฉากถัดไปเลื่อนมาชิด', 'delete')}
+                  >
+                    ลบแล้วดึงชิด
+                  </Button>
                 ) : (
-                  <>
-                    <Button
-                      className="flex-1"
-                      icon={<Copy size={14} />}
-                      disabled
-                      reasonAs="tooltip"
-                      disabledReason="เลือกฉากก่อน"
-                    >
-                      ทำซ้ำ
-                    </Button>
-                    <Button
-                      variant="danger"
-                      icon={<Trash2 size={15} />}
-                      iconOnly
-                      aria-label="ลบฉากที่เลือก"
-                      disabled
-                      reasonAs="tooltip"
-                      disabledReason="เลือกฉากก่อน"
-                    />
-                  </>
+                  <Button
+                    icon={<Trash2 size={14} />}
+                    disabled
+                    reasonAs="tooltip"
+                    disabledReason="เลือกฉากก่อน"
+                  >
+                    ลบแล้วดึงชิด
+                  </Button>
                 )}
-              </div>
-            </aside>
-          </div>
-
-          {/* timeline — toolbar · ruler+tracks (one scroll container) · hint */}
-          <div className="shrink-0 border-t border-divider">
-            <div className="flex items-center gap-2 px-4 py-2">
-              <div className="flex items-center gap-1 rounded-lg border border-border p-0.5">
-                <button
-                  type="button"
-                  onClick={() => switchViewMode('edited')}
-                  title={withShortcut('ดูแบบตัดแล้ว', 'view-edited')}
-                  className={`rounded-md border px-2.5 py-1 text-[13px] font-medium transition-colors duration-state ${
-                    viewMode === 'edited'
-                      ? 'border-accent bg-accent-nav text-accent'
-                      : 'border-transparent text-muted hover:text-ink'
-                  }`}
-                >
-                  ตัดแล้ว
-                </button>
-                <button
-                  type="button"
-                  onClick={() => switchViewMode('source')}
-                  title={withShortcut('ดูคลิปต้นฉบับ', 'view-source')}
-                  className={`rounded-md border px-2.5 py-1 text-[13px] font-medium transition-colors duration-state ${
-                    viewMode === 'source'
-                      ? 'border-accent bg-accent-nav text-accent'
-                      : 'border-transparent text-muted hover:text-ink'
-                  }`}
-                >
-                  ต้นฉบับ
-                </button>
-              </div>
-              {thStats && (
-                <p className="text-[13px] text-muted">
-                  <span className="font-medium text-ink">ตัดช่วงเงียบ</span> · ตัดออกแล้ว{' '}
-                  {thStats.removedCount} ช่วง · {fmtTime(thStats.keptSec)} จาก{' '}
-                  {fmtTime(thStats.totalSec)}
-                </p>
-              )}
-              <span className="h-5 w-px bg-divider" />
-              {/* The key is drawn beside the label (R3), not hidden in a
-                  title= — a shortcut nobody can see is a shortcut nobody uses. */}
-              <Button
-                icon={<Scissors size={14} />}
-                onClick={splitAtPlayhead}
-                title={withShortcut('แยกฉากตรงหัวเล่น', 'split')}
-              >
-                แยกที่หัวเล่น <ShortcutKey id="split" />
-              </Button>
-              <Button
-                icon={<Plus size={14} />}
-                onClick={addSceneAtPlayhead}
-                title={withShortcut('เพิ่มฉากที่หัวเล่น', 'add-scene')}
-              >
-                เพิ่มฉาก <ShortcutKey id="add-scene" />
-              </Button>
-              {selectedCut ? (
-                <Button
-                  icon={<Trash2 size={14} />}
-                  onClick={deleteSelectedCut}
-                  title={withShortcut('ลบฉากที่เลือก แล้วฉากถัดไปเลื่อนมาชิด', 'delete')}
-                >
-                  ลบแล้วดึงชิด
-                </Button>
-              ) : (
-                <Button
-                  icon={<Trash2 size={14} />}
-                  disabled
-                  reasonAs="tooltip"
-                  disabledReason="เลือกฉากก่อน"
-                >
-                  ลบแล้วดึงชิด
-                </Button>
-              )}
-              <span className="flex-1" />
-              {/* Stays on screen with no music, disabled with its reason — the
+                <span className="flex-1" />
+                {/* Stays on screen with no music, disabled with its reason — the
                   design's own caption promises it "เปิดใช้ได้เมื่อมีเพลง", which
                   only means something if you can see the control. */}
-              {(music?.beats?.length ?? 0) > 0 ? (
-                <button
-                  type="button"
-                  onClick={() => setSnapToBeatEnabled((v) => !v)}
-                  title="ลากขอบฉากแล้วดูดเข้าจังหวะเพลงอัตโนมัติ"
-                  className={`flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-[13px] font-medium transition-colors duration-state ${
-                    snapToBeatEnabled
-                      ? 'border-accent bg-accent-nav text-accent'
-                      : 'border-border text-muted hover:text-ink'
-                  }`}
-                >
-                  <Magnet size={13} />
-                  ดูดเข้าจังหวะ
-                </button>
-              ) : (
-                <Button
-                  icon={<Magnet size={13} />}
-                  disabled
-                  reasonAs="tooltip"
-                  disabledReason={
-                    music ? 'เพลงนี้ยังไม่มีข้อมูลจังหวะ' : 'ใส่เพลงประกอบก่อนถึงจะดูดเข้าจังหวะได้'
-                  }
-                >
-                  ดูดเข้าจังหวะ
-                </Button>
-              )}
-              <Slider
-                className="w-44"
-                value={pxPerSec}
-                min={MIN_PX_PER_SEC}
-                max={MAX_PX_PER_SEC}
-                step={2}
-                onChange={setPxPerSec}
-                formatValue={(v) => `${Math.round(v)} px/วิ`}
-              />
-              <Button icon={<Maximize2 size={14} />} onClick={fitToScreen}>
-                พอดีจอ
-              </Button>
-            </div>
-
-            <div
-              ref={viewportRef}
-              onWheel={onTimelineWheel}
-              onScroll={onViewportScroll}
-              className="scroll-ghost relative max-h-[248px] overflow-auto select-none"
-            >
-              <div className="relative" style={{ width: HEADER_COL_PX + contentW }}>
-                {/* ruler */}
-                <div className="flex" style={{ height: RULER_PX }}>
-                  <div
-                    // Same stacking rule as trackLabelCls — this is the
-                    // ruler's corner and the ruler ticks must scroll under it.
-                    className="sticky left-0 z-40 h-full shrink-0 bg-ground"
-                    style={{ width: HEADER_COL_PX }}
-                  />
-                  <TimelineRuler
-                    durationSec={axisDur}
-                    pxPerSec={pxPerSec}
-                    widthPx={contentW}
-                    onPointerDown={onRulerPointerDown}
-                  />
-                </div>
-
-                {viewMode === 'edited' ? (
-                  <>
-                    {/* ภาพ */}
-                    <div
-                      className="flex items-center"
-                      style={{ height: IMG_LANE_PX, marginBottom: TRACK_GAP_PX }}
-                    >
-                      <div className={trackLabelCls} style={{ width: HEADER_COL_PX }}>
-                        ภาพ
-                        <span className="tabular-nums text-ink-3">{cuts.length}</span>
-                      </div>
-                      <div
-                        className="relative h-full cursor-crosshair"
-                        style={{ width: contentW }}
-                        onPointerDown={onLaneBackgroundPointerDown}
-                      >
-                        <DndContext
-                          sensors={sensors}
-                          collisionDetection={closestCenter}
-                          onDragEnd={handleSequenceDragEnd}
-                        >
-                          <SortableContext
-                            items={cuts.map((c) => c.id)}
-                            strategy={horizontalListSortingStrategy}
-                          >
-                            <ul className="flex h-full items-stretch">
-                              {cuts.map((c) => (
-                                <EditedCutBlock
-                                  key={c.id}
-                                  cut={c}
-                                  selected={c.id === selectedId}
-                                  playOrder={playOrderMap.get(c.id) ?? 0}
-                                  filmstrip={filmstrips[c.source] ?? null}
-                                  sourceDurationSec={
-                                    timeline.sources.find((s) => s.id === c.source)?.durationSec ??
-                                    0
-                                  }
-                                  pxPerSec={pxPerSec}
-                                  onSelect={() => void selectCut(c)}
-                                  onChange={(patch) => updateCut(c.id, patch)}
-                                  onDragStart={beginCutBlockEdit}
-                                  onDragEnd={commitCutBlockEdit}
-                                  onNeedFilmstrip={queueFilmstripRange}
-                                  startOffsetSec={
-                                    computeEditedSegments(cuts).find((s) => s.cut.id === c.id)
-                                      ?.editedIn ?? 0
-                                  }
-                                  beatsSec={effectiveMusic?.beats ?? null}
-                                  snapEnabled={snapToBeatEnabled}
-                                  musicOffsetSec={effectiveMusic?.offsetSec ?? 0}
-                                  musicTrimInSec={effectiveMusic?.trimInSec ?? 0}
-                                />
-                              ))}
-                            </ul>
-                          </SortableContext>
-                        </DndContext>
-                      </div>
-                    </div>
-
-                    {/* เสียงพากย์ (dub) */}
-                    {isDub && (
-                      <div
-                        className="flex items-center"
-                        style={{ height: VO_LANE_PX, marginBottom: TRACK_GAP_PX }}
-                      >
-                        <div className={trackLabelCls} style={{ width: HEADER_COL_PX }}>
-                          เสียงพากย์
-                        </div>
-                        <div
-                          className="relative h-full rounded-md bg-surface"
-                          style={{ width: contentW }}
-                          onPointerDown={onLaneBackgroundPointerDown}
-                        >
-                          {voBlocks.map((b) => {
-                            const isActive =
-                              selectedCut !== null && cutLineId(selectedCut) === b.lineId
-                            const isSpeaking = b.lineId === playingLineId
-                            return (
-                              <button
-                                key={b.lineId}
-                                type="button"
-                                data-cut-block
-                                onPointerDown={(e) => e.stopPropagation()}
-                                onClick={() => {
-                                  const first = cuts.find((c) => c.id === b.firstCutId)
-                                  if (first) void selectCut(first)
-                                  setInspectorTab('script')
-                                }}
-                                title={b.script || `ประโยค ${b.lineId}`}
-                                className={`absolute inset-y-0.5 overflow-hidden rounded border px-2 text-left text-[13px] transition-colors duration-state ${
-                                  isActive
-                                    ? 'border-accent bg-accent-nav text-accent'
-                                    : isSpeaking
-                                      ? 'border-[rgb(217_164_65_/_0.45)] bg-[rgb(217_164_65_/_0.08)] text-ink'
-                                      : 'border-border bg-ground text-muted hover:text-ink'
-                                }`}
-                                style={{
-                                  left: b.outStart * pxPerSec,
-                                  width: Math.max(b.durationSec * pxPerSec - 2, 20)
-                                }}
-                              >
-                                <span className="truncate">
-                                  {b.lineId}
-                                  {b.script ? ` · ${b.script}` : ''}
-                                </span>
-                              </button>
-                            )
-                          })}
-                          {voBlocks.length === 0 && (
-                            <p className="flex h-full items-center px-3 text-[13px] text-muted">
-                              ยังไม่มีเสียงพากย์ช่วงนี้
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* เพลง — both modes. The R3 ตัดช่วงเงียบ variant carries
-                        this lane too; music is attached to the project, not to
-                        whether AI wrote the script. */}
-                    {
-                      <div
-                        className="flex items-center"
-                        style={{ height: MUSIC_LANE_PX, marginBottom: TRACK_GAP_PX }}
-                      >
-                        <div className={trackLabelCls} style={{ width: HEADER_COL_PX }}>
-                          เพลง
-                          {music && (
-                            <span className="flex items-center gap-0.5">
-                              <button
-                                type="button"
-                                onClick={() => void commitMusic({ muted: !music.muted })}
-                                title={music.muted ? 'เปิดเสียงเพลง' : 'ปิดเสียงเพลง'}
-                                className="rounded p-0.5 text-muted transition-colors duration-state hover:text-ink"
-                              >
-                                {music.muted ? <VolumeX size={12} /> : <Volume2 size={12} />}
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => void handlePickMusic()}
-                                disabled={musicBusy}
-                                title="เปลี่ยนเพลง"
-                                className="rounded p-0.5 text-muted transition-colors duration-state hover:text-ink disabled:opacity-40"
-                              >
-                                <RefreshCw size={12} />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => void handleRemoveMusic()}
-                                disabled={musicBusy}
-                                title="ลบเพลงประกอบ"
-                                className="rounded p-0.5 text-muted transition-colors duration-state hover:text-error disabled:opacity-40"
-                              >
-                                <Trash2 size={12} />
-                              </button>
-                            </span>
-                          )}
-                        </div>
-                        <div
-                          className="relative h-full"
-                          style={{ width: contentW }}
-                          onPointerDown={onLaneBackgroundPointerDown}
-                        >
-                          {music ? (
-                            <MusicBlock
-                              music={music}
-                              peaks={musicPeaks}
-                              fullDurationSec={musicDurationSec}
-                              pxPerSec={pxPerSec}
-                              cutBoundaries={outputCutBoundaries}
-                              snapEnabled={snapToBeatEnabled}
-                              onChange={(patch) => void commitMusic(patch)}
-                              onDraftChange={setMusicDraft}
-                            />
-                          ) : (
-                            <button
-                              type="button"
-                              data-cut-block
-                              onPointerDown={(e) => e.stopPropagation()}
-                              onClick={() => void handlePickMusic()}
-                              disabled={musicBusy}
-                              className="flex h-full items-center justify-center gap-2 rounded-md border border-dashed border-border text-[13px] text-muted transition-colors duration-state hover:border-border-strong hover:text-ink disabled:opacity-50"
-                              style={{ width: Math.max(editedDur * pxPerSec, MIN_LANE_PX) }}
-                            >
-                              {musicBusy ? (
-                                <Loader2 size={13} className="animate-spin" />
-                              ) : (
-                                <Music2 size={13} />
-                              )}
-                              เพิ่มเพลงประกอบ — ไฟล์เพลง หรือวิดีโอที่มีเพลงก็ได้
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    }
-                    {/* คำบรรยาย */}
-                    {captionLines && captionLines.length > 0 && (
-                      <div
-                        className="flex items-center"
-                        style={{ height: CAPTION_LANE_PX, marginBottom: TRACK_GAP_PX }}
-                      >
-                        <div className={trackLabelCls} style={{ width: HEADER_COL_PX }}>
-                          คำบรรยาย
-                        </div>
-                        <div
-                          className="relative h-full"
-                          style={{ width: contentW }}
-                          onPointerDown={onLaneBackgroundPointerDown}
-                        >
-                          {capSpans.map((chip) => {
-                            const idx = captionLines.findIndex((l) => l.id === chip.id)
-                            const isActive = idx === captionCursorIdx
-                            return (
-                              <div
-                                key={chip.id}
-                                data-cut-block
-                                onPointerDown={(e) => e.stopPropagation()}
-                                className={`absolute inset-y-0 rounded border transition-colors duration-state ${
-                                  isActive
-                                    ? 'border-accent bg-accent-nav'
-                                    : 'border-border-faint bg-surface hover:border-border'
-                                }`}
-                                style={{
-                                  left: chip.outStart * pxPerSec,
-                                  width: Math.max(chip.durationSec * pxPerSec - 2, 16)
-                                }}
-                              >
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setInspectorTab('caption')
-                                    jumpToCaption(idx)
-                                  }}
-                                  title={chip.text}
-                                  className={`h-full w-full overflow-hidden px-2 text-left text-[13px] ${
-                                    isActive ? 'text-ink' : 'text-ink-2'
-                                  }`}
-                                >
-                                  <span className="truncate">{chip.text}</span>
-                                </button>
-                                {/* Edge drags retime the line itself (R7). The
-                                    handles are hit areas, not visible bars —
-                                    the lane is 24px tall and a 12px bar would
-                                    swallow the text. */}
-                                <CaptionEdge chip={chip} edge="left" onDrag={dragCaption} />
-                                <CaptionEdge chip={chip} edge="right" onDrag={dragCaption} />
-                              </div>
-                            )
-                          })}
-                        </div>
-                      </div>
-                    )}
-                  </>
+                {(music?.beats?.length ?? 0) > 0 ? (
+                  <button
+                    type="button"
+                    onClick={() => setSnapToBeatEnabled((v) => !v)}
+                    title="ลากขอบฉากแล้วดูดเข้าจังหวะเพลงอัตโนมัติ"
+                    className={`flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-[13px] font-medium transition-colors duration-state ${
+                      snapToBeatEnabled
+                        ? 'border-accent bg-accent-nav text-accent'
+                        : 'border-border text-muted hover:text-ink'
+                    }`}
+                  >
+                    <Magnet size={13} />
+                    ดูดเข้าจังหวะ
+                  </button>
                 ) : (
-                  /* source view (จ) — one lane per file under the shared axis */
-                  <>
-                    {timeline.sources.map((src) => (
+                  <Button
+                    icon={<Magnet size={13} />}
+                    disabled
+                    reasonAs="tooltip"
+                    disabledReason={
+                      music
+                        ? 'เพลงนี้ยังไม่มีข้อมูลจังหวะ'
+                        : 'ใส่เพลงประกอบก่อนถึงจะดูดเข้าจังหวะได้'
+                    }
+                  >
+                    ดูดเข้าจังหวะ
+                  </Button>
+                )}
+                <Slider
+                  className="w-44"
+                  value={pxPerSec}
+                  min={MIN_PX_PER_SEC}
+                  max={MAX_PX_PER_SEC}
+                  step={2}
+                  onChange={setPxPerSec}
+                  formatValue={(v) => `${Math.round(v)} px/วิ`}
+                />
+                <Button icon={<Maximize2 size={14} />} onClick={fitToScreen}>
+                  พอดีจอ
+                </Button>
+              </div>
+
+              <div
+                ref={viewportRef}
+                onWheel={onTimelineWheel}
+                onScroll={onViewportScroll}
+                className="scroll-ghost relative max-h-[248px] overflow-auto select-none"
+              >
+                <div className="relative" style={{ width: HEADER_COL_PX + contentW }}>
+                  {/* ruler */}
+                  <div className="flex" style={{ height: RULER_PX }}>
+                    <div
+                      // Same stacking rule as trackLabelCls — this is the
+                      // ruler's corner and the ruler ticks must scroll under it.
+                      className="sticky left-0 z-40 h-full shrink-0 bg-ground"
+                      style={{ width: HEADER_COL_PX }}
+                    />
+                    <TimelineRuler
+                      durationSec={axisDur}
+                      pxPerSec={pxPerSec}
+                      widthPx={contentW}
+                      onPointerDown={onRulerPointerDown}
+                    />
+                  </div>
+
+                  {viewMode === 'edited' ? (
+                    <>
+                      {/* ภาพ */}
                       <div
-                        key={src.id}
                         className="flex items-center"
                         style={{ height: IMG_LANE_PX, marginBottom: TRACK_GAP_PX }}
                       >
                         <div className={trackLabelCls} style={{ width: HEADER_COL_PX }}>
-                          <span
-                            className={`truncate ${previewSource === src.id ? 'text-ink' : ''}`}
-                            title={src.id}
-                          >
-                            {src.id}
-                          </span>
+                          ภาพ
+                          <span className="tabular-nums text-ink-3">{cuts.length}</span>
                         </div>
                         <div
-                          className="relative h-full"
+                          className="relative h-full cursor-crosshair"
                           style={{ width: contentW }}
-                          onPointerDown={(e) => onSourceLanePointerDown(src.id, e)}
+                          onPointerDown={onLaneBackgroundPointerDown}
                         >
-                          <SourceLaneRow
-                            laneDurationSec={getSourceDurationSec(src.id)}
-                            strip={filmstrips[src.id] ?? null}
-                            cuts={cuts.filter((c) => c.source === src.id)}
-                            playOrderMap={playOrderMap}
-                            selectedId={selectedId}
-                            pxPerSec={pxPerSec}
-                            isActive={previewSource === src.id}
-                            onSelect={(c) => void selectCut(c)}
-                            onChange={updateCut}
-                            onDragStart={beginCutBlockEdit}
-                            onDragEnd={commitCutBlockEdit}
-                          />
+                          <DndContext
+                            sensors={sensors}
+                            collisionDetection={closestCenter}
+                            onDragEnd={handleSequenceDragEnd}
+                          >
+                            <SortableContext
+                              items={cuts.map((c) => c.id)}
+                              strategy={horizontalListSortingStrategy}
+                            >
+                              <ul className="flex h-full items-stretch">
+                                {cuts.map((c) => (
+                                  <EditedCutBlock
+                                    key={c.id}
+                                    cut={c}
+                                    selected={c.id === selectedId}
+                                    playOrder={playOrderMap.get(c.id) ?? 0}
+                                    strip={strips[c.source] ?? null}
+                                    sourceDurationSec={
+                                      timeline.sources.find((s) => s.id === c.source)
+                                        ?.durationSec ?? 0
+                                    }
+                                    pxPerSec={pxPerSec}
+                                    onSelect={() => void selectCut(c)}
+                                    onChange={(patch) => updateCut(c.id, patch)}
+                                    onDragStart={beginCutBlockEdit}
+                                    onDragEnd={commitCutBlockEdit}
+                                    startOffsetSec={
+                                      computeEditedSegments(cuts).find((s) => s.cut.id === c.id)
+                                        ?.editedIn ?? 0
+                                    }
+                                    beatsSec={effectiveMusic?.beats ?? null}
+                                    snapEnabled={snapToBeatEnabled}
+                                    musicOffsetSec={effectiveMusic?.offsetSec ?? 0}
+                                    musicTrimInSec={effectiveMusic?.trimInSec ?? 0}
+                                  />
+                                ))}
+                              </ul>
+                            </SortableContext>
+                          </DndContext>
                         </div>
                       </div>
-                    ))}
-                  </>
-                )}
 
-                {/* Beat ticks sit BEHIND the lanes (z-0): they are a guide for
-                    the eye, and painting them over a block's own artwork or
-                    label makes both harder to read (HANDOFF §3). */}
-                {viewMode === 'edited' &&
-                  snapToBeatEnabled &&
-                  effectiveMusic?.beats &&
-                  effectiveMusic.beats.length > 0 && (
-                    <div
-                      className="pointer-events-none absolute inset-x-0 bottom-0 -z-10"
-                      style={{ top: RULER_PX }}
-                    >
-                      {effectiveMusic.beats.map((b, i) => {
-                        const outputSec = b - effectiveMusic.trimInSec + effectiveMusic.offsetSec
-                        if (outputSec < 0 || outputSec > editedDur) return null
-                        return (
+                      {/* เสียงพากย์ (dub) */}
+                      {isDub && (
+                        <div
+                          className="flex items-center"
+                          style={{ height: VO_LANE_PX, marginBottom: TRACK_GAP_PX }}
+                        >
+                          <div className={trackLabelCls} style={{ width: HEADER_COL_PX }}>
+                            เสียงพากย์
+                          </div>
                           <div
-                            key={i}
-                            className="absolute top-0 bottom-0 w-px bg-[rgb(217_164_65_/_0.4)]"
-                            style={{ left: HEADER_COL_PX + outputSec * pxPerSec }}
-                          />
-                        )
-                      })}
-                    </div>
+                            className="relative h-full rounded-md bg-surface"
+                            style={{ width: contentW }}
+                            onPointerDown={onLaneBackgroundPointerDown}
+                          >
+                            {voBlocks.map((b) => {
+                              const isActive =
+                                selectedCut !== null && cutLineId(selectedCut) === b.lineId
+                              const isSpeaking = b.lineId === playingLineId
+                              return (
+                                <button
+                                  key={b.lineId}
+                                  type="button"
+                                  data-cut-block
+                                  onPointerDown={(e) => e.stopPropagation()}
+                                  onClick={() => {
+                                    const first = cuts.find((c) => c.id === b.firstCutId)
+                                    if (first) void selectCut(first)
+                                    setInspectorTab('script')
+                                  }}
+                                  title={b.script || `ประโยค ${b.lineId}`}
+                                  className={`absolute inset-y-0.5 overflow-hidden rounded border px-2 text-left text-[13px] transition-colors duration-state ${
+                                    isActive
+                                      ? 'border-accent bg-accent-nav text-accent'
+                                      : isSpeaking
+                                        ? 'border-[rgb(217_164_65_/_0.45)] bg-[rgb(217_164_65_/_0.08)] text-ink'
+                                        : 'border-border bg-ground text-muted hover:text-ink'
+                                  }`}
+                                  style={{
+                                    left: b.outStart * pxPerSec,
+                                    width: Math.max(b.durationSec * pxPerSec - 2, 20)
+                                  }}
+                                >
+                                  <span className="truncate">
+                                    {b.lineId}
+                                    {b.script ? ` · ${b.script}` : ''}
+                                  </span>
+                                </button>
+                              )
+                            })}
+                            {voBlocks.length === 0 && (
+                              <p className="flex h-full items-center px-3 text-[13px] text-muted">
+                                ยังไม่มีเสียงพากย์ช่วงนี้
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* เพลง — both modes. The R3 ตัดช่วงเงียบ variant carries
+                        this lane too; music is attached to the project, not to
+                        whether AI wrote the script. */}
+                      {
+                        <div
+                          className="flex items-center"
+                          style={{ height: MUSIC_LANE_PX, marginBottom: TRACK_GAP_PX }}
+                        >
+                          <div className={trackLabelCls} style={{ width: HEADER_COL_PX }}>
+                            เพลง
+                            {music && (
+                              <span className="flex items-center gap-0.5">
+                                <button
+                                  type="button"
+                                  onClick={() => void commitMusic({ muted: !music.muted })}
+                                  title={music.muted ? 'เปิดเสียงเพลง' : 'ปิดเสียงเพลง'}
+                                  className="rounded p-0.5 text-muted transition-colors duration-state hover:text-ink"
+                                >
+                                  {music.muted ? <VolumeX size={12} /> : <Volume2 size={12} />}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => void handlePickMusic()}
+                                  disabled={musicBusy}
+                                  title="เปลี่ยนเพลง"
+                                  className="rounded p-0.5 text-muted transition-colors duration-state hover:text-ink disabled:opacity-40"
+                                >
+                                  <RefreshCw size={12} />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => void handleRemoveMusic()}
+                                  disabled={musicBusy}
+                                  title="ลบเพลงประกอบ"
+                                  className="rounded p-0.5 text-muted transition-colors duration-state hover:text-error disabled:opacity-40"
+                                >
+                                  <Trash2 size={12} />
+                                </button>
+                              </span>
+                            )}
+                          </div>
+                          <div
+                            className="relative h-full"
+                            style={{ width: contentW }}
+                            onPointerDown={onLaneBackgroundPointerDown}
+                          >
+                            {music ? (
+                              <MusicBlock
+                                music={music}
+                                peaks={musicPeaks}
+                                fullDurationSec={musicDurationSec}
+                                pxPerSec={pxPerSec}
+                                cutBoundaries={outputCutBoundaries}
+                                snapEnabled={snapToBeatEnabled}
+                                onChange={(patch) => void commitMusic(patch)}
+                                onDraftChange={setMusicDraft}
+                              />
+                            ) : (
+                              <button
+                                type="button"
+                                data-cut-block
+                                onPointerDown={(e) => e.stopPropagation()}
+                                onClick={() => void handlePickMusic()}
+                                disabled={musicBusy}
+                                className="flex h-full items-center justify-center gap-2 rounded-md border border-dashed border-border text-[13px] text-muted transition-colors duration-state hover:border-border-strong hover:text-ink disabled:opacity-50"
+                                style={{ width: Math.max(editedDur * pxPerSec, MIN_LANE_PX) }}
+                              >
+                                {musicBusy ? (
+                                  <Loader2 size={13} className="animate-spin" />
+                                ) : (
+                                  <Music2 size={13} />
+                                )}
+                                เพิ่มเพลงประกอบ — ไฟล์เพลง หรือวิดีโอที่มีเพลงก็ได้
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      }
+                      {/* คำบรรยาย */}
+                      {captionLines && captionLines.length > 0 && (
+                        <div
+                          className="flex items-center"
+                          style={{ height: CAPTION_LANE_PX, marginBottom: TRACK_GAP_PX }}
+                        >
+                          <div className={trackLabelCls} style={{ width: HEADER_COL_PX }}>
+                            คำบรรยาย
+                          </div>
+                          <div
+                            className="relative h-full"
+                            style={{ width: contentW }}
+                            onPointerDown={onLaneBackgroundPointerDown}
+                          >
+                            {capSpans.map((chip) => {
+                              const idx = captionLines.findIndex((l) => l.id === chip.id)
+                              const isActive = idx === captionCursorIdx
+                              return (
+                                <div
+                                  key={chip.id}
+                                  data-cut-block
+                                  onPointerDown={(e) => e.stopPropagation()}
+                                  className={`absolute inset-y-0 rounded border transition-colors duration-state ${
+                                    isActive
+                                      ? 'border-accent bg-accent-nav'
+                                      : 'border-border-faint bg-surface hover:border-border'
+                                  }`}
+                                  style={{
+                                    left: chip.outStart * pxPerSec,
+                                    width: Math.max(chip.durationSec * pxPerSec - 2, 16)
+                                  }}
+                                >
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setInspectorTab('caption')
+                                      jumpToCaption(idx)
+                                    }}
+                                    title={chip.text}
+                                    className={`h-full w-full overflow-hidden px-2 text-left text-[13px] ${
+                                      isActive ? 'text-ink' : 'text-ink-2'
+                                    }`}
+                                  >
+                                    <span className="truncate">{chip.text}</span>
+                                  </button>
+                                  {/* Edge drags retime the line itself (R7). The
+                                    handles are hit areas, not visible bars —
+                                    the lane is 24px tall and a 12px bar would
+                                    swallow the text. */}
+                                  <CaptionEdge chip={chip} edge="left" onDrag={dragCaption} />
+                                  <CaptionEdge chip={chip} edge="right" onDrag={dragCaption} />
+                                </div>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    /* source view (จ) — one lane per file under the shared axis */
+                    <>
+                      {timeline.sources.map((src) => (
+                        <div
+                          key={src.id}
+                          className="flex items-center"
+                          style={{ height: IMG_LANE_PX, marginBottom: TRACK_GAP_PX }}
+                        >
+                          <div className={trackLabelCls} style={{ width: HEADER_COL_PX }}>
+                            <span
+                              className={`truncate ${previewSource === src.id ? 'text-ink' : ''}`}
+                              title={src.id}
+                            >
+                              {src.id}
+                            </span>
+                          </div>
+                          <div
+                            className="relative h-full"
+                            style={{ width: contentW }}
+                            onPointerDown={(e) => onSourceLanePointerDown(src.id, e)}
+                          >
+                            <SourceLaneRow
+                              laneDurationSec={getSourceDurationSec(src.id)}
+                              strip={strips[src.id] ?? null}
+                              cuts={cuts.filter((c) => c.source === src.id)}
+                              playOrderMap={playOrderMap}
+                              selectedId={selectedId}
+                              pxPerSec={pxPerSec}
+                              isActive={previewSource === src.id}
+                              onSelect={(c) => void selectCut(c)}
+                              onChange={updateCut}
+                              onDragStart={beginCutBlockEdit}
+                              onDragEnd={commitCutBlockEdit}
+                            />
+                          </div>
+                        </div>
+                      ))}
+                    </>
                   )}
 
-                {/* playhead — a positioned element over a static timeline */}
-                <div
-                  ref={playheadRef}
-                  className="pointer-events-none absolute top-0 bottom-0 left-0 z-20 will-change-transform"
-                >
-                  {/* The whole line is the handle, not just its head: an 8px
+                  {/* Beat ticks sit BEHIND the lanes (z-0): they are a guide for
+                    the eye, and painting them over a block's own artwork or
+                    label makes both harder to read (HANDOFF §3). */}
+                  {viewMode === 'edited' &&
+                    snapToBeatEnabled &&
+                    effectiveMusic?.beats &&
+                    effectiveMusic.beats.length > 0 && (
+                      <div
+                        className="pointer-events-none absolute inset-x-0 bottom-0 -z-10"
+                        style={{ top: RULER_PX }}
+                      >
+                        {effectiveMusic.beats.map((b, i) => {
+                          const outputSec = b - effectiveMusic.trimInSec + effectiveMusic.offsetSec
+                          if (outputSec < 0 || outputSec > editedDur) return null
+                          return (
+                            <div
+                              key={i}
+                              className="absolute top-0 bottom-0 w-px bg-[rgb(217_164_65_/_0.4)]"
+                              style={{ left: HEADER_COL_PX + outputSec * pxPerSec }}
+                            />
+                          )
+                        })}
+                      </div>
+                    )}
+
+                  {/* playhead — a positioned element over a static timeline */}
+                  <div
+                    ref={playheadRef}
+                    className="pointer-events-none absolute top-0 bottom-0 left-0 z-20 will-change-transform"
+                  >
+                    {/* The whole line is the handle, not just its head: an 8px
                       grab strip runs the full height over a 2px visible rule,
                       so you can catch the playhead wherever your eye is. */}
-                  <div
-                    onPointerDown={onRulerPointerDown}
-                    title="ลากเพื่อเลื่อนหัวเล่น"
-                    className="pointer-events-auto absolute top-0 bottom-0 w-2 -translate-x-1/2 cursor-ew-resize touch-none"
-                  >
-                    <span className="absolute inset-y-0 left-1/2 w-0.5 -translate-x-1/2 bg-ink" />
+                    <div
+                      onPointerDown={onRulerPointerDown}
+                      title="ลากเพื่อเลื่อนหัวเล่น"
+                      className="pointer-events-auto absolute top-0 bottom-0 w-2 -translate-x-1/2 cursor-ew-resize touch-none"
+                    >
+                      <span className="absolute inset-y-0 left-1/2 w-0.5 -translate-x-1/2 bg-ink" />
+                    </div>
+                    <div
+                      onPointerDown={onRulerPointerDown}
+                      title="ลากเพื่อเลื่อนหัวเล่น"
+                      className="pointer-events-auto absolute top-0 h-3 w-[18px] -translate-x-1/2 cursor-ew-resize rounded-[2px_2px_4px_4px] bg-ink"
+                    />
                   </div>
-                  <div
-                    onPointerDown={onRulerPointerDown}
-                    title="ลากเพื่อเลื่อนหัวเล่น"
-                    className="pointer-events-auto absolute top-0 h-3 w-[18px] -translate-x-1/2 cursor-ew-resize rounded-[2px_2px_4px_4px] bg-ink"
-                  />
                 </div>
               </div>
-            </div>
 
-            <p className="truncate px-4 py-1.5 text-[13px] text-muted">
-              {viewMode === 'edited'
-                ? `ลากไม้บรรทัดเพื่อเลื่อนหัวเล่น · ลากขอบทองเพื่อยืด–หดฉาก · ลากตัวบล็อกเพื่อสลับลำดับ · ลากขอบท่อนคำบรรยายเพื่อยืด–หดเวลา${
-                    isDub && music ? ' · ลากปลายบล็อกเพลงเพื่อตัดต้น–ท้ายเพลง' : ''
-                  } · Alt+ล้อ เพื่อซูม · Space เล่น/หยุด`
-                : 'ตัวเลขในบล็อกคือลำดับที่จะเล่นจริง · ช่วงที่ไม่มีบล็อกคือส่วนที่ไม่ถูกใช้ · ลากขอบเพื่อเปลี่ยนช่วงที่ตัดมาใช้'}
-            </p>
-          </div>
-        </>
-      )}
-    </div>
+              <p className="truncate px-4 py-1.5 text-[13px] text-muted">
+                {viewMode === 'edited'
+                  ? `ลากไม้บรรทัดเพื่อเลื่อนหัวเล่น · ลากขอบทองเพื่อยืด–หดฉาก · ลากตัวบล็อกเพื่อสลับลำดับ · ลากขอบท่อนคำบรรยายเพื่อยืด–หดเวลา${
+                      isDub && music ? ' · ลากปลายบล็อกเพลงเพื่อตัดต้น–ท้ายเพลง' : ''
+                    } · Alt+ล้อ เพื่อซูม · Space เล่น/หยุด`
+                  : 'ตัวเลขในบล็อกคือลำดับที่จะเล่นจริง · ช่วงที่ไม่มีบล็อกคือส่วนที่ไม่ถูกใช้ · ลากขอบเพื่อเปลี่ยนช่วงที่ตัดมาใช้'}
+              </p>
+            </div>
+          </>
+        )}
+      </div>
+    </TimelineViewportContext.Provider>
   )
 }
 
@@ -3896,7 +3720,7 @@ function SourceLaneRow({
   onDragEnd
 }: {
   laneDurationSec: number
-  strip: Filmstrip | null
+  strip: FilmstripStrip | null
   cuts: WorkingCut[]
   playOrderMap: Map<string, number>
   selectedId: string | null
@@ -3908,7 +3732,6 @@ function SourceLaneRow({
   onDragEnd: () => void
 }) {
   const width = Math.max(laneDurationSec * pxPerSec, MIN_LANE_PX)
-  const thumbWidthPx = strip && strip.thumbs.length > 0 ? width / strip.thumbs.length : 0
 
   return (
     <div
@@ -3917,28 +3740,15 @@ function SourceLaneRow({
       }`}
       style={{ width }}
     >
-      {strip ? (
-        <div className="pointer-events-none absolute inset-0 flex opacity-40">
-          {strip.thumbs.map((t, i) =>
-            t ? (
-              <img
-                key={i}
-                src={t}
-                alt=""
-                draggable={false}
-                className="h-full shrink-0 object-cover"
-                style={{ width: thumbWidthPx }}
-              />
-            ) : (
-              <div key={i} className="h-full shrink-0 bg-surface" style={{ width: thumbWidthPx }} />
-            )
-          )}
-        </div>
-      ) : (
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-[13px] text-muted">
-          กำลังโหลดภาพตัวอย่าง…
-        </div>
-      )}
+      <FilmstripCanvas
+        strip={strip}
+        sourceStartSec={0}
+        laneWidthPx={width}
+        heightPx={IMG_LANE_PX}
+        laneLeftPx={HEADER_COL_PX}
+        pxPerSec={pxPerSec}
+        opacity={0.4}
+      />
       {cuts.map((c) => (
         <SourceCutBlock
           key={c.id}
@@ -4079,14 +3889,13 @@ function EditedCutBlock({
   cut,
   selected,
   playOrder,
-  filmstrip,
+  strip,
   sourceDurationSec,
   pxPerSec,
   onSelect,
   onChange,
   onDragStart,
   onDragEnd,
-  onNeedFilmstrip,
   startOffsetSec = 0,
   beatsSec = null,
   snapEnabled = false,
@@ -4096,14 +3905,13 @@ function EditedCutBlock({
   cut: WorkingCut
   selected: boolean
   playOrder: number
-  filmstrip: Filmstrip | null
+  strip: FilmstripStrip | null
   sourceDurationSec: number
   pxPerSec: number
   onSelect: () => void
   onChange: (patch: Partial<WorkingCut>) => void
   onDragStart: () => void
   onDragEnd: () => void
-  onNeedFilmstrip: (sourceId: string, durationSec: number, startSec: number, endSec: number) => void
   /** This cut's start position on the output/edited timeline — trimming this
    * cut's edge only ever moves the boundary at startOffsetSec + durationSec. */
   startOffsetSec?: number
@@ -4121,15 +3929,20 @@ function EditedCutBlock({
     zIndex: isDragging ? 30 : undefined
   }
   const durationSec = Math.max(cut.out - cut.in, 0)
-  const widthPx = Math.max(durationSec * pxPerSec, 24)
-  const fullSourcePx = Math.max(sourceDurationSec * pxPerSec, MIN_LANE_PX)
-
-  // Only this cut's own small window needs thumbnails — not the whole source clip.
-  useEffect(() => {
-    onNeedFilmstrip(cut.source, sourceDurationSec, cut.in, cut.out)
-  }, [cut.source, cut.in, cut.out])
-  const thumbWidthPx =
-    filmstrip && filmstrip.thumbs.length > 0 ? fullSourcePx / filmstrip.thumbs.length : 0
+  // EXACT — the same clock as the ruler, the playhead, the caption chips, the
+  // voiceover blocks and the beat ticks, all of which are positioned at
+  // `t * pxPerSec`. A 24px floor used to be baked in here, and because the
+  // blocks sit in a `flex` row with `shrink-0`, every inflated block SHIFTED
+  // every block after it: press พอดีจอ on a 40-scene 2-minute project
+  // (~8.7 px/s, so anything under 2.8 s hits the floor) and the lane ended up
+  // over a hundred pixels right of the ruler mark it claimed to be under. You
+  // then clicked the scene beneath the playhead and selected a different one
+  // (2026-09-07). At MIN_PX_PER_SEC the floor covered six whole seconds.
+  const widthPx = durationSec * pxPerSec
+  // The floor comes back as an OVERHANGING hit target instead — the same
+  // pattern the music block, the VO blocks and the caption chips already use,
+  // so a very short scene stays grabbable without moving its neighbours.
+  const hitPadPx = widthPx < MIN_BLOCK_HIT_PX ? MIN_BLOCK_HIT_PX : 0
 
   const maxOut = Math.max(sourceDurationSec, cut.out)
 
@@ -4139,35 +3952,18 @@ function EditedCutBlock({
     // (its start is fixed by prior cuts' cumulative duration) — snap whichever
     // edge is being dragged so the resulting duration puts that end on-beat.
     const snappingOnChange = (patch: Partial<WorkingCut>): void => {
-      if (!snapEnabled || !beatsSec || beatsSec.length === 0) {
-        onChange(patch)
-        return
-      }
-      if (patch.out !== undefined) {
-        const candidateEnd = startOffsetSec + (patch.out - cut.in)
-        const snappedEnd = snapCandidateToBeat(
-          candidateEnd,
+      onChange(
+        snapTrimToBeat({
+          patch,
+          cut,
+          startOffsetSec,
+          maxOut,
           beatsSec,
-          true,
+          snapEnabled,
           musicOffsetSec,
           musicTrimInSec
-        )
-        onChange({ out: cut.in + (snappedEnd - startOffsetSec) })
-        return
-      }
-      if (patch.in !== undefined) {
-        const candidateEnd = startOffsetSec + (cut.out - patch.in)
-        const snappedEnd = snapCandidateToBeat(
-          candidateEnd,
-          beatsSec,
-          true,
-          musicOffsetSec,
-          musicTrimInSec
-        )
-        onChange({ in: cut.out - (snappedEnd - startOffsetSec) })
-        return
-      }
-      onChange(patch)
+        })
+      )
     }
     bindTrimDrag({
       e,
@@ -4194,40 +3990,33 @@ function EditedCutBlock({
       {...listeners}
       onClick={onSelect}
     >
+      {hitPadPx > 0 && (
+        /* Overhangs its neighbours rather than widening the block, so a scene
+           too narrow to hit stays clickable while the lane keeps lining up
+           with the ruler. */
+        <span
+          aria-hidden
+          className="absolute inset-y-0 left-1/2 z-10 -translate-x-1/2 cursor-grab"
+          style={{ width: hitPadPx }}
+        />
+      )}
       <div
         className={`relative h-full w-full cursor-grab overflow-hidden rounded-[5px] border bg-black active:cursor-grabbing ${
           selected ? 'border-accent' : 'border-border'
         }`}
       >
-        <div
-          className="pointer-events-none absolute inset-y-0"
-          style={{ width: fullSourcePx, left: -cut.in * pxPerSec }}
-        >
-          {filmstrip ? (
-            <div className="absolute inset-0 flex opacity-60">
-              {filmstrip.thumbs.map((t, i) =>
-                t ? (
-                  <img
-                    key={i}
-                    src={t}
-                    alt=""
-                    draggable={false}
-                    className="h-full shrink-0 object-cover"
-                    style={{ width: thumbWidthPx }}
-                  />
-                ) : (
-                  <div
-                    key={i}
-                    className="h-full shrink-0 bg-surface"
-                    style={{ width: thumbWidthPx }}
-                  />
-                )
-              )}
-            </div>
-          ) : (
-            <div className="absolute inset-0 bg-surface" />
-          )}
-        </div>
+        {/* The block draws ONLY its own trimmed window — `sourceStartSec` is the
+            cut's in-point, so there is no full-source strip offset behind a
+            crop any more. A block that is offscreen draws nothing at all. */}
+        <FilmstripCanvas
+          strip={strip}
+          sourceStartSec={cut.in}
+          laneWidthPx={widthPx}
+          heightPx={IMG_LANE_PX}
+          laneLeftPx={HEADER_COL_PX + startOffsetSec * pxPerSec}
+          pxPerSec={pxPerSec}
+          opacity={0.6}
+        />
         <span className="absolute bottom-0.5 left-1.5 z-10 text-[13px] font-semibold tabular-nums text-ink [text-shadow:0_1px_2px_rgba(0,0,0,0.8)]">
           {playOrder}
         </span>

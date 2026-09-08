@@ -350,3 +350,70 @@ def test_edited_thai_line_still_falls_back_to_redistribution():
     lines = _dialogue_lines(result)
     assert len(lines) >= 1
     assert "เปลี่ยนข้อความแล้ว" in lines[-1]
+
+
+# ── caption_lines are OUTPUT time, and that is load-bearing (2026-09-07) ──────
+#
+# `build_ass_captions` documents `caption_lines` as being in output time and
+# uses start/end verbatim. The desktop editor used to hand talking_head lines
+# over on the SOURCE clock (grouped straight from `timeline.words`), so on a
+# cut-down video every line was burned at its ORIGINAL timestamp — typically
+# past the end of the clip, where it never renders. Any save from the editor
+# wrote that, a pure trim included.
+
+
+def _dialogue_times(ass: str) -> list[tuple[float, float]]:
+    def to_sec(t: str) -> float:
+        h, m, rest = t.split(":")
+        return int(h) * 3600 + int(m) * 60 + float(rest)
+
+    out = []
+    for line in ass.splitlines():
+        if line.startswith("Dialogue:"):
+            parts = line.split(",")
+            out.append((to_sec(parts[1]), to_sec(parts[2])))
+    return out
+
+
+def _speech_scenario() -> tuple[list[dict], float]:
+    """A 60 s source cut down to 25 s of speech."""
+    words = [{"word": f"w{i}", "start": float(i), "end": float(i) + 0.8} for i in range(60)]
+    cuts = [
+        {"source": "clip0", "in": 0.0, "out": 10.0},
+        {"source": "clip0", "in": 40.0, "out": 55.0},
+    ]
+    return remap_words_to_output(words, cuts, {"clip0": 0.0}), 25.0
+
+
+def test_a_source_clock_line_lands_outside_the_video() -> None:
+    """The bug, pinned: this is what the editor used to send."""
+    remapped, output_dur = _speech_scenario()
+    ass = build_ass_captions(
+        remapped, output_dur,
+        caption_lines=[{"id": 1, "text": "w40 w41", "start": 40.0, "end": 42.0}],
+    )
+    times = _dialogue_times(ass)
+    assert times, "expected a Dialogue line"
+    assert all(start >= output_dur for start, _ in times)
+
+
+def test_an_output_clock_line_lands_inside_the_video() -> None:
+    """What the editor sends now: the same words, remapped first."""
+    remapped, output_dur = _speech_scenario()
+    # Source 40-42 s falls in the second cut, which starts at output 10 s.
+    ass = build_ass_captions(
+        remapped, output_dur,
+        caption_lines=[{"id": 1, "text": "w40 w41", "start": 10.0, "end": 12.0}],
+    )
+    times = _dialogue_times(ass)
+    assert times
+    for start, end in times:
+        assert 0 <= start < output_dur
+        assert end <= output_dur
+
+
+def test_remap_puts_the_second_cut_right_after_the_first() -> None:
+    """The arithmetic the desktop's remapWordsToOutput is pinned against."""
+    remapped, _ = _speech_scenario()
+    w40 = next(w for w in remapped if w["word"] == "w40")
+    assert w40["start"] == pytest.approx(10.0)

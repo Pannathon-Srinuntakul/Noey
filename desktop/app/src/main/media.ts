@@ -49,7 +49,16 @@ const MIME_BY_EXT: Record<string, string> = {
   '.m4a': 'audio/mp4',
   '.aac': 'audio/aac',
   '.ogg': 'audio/ogg',
-  '.flac': 'audio/flac'
+  '.flac': 'audio/flac',
+  // Timeline filmstrip tiles (filmstrip/<clipId>/t_00001.jpg). Chromium sniffs
+  // images even without a type, but an <img> that is fed
+  // application/octet-stream cannot be drawn to a canvas in every path, and
+  // this lane is drawn, not displayed.
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.png': 'image/png',
+  '.webp': 'image/webp',
+  '.json': 'application/json'
 }
 
 /** Chromium's <video> tag sniffs MP4 well enough without a Content-Type, but

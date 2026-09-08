@@ -177,6 +177,14 @@ export const editorApi = {
   getEditTimeline: async (_uid: string): Promise<EditTimeline> =>
     editTimelineFromContext(requireCtx()),
 
+  /** The source clips the filmstrip lanes are extracted from — id + the
+   * project-relative file, which is all the sidecar's `filmstrip` command
+   * needs. Returns nothing until the editor has been configured. */
+  filmstripSources: (): { localUid: string; clips: { id: string; file: string }[] } | null => {
+    if (!ctx) return null
+    return { localUid: ctx.localUid, clips: ctx.clips.map((c) => ({ id: c.id, file: c.file })) }
+  },
+
   resolveSourcePreviewSrc: async (
     _uid: string,
     sourceId: string

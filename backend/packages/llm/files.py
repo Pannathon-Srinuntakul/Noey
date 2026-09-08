@@ -149,7 +149,9 @@ async def delete_gemini_files(file_ids: list[str]) -> None:
             log.warning("gemini_file_delete_failed", file_id=file_id[:60], error=str(exc)[:200])
 
 
-def gemini_video_block(file_id: str, *, mime_type: str = VIDEO_MP4_MIME) -> dict[str, Any]:
+def gemini_video_block(
+    file_id: str, *, mime_type: str = VIDEO_MP4_MIME, fps: int | None = None
+) -> dict[str, Any]:
     """LiteLLM/OpenAI-shaped block → Gemini file_uri pass-through via gateway.
 
     Uses Gemini's default media_resolution (300 tokens/sec) rather than "low"
@@ -157,11 +159,27 @@ def gemini_video_block(file_id: str, *, mime_type: str = VIDEO_MP4_MIME) -> dict
     (e.g. a "back-view" moment described but not actually at that timestamp)
     that are consistent with reduced visual fidelity. Correctness over token
     cost while this path is still stabilizing.
+
+    ``fps`` overrides Gemini's default ~1 frame/sec sampling. Measured
+    2026-09-07 on a 26.7s clip against PySceneDetect ground truth: at 1 fps the
+    reported cut timestamps land ±0.42s from truth and wobble run to run; at
+    5 fps they land ±0.08s and two runs came back byte-identical. 5 fps also
+    surfaced a real cut that 1 fps missed in both of its runs, so the gain is
+    not only precision — denser sampling makes brief moments visible at all.
+    Costs ~5x the video input tokens (1,833 → 8,895 on that clip).
+
+    Only the per-block form works: passing video_metadata as a top-level
+    acompletion kwarg is silently dropped by LiteLLM (token count identical to
+    baseline across three runs). See scripts/probe_gemini_fps.py.
+
+    DANGER — keep the uploaded file at proxy resolution. The same clip at
+    1080x1920 and >=8 fps is rejected by Google with
+    promptFeedback.blockReason=PROHIBITED_CONTENT (input refused, no candidates,
+    input tokens still billed), and that class is NOT adjustable via
+    safety_settings. Downscaled to 270x480 the identical frame count passes.
+    Every caller today uploads proxies; do not change that to feed this flag.
     """
-    return {
-        "type": "file",
-        "file": {
-            "file_id": file_id,
-            "format": mime_type,
-        },
-    }
+    file_part: dict[str, Any] = {"file_id": file_id, "format": mime_type}
+    if fps and fps > 0:
+        file_part["video_metadata"] = {"fps": fps}
+    return {"type": "file", "file": file_part}

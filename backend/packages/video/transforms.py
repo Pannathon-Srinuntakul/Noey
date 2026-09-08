@@ -302,6 +302,14 @@ TRANSFORM_REGISTRY: dict[str, dict[str, Any]] = {
     "whip-pan": {
         "title": "แพนปัดฉาก (ทรานซิชัน)",
         "builder": whip_pan_filter,
+        # A transition is AUTHORED to straddle a cut — half the sweep before the
+        # join, half after (see whip_pan_filter's docstring, and the deliberately
+        # inclusive between() gate it relies on). The render-time clamp in
+        # effects_render.py exists to stop a zoom HOLD bleeding into the next
+        # shot, which is the opposite invariant; without this flag it truncated
+        # every whip-pan at the cut, deleting the half that lands on the incoming
+        # shot and turning the sweep into a jerk (2026-09-07).
+        "straddlesCut": True,
         "propSchema": {
             "direction": {"type": "enum", "options": ["horizontal", "vertical"], "label": "ทิศทาง"},
             "intensity": _num("ความแรง", 0.2, 1.0),

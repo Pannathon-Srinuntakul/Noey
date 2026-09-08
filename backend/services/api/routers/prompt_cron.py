@@ -11,10 +11,18 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.db.models import AiPrompt
-from services.api.deps import db_session
+from services.api.deps import current_user, db_session
 from services.api.schemas import PromptIn, PromptOut
 
-router = APIRouter(prefix="/prompts", tags=["prompt-cron"])
+# Authenticated at the ROUTER, not per handler: a prompt row is the literal
+# instruction text sent to the model, so an anonymous GET here hands out the
+# system prompts. One dependency is harder to forget than five.
+router = APIRouter(
+    prefix="/prompts",
+    tags=["prompt-cron"],
+    dependencies=[Depends(current_user)],
+    include_in_schema=False,
+)
 
 
 def _to_out(p: AiPrompt) -> PromptOut:

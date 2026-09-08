@@ -12,6 +12,7 @@ Commands (all output is JSON, one object per line, on stdout):
 - ``mix-music --job F``       → re-mix music onto an existing final_silent.mp4 (VO optional, none needed here)
 - ``render-ai-preview --job F`` → live (unsaved) edit script → downscaled silent preview MP4 for an AI re-edit request
 - ``render-effects --job F``   → bake a full effects.json (overlays + transforms) onto the cut video → final_fx.mp4
+- ``filmstrip --job F``        → timeline-editor thumbnail lanes as JPEG tiles + per-source manifest
 
 Exit code 0 on success, 1 on any error (last line is the error event).
 """
@@ -172,6 +173,15 @@ def cmd_proxy_one(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_filmstrip(args: argparse.Namespace) -> int:
+    from sidecar.dub import load_json_job
+    from sidecar.filmstrip import FilmstripJob, run_filmstrip
+
+    job = load_json_job(args.job, FilmstripJob)
+    emit(run_filmstrip(job, emit))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="sidecar", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -195,6 +205,7 @@ def build_parser() -> argparse.ArgumentParser:
         ("render-ai-preview", cmd_render_ai_preview, "render a live-editor silent preview for an AI re-edit request"),
         ("render-effects", cmd_render_effects, "bake a full effects.json (overlays + transforms) onto the cut video"),
         ("proxy-one", cmd_proxy_one, "downscale a single cut video to a proxy MP4 for effects AI upload"),
+        ("filmstrip", cmd_filmstrip, "extract timeline thumbnail lanes as JPEG tiles"),
     ):
         p = sub.add_parser(name, help=help_text)
         p.add_argument("--job", required=True, help="path to job JSON file")

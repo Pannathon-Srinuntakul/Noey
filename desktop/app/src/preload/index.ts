@@ -67,6 +67,11 @@ export interface LocalProject {
   pendingSources?: string[]
   pendingMusic?: { path: string; trimInSec: number; trimOutSec: number }
   cutStyleUid?: string
+  /** AI quality tiers chosen at creation, re-sent on every analyze so a recut
+   * repeats the user's choice. Absent on projects made before the feature —
+   * the backend then falls back to its defaults. */
+  engine?: 'lite' | 'pro'
+  precision?: 'standard' | 'high'
   // Whether the AI should cut against the music's beat grid. Only meaningful
   // with `music` attached. Absent on projects created before the wizard
   // exposed the switch — those are treated as on, which is what they did.
@@ -132,8 +137,25 @@ export interface LocalProject {
     clipDurationsSec?: number[]
     timeline?: Record<string, unknown>
     captionLines?: { id: string; text: string; start: number; end: number }[]
+    /** R18b: this stash came from ปรับช็อต (shot swap), not a recut — the
+     * revert path uses it to log the matching taste event. */
+    fromShotSwap?: boolean
   }
 }
+
+/** R18b taste-log events (main/tasteLog.ts). `v`/`at` are stamped by main;
+ * everything else comes from the renderer at COMMIT time only. */
+export type TasteEvent =
+  | {
+      type: 'shot_swap'
+      projectUid: string
+      mode: string
+      line: number
+      from: { frame: number; desc: string }
+      to: { frame: number; note: string }
+    }
+  | { type: 'shot_swap_revert'; projectUid: string; mode: string }
+  | { type: 'recut_note'; projectUid: string; mode: string; round: number; text: string }
 
 // Mirrors main/prefs.ts and main/storage.ts (preload defines its own view of
 // every main-process shape, same as LocalProject above).
@@ -256,6 +278,7 @@ const noey = {
     renderAiPreview: jobCommand('sidecar:renderAiPreview'),
     renderEffects: jobCommand('sidecar:renderEffects'),
     proxyOne: jobCommand('sidecar:proxyOne'),
+    filmstrip: jobCommand('sidecar:filmstrip'),
     cancel: (projectDir: string): Promise<void> => ipcRenderer.invoke('sidecar:cancel', projectDir)
   },
   projects: {
@@ -350,6 +373,10 @@ const noey = {
       ipcRenderer.on('app:close-requested', listener)
       return () => ipcRenderer.removeListener('app:close-requested', listener)
     }
+  },
+  // R18b taste log — fire-and-forget appends; failures are swallowed in main.
+  taste: {
+    append: (event: TasteEvent): Promise<void> => ipcRenderer.invoke('taste:append', event)
   },
   log: {
     write: (scope: string, message: string): Promise<void> =>

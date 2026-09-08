@@ -212,7 +212,8 @@ export function registerSidecarIpc(): void {
     ['sidecar:renderHighlights', 'render-highlights'],
     ['sidecar:renderAiPreview', 'render-ai-preview'],
     ['sidecar:renderEffects', 'render-effects'],
-    ['sidecar:proxyOne', 'proxy-one']
+    ['sidecar:proxyOne', 'proxy-one'],
+    ['sidecar:filmstrip', 'filmstrip']
   ]
   for (const [channel, command] of jobChannels) {
     ipcMain.handle(channel, (evt, job: unknown) => {

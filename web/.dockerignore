@@ -1,0 +1,18 @@
+# Keep the build context small and the build reproducible.
+#
+# `node_modules` is the one that matters: hundreds of MB shipped to the daemon
+# on every build, and worse, a host-built tree can carry native binaries for
+# the wrong platform. The image runs its own `npm ci` from the lockfile.
+node_modules
+dist
+.vite
+
+# Local-only
+.env
+.env.*
+*.log
+
+# Never part of a build
+.git
+.gitignore
+PROGRESS.md

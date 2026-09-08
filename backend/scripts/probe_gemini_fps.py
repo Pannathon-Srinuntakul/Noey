@@ -150,26 +150,20 @@ def _print_verdict(truth: dict[str, Any] | None, results: list[dict[str, Any]]) 
             return False
         return cur > base * 1.5
 
-    def _answer_changed(v: dict[str, Any]) -> bool:
-        return (
-            "error" not in v
-            and "error" not in v1
-            and v.get("cut_count") is not None
-            and v.get("cut_count") != v1.get("cut_count")
-        )
-
-    working = [
-        v["label"]
-        for v in (v2, v3)
-        if "error" not in v and (_tokens_inflated(v) or _answer_changed(v))
-    ]
+    # A changed cut count is NOT evidence on its own — this model is stochastic
+    # (measured: byte-identical uploads producing 11 vs 8 cuts). Probed live
+    # 2026-09-07: V3's token count matched V1's exactly across three runs — the
+    # kwarg was dropped — yet its cut count differed in 2 of them, so treating a
+    # changed answer as proof reported "V3 works" three times for a variant that
+    # provably did nothing. Token inflation is the only deterministic signal.
+    working = [v["label"] for v in (v2, v3) if "error" not in v and _tokens_inflated(v)]
     print("-" * 60)
     if "error" in v1:
         print("INCONCLUSIVE: baseline V1 failed — fix that before judging fps passthrough.")
     elif working:
         print(f"fps passthrough WORKS via {'/'.join(working)}")
         print(
-            "  → evidence: input-token inflation and/or a changed cut answer vs V1. "
+            "  → evidence: input-token inflation vs V1 (the only deterministic signal). "
             f"Safe to add cut_style_ref_fps to settings (probe used fps={PROBE_FPS})."
         )
         if truth is not None:

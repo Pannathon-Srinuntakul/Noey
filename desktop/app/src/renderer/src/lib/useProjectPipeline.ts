@@ -31,6 +31,7 @@ import {
   type SaveCutPayload
 } from './editorApi'
 import { captionWordsFromLines, dubCaptionLines, groupWordsIntoLines } from './captionLines'
+import { clipAbsOffsets, remapWordsToOutput, type TimedWord } from './timelineMath'
 
 /** talking_head + the R17 speech modes all run the audio chain
  * (extract → transcribe → render locally); everything else runs the
@@ -68,6 +69,7 @@ export function stripIndexTimelines(index: HighlightIndex): HighlightIndex {
   return { ...index, items: index.items.map(({ timeline: _t, ...rest }) => ({ ...rest })) }
 }
 import { dubScenesFor, timelineScenesFor } from './dubScenes'
+import { retimeTimelineForSwap, type ShotSwapLogEntry } from './shotSwap'
 import type { CaptionStyle } from './captionStyle'
 import { pickFile } from './pickFile'
 import type { ProjectMode, ProjectStep } from './projectFlow'
@@ -155,6 +157,9 @@ export interface ProjectPipeline {
   recut: (text: string) => Promise<void>
   /** Put the render kept before the last recut back, discarding the new one. */
   revertRecut: () => Promise<void>
+  /** R18b ปรับช็อต: persist a shot-swapped edit script and reassemble locally —
+   * zero AI calls (the swap data came with the original analysis answer). */
+  applyShotSwap: (patchedScript: DubEditScript, swapLog?: ShotSwapLogEntry[]) => Promise<void>
   stop: () => Promise<void>
   stopping: boolean
   openEditor: () => void
@@ -573,6 +578,8 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
           brief: current.brief || null,
           user_script: current.userScript || null,
           target_duration_sec: current.targetDurationSec ?? null,
+          engine: current.engine ?? null,
+          precision: current.precision ?? null,
           clips: current.clips.map((c) => ({
             id: c.id,
             durationSec: c.durationSec,
@@ -635,7 +642,10 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
         project.uid,
         proxies,
         current.cutStyleUid,
-        briefWithRecutNotes(current)
+        briefWithRecutNotes(current),
+        // Re-sent every run, including "ให้ AI ตัดใหม่": the local project row
+        // is the source of truth for the user's tier choice.
+        { engine: current.engine, precision: current.precision }
       )
       await patchProject({ remote: { uid: remoteUid, jobId: job_id } })
 
@@ -1387,7 +1397,10 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
    */
   const recut = async (text: string): Promise<void> => {
     const note = text.trim()
-    if (!note || pipelineRef.current || mode === 'talking_head') return
+    // Every speech mode cuts from the transcript — recut would re-run the
+    // VIDEO analyze chain on them (happened live 2026-09-07 on a
+    // speech_scenes project via the card menu, whose guard predated R17).
+    if (!note || pipelineRef.current || isSpeechMode(mode)) return
     void window.noey.log.write('useProjectPipeline', `recut uid=${project.uid}`)
     setError(null)
 
@@ -1413,6 +1426,15 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
         },
         step: 'imported',
         error: undefined
+      })
+      // R18b taste log: the recut comment is taste data too — same file the
+      // shot swaps land in, distilled later by R19 (never fed to a prompt now).
+      void window.noey.taste.append({
+        type: 'recut_note',
+        projectUid: project.uid,
+        mode,
+        round,
+        text: note
       })
       await runAnalyze()
     })()
@@ -1441,8 +1463,152 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
       captionLines: kept.captionLines,
       error: undefined
     })
+    if (kept.fromShotSwap) {
+      void window.noey.taste.append({ type: 'shot_swap_revert', projectUid: project.uid, mode })
+    }
     setEditScript((restored.editScript as unknown as DubEditScript | undefined) ?? null)
     setMediaKey((k) => k + 1)
+  }
+
+  /**
+   * Final (voiced) render straight from an existing planned timeline — no
+   * planDub call. Used by R18b's locked swap regime: every durationSec is
+   * unchanged there, so the stored plan stays valid and re-planning would
+   * spend an AI call for nothing (the whole swap flow must stay at zero).
+   */
+  const renderFinalFromPlannedTimeline = async (timeline: DubTimeline): Promise<void> => {
+    const voiceoverPath = live().voiceoverPath
+    if (!voiceoverPath) throw new Error('ไม่พบไฟล์เสียงพากย์เดิม')
+    await patchProject({ step: 'final_rendering', timeline })
+    const projectDir = await window.noey.projects.dir(project.uid)
+    const unsub = window.noey.sidecar.renderFinal.onProgress((evt: SidecarEvent) => {
+      setProgressMsg(
+        evt.stage === 'cut'
+          ? `กำลังตัดช่วงที่ ${evt.step}/${evt.total}…`
+          : evt.stage === 'mux'
+            ? live().music
+              ? 'กำลังใส่เสียงพากย์ + เพลงประกอบ…'
+              : 'กำลังใส่เสียงพากย์…'
+            : 'กำลังประกอบวิดีโอ…'
+      )
+    }, projectDir)
+    let finalClipDurations: number[] | undefined
+    try {
+      const doneFinal = await window.noey.sidecar.renderFinal.run({
+        projectDir,
+        timeline,
+        voiceoverPath,
+        ...captionJobFields(
+          finalCaptionLinesFor(
+            timeline,
+            (live().editScript as unknown as DubEditScript | undefined) ?? editScript
+          )
+        ),
+        ...(await musicJobFields())
+      })
+      finalClipDurations = (doneFinal as { clipDurationsSec?: number[] }).clipDurationsSec
+    } finally {
+      unsub()
+    }
+    const remoteUid = live().remote?.uid
+    if (remoteUid) await patchLocalStatus(session, remoteUid, 'done').catch(() => undefined)
+    await patchProject({
+      step: 'done',
+      lastRunSeconds: runSeconds(),
+      ...(finalClipDurations?.length ? { clipDurationsSec: finalClipDurations } : {})
+    })
+    setMediaKey((k) => k + 1)
+    setProgressMsg('')
+  }
+
+  /**
+   * R18b ปรับช็อต — apply a shot-swapped edit script and reassemble locally.
+   *
+   * Reuses R12's previousRender mechanism VERBATIM (whole snapshot, old stash
+   * deleted first by stashRender) and the existing render paths; nothing here
+   * calls a model. Free regime (no VO yet / highlight) re-runs the silent
+   * render on the new windows; locked regime (VO recorded) additionally
+   * re-points the planned timeline's cuts mechanically and re-renders the
+   * voiced final with the SAME voiceover file — possible only because the
+   * locked length rule kept every durationSec identical.
+   */
+  const applyShotSwap = async (
+    patchedScript: DubEditScript,
+    swapLog: ShotSwapLogEntry[] = []
+  ): Promise<void> => {
+    if (pipelineRef.current) return
+    const run = (async () => {
+      setError(null)
+      setThinking('')
+      markRunStarted()
+      void window.noey.log.write(
+        'useProjectPipeline',
+        `applyShotSwap uid=${project.uid} swaps=${swapLog.length}`
+      )
+      try {
+        const current = live()
+        const remoteUid = current.remote?.uid
+        if (!remoteUid) throw new Error('ไม่พบ remote project')
+        const oldSegments = ((current.editScript as unknown as DubEditScript | undefined)
+          ?.segments ??
+          editScript?.segments ??
+          []) as Record<string, unknown>[]
+        const locked = mode === 'dub_first' && !!current.voiceoverPath && !!current.timeline
+
+        // Keep this version the way recut does — one spare, old stash replaced.
+        const files = await window.noey.projects.stashRender(project.uid)
+        await patchProject({
+          previousRender: {
+            round: current.recutNotes?.at(-1)?.round ?? 1,
+            at: current.updatedAt,
+            files,
+            editScript: current.editScript,
+            clipDurationsSec: current.clipDurationsSec,
+            timeline: current.timeline,
+            captionLines: current.captionLines,
+            fromShotSwap: true
+          },
+          // Free regime: durations moved, so saved caption lines describe the
+          // old clock — clear them and let the render re-derive from the new
+          // script (dubScenesFor reads editScript live; never cache old times).
+          ...(locked ? {} : { captionLines: undefined }),
+          error: undefined
+        })
+
+        applyEditScript(patchedScript)
+        await putLocalEditScript(session, remoteUid, patchedScript)
+
+        // Taste log at COMMIT only — exploratory clicks in the tray are not
+        // taste; pressing ประกอบใหม่ is (HANDOFF-R18b §7).
+        for (const entry of swapLog) {
+          void window.noey.taste.append({
+            type: 'shot_swap',
+            projectUid: project.uid,
+            mode,
+            ...entry
+          })
+        }
+
+        if (locked) {
+          const patchedTimeline = retimeTimelineForSwap(
+            oldSegments,
+            patchedScript.segments,
+            current.timeline as unknown as DubTimeline
+          )
+          await putLocalTimeline(session, remoteUid, patchedTimeline).catch(() => undefined)
+          await runRenderSilent(patchedScript, remoteUid) // lands at waiting_vo
+          await renderFinalFromPlannedTimeline(patchedTimeline) // → done, same VO
+        } else {
+          await runRenderSilent(patchedScript, remoteUid) // waiting_vo, or done (highlight)
+        }
+      } catch (exc) {
+        await handlePipelineError(exc)
+      }
+    })()
+    pipelineRef.current = run.finally(() => {
+      pipelineRef.current = null
+    })
+    await pipelineRef.current
   }
 
   /** Draft save: write the edit model to disk + server, render nothing. */
@@ -1474,7 +1640,11 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
         out: c.out,
         label: c.label
       })),
-      ...(captionLines ? { captionLines } : {})
+      // `captionLinesBase` marks the clock these lines are on. Lines written
+      // before 2026-09-07 carry no marker and are on the SOURCE clock, which
+      // the burn-in reads as output time — openEditor drops unmarked lines
+      // rather than re-hydrating a mis-timed edit.
+      ...(captionLines ? { captionLines, captionLinesBase: 'output' as const } : {})
     }
     await putLocalTimeline(session, remoteUid, timeline).catch(() => undefined)
     // A draft is only ever a fallback for work not yet rendered, so it must
@@ -1485,7 +1655,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     await patchProject({ timeline })
   }
 
-  const saveEditedCuts = async (
+  const saveEditedCutsInner = async (
     cuts: SaveCutPayload[],
     target: 'edit_script' | 'timeline',
     captionLines?: CaptionLine[]
@@ -1516,9 +1686,21 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
         // the editor was dropped at render and the clip kept the style chosen
         // at creation. Carry the project's copy in, it is the live one.
         ...(live().captionStyle ? { captionStyle: live().captionStyle } : {}),
-        ...(captionLines ? { captionLines } : {})
+        // `captionLinesBase` marks the clock these lines are on. Lines written
+        // before 2026-09-07 carry no marker and are on the SOURCE clock, which
+        // the burn-in reads as output time — openEditor drops unmarked lines
+        // rather than re-hydrating a mis-timed edit.
+        ...(captionLines ? { captionLines, captionLinesBase: 'output' as const } : {})
       }
-      if (mode === 'talking_head') {
+      // Every mode that keeps the ORIGINAL audio renders through the timeline
+      // path. This used to name talking_head alone, from before R17 added the
+      // speech modes — so saving an edit on a speech_scenes project fell
+      // through to the voiceover branch below and threw
+      // "ไม่พบไฟล์เสียงพากย์เดิม" every single time, on a mode that has no
+      // voiceover by definition. (speech_highlights cannot reach here: it
+      // renders one file per highlight and the detail page refuses to open the
+      // editor for it.)
+      if (mode === 'talking_head' || mode === 'speech_scenes') {
         await putLocalTimeline(session, remoteUid, timeline).catch(() => undefined)
         await runRenderTimeline(timeline, remoteUid)
         return
@@ -1564,6 +1746,50 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
       setMediaKey((k) => k + 1)
       setProgressMsg('')
     }
+  }
+
+  /**
+   * The editor's Save — the only render entry point that used to skip
+   * `pipelineRef`.
+   *
+   * Every other one (`retry`, `recut`, `applyShotSwap`, `runFinalWithAudio`)
+   * claims the ref for its whole duration, because `saveEditedCutsInner`
+   * patches the project to a BUSY step and the effect that watches for a busy
+   * step calls `ensurePipeline()` — which short-circuits on
+   * `if (pipelineRef.current) return` and does nothing else to tell whether a
+   * render is already running. With the ref left null, that effect fired
+   * mid-save and started a SECOND pipeline on the same project:
+   *
+   *   post-VO dub  — bootstrapPipeline falls through to
+   *                  `resumeStep('final_rendering')` = 'waiting_vo' and patches
+   *                  the step BACKWARDS while renderFinal is still running. The
+   *                  job host sees busy -> terminal and announces
+   *                  "ตัดคลิปเสร็จแล้ว" before anything has been written.
+   *   pre-VO / talking_head — bootstrapPipeline re-fetches the script and runs
+   *                  the whole render a second time. `withProjectLock` in
+   *                  main/sidecar.ts serializes them, so the duplicate lands
+   *                  AFTER the first finished: it wipes clips/ and os.replace()s
+   *                  the output under a <video> that is already playing it.
+   *
+   * Both read to the owner as one bug: "บันทึกแล้ววีดีโอไม่เปลี่ยน" and a clip
+   * that only settles down "ต้องรอสักพักนึง" (2026-09-07).
+   *
+   * Throws rather than returning silently when something else is rendering:
+   * `TimelineEditor.handleSave` treats a resolved promise as "rendered" and
+   * closes the editor, so a swallowed save would look exactly like a
+   * successful one.
+   */
+  const saveEditedCuts = async (
+    cuts: SaveCutPayload[],
+    target: 'edit_script' | 'timeline',
+    captionLines?: CaptionLine[]
+  ): Promise<void> => {
+    if (pipelineRef.current) throw new Error('มีงานเรนเดอร์ค้างอยู่ รอให้เสร็จก่อนแล้วลองใหม่')
+    const run = saveEditedCutsInner(cuts, target, captionLines)
+    pipelineRef.current = run.finally(() => {
+      pipelineRef.current = null
+    })
+    await pipelineRef.current
   }
 
   /** dub_first pre-render only: AI-assisted re-edit of the LIVE (possibly
@@ -1621,15 +1847,41 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     // dub_first has none — the voiceover is recorded against the cut, never
     // transcribed — so its lines come from splitting each spoken line's text
     // across the scenes cut for it (see dubCaptionLines).
+    //
+    // talking_head's words are SOURCE timestamps, absolute across every clip
+    // laid end to end, and they are remapped onto the output clock here before
+    // they are grouped. They used to be grouped as-is and carried through the
+    // editor on the source clock, but `build_ass_captions` documents its
+    // `caption_lines` as output time and burns them verbatim — so on a 60 s
+    // source cut down to 25 s of speech, a line at source 40–42 s was burned at
+    // output 40–42 s, past the end of the clip, and simply never appeared. Any
+    // save from the editor wrote that, a pure trim included, and the stored
+    // lines then beat the correct auto-grouping on every later render
+    // (2026-09-07). One clock now — the output one — end to end.
     const savedCaptionLines = timeline?.captionLines as CaptionLine[] | undefined
+    // Lines saved BEFORE that fix are on the source clock and are unusable;
+    // there is no marker on them, so the marker is what a good one carries.
+    // Without it the lines are re-derived, which loses nothing: they were being
+    // burned in the wrong place anyway.
+    const savedLinesUsable =
+      savedCaptionLines && (mode !== 'talking_head' || timeline?.captionLinesBase === 'output')
+        ? savedCaptionLines
+        : undefined
+    const timelineCuts = ((timeline?.timeline ?? []) as { type?: string }[]).filter(
+      (c) => c.type === 'cut'
+    ) as unknown as EditCut[]
     const captionLines = !project.captionStyle
       ? undefined
       : mode === 'talking_head'
-        ? (savedCaptionLines ??
+        ? (savedLinesUsable ??
           groupWordsIntoLines(
-            (timeline?.words as { word: string; start: number; end: number }[]) ?? []
+            remapWordsToOutput(
+              (timeline?.words as TimedWord[] | undefined) ?? [],
+              timelineCuts,
+              clipAbsOffsets(project.clips.map((c) => c.durationSec))
+            )
           ))
-        : (savedCaptionLines ??
+        : (savedLinesUsable ??
           (project.captionLines as CaptionLine[] | undefined) ??
           dubCaptionLines(dubScenesFor(editScript)))
     configureEditorApi({
@@ -1639,9 +1891,10 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
       editScript,
       timeline,
       captionLines,
-      // dubCaptionLines lays the spoken lines along the CUT (output clock);
-      // groupWordsIntoLines uses raw transcript words (source clock).
-      captionTimeBase: mode === 'talking_head' ? 'source' : 'output',
+      // Both modes are on the OUTPUT clock now: dubCaptionLines always laid the
+      // spoken lines along the cut, and talking_head's words are remapped above
+      // instead of being grouped on the source clock.
+      captionTimeBase: 'output',
       // preload types captionStyle structurally (strings, not the literal
       // unions) because it crosses the IPC boundary; the values are written by
       // the wizard's own CaptionStyle picker, so the narrowing is safe.
@@ -1693,6 +1946,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     retry,
     recut,
     revertRecut,
+    applyShotSwap,
     stop,
     stopping,
     openEditor

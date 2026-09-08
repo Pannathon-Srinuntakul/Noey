@@ -49,9 +49,18 @@ def _client():
 
 
 def _s3_enabled() -> bool:
+    """Whether storage is configured well enough to talk to.
+
+    `S3_ENDPOINT_URL` is deliberately NOT part of this test. It used to be, and
+    that silently disabled storage on plain AWS S3, where the endpoint is
+    derived from the region and nobody sets the variable — every method became
+    a no-op and the only symptom was files that were not there later. It is
+    required for R2 and other S3-compatible services because boto3 cannot guess
+    those; `_client()` passes it through as None on AWS, which is correct.
+    """
     from packages.core.settings import get_settings
     s = get_settings()
-    return bool(s.s3_bucket and s.s3_access_key_id and s.s3_secret_access_key and s.s3_endpoint_url)
+    return bool(s.s3_bucket and s.s3_access_key_id and s.s3_secret_access_key)
 
 
 def s3_enabled() -> bool:
@@ -178,6 +187,21 @@ async def delete_project(project_uid: str) -> None:
     log.info("s3_delete_project", project_uid=project_uid)
 
 
+async def delete_output_subdir(project_uid: str, subdir: str) -> None:
+    """Delete one folder under a project's outputs prefix.
+
+    Used to retire uploaded media once the job that needed it is done — see
+    `storage.purge_uploaded_media`. Deleting only the local copy is not enough:
+    every task begins with `pull_project_files`, which would download the files
+    straight back from S3 on the next run.
+    """
+    if not _s3_enabled():
+        return
+    prefix = f"{_prefix(project_uid, 'outputs')}{subdir.strip('/')}/"
+    await asyncio.to_thread(_sync_delete_prefix, prefix)
+    log.info("s3_delete_output_subdir", project_uid=project_uid, subdir=subdir)
+
+
 def _sync_delete_object(key: str) -> bool:
     """Delete one object. Returns True if a delete was attempted."""
     from botocore.exceptions import ClientError
@@ -207,6 +231,56 @@ async def delete_output_file(project_uid: str, relative_path: str) -> None:
     deleted = await asyncio.to_thread(_sync_delete_object, key)
     if deleted:
         log.info("s3_delete_output_file", project_uid=project_uid, key=key)
+
+
+def _sync_upload_one(local_path: pathlib.Path, key: str) -> None:
+    _client().upload_file(str(local_path), _bucket(), key)
+
+
+async def push_output_file(project_uid: str, relative_path: str, local_path: pathlib.Path) -> None:
+    """Upload ONE file under the project's outputs/ prefix.
+
+    The web file store used to call `push_project_files` after every single
+    PUT, which re-uploads the project's entire output tree — so syncing N files
+    cost N²/2 object PUTs and grew with the project. One file in, one object
+    out.
+    """
+    if not _s3_enabled() or not local_path.is_file():
+        return
+    rel = relative_path.replace("\\", "/").lstrip("/")
+    await asyncio.to_thread(_sync_upload_one, local_path, f"videos/{project_uid}/outputs/{rel}")
+
+
+def _sync_list_outputs(project_uid: str) -> list[tuple[str, int]]:
+    prefix = _prefix(project_uid, "outputs")
+    client = _client()
+    found: list[tuple[str, int]] = []
+    for page in client.get_paginator("list_objects_v2").paginate(
+        Bucket=_bucket(), Prefix=prefix
+    ):
+        for obj in page.get("Contents", []) or []:
+            key = obj["Key"]
+            if key.endswith("/"):
+                continue
+            found.append((key[len(prefix):], int(obj["Size"])))
+    return found
+
+
+async def list_output_files(project_uid: str) -> list[tuple[str, int]]:
+    """Every stored object for a project as (relative path, bytes).
+
+    The manifest and the storage quota both used to walk the local disk only.
+    On a deploy where the bytes live in S3 and the container is ephemeral, that
+    walk finds nothing: a fresh browser is told the project is empty, and the
+    plan quota reads 0 used no matter how much is stored.
+    """
+    if not _s3_enabled():
+        return []
+    try:
+        return await asyncio.to_thread(_sync_list_outputs, project_uid)
+    except Exception as exc:  # noqa: BLE001 — a listing hiccup must not 500 the page
+        log.warning("s3_list_outputs_failed", project_uid=project_uid, error=str(exc))
+        return []
 
 
 def _output_key(project_uid: str, filename: str) -> str:
@@ -324,6 +398,54 @@ async def push_project_files(project_uid: str) -> None:
     out = output_dir(project_uid)
     if out.is_dir():
         await push_outputs(project_uid, out)
+
+
+# ── scratch (web transcode: api and worker may be different hosts) ──────────
+#
+# The HEVC conversion is the one path where a file is written by the worker and
+# read by the API without a project row to hang it on. On a single host they
+# share a disk and this is dead weight; on Railway they do not, and without it
+# the job reports success while the download 404s forever.
+
+def _scratch_key(user_id: int, token: str, filename: str) -> str:
+    return f"scratch/transcode/{user_id}/{token}/{filename}"
+
+
+async def push_scratch_file(user_id: int, token: str, local_path: pathlib.Path) -> None:
+    """Upload one scratch file. No-op when S3 is off or the file is missing."""
+    if not _s3_enabled() or not local_path.is_file():
+        return
+    key = _scratch_key(user_id, token, local_path.name)
+    await asyncio.to_thread(_sync_upload_one, local_path, key)
+    log.info("s3_scratch_push", key=key)
+
+
+async def pull_scratch_file(user_id: int, token: str, local_path: pathlib.Path) -> bool:
+    """Fetch one scratch file if the local copy is missing. True when present after."""
+    if local_path.is_file():
+        return True
+    if not _s3_enabled():
+        return False
+    key = _scratch_key(user_id, token, local_path.name)
+
+    def _download() -> bool:
+        from botocore.exceptions import ClientError
+
+        local_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            _client().download_file(_bucket(), key, str(local_path))
+            return True
+        except ClientError:
+            return False
+
+    return await asyncio.to_thread(_download)
+
+
+async def delete_scratch(user_id: int, token: str) -> None:
+    """Remove everything stored for one conversion."""
+    if not _s3_enabled():
+        return
+    await asyncio.to_thread(_sync_delete_prefix, f"scratch/transcode/{user_id}/{token}/")
 
 
 # ── static releases (desktop app installers, not project-scoped) ────────────

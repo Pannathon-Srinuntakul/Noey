@@ -13,6 +13,14 @@ def _client() -> AsyncClient:
     return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
 
 
+async def _auth_headers(c: AsyncClient) -> dict[str, str]:
+    r = await c.post(
+        "/auth/login", json={"email": "admin@noey.local", "password": "ChangeMe123!"}
+    )
+    assert r.status_code == 200, r.text
+    return {"Authorization": f"Bearer {r.json()['access_token']}"}
+
+
 @pytest.mark.asyncio
 async def test_health():
     async with _client() as c:
@@ -36,33 +44,47 @@ async def test_overview_shape_and_nonnegative():
 @pytest.mark.asyncio
 async def test_prompt_cron_crud():
     async with _client() as c:
+        h = await _auth_headers(c)
         created = (
             await c.post(
                 "/prompts",
                 json={"name": "daily", "prompt": "summarize sales", "schedule": "daily:07:00"},
+                headers=h,
             )
         )
         assert created.status_code == 201
         pid = created.json()["id"]
 
-        listed = await c.get("/prompts")
+        listed = await c.get("/prompts", headers=h)
         assert any(p["id"] == pid for p in listed.json())
 
         upd = await c.put(
             f"/prompts/{pid}",
             json={"name": "daily2", "prompt": "x", "schedule": "every:2h", "enabled": False},
+            headers=h,
         )
         assert upd.status_code == 200
         assert upd.json()["enabled"] is False
 
-        deleted = await c.delete(f"/prompts/{pid}")
+        deleted = await c.delete(f"/prompts/{pid}", headers=h)
         assert deleted.status_code == 204
 
         gone = await c.put(
             f"/prompts/{pid}",
             json={"name": "x", "prompt": "x", "schedule": "x"},
+            headers=h,
         )
         assert gone.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_prompt_and_run_history_need_auth():
+    """A prompt row IS the instruction text sent to the model, and an AiRun row
+    carries the model's raw output plus the provider's own error text. Both used
+    to be readable with no credentials at all."""
+    async with _client() as c:
+        assert (await c.get("/prompts")).status_code == 401
+        assert (await c.get("/runs")).status_code == 401
 
 
 def _msg(content=None, tool_calls=None):

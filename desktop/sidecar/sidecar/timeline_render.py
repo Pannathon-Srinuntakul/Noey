@@ -26,7 +26,7 @@ from packages.video.caption import (  # noqa: E402
     resolve_caption_style,
 )
 from packages.video.dub_render import concat_stream_copy, norm_for_clip, prepare_clips_dir  # noqa: E402
-from packages.video.ffmpeg_bin import media_duration, trim_media  # noqa: E402
+from packages.video.ffmpeg_bin import media_duration, target_geometry, trim_media  # noqa: E402
 from packages.video.render_common import build_capcut_bundle, write_srt  # noqa: E402
 
 
@@ -85,13 +85,21 @@ def run_render_timeline(job: RenderTimelineJob, emit) -> dict[str, Any]:
     # measured durations, not the requested ones — see below.
     actual_durations: list[float] = []
     total = len(cuts)
+
+    def _src_for(cut: dict) -> Path:
+        source = str(cut.get("source", "clip0"))
+        return norm_for_clip(norm_files, source) if source.startswith("clip") else project_dir / source
+
+    # One shape for the whole concat, taken from the first cut's source — the
+    # clips are joined with `-c copy`, which keeps only the first parameter set.
+    geometry = target_geometry([_src_for(cuts[0])]) if cuts else None
+
     for i, cut in enumerate(cuts):
         emit({"event": "progress", "stage": "cut", "step": i + 1, "total": total})
-        source = str(cut.get("source", "clip0"))
-        src = norm_for_clip(norm_files, source) if source.startswith("clip") else project_dir / source
+        src = _src_for(cut)
         clip_out = clips_dir / f"clip_{i + 1:03d}.mp4"
         dur = float(cut["out"]) - float(cut["in"])
-        trim_media(src, clip_out, float(cut["in"]), dur)
+        trim_media(src, clip_out, float(cut["in"]), dur, geometry=geometry)
         clip_paths.append(clip_out)
         actual_durations.append(media_duration(clip_out))
 

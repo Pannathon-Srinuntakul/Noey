@@ -38,6 +38,9 @@ export interface CreateLocalProjectIn {
   target_duration_sec?: number | null
   clips: ClipMetaIn[]
   caption_style?: CaptionStyleIn | null
+  /** AI quality tiers (see backend packages/video/quality.py). */
+  engine?: string | null
+  precision?: string | null
 }
 
 export interface ProxyManifestEntry {
@@ -149,7 +152,10 @@ export async function analyzeVideo(
    * sends the original brief plus any recut comments; the row is the only way
    * the brief reaches the model, and it is otherwise written once at creation.
    * Empty is "keep what is stored" — it never blanks an existing brief. */
-  brief?: string
+  brief?: string,
+  /** AI quality tiers. Omitted fields mean "keep what the server stored" — a
+   * re-analyze that forgets them must not silently downgrade a Pro project. */
+  tiers?: { engine?: string; precision?: string }
 ): Promise<{ job_id: string }> {
   const manifest = proxies.map((e) => ({
     clip_id: e.clip_id,
@@ -162,7 +168,9 @@ export async function analyzeVideo(
     formFields: {
       manifest: JSON.stringify(manifest),
       ...(styleUid ? { style_uid: styleUid } : {}),
-      ...(brief?.trim() ? { brief: brief.trim() } : {})
+      ...(brief?.trim() ? { brief: brief.trim() } : {}),
+      ...(tiers?.engine ? { engine: tiers.engine } : {}),
+      ...(tiers?.precision ? { precision: tiers.precision } : {})
     },
     formFiles: await Promise.all(
       proxies.map(async (entry) => ({
@@ -345,20 +353,36 @@ export function putLocalEditScript(
 /** dub_first: AI-assisted re-edit. `previewPath` is the freshly-rendered live-editor
  *  silent preview (absolute path, from sidecar.renderAiPreview) — uploaded fresh
  *  every call so the AI always reviews exactly what's on screen right now.
- *  `selectedLineIds` empty = whole-script scope (see DUB_REEDIT_SYSTEM_VIDEO). */
-export function reeditDubScenes(
+ *  `selectedLineIds` empty = whole-script scope (see DUB_REEDIT_SYSTEM_VIDEO).
+ *
+ *  The raw source proxies go up with it. They used to be reused from whatever
+ *  the analyze step left on the server, which meant the server had to keep
+ *  every user's uploaded footage indefinitely — 2.93 GB of it by the time this
+ *  was measured. They cost nothing to resend: the client already has them in
+ *  `proxy/`, and analyze uploads the same files on every run anyway. */
+export async function reeditDubScenes(
   session: ApiSession,
   remoteUid: string,
   previewPath: string,
   { selectedLineIds, instruction }: { selectedLineIds: number[]; instruction: string },
-  styleUid?: string
+  styleUid?: string,
+  proxies: ProxyManifestEntry[] = [],
+  proxyPaths: string[] = []
 ): Promise<{ job_id: string }> {
   return request(session, `/videos/${remoteUid}/reedit-dub-scenes`, {
     method: 'POST',
     formFields: {
       manifest: JSON.stringify({ selectedLineIds, instruction }),
+      ...(proxies.length ? { proxy_manifest: JSON.stringify(proxies) } : {}),
       ...(styleUid ? { style_uid: styleUid } : {})
     },
-    formFiles: [{ field: 'preview', path: previewPath, filename: 'edited_preview.mp4' }]
+    formFiles: [
+      { field: 'preview', path: previewPath, filename: 'edited_preview.mp4' },
+      ...proxyPaths.map((path, i) => ({
+        field: 'proxies',
+        path,
+        filename: proxies[i]?.file ?? `clip${i}.mp4`
+      }))
+    ]
   })
 }

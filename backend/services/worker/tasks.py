@@ -27,7 +27,7 @@ from packages.core.errors import format_exception_message
 from packages.db.models.core_auth import Job
 from packages.db.session import bind_tenant_search_path, get_engine, get_sessionmaker
 from packages.video.storage import data_root
-from packages.video.ffmpeg_bin import configure_ffmpeg, has_audio_stream, hwaccel_input_kwargs, media_duration, run_ffmpeg, trim_media, video_encode_kwargs, video_stream_info
+from packages.video.ffmpeg_bin import VideoGeometry, configure_ffmpeg, has_audio_stream, hwaccel_input_kwargs, media_duration, run_ffmpeg, target_geometry, trim_media, video_encode_kwargs, video_stream_info
 from packages.video.timeline import (
     normalize_dub_edit_script,
     filter_renderable_cuts,
@@ -814,6 +814,9 @@ async def render_video(ctx: dict[str, Any], *, job_id: str, project_uid: str, te
         # timing below uses these measured durations, not the requested ones.
         actual_durations: list[float] = []
         total = len(cuts)
+        # Resolved from the FIRST cut's source inside the loop (source paths are
+        # worked out per cut here), then reused for every later cut.
+        geometry: VideoGeometry | None = None
         log.info("render_video_cutting", project_uid=project_uid, total_cuts=total)
         for i, cut in enumerate(cuts):
             if await _abort_if_cancelled(session, project_uid, job_id):
@@ -832,7 +835,10 @@ async def render_video(ctx: dict[str, Any], *, job_id: str, project_uid: str, te
                 norm_file = norm_files_sorted[idx] if idx < len(norm_files_sorted) else norm_files_sorted[0]
             clip_out = clips_dir / f"clip_{i + 1:03d}.mp4"
             dur = float(cut["out"]) - float(cut["in"])
-            trim_media(norm_file, clip_out, float(cut["in"]), dur)
+            # Conform to the first cut's source: same reason as the dub path.
+            if geometry is None:
+                geometry = target_geometry([norm_file])
+            trim_media(norm_file, clip_out, float(cut["in"]), dur, geometry=geometry)
 
             # Apply punch-zoom if this cut has a zoom effect
             if i in _zoom_by_idx:
@@ -1204,6 +1210,7 @@ async def render_dub_silent(ctx: dict[str, Any], *, job_id: str, project_uid: st
             build_dub_bundle_zip,
             concat_stream_copy,
             prepare_clips_dir,
+            segment_geometry,
             trim_one_segment,
             write_dub_script_txt,
         )
@@ -1211,6 +1218,10 @@ async def render_dub_silent(ctx: dict[str, Any], *, job_id: str, project_uid: st
         prepare_clips_dir(clips_dir)
         clip_paths: list[pathlib.Path] = []
         total = len(segments)
+        # One shape for the whole concat — see ffmpeg_bin.conform_video. The
+        # clips are joined with `-c copy`, which keeps only the first clip's
+        # parameter set, so mixed-source projects played green without this.
+        geometry = segment_geometry(norm_files_sorted, segments)
         log.info("render_dub_silent_cutting", project_uid=project_uid, total_segments=total)
         for i, seg in enumerate(segments):
             if await _abort_if_cancelled(session, project_uid, job_id):
@@ -1221,7 +1232,9 @@ async def render_dub_silent(ctx: dict[str, Any], *, job_id: str, project_uid: st
                 "render",
                 f"กำลังตัดซีนที่ {i + 1}/{total}…",
             )
-            clip_paths.append(trim_one_segment(norm_files_sorted, seg, clips_dir, i, total))
+            clip_paths.append(
+                trim_one_segment(norm_files_sorted, seg, clips_dir, i, total, geometry=geometry)
+            )
 
         log.info("render_dub_silent_concat", project_uid=project_uid, clips=len(clip_paths))
         await _video_progress(job_id, 93, "render", "กำลังรวมคลิปเป็นวิดีโอเดียว…")
@@ -1480,6 +1493,107 @@ async def analyze_dub_local(ctx: dict[str, Any], *, job_id: str, project_uid: st
 # ── task: analyze_dub_video_local ────────────────────────────────────────────
 
 
+async def _purge_uploaded_media(project_uid: str, subdirs: tuple[str, ...]) -> None:
+    """Retire uploaded media once the job that needed it has SUCCEEDED.
+
+    Called on the success path only. On failure the files stay so a retry does
+    not have to re-upload them — and, for the speech path, so a retry does not
+    pay for transcription twice.
+
+    Both copies go: deleting only the local one leaves S3 to restore it on the
+    next task's `pull_project_files`.
+    """
+    import asyncio
+
+    from packages.video.s3 import delete_output_subdir
+    from packages.video.storage import purge_uploaded_media
+
+    try:
+        removed = await asyncio.to_thread(purge_uploaded_media, project_uid, subdirs)
+        for sub in subdirs:
+            await delete_output_subdir(project_uid, sub)
+        if removed:
+            log.info("uploaded_media_purged", project_uid=project_uid, files=removed)
+    except Exception as exc:  # never fail a finished job over cleanup
+        log.warning("uploaded_media_purge_failed", project_uid=project_uid, error=str(exc))
+
+
+async def transcode_for_web(
+    ctx: dict[str, Any],
+    *,
+    job_id: str,
+    user_id: int,
+    token: str,
+    filename: str,
+) -> dict:
+    """Web only: re-encode ONE clip the browser cannot decode into H.264 MP4.
+
+    Why the server does this at all, when the whole point of the web build is
+    that video never leaves the user's machine: some codecs simply cannot be
+    decoded by a browser. HEVC is the case that matters — every recent iPhone
+    records it by default, it demuxes everywhere and decodes only where the
+    platform has an HEVC decoder, and there is nothing the client can do about
+    it. Refusing those clips means refusing most phone footage.
+
+    So this is deliberately the SMALLEST possible server involvement:
+
+      * only clips the client could not open are sent — H.264 never is;
+      * this converts the codec, nothing else. No cut, no AI, no render;
+      * the resolution is the source's own;
+      * BOTH files are deleted the moment the client has collected the result
+        (`DELETE /videos/{uid}/transcoded`), and the upload is deleted here as
+        soon as the output exists — the server is a converter, not a store.
+
+    Measured on a 6:27 1080x1920 HEVC clip: ~85 s on 2 cores, ~30 s on 24,
+    and the output is 61% smaller than the source.
+    """
+    import asyncio
+
+    from packages.video.ffmpeg_bin import transcode_to_h264
+    from packages.video.s3 import pull_scratch_file, push_scratch_file
+    from packages.video.storage import data_root
+
+    await _video_progress(job_id, 10, "transcode", "กำลังแปลงไฟล์ให้เล่นได้ในเบราว์เซอร์…")
+    try:
+        base = data_root() / "video_transcode" / str(user_id) / token
+        src = base / filename
+        # The API wrote this; on a multi-host deploy that was a different
+        # machine's disk, so fall back to the object store before giving up.
+        if not await pull_scratch_file(user_id, token, src):
+            raise FileNotFoundError(f"ไม่พบไฟล์ที่อัปโหลด: {filename}")
+
+        out = base / "converted.mp4"
+        await _video_progress(job_id, 30, "transcode", "กำลังแปลงเป็น MP4 (H.264)…")
+        await asyncio.to_thread(transcode_to_h264, src, out)
+
+        # The source has served its purpose the instant the output exists.
+        # Failing to remove it must not fail the job — the collect step deletes
+        # the whole directory anyway.
+        try:
+            src.unlink()
+        except OSError as exc:
+            log.warning("transcode_source_unlink_failed", token=token, error=str(exc))
+
+        size = out.stat().st_size
+        # Handed back the same way it came: the API serves the download and may
+        # not be this host.
+        await push_scratch_file(user_id, token, out)
+        await _update_job(
+            job_id, "ok", 100,
+            result={"step": "transcoded", "message": "แปลงไฟล์เสร็จแล้ว", "bytes": size},
+        )
+        log.info("transcode_for_web_done", user_id=user_id, token=token, bytes=size)
+        return {"bytes": size}
+    except Exception as exc:
+        await _update_job(
+            job_id, "error", 0,
+            result={"step": "error", "message": format_exception_message(exc)},
+            error=format_exception_message(exc),
+        )
+        log.exception("transcode_for_web_failed", token=token)
+        raise
+
+
 async def analyze_dub_video_local(
     ctx: dict[str, Any],
     *,
@@ -1501,6 +1615,7 @@ async def analyze_dub_video_local(
     steers the edit-script prompt. Resolved from the DB only — never persisted
     to disk/S3 (a stale style file from a previous attempt must not override
     the user's current choice; see plan_effects_local's 2026-07-18 note).
+
     """
     log.info("task_start", task="analyze_dub_video_local", project_uid=project_uid)
     await _video_progress(job_id, 20, "analyze", "กำลังส่งวิดีโอให้ AI วิเคราะห์…")
@@ -1553,6 +1668,21 @@ async def analyze_dub_video_local(
         if not clip_videos:
             raise ValueError("No usable proxy clips found in manifest")
 
+        # The engine the request asked for, else the one this project ran on
+        # before: a worker retry must repeat the user's choice, never reset it.
+        # Both tiers are read off the row the API already persisted, so nothing
+        # here depends on the enqueue kwargs surviving a requeue.
+        from packages.video.quality import resolve as resolve_quality
+
+        tier_model, tier_fps = resolve_quality(proj.engine, proj.precision)
+        log.info(
+            "analyze_dub_video_tiers",
+            project_uid=project_uid,
+            engine=proj.engine or "(default)",
+            precision=proj.precision or "(default)",
+            model=tier_model,
+            fps=tier_fps,
+        )
         await _video_progress(job_id, 74, "analyze", "กำลัง match script กับซีนวิดีโอ…")
 
         async def _push_thinking(excerpt: str) -> None:
@@ -1565,6 +1695,7 @@ async def analyze_dub_video_local(
         # default; v1 = the frozen pre-2026-08-15 set). System + default prose
         # travel as a pair — see select_video_edit_prompts.
         edit_system, edit_default_prose = select_video_edit_prompts(proj.mode == "highlight")
+
         edit_script = await generate_dub_edit_script_video(
             clip_videos,
             brief=proj.brief or "",
@@ -1575,6 +1706,8 @@ async def analyze_dub_video_local(
             system=edit_system,
             style_prompt=style_prompt,
             default_cut_style_prose=edit_default_prose,
+            model=tier_model,
+            fps=tier_fps,
             on_thinking=_push_thinking,
         )
 
@@ -1601,7 +1734,13 @@ async def analyze_dub_video_local(
             job_id, "ok", 100,
             result={"step": "edit_script_ready", "message": "Edit script พร้อมแล้ว", "segments": segments},
         )
-        log.info("analyze_dub_video_local_done", project_uid=project_uid, segments=segments)
+        log.info(
+            "analyze_dub_video_local_done",
+            project_uid=project_uid, segments=segments,
+        )
+        # The model has read them; nothing downstream does. A later AI re-edit
+        # re-uploads its own copies.
+        await _purge_uploaded_media(project_uid, ("proxy",))
         return {"segments": segments}
     except Exception as exc:
         ts = await _tenant_session(tenant_slug)
@@ -1638,20 +1777,6 @@ async def plan_effects_local(
 ) -> dict:
     """AI-assisted effects placement for a local-render project.
 
-    The desktop app uploaded a downscaled proxy of the finished cut video
-    (effects/cut_proxy.mp4) plus an optional free-text instruction
-    (effects/prompt.txt) via POST /videos/{uid}/plan-effects. This task runs the
-    Gemini motion-placement pass and stores effects.json; the desktop then
-    bakes those ffmpeg transforms into the footage locally. No cut/timeline is
-    touched.
-
-    ``style_uid`` — the EffectStyle the desktop selected for THIS run. Re-applied
-    from the DB after S3 pull so a stale ``effects/style.txt`` from a previous
-    attempt cannot silently override the user's choice.
-
-    ``use_previous`` — whether to feed a pre-existing effects.json to the model
-    as ``<previous_attempt>`` (the "แก้ไข AI" edit flow). False (the fresh-start
-    "ให้ AI จัดทั้งคลิป" flow) always ignores any existing effects.json.
     """
     from packages.video.effects_ai import generate_effects_placement
 
@@ -1783,6 +1908,10 @@ async def plan_effects_local(
             result={"step": "effects_ready", "message": "วางเอฟเฟกต์เสร็จแล้ว", "instances": count, "effects": doc},
         )
         log.info("plan_effects_local_done", project_uid=project_uid, instances=count)
+        # `effects/cut_proxy.mp4` is re-uploaded on every placement run, so
+        # keeping it buys nothing. A style reference, if one was sent, belongs
+        # to the style and is left alone.
+        await _purge_uploaded_media(project_uid, ("effects",))
         return {"instances": count}
     except Exception as exc:
         await _update_job(
@@ -2012,6 +2141,9 @@ async def reedit_dub_scenes_local(
             result={"step": "edit_script_ready", "message": "แก้ไขเรียบร้อยแล้ว", "segments": segments},
         )
         log.info("reedit_dub_scenes_local_done", project_uid=project_uid, segments=len(segments))
+        # Both were uploaded for this one call: the live preview and the raw
+        # proxies that came with it.
+        await _purge_uploaded_media(project_uid, ("ai_reedit", "proxy"))
         return {"segments": len(segments)}
     except Exception as exc:
         ts = await _tenant_session(tenant_slug)
@@ -2366,6 +2498,7 @@ async def plan_speech_local(ctx: dict[str, Any], *, job_id: str, project_uid: st
                         "cuts": count},
             )
             log.info("plan_speech_scenes_done", project_uid=project_uid, cuts=count)
+            await _purge_uploaded_media(project_uid, ("audio",))
             return {"cuts": count}
 
         # speech_highlights — N standalone windows, each its own mini-timeline.
@@ -2447,6 +2580,9 @@ async def plan_speech_local(ctx: dict[str, Any], *, job_id: str, project_uid: st
                     "cuts": len(items)},
         )
         log.info("plan_speech_highlights_done", project_uid=project_uid, highlights=len(items))
+        # Speech WAVs only. `transcript.json` stays: it is text, not media,
+        # and it is what stops a retry paying for transcription twice.
+        await _purge_uploaded_media(project_uid, ("audio",))
         return {"highlights": len(items)}
     except Exception as exc:
         ts = await _tenant_session(tenant_slug)
@@ -2474,6 +2610,11 @@ async def plan_speech_local(ctx: dict[str, Any], *, job_id: str, project_uid: st
 
 
 async def startup(ctx: dict[str, Any]) -> None:
+    # The worker mints nothing, but it reads the same tokens and runs beside
+    # the API — a deployment where one is misconfigured is one where both are.
+    from packages.core.settings import assert_production_secrets
+
+    assert_production_secrets()
     from packages.core.settings import reload_settings
     from packages.llm.config import sync_llm_env
 
@@ -2507,6 +2648,7 @@ class WorkerSettings:
         analyze_dub_first,
         analyze_dub_local,
         analyze_dub_video_local,
+        transcode_for_web,
         plan_effects_local,
         distill_style_local,
         reedit_dub_scenes_local,

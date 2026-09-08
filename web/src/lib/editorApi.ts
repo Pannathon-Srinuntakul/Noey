@@ -1,0 +1,255 @@
+/** IO seam for the ported TimelineEditor (frontend VideoTimelineEditor.tsx).
+ *
+ * The web editor talks to GET/PUT /videos/{uid}/edit-timeline and streams
+ * source clips from the API. On desktop everything is local: the edit model
+ * is derived from the project's edit script (pre-VO) or planned timeline
+ * (post-VO), sources play via media://, and saving re-renders locally.
+ * useProjectPipeline's openEditor() calls `configureEditorApi` before mounting
+ * the editor.
+ */
+
+import { ApiError } from './api'
+import type { CaptionLine } from './captionLines'
+import type { CaptionStyle } from './captionStyle'
+import { dubSegmentsFromEditCuts, type EditCutIn } from './dubSegments'
+import type { DubEditScript, DubTimeline } from './videosLocalApi'
+import type { LocalClip, LocalProject } from '@renderer/platform/types'
+
+export type EditorMusic = NonNullable<LocalProject['music']>
+export type MusicPatch = Partial<EditorMusic>
+
+export type { CaptionLine } from './captionLines'
+
+export interface EditTimelineSource {
+  id: string
+  durationSec: number
+}
+
+export interface EditCut {
+  id: string
+  source: string
+  in: number
+  out: number
+  label: string
+  voiceoverLineId?: number | null
+  voiceoverScript?: string | null
+}
+
+export interface EditTimeline {
+  mode: string
+  editTarget: 'timeline' | 'edit_script'
+  sources: EditTimelineSource[]
+  cuts: EditCut[]
+}
+
+export type SaveCutPayload = Omit<EditCut, 'id'>
+
+export interface EditorContext {
+  localUid: string
+  clips: LocalClip[]
+  editTarget: 'timeline' | 'edit_script'
+  editScript?: DubEditScript | null
+  timeline?: DubTimeline | null
+  /** Initial burned-caption lines (talking_head only) — undefined when the
+   * project has no caption_style/words, empty array when captions are
+   * enabled but not yet grouped/edited. */
+  captionLines?: CaptionLine[]
+  /** See initialCaptionTimeBase. */
+  captionTimeBase?: 'source' | 'output'
+  /** How those lines are burned in (font/mode/colour/size). Present whenever
+   * `captionLines` is — the editor shows it as an appearance summary and lets
+   * the user change it without starting a new project. */
+  captionStyle?: CaptionStyle
+  /** Persist a changed caption appearance. */
+  onCaptionStyleChange?: (style: CaptionStyle) => Promise<void>
+  /** dub_first only: the attached background music track, if any (see the
+   * editor's audio track — waveform + drag/trim/volume/mute). */
+  music?: EditorMusic
+  onMusicChange?: (patch: MusicPatch) => Promise<void>
+  /** Replace the whole track (or detach it with null). `onMusicChange` can only
+   * patch a track that is already attached, which is not enough to UNDO an
+   * attach/detach — see the editor's history. */
+  onSetMusic?: (music: EditorMusic | null) => Promise<void>
+  onPickMusic?: () => Promise<EditorMusic | undefined>
+  onRemoveMusic?: () => Promise<void>
+  /** Persist + re-render; useProjectPipeline owns the flow. */
+  onSave: (cuts: SaveCutPayload[], captionLines?: CaptionLine[]) => Promise<void>
+  /** Persist WITHOUT rendering — the editor's draft autosave. Losing an hour of
+   * trims to a crash is the failure this exists to prevent; rendering on every
+   * keystroke is not. */
+  onSaveDraft?: (cuts: SaveCutPayload[], captionLines?: CaptionLine[]) => Promise<void>
+  /** dub_first only: AI-assisted re-edit of the live (unsaved) cuts. Returns
+   * the revised cut list — preview only, does NOT save/render; the caller
+   * still hits Save to commit. Undefined outside dub_first pre-render editing. */
+  onAiReedit?: (
+    cuts: SaveCutPayload[],
+    selectedLineIds: number[],
+    instruction: string
+  ) => Promise<EditCut[]>
+}
+
+let ctx: EditorContext | null = null
+
+export function configureEditorApi(next: EditorContext): void {
+  ctx = next
+}
+
+function requireCtx(): EditorContext {
+  if (!ctx) throw new Error('editorApi not configured')
+  return ctx
+}
+
+/** Initial caption lines for the currently-configured project, if any. */
+export function initialCaptionLines(): CaptionLine[] | undefined {
+  return ctx?.captionLines
+}
+
+/** Which clock `captionLines` are timed on. dub_first lines are laid out along
+ * the finished cut (OUTPUT), talking_head lines come from raw transcript words
+ * (SOURCE). Everything downstream — lane chips, the preview overlay, the
+ * per-scene matcher — has to agree with this or the lines land nowhere. */
+export function initialCaptionTimeBase(): 'source' | 'output' {
+  return ctx?.captionTimeBase ?? 'source'
+}
+
+/** Initial caption appearance for the currently-configured project, if any. */
+export function initialCaptionStyle(): CaptionStyle | undefined {
+  return ctx?.captionStyle
+}
+
+/** Initial background-music state for the currently-configured project, if any. */
+export function initialMusic(): EditorMusic | undefined {
+  return ctx?.music
+}
+
+/** Mirror of routers/videos.py get_edit_timeline (videos.py:605) for local data. */
+export function editTimelineFromContext(c: EditorContext): EditTimeline {
+  const sources: EditTimelineSource[] = c.clips.map((clip) => ({
+    id: clip.id,
+    durationSec: clip.durationSec
+  }))
+
+  let cuts: EditCut[]
+  if (c.editTarget === 'timeline') {
+    const raw = c.timeline?.timeline ?? []
+    cuts = raw.map((t, i) => ({
+      id: `cut${i}`,
+      source: String(t.source),
+      in: Number(t.in),
+      out: Number(t.out),
+      label: String(t.label ?? '')
+    }))
+  } else {
+    cuts = editCutsFromDubSegments(c.editScript?.segments ?? [])
+  }
+
+  return { mode: 'dub_first', editTarget: c.editTarget, sources, cuts }
+}
+
+/** Edit Script segments (server/AI shape, sorted by `order`) → editor `EditCut[]`.
+ * Inverse of dubSegmentsFromEditCuts — shared by the initial editor load and by
+ * AI re-edit results, which return the same segment shape. */
+export function editCutsFromDubSegments(segments: Record<string, unknown>[]): EditCut[] {
+  const segs = [...segments].sort((a, b) => Number(a.order ?? 0) - Number(b.order ?? 0))
+  return segs.map((s, i) => ({
+    id: `cut${i}`,
+    source: String(s.sourceClip ?? 'clip0'),
+    in: Number(s.sourceIn ?? 0),
+    out: Number(s.sourceOut ?? 0),
+    label: String(s.voiceoverLineId ?? i + 1),
+    voiceoverLineId: s.voiceoverLineId != null ? Number(s.voiceoverLineId) : null,
+    voiceoverScript: (s.voiceoverScript as string | undefined) ?? null
+  }))
+}
+
+/** Manual cuts → edit_script JSON (shared shape with the server). */
+export function editScriptFromCuts(cuts: SaveCutPayload[]): DubEditScript {
+  const segments = dubSegmentsFromEditCuts(cuts as EditCutIn[])
+  const total = segments.reduce((acc, s) => acc + s.durationSec, 0)
+  return {
+    mode: 'dub_first',
+    totalEstimatedSec: Math.round(total * 10) / 10,
+    segments: segments as unknown as Record<string, unknown>[]
+  }
+}
+
+export const editorApi = {
+  getEditTimeline: async (_uid: string): Promise<EditTimeline> =>
+    editTimelineFromContext(requireCtx()),
+
+  /** The source clips the filmstrip lanes are extracted from — id + the
+   * project-relative file, which is all the sidecar's `filmstrip` command
+   * needs. Returns nothing until the editor has been configured. */
+  filmstripSources: (): { localUid: string; clips: { id: string; file: string }[] } | null => {
+    if (!ctx) return null
+    return { localUid: ctx.localUid, clips: ctx.clips.map((c) => ({ id: c.id, file: c.file })) }
+  },
+
+  resolveSourcePreviewSrc: async (
+    _uid: string,
+    sourceId: string
+  ): Promise<{ src: string; cleanup: () => void }> => {
+    const c = requireCtx()
+    const clip = c.clips.find((cl) => cl.id === sourceId)
+    if (!clip) throw new Error(`ไม่พบคลิปต้นฉบับ ${sourceId}`)
+    return { src: window.noey.media.urlFor(c.localUid, clip.file), cleanup: () => undefined }
+  },
+
+  saveEditTimeline: async (
+    _uid: string,
+    cuts: SaveCutPayload[],
+    captionLines?: CaptionLine[]
+  ): Promise<{ project_uid: string; job_id: string }> => {
+    const c = requireCtx()
+    await c.onSave(cuts, captionLines)
+    return { project_uid: c.localUid, job_id: '' }
+  },
+
+  requestAiReedit: async (
+    _uid: string,
+    cuts: SaveCutPayload[],
+    selectedLineIds: number[],
+    instruction: string
+  ): Promise<EditCut[]> => {
+    const c = requireCtx()
+    if (!c.onAiReedit) throw new Error('AI re-edit ใช้ได้เฉพาะก่อน render (dub_first / highlight)')
+    return c.onAiReedit(cuts, selectedLineIds, instruction)
+  },
+
+  saveDraft: async (cuts: SaveCutPayload[], captionLines?: CaptionLine[]): Promise<void> => {
+    const c = requireCtx()
+    await c.onSaveDraft?.(cuts, captionLines)
+  },
+
+  updateCaptionStyle: async (style: CaptionStyle): Promise<void> => {
+    const c = requireCtx()
+    await c.onCaptionStyleChange?.(style)
+  },
+
+  updateMusic: async (patch: MusicPatch): Promise<void> => {
+    const c = requireCtx()
+    await c.onMusicChange?.(patch)
+  },
+
+  pickMusic: async (): Promise<EditorMusic | undefined> => {
+    const c = requireCtx()
+    return c.onPickMusic?.()
+  },
+
+  removeMusic: async (): Promise<void> => {
+    const c = requireCtx()
+    await c.onRemoveMusic?.()
+  },
+
+  /** Undo/redo path — set the whole track at once (null detaches it). */
+  setMusic: async (music: EditorMusic | null): Promise<void> => {
+    const c = requireCtx()
+    await c.onSetMusic?.(music)
+  }
+}
+
+export function formatUserError(e: unknown): string {
+  if (e instanceof ApiError) return e.detail
+  const msg = (e as Error)?.message
+  return typeof msg === 'string' && msg ? msg : String(e)
+}

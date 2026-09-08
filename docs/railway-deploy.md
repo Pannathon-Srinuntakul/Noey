@@ -1,76 +1,66 @@
 # Deploy Noey Tiktok บน Railway
 
-> อัปเดต: 2026-06-22  
-> โปรเจกต์มี `backend/Dockerfile`, `frontend/Dockerfile`, `docker-compose.yml` อยู่แล้ว — Railway ใช้ image เดียวกัน แยกเป็น **หลาย service**
+> อัปเดต: 2026-09-08 — เขียนใหม่ทั้งไฟล์
+>
+> ฉบับก่อนหน้า (2026-06-22) อธิบายระบบที่ไม่มีจริงแล้ว: service `scheduler`
+> (ไม่มี `backend/services/scheduler` — งานตามเวลาเป็นของ arq), และ `web` ที่
+> build จาก `frontend/` (คือ dashboard ตัวเก่า ไม่ใช่แอปตัดต่อ) ทำตามแล้วจะได้
+> service ที่ start ไม่ขึ้น และเว็บผิดตัว
 
 ---
 
-## ภาพรวมบน Railway
+## ภาพรวม
 
 ```
 Railway Project
-├── PostgreSQL      (plugin — managed)
-├── Redis           (plugin — managed)
-├── api             (backend Dockerfile — uvicorn)
-├── worker          (backend Dockerfile — python -m services.worker)
-├── scheduler       (backend Dockerfile — python -m services.scheduler)
-└── web             (frontend Dockerfile — nginx + SPA)
+├── PostgreSQL   (plugin)
+├── Redis        (plugin)
+├── api          backend/Dockerfile — uvicorn
+├── worker       backend/Dockerfile — python -m services.worker
+└── web          web/Dockerfile     — static build + nginx
 ```
 
-**Private network:** service คุยกันผ่าน `{ชื่อ-service}.railway.internal`  
-**Public URL:** เปิดให้ user เข้าได้แค่ `web` (และ optionally `api` ถ้าไม่ proxy ผ่าน nginx)
+**Private network:** service คุยกันผ่าน `{ชื่อ-service}.railway.internal`
+**Public URL:** ต้องเปิดทั้ง `web` และ `api` — เบราว์เซอร์เรียก API ตรง ไม่ผ่าน proxy
+
+**HTTPS บังคับ ทั้งสองฝั่ง** เว็บ build ใช้ service worker + OPFS + WebCodecs ซึ่ง
+เบราว์เซอร์ให้เฉพาะ secure context เท่านั้น เปิดผ่าน `http://` (นอกจาก localhost)
+แอปจะไม่ยอมเริ่มเลย และหน้า HTTPS ก็เรียก API ที่เป็น `http://` ไม่ได้ (mixed content)
 
 ---
 
-## ขั้นที่ 1 — สร้าง Project
-
-1. [railway.app](https://railway.app) → New Project
-2. **Add PostgreSQL** (plugin)
-3. **Add Redis** (plugin)
-4. **Deploy from GitHub repo** (เชื่อม repo Noey Tiktok)
-
----
-
-## ขั้นที่ 2 — สร้าง Services (จาก repo เดียวกัน)
-
-สร้าง service 4 ตัว ชี้ root directory / Dockerfile ตามนี้:
+## ขั้นที่ 1 — Services
 
 | Service | Root / Dockerfile | Start Command |
 |---------|-------------------|---------------|
 | **api** | `backend/Dockerfile` | `uvicorn services.api.main:app --host 0.0.0.0 --port $PORT` |
 | **worker** | `backend/Dockerfile` | `python -m services.worker` |
-| **scheduler** | `backend/Dockerfile` | `python -m services.scheduler` |
-| **web** | `frontend/Dockerfile` | (default nginx) |
+| **web** | `web/Dockerfile` | (nginx default) |
 
-> **สำคัญ:** Railway กำหนด `$PORT` ให้ — อย่า hardcode 8000 บน api service
+> Railway กำหนด `$PORT` ให้ — อย่า hardcode 8000 บน api
 
-### Pre-deploy / Release command (เฉพาะ **api**)
+**ไม่ต้องตั้ง release command** — `alembic upgrade head` และการ seed tenant/admin
+รันเองตอน API start (`lifespan` ใน `services/api/main.py`)
+เพราะรันตอน start ให้ **pin api ไว้ที่ 1 replica** ไม่งั้น replica หลายตัวจะแย่งกัน migrate
 
-```bash
-alembic upgrade head
+### web: build argument
+
+`VITE_BACKEND_URL` เป็น **build-time** ไม่ใช่ runtime — ค่านี้ถูกฝังทั้งใน bundle
+และใน Content-Security-Policy ของหน้าเว็บ (`web/vite.config.ts`) เปลี่ยนแล้วต้อง
+**rebuild** ไม่ใช่ restart
+
 ```
-
-รัน migration ก่อน start ทุก deploy
-
-### ครั้งแรกหลัง DB ว่าง (one-time)
-
-รันใน Railway shell ของ **api** (หรือ one-off job):
-
-```bash
-python scripts/migrate_to_multitenant.py
+VITE_BACKEND_URL=https://noey-api-production.up.railway.app
 ```
-
-สร้าง tenant `default` + admin user (ดู output ใน log)
 
 ---
 
-## ขั้นที่ 3 — Environment Variables
+## ขั้นที่ 2 — Environment Variables
 
-ตั้งใน Railway → แต่ละ service (หรือ Shared Variables)
+ตั้งเป็น **Shared Variables** เพื่อให้ทั้ง api และ worker ได้เหมือนกัน
+ค่าที่ตั้งแค่ service เดียวคือสาเหตุความพังที่พบบ่อยที่สุด
 
-### จาก PostgreSQL plugin (Reference Variables)
-
-Railway ให้ `DATABASE_URL` — แอปเราใช้ `POSTGRES_*` แยก ให้ map แบบนี้:
+### จาก plugin
 
 ```env
 POSTGRES_HOST=${{Postgres.PGHOST}}
@@ -78,140 +68,118 @@ POSTGRES_PORT=${{Postgres.PGPORT}}
 POSTGRES_USER=${{Postgres.PGUSER}}
 POSTGRES_PASSWORD=${{Postgres.PGPASSWORD}}
 POSTGRES_DB=${{Postgres.PGDATABASE}}
-```
-
-### จาก Redis plugin
-
-```env
 REDIS_URL=${{Redis.REDIS_URL}}
 ```
 
-> ถ้า Redis URL เป็น `redis://` ธรรมดา arq ใช้ได้ (มี `RedisSettings.from_dsn`)
-
-### บังคับทุก backend service (api, worker, scheduler)
+### บังคับ (api + worker)
 
 ```env
-JWT_SECRET=<random-64-chars>          # python -c "import secrets; print(secrets.token_hex(32))"
-ANTHROPIC_API_KEY=sk-ant-...
-LLM_MODEL=anthropic/claude-haiku-4-5-20251001
+JWT_SECRET=<random 64 hex>      # python -c "import secrets; print(secrets.token_hex(32))"
+SEED_EMAIL=<อีเมลแอดมิน>
+ADMIN_PASSWORD=<รหัสผ่านจริง>
+GEMINI_API_KEY=...
+ELEVENLABS_API_KEY=...
+LLM_MODEL=gemini/gemini-3.7-flash
+LLM_VISION_MODEL=gemini/gemini-3.1-pro-preview
+FRONTEND_URL=https://<web service>.up.railway.app
 ALLOW_REGISTRATION=false
 ```
+
+`JWT_SECRET`, `POSTGRES_PASSWORD` และ `ADMIN_PASSWORD` **ต้องไม่ใช่ค่า default**
+ทั้ง api และ worker จะ **refuse to start** ถ้ายังเป็นค่า placeholder ขณะที่
+`POSTGRES_HOST` ไม่ใช่ localhost (`assert_production_secrets()` ใน
+`packages/core/settings.py`) — ค่า default อยู่ใน source ใครอ่าน repo ได้ก็ปลอม
+token เป็นใครก็ได้รวมทั้ง admin
+
+`ELEVENLABS_API_KEY` **ต้องถึง worker** ด้วย — worker คือตัวที่ถอดเสียง
+
+### ที่เก็บไฟล์ — เลือกอย่างน้อยหนึ่ง (บังคับ)
+
+api กับ worker เป็นคนละ host และ **ไม่ได้แชร์ดิสก์กัน** ค่า default (`backend/data`)
+อยู่ในตัว image ด้วย — redeploy ทีเดียวไฟล์หายหมด
+
+**แบบ A — Railway Volume (ง่ายกว่า)**
+mount volume ที่ path เดียวกันทั้งสอง service แล้วตั้ง
+
+```env
+DATA_DIR=/data
+```
+
+**แบบ B — S3 / Cloudflare R2 (จำเป็นเมื่อ worker หลาย replica)**
+
+```env
+S3_BUCKET=noey-videos
+S3_ACCESS_KEY_ID=...
+S3_SECRET_ACCESS_KEY=...
+S3_ENDPOINT_URL=https://<account>.r2.cloudflarestorage.com   # R2 เท่านั้น; AWS ไม่ต้องตั้ง
+S3_REGION=auto
+```
+
+ถ้าไม่ตั้งทั้งสองแบบ: manifest ของโปรเจกต์จะว่างเมื่อเปิดจากเบราว์เซอร์อื่น,
+โควตาที่เก็บอ่านได้ 0 เสมอ, และการแปลงไฟล์ HEVC จะรายงานว่าสำเร็จแต่ดาวน์โหลด 404
+ตลอดไป — ทุกอันดูเหมือนไฟล์หาย ไม่ใช่ config ผิด
+
+### CORS
+
+```env
+FRONTEND_URL=https://<web service>.up.railway.app
+CORS_EXTRA_ORIGINS=https://<origin อื่น ถ้ามี>,https://...
+```
+
+origin ที่ไม่อยู่ในสองตัวนี้จะถูก block ทุก request
+settings ถูก cache ไว้ → **แก้ CORS ต้อง restart api**
 
 ### Optional
 
 ```env
-ENCRYPTION_KEY=...                    # Fernet key ถ้าเก็บ API key ใน DB
+ENCRYPTION_KEY=...        # Fernet — ถ้าไม่ตั้ง key ที่เก็บใน DB เป็น plaintext
+API_DOCS_ENABLED=false    # default ปิด — schema เปิดเผยชื่อ provider ใน docstring
 LLM_WEB_SEARCH_ENABLED=true
+PLAN_FREE_STORAGE_BYTES=10737418240   # 10 GB (default ทุกแพลน)
 ```
-
-### Frontend service (**web**)
-
-nginx ใน `frontend/nginx.conf` ตอนนี้ proxy ไป `http://api:8000` — **ใช้ได้แค่ docker-compose**
-
-บน Railway ต้องแก้เป็นหนึ่งในสองแบบ:
-
-#### แบบ A (แนะนำ): Private networking + envsubst
-
-1. ตั้ง env บน service **web**:
-   ```env
-   API_INTERNAL_HOST=api.railway.internal
-   API_INTERNAL_PORT=8000
-   ```
-   (`8000` = PORT ที่ service **api** bind — ต้องตรงกับ `$PORT` ของ api)
-
-2. แก้ nginx ให้ใช้ host จาก env (entrypoint script) — **ยังไม่ได้ทำใน repo** ต้อง implement ก่อน deploy web
-
-#### แบบ B: แยก domain API (ง่ายกว่าชั่วคราว)
-
-1. เปิด **Public URL** ให้ service **api** → ได้ `https://noey-api-production.up.railway.app`
-2. Build frontend ด้วย `VITE_API_BASE=https://noey-api-production.up.railway.app` (ต้องแก้ `api.ts` ให้อ่าน env — **ยังไม่ได้ทำ**)
-3. เปิด CORS บน FastAPI ให้ origin ของ web
-
-#### แบบ C: Deploy แค่ API บน Railway ก่อน
-
-- Frontend รัน local / Vite dev proxy ชั่วคราว
-- หรือ frontend บน Vercel ชี้ API URL
 
 ---
 
-## ขั้นที่ 4 — Networking
+## ขั้นที่ 3 — Networking
 
 | Service | Public? | หมายเหตุ |
 |---------|---------|----------|
-| api | Optional | ถ้า web proxy ผ่าน private ไม่ต้อง public |
-| worker | **ไม่** | ไม่มี HTTP |
-| scheduler | **ไม่** | ไม่มี HTTP |
-| web | **ใช่** | user เข้า URL นี้ |
-| postgres, redis | **ไม่** | internal only |
+| api | **ใช่** | เบราว์เซอร์เรียกตรง ต้อง HTTPS |
+| web | **ใช่** | user เข้า URL นี้ ต้อง HTTPS |
+| worker | ไม่ | ไม่มี HTTP |
+| postgres, redis | ไม่ | internal only |
 
----
-
-## ขั้นที่ 5 — CORS (ถ้า frontend คนละ domain กับ API)
-
-แก้ `backend/services/api/main.py`:
-
-```python
-allow_origins=["https://your-web.up.railway.app"]
-```
-
-(ตอนนี้ allow แค่ `localhost:5173`)
-
----
-
-## Video editing บน Railway (อนาคต)
-
-| ส่วน | Railway |
-|------|---------|
-| **FFmpeg** | เพิ่มใน `backend/Dockerfile`: `RUN apt-get install -y ffmpeg` |
-| **ถอดเสียง** | ElevenLabs Scribe (HTTP API) — ไม่ต้องใช้ GPU/RAM บน worker เลย ตั้ง `ELEVENLABS_API_KEY` พอ |
-| **Remotion** | service แยก (Node) — RAM 2–4GB+, แพง |
-| **ไฟล์วิดีโอ** | อย่าเก็บ local disk ถาวร — ใช้ **Railway Volume** (ชั่วคราว) หรือ **Cloudflare R2 / S3** (แนะนำ) |
-
-Worker สำหรับ video ควรเป็น service แยก `video-worker` (scale ต่างจาก worker ทั่วไป)
+`web/nginx.conf` เสิร์ฟ `/media-sw.js` จาก **root path** พร้อม `Cache-Control: no-store`
+ทั้งสองอย่างจำเป็น: scope ของ service worker คือ origin (ถ้าเสิร์ฟจาก `/assets/`
+มันจะคุมอะไรไม่ได้เลย และ preview คลิปทุกตัว 404) และถ้า cache ไว้ deploy ใหม่ก็
+ไม่ได้ผลจนกว่าเบราว์เซอร์จะยอมทิ้งของเก่า
 
 ---
 
 ## Checklist ก่อน go-live
 
-- [ ] `JWT_SECRET` เปลี่ยนจาก dev
-- [ ] `alembic upgrade head` ใน release command
-- [ ] รัน `migrate_to_multitenant.py` ครั้งแรก
-- [ ] api bind `$PORT`
-- [ ] แก้ nginx หรือ `VITE_API_BASE` ให้ web เรียก api ได้
-- [ ] CORS production origin
-- [ ] Redis + worker + scheduler รันอยู่ (เช็ค logs)
-- [ ] ทดสอบ login + chat + import CSV
+- [ ] `JWT_SECRET` ตั้งแล้ว **ค่าเดียวกัน** ทั้ง api และ worker
+- [ ] `ADMIN_PASSWORD` + `SEED_EMAIL` ตั้งแล้ว (ไม่งั้น API ไม่ยอม boot)
+- [ ] `POSTGRES_PASSWORD` ไม่ใช่ `change_me`
+- [ ] `DATA_DIR` ชี้ volume ที่ mount ทั้ง api และ worker **หรือ** ตั้ง S3 ครบ
+- [ ] `ELEVENLABS_API_KEY` ถึง worker
+- [ ] `FRONTEND_URL` = origin ของ web จริง
+- [ ] `VITE_BACKEND_URL` ตอน build web = origin ของ api จริง
+- [ ] api pin ไว้ 1 replica (migration รันตอน start)
+- [ ] api และ web เป็น HTTPS ทั้งคู่
+- [ ] `ENCRYPTION_KEY` ตั้ง ถ้าจะเก็บ AI key ใน DB
+- [ ] smoke test: login → import คลิป → ตัด → เปิดโปรเจกต์เดิมจากอีกเบราว์เซอร์
 
 ---
 
-## ค่าใช้จ่ายคร่าวๆ (Railway)
+## ค่าใช้จ่ายคร่าวๆ
 
 | Resource | ประมาณ |
 |----------|--------|
-| api + web + worker + scheduler | ~$5–20/เดือน (usage) |
+| api + worker + web | ~$5–20/เดือน (usage) |
 | Postgres plugin | ~$5+/เดือน |
 | Redis plugin | ~$5+/เดือน |
-| Video worker + storage | เพิ่มตาม usage |
+| Volume / R2 | ตามปริมาณไฟล์ |
 
-ใช้ **Hobby plan** ทดสอบได้ — production ควร monitor RAM ของ worker
-
----
-
-## สิ่งที่ต้อง implement ใน repo ก่อน deploy สมบูรณ์
-
-1. **api start command** ใช้ `$PORT` (Railway)
-2. **frontend → api** บน Railway (nginx envsubst หรือ `VITE_API_BASE`)
-3. **CORS** production origins
-4. (Optional) `DATABASE_URL` รองรับใน `settings.py` — Railway ให้ URL เดียว
-5. (Video) FFmpeg ใน Dockerfile + object storage
-
----
-
-## คำสั่ง local ที่ mirror Railway
-
-```powershell
-docker compose up -d postgres redis api worker scheduler web
-# เปิด http://localhost:8080
-```
-
-Local ใช้ network ชื่อ `api` ใน nginx — เหมือนที่ Railway ใช้ `api.railway.internal`
+การเรนเดอร์ทั้งหมดเกิดบนเครื่องผู้ใช้ (WebCodecs) เซิร์ฟเวอร์ทำแค่ AI, เก็บไฟล์
+และแปลง codec ที่เบราว์เซอร์ถอดไม่ได้ — RAM ของ worker จึงไม่ใช่ตัวแปรหลัก

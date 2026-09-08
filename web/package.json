@@ -1,0 +1,50 @@
+{
+  "name": "noey-video-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Browser build of the video editor. Same UI as the desktop renderer; rendering runs on the viewer's own machine through WebCodecs instead of a local ffmpeg sidecar, so our servers only ever do AI work.",
+  "scripts": {
+    "dev": "vite --port 5174",
+    "build": "npm run typecheck && vite build",
+    "preview": "vite preview --port 5174",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "lint": "eslint src --ext .ts,.tsx",
+    "format": "prettier --write src"
+  },
+  "dependencies": {
+    "@dnd-kit/core": "^6.3.1",
+    "@dnd-kit/sortable": "^10.0.0",
+    "@dnd-kit/utilities": "^3.2.2",
+    "@fontsource/anuphan": "^5.2.8",
+    "@fontsource/kanit": "^5.2.8",
+    "@fontsource/noto-sans-thai": "^5.2.8",
+    "@fontsource/prompt": "^5.2.8",
+    "@fontsource/sarabun": "^5.2.8",
+    "@mediabunny/aac-encoder": "^1.55.7",
+    "fflate": "^0.8.2",
+    "lucide-react": "^1.23.0",
+    "mediabunny": "^1.50.8",
+    "react": "19.1.0",
+    "react-dom": "19.1.0"
+  },
+  "devDependencies": {
+    "@electron-toolkit/eslint-config-prettier": "^3.0.0",
+    "@electron-toolkit/eslint-config-ts": "^3.1.0",
+    "@tailwindcss/vite": "4.3.2",
+    "@types/node": "^22.19.1",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "5.2.0",
+    "eslint": "^9.39.1",
+    "eslint-plugin-react": "^7.37.5",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.6",
+    "prettier": "^3.7.4",
+    "tailwindcss": "4.3.2",
+    "typescript": "5.9.3",
+    "vite": "7.3.6",
+    "vitest": "4.1.9"
+  }
+}

@@ -6,7 +6,6 @@ code the server worker runs), so local output matches server output.
 
 from __future__ import annotations
 
-import json
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -24,10 +23,11 @@ from packages.video.dub_render import (  # noqa: E402
     concat_stream_copy,
     mix_audio_layers,
     prepare_clips_dir,
+    segment_geometry,
     trim_one_segment,
 )
 from packages.video.dub_render import write_dub_script_txt  # noqa: E402
-from packages.video.ffmpeg_bin import media_duration, trim_media  # noqa: E402
+from packages.video.ffmpeg_bin import media_duration, target_geometry, trim_media  # noqa: E402
 from packages.video.timeline import normalize_dub_edit_script  # noqa: E402
 
 
@@ -125,9 +125,13 @@ def run_render_silent(job: RenderSilentJob, emit) -> dict[str, Any]:
     # caller can build cut points from real output timing instead.
     clip_durations_sec: list[float] = []
     total = len(segments)
+    # One shape for the whole concat — see conform_video. Without it a project
+    # mixing a portrait and a landscape source concatenates two different SPSs
+    # under `-c copy` and plays green from the first source switch on.
+    geometry = segment_geometry(norm_files, segments)
     for i, seg in enumerate(segments):
         emit({"event": "progress", "stage": "cut", "step": i + 1, "total": total})
-        clip_out = trim_one_segment(norm_files, seg, clips_dir, i, total)
+        clip_out = trim_one_segment(norm_files, seg, clips_dir, i, total, geometry=geometry)
         clip_paths.append(clip_out)
         clip_durations_sec.append(round(media_duration(clip_out), 3))
 
@@ -260,20 +264,27 @@ def run_render_final(job: RenderFinalJob, emit) -> dict[str, Any]:
     # dub_first timelines don't use them).
     clip_paths: list[Path] = []
     total = len(cuts)
-    for i, cut in enumerate(cuts):
-        emit({"event": "progress", "stage": "cut", "step": i + 1, "total": total})
+
+    def _src_for(cut: dict) -> Path:
         source = str(cut.get("source", "clip0"))
         if source.startswith("clip"):
             idx = int(source.replace("clip", "") or 0)
-            src = norm_files[idx] if idx < len(norm_files) else norm_files[0]
-        else:
-            src = project_dir / source
+            return norm_files[idx] if idx < len(norm_files) else norm_files[0]
+        return project_dir / source
+
+    # One shape for the whole concat, taken from the first cut's source — the
+    # clips are joined with `-c copy`, which keeps only the first parameter set.
+    geometry = target_geometry([_src_for(cuts[0])]) if cuts else None
+
+    for i, cut in enumerate(cuts):
+        emit({"event": "progress", "stage": "cut", "step": i + 1, "total": total})
+        src = _src_for(cut)
         clip_out = clips_dir / f"clip_{i + 1:03d}.mp4"
         dur = float(cut["out"]) - float(cut["in"])
         # Video only: the mux below replaces the audio with the voiceover (plus
         # music) regardless, and asking for [0:a] here made a silent source clip
         # fail the whole render instead of rendering fine without sound.
-        trim_media(src, clip_out, float(cut["in"]), dur, include_audio=False)
+        trim_media(src, clip_out, float(cut["in"]), dur, include_audio=False, geometry=geometry)
         clip_paths.append(clip_out)
 
     emit({"event": "progress", "stage": "concat", "step": total, "total": total})

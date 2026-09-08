@@ -69,22 +69,27 @@ Every API request sets `SET search_path TO "tenant_<slug>", core` via `deps.py` 
     - `models/custom_table.py` — CustomTableMeta (user-defined table registry, per-tenant).
     - `models/tiktok_csv.py` + other analytics models — analytics tables (per-tenant).
     - `models/chat_session.py` — ChatSession, ChatMessage (per-tenant; auto-summarize at 40 msgs).
-    - `models/video_project.py` — VideoProject (per-tenant; statuses: pending/processing/done/error/cancelled; modes: talking_head/dub_first).
+    - `models/video_project.py` — VideoProject (per-tenant; statuses incl. pending/processing/waiting_vo/done/error/cancelled; modes: see "Video modes" below).
+    - `models/effect_style.py` — EffectStyle (per-tenant; `kind` = effects style or cut style; status pending/ready/error).
     - `models/llm_usage.py` — per-user token usage + cost tracking.
     - `models/app_setting.py` — key-value app settings (per-tenant).
     - `models/scrape_run.py` — scrape run audit log.
   - `llm/` — LiteLLM gateway (`gateway.py`: `acompletion`, `acompletion_stream_thinking` for streamed extended-thinking, `complete`, `chat_once` — with retry/timeout/error-phase classification), `config.py` (`sync_llm_env`, `model_params`, `call_kwargs`, `vision_call_kwargs`, `anthropic_file_kwargs`, `model_supports_effort`), `files.py` (Anthropic Files API upload/delete for vision frames — via LiteLLM, never the `anthropic` SDK), `tools.py`, `usage.py` (per-user token tracking via ContextVar — set `UsageCtx` before any LLM call). **Only AI entry point.**
   - `tables/` — `formula.py` (compile formula spec → safe PostgreSQL GENERATED ALWAYS AS expression), `workspace.py` (provision 5 default TikTok Affiliate tables for new tenants).
-  - `video/` — `storage.py` (file paths under `backend/data/`), `ffmpeg_bin.py` (ffmpeg/ffprobe wrapper, reads `FFMPEG_PATH`), `timeline.py` (transcript → cut list, AI highlight planning), `scene.py` (frame extraction for dub_first), `elevenlabs_stt.py` (**the only speech-to-text path** — ElevenLabs Scribe client + the word-gap arithmetic that decides the silence cut), `caption.py` (ASS subtitle generation), `overlay.py` (visual effects/stickers render), `stickers.py` (sticker asset resolution), `face_tracker.py` (face bbox tracking), `style_profile.py` (PySceneDetect + Claude Vision → Style Profile JSON), `assets.py` (SFX catalog + rule-based placement), `fonts.py` (bundled Thai-capable caption fonts in `backend/data/fonts/`), `s3.py` (S3/R2 sync for multi-host deployments — no-op when `S3_BUCKET` unset).
+  - `video/` — `storage.py` (file paths under `backend/data/`), `ffmpeg_bin.py` (ffmpeg/ffprobe wrapper, reads `FFMPEG_PATH`), `timeline.py` (transcript → cut list, AI highlight planning), `scene.py` (frame extraction for dub_first), `elevenlabs_stt.py` (**the only speech-to-text path** — ElevenLabs Scribe client + the word-gap arithmetic that decides the silence cut), `stt_pricing.py` (Scribe cost → usage rows), `speech_select.py` (speech modes: `select_highlights` = mode A long clip → N clips, `select_scenes` = mode B pick segments), `audio_edges.py` (cut-boundary snapping), `beat_analysis.py` (librosa beat grid for background music), `caption.py` (ASS subtitle generation), `face_tracker.py` (face bbox tracking), `fonts.py` (bundled Thai-capable caption fonts in `backend/data/fonts/`), `s3.py` (S3/R2 sync for multi-host deployments — no-op when `S3_BUCKET` unset).
     - Effects layer (see "Effects Layer" below): `effects.py`, `effects_ai.py`, `effects_render.py`, `transforms.py`.
-- **`backend/services/api/`** — FastAPI app. Routers: `auth`, `workspace`, `analytics`, `import_csv`, `metrics`, `products`, `creators`, `market`, `prompt_cron`, `runs`, `chat`, `settings`, `custom_tables`, `table_io`, `jobs`, `videos`, `videos_local`, `usage`, `releases` (unauthenticated presigned-S3 redirect for the desktop installer). Logic split: `queries.py` (read), `csv_importer.py`, `chat_service.py`, `schemas.py`, `deps.py` (DI + JWT extraction + search_path injection).
-- **`backend/services/worker/`** — arq background worker (queue `arq:default`). Tasks: `csv_export`, `csv_import`, `ai_process`, `ingest_video` (AI cut selection → ffmpeg render → CapCut ZIP). API enqueues → returns `job_id` → frontend polls `GET /jobs/{job_id}`. Run: `python -m services.worker`.
+    - Dub cut prompts are **versioned**: `dub_ai.py` dispatches to `dub_ai_v1.py` (rollback) or `dub_ai_v2.py` (current, span/ranking/continuity) via `DUB_PROMPT_VERSION`. Change a prompt in the versioned file, never by forking the dispatcher.
+    - **Shot swap alternates (R18b)**: v2 edit-script segments carry `alternates` (≤3 backup shots + one-line Thai `note`, returned inside the SAME analysis call — never an extra model call). The field is REQUIRED in the Gemini response schema with empty = none (enforced decoding never fills an optional field — measured live 2026-09-01, 0/12 twice), restated in the v2 instruction tail, and validated in code by `timeline.py:sanitize_segment_alternates` (per-clip bounds silent-drop, >50% overlap with the main window drop, cap 3, NO minimum length at plan time — the length rule belongs to the desktop's locked regime). Empty arrays are stripped, so stored scripts still omit the field when there are no backups.
+- **`backend/services/api/`** — FastAPI app. Routers: `auth`, `workspace`, `analytics`, `import_csv`, `metrics`, `products`, `creators`, `market`, `prompt_cron`, `runs`, `chat`, `settings`, `custom_tables`, `table_io`, `jobs`, `videos`, `videos_local`, `effect_styles`, `usage`, `releases` (unauthenticated presigned-S3 redirect for the desktop installer). Logic split: `queries.py` (read), `csv_importer.py`, `chat_service.py`, `schemas.py`, `deps.py` (DI + JWT extraction + search_path injection).
+- **`backend/services/worker/`** — arq background worker (queue `arq:default`). Tasks: `csv_export`, `csv_import`, `ai_process`, the server-render video chain (`ingest_video`, `transcribe_video`, `plan_edit`, `render_video`, `analyze_dub_first`, `render_dub_silent`, `plan_dub_timeline`) and the desktop/local chain (`analyze_dub_local`, `analyze_dub_video_local`, `plan_talking_local`, `reedit_dub_scenes_local`, `plan_effects_local`, `distill_style_local`). API enqueues → returns `job_id` → frontend polls `GET /jobs/{job_id}`. Run: `python -m services.worker`.
 - **`backend/scripts/`** — one-off operational/smoke scripts (NOT pytest): `check_project.py` (inspect a video_project row), `probe_stream_thinking.py` (verify streamed thinking chunks), `vision_smoke_test.py` (Files API vs base64 vision latency), `probe_elevenlabs.py` (Scribe on a real Thai clip → token shape, gap distribution, logprob spread, wall clock). Run from `backend/` with `python scripts/<name>.py`.
 - **`backend/packages/db/alembic/`** — migrations live here (not `backend/alembic`); `alembic.ini` at `backend/` points `script_location` to it. Run alembic from `backend/`.
 - **`frontend/src/`** — `auth/` (AuthContext, RequireAuth), `pages/` (Login, Island, Revenue, Catalog, Market, Import, Settings, TablePage, CreateTablePage, ManageFieldsPage, VideoPage), `scene/` (R3F: IslandWorld, DataWorld, InteractiveRoom, SphereField, DrillCard), `hud/` (TableEditor, AddColumnModal, ColumnSettingsPopover, ColumnFilterPopover, ConfirmModal, ImportModal, TemplateGallery, ChatPanel, Filters, MetricBar, PromptCron, RevenueOverlay, Room, RoomPage; `rooms/` sub-dir has per-route HUDs: CatalogRoom, ImportRoom, MarketRoom, SettingsRoom), `fallback/TableView.tsx` (2D fallback when R3F not supported), `lib/` (columnTypes, encoding, optionColors, tablePresets), `navigation/NavigationContext.tsx`, `api.ts` (backend client), `errors.ts` (central parser turning FastAPI/worker/LiteLLM/Anthropic error payloads into user-facing Thai strings — use `readApiError`/`formatUserError` instead of showing raw messages; covered by `errors.test.ts`), `types.ts`.
 
-- **`desktop/`** — standalone desktop app for the AI video-edit feature, **both modes** (dub_first + talking_head) end-to-end (see `DESKTOP_VIDEO_APP_REQUIREMENTS.md` + `desktop/README.md`). Isolated from `backend/`/`frontend/` — additive backend changes only. `desktop/app/` = Electron + React + TS (electron-vite, Tailwind v4): own JWT login against existing `/auth/*` (no session sharing), safeStorage token store, local project registry (`userData/projects/<uid>/project.json`), `media://` privileged protocol for local video preview, mode-aware wizard (`pages/WizardPage.tsx` — dub: analyze → silent cut, which is where a dub run normally ENDS; the voiceover + final render are optional work offered afterwards. talking_head: extract-audio → server transcribe+plan → local render), TimelineEditor ported from the web editor (IO seam in `lib/editorApi.ts`). `desktop/sidecar/` = Python render engine spawned by Electron main; imports `backend/packages/video` read-only via `sys.path` (`bootstrap.py`, `NOEY_BACKEND_DIR` override); JSON-lines protocol on stdout (`ping`/`probe`/`ingest`/`extract-frames`/`render-silent`/`render-final`/`extract-audio`/`render-timeline`), logs on stderr. Video files stay on the user's machine — only frame JPEGs (dub) / speech WAVs (talking_head) upload for AI. Packaging: PyInstaller sidecar + bundled ffmpeg + electron-builder NSIS/dmg (`npm run build:win`).
-- **Local-render backend surface** (additive): `routers/videos_local.py` (`POST /videos/local`, `POST /videos/{uid}/analyze-frames`, `POST /videos/{uid}/plan-dub`, `POST /videos/{uid}/transcribe-audio`, `GET/PUT /videos/{uid}/local-timeline`, `PATCH /videos/{uid}/local-status`, `PUT /videos/{uid}/local-edit-script`), arq tasks `analyze_dub_local` + `plan_talking_local`, `video_projects.origin/local_meta` columns. Shared cores extracted from worker tasks into `packages/video/`: `dub_ai.py` (dub prompts + LLM calls), `dub_render.py` (dub ffmpeg cores), `plan_core.py` (talking_head planning incl. Haiku passes), `elevenlabs_stt.py` (Scribe transport + transcript assembly), `audio_extract.py` (speech WAV chain), `render_common.py` (SRT + CapCut bundle) — worker and sidecar/API both use them; do not fork their behavior.
+- **`desktop/`** — standalone desktop app for the AI video-edit feature (see `DESKTOP_VIDEO_APP_REQUIREMENTS.md` + `desktop/README.md`). Isolated from `backend/`/`frontend/` — additive backend changes only. `desktop/app/` = Electron + React + TS (electron-vite, Tailwind v4): own JWT login against existing `/auth/*` (no session sharing), safeStorage token store, local project registry (`userData/projects/<uid>/project.json`), `media://` privileged protocol for local video preview, mode-aware wizard (`pages/WizardPage.tsx`), timeline editor (`TimelineRoute.tsx`), effects/cut Style studio (`EffectsStudioPage.tsx`), voiceover (`VoiceoverPage.tsx`), app-level job progress (`JobProgressPage.tsx`). Long AI work runs at app level (`main/remoteJobs.ts`, `lib/fxJobs`) so leaving a screen does not kill it. R18b shot swap: `components/projects/ShotSwapModal.tsx` + `lib/shotSwap.ts` (swap a shot for an AI-returned `alternates` backup, ประกอบใหม่ locally — zero AI calls per swap round; free length regime before the voiceover / locked after, where the alternate is trimmed to the original durationSec anchored on matchedFrameTime and the planned timeline is re-pointed mechanically instead of re-planned), entry button `ปรับช็อต` on `ProjectDetailPage`, revert via the R12 `previousRender` mechanism; clicking a tray thumb previews the window in the app's `VideoModal` (new additive `stopAtSec` prop pauses at the window's end). Taste log: `main/tasteLog.ts` appends `shot_swap`/`shot_swap_revert`/`recut_note` events to `userData/taste-log.jsonl` at COMMIT only — collection-only this round, never fed to any prompt (R19 distills later). Phone/LAN surface in `main/`: `lanReceive.ts` (รับจากมือถือ / ส่งไปมือถือ over LAN), `remoteAccess.ts` + `remotePage.ts` + `remoteApi.ts` (phone remote = a switch, QR is a single-use pairing ticket → HttpOnly device cookie), `apiProxy.ts`. `desktop/sidecar/` = Python render engine spawned by Electron main; imports `backend/packages/video` read-only via `sys.path` (`bootstrap.py`, `NOEY_BACKEND_DIR` override); JSON-lines protocol on stdout (`ping`/`probe`/`ingest`/`extract-proxy`/`proxy-one`/`render`/`render-silent`/`render-final`/`render-timeline`/`render-highlights`/`render-effects`/`render-ai-preview`/`extract-audio`/`mix-music`), logs on stderr; outputs are written atomically (`atomic.py`: staged `.part` + faststart) so a file that exists is complete. Video files stay on the user's machine — only frame JPEGs / speech WAVs / cut proxies upload for AI. Packaging: PyInstaller sidecar + bundled ffmpeg + electron-builder NSIS (`npm run build:win` — bumps version, builds, and **uploads a public release**).
+- **Local-render backend surface** (additive): `routers/videos_local.py` — `POST /videos/local`, `POST /videos/{uid}/analyze-frames`, `POST /videos/{uid}/analyze-video`, `POST /videos/{uid}/plan-dub`, `POST /videos/{uid}/transcribe-audio`, `POST /videos/{uid}/reedit-dub-scenes`, `POST /videos/{uid}/plan-effects`, `GET/PUT /videos/{uid}/effects`, `POST/DELETE /videos/{uid}/music`, `GET/PUT /videos/{uid}/local-timeline`, `PATCH /videos/{uid}/local-status`, `PUT /videos/{uid}/local-edit-script`; arq tasks `analyze_dub_local`, `analyze_dub_video_local`, `plan_talking_local`, `reedit_dub_scenes_local`, `plan_effects_local`, `distill_style_local`; `video_projects.origin/local_meta` columns. Shared cores extracted from worker tasks into `packages/video/`: `dub_ai.py` (dub prompts + LLM calls), `dub_render.py` (dub ffmpeg cores), `plan_core.py` (talking_head planning incl. Haiku passes), `elevenlabs_stt.py` (Scribe transport + transcript assembly), `speech_select.py` (speech-mode selection), `audio_extract.py` (speech WAV chain), `render_common.py` (SRT + CapCut bundle) — worker and sidecar/API both use them; do not fork their behavior.
+- **The UI never names an AI vendor** — no Gemini, Twelve Labs, ElevenLabs or Claude in anything a user reads (an env-var name in a settings hint leaks it too). Code, comments and `.env` keep the real names.
+- **Video modes** (`video_projects.mode`, allow-list in `videos_local.py`): `talking_head`, `dub_first`, `highlight`, `speech_highlights` (long clip → N clips), `speech_scenes` (keep original audio, pick strong scenes). Statuses in `models/video_project.py`; `waiting_vo` is terminal for a dub run.
 
 ## Effects Layer (AI-placed camera motion on top of the cut)
 
@@ -143,15 +148,10 @@ re-uploading the reference video each time. `packages/video/cut_style.py` reuses
 distillation — it wants a documented default per axis, so it wraps them in its
 own `_band_or`.
 
-**Desktop app (UI) is NOT yet updated** — `desktop/app` still imports the removed
-node-sidecar through the `@fx` alias, still ships the Effects Studio / canvas
-editor / overlay pipeline, and **will not build until that is done**. Pending
-work when the UI is next touched: `electron.vite.config.ts` + `tsconfig` `@fx`
-alias, `main/nodeSidecar.ts`, `main/index.ts` IPC, `main/library.ts`,
-`preload/index.ts`, `lib/effectsPipeline.ts`, `lib/effectsCatalog.ts`,
-`pages/EffectsStudioPage.tsx`, `components/EffectsCanvasEditor.tsx`,
-`components/EffectLivePreview.tsx`, `scripts/prepare-resources.mjs`, and the
-`remotion` deps in `package.json`.
+**Desktop UI migration is DONE** — the `@fx` alias, the node-sidecar, `main/library.ts`,
+`lib/effectsPipeline.ts` and the `remotion` deps are gone; `desktop/app` builds against the
+ffmpeg-only layer. `lib/effectsCatalog.ts` survives as the *transform* prop catalog used by
+`EffectsCanvasEditor.tsx`.
 
 **Not built yet**: no `services/scraper`. Live scraping is remaining work; current data path is CSV import via the API. Desktop app: auto-update, code signing, macOS build (needs a Mac).
 
@@ -205,6 +205,10 @@ cd backend && alembic upgrade head
 cd backend && alembic revision --autogenerate -m "description"
 ```
 
+Backend tests live in `backend/tests/` (~40 files); most video work is covered by a
+`test_<module>.py` next to the module it exercises — add there rather than starting a
+new suite.
+
 **Frontend**
 ```bash
 cd frontend && npm run dev      # dev server (localhost:5173)
@@ -220,7 +224,11 @@ npm run test                    # Vitest
 npm run typecheck && npm run lint
 npm run build                   # production bundles
 cd desktop/sidecar && python -m pytest tests/   # sidecar tests (same Python env as backend)
+npm run build:win               # bumps version, builds NSIS, UPLOADS a public release — never run casually
 ```
+
+`npm run build:win` is a **publish**, not a build check. Use `npm run build` /
+`build:unpack` to verify a build; only run `build:win` when the user asks to ship.
 
 **Infrastructure**
 ```bash
@@ -228,6 +236,13 @@ docker compose up -d postgres   # start only postgres
 docker compose up -d redis      # start only redis (required for arq worker)
 docker compose up -d            # start all containers
 ```
+
+## Docs
+
+- `docs/ai-video-editing.md` — the video pipeline end to end.
+- `docs/railway-deploy.md` — deploy notes (API + worker on separate hosts → this is why `s3.py` exists).
+- `AGENTS.md` — a Codex-facing mirror of this file. Update both together, or say which one is authoritative.
+- Historical only (describe removed systems): `REMOTION_EFFECTS_REQUIREMENTS.md`, `EFFECTS_USER_GUIDE.md`.
 
 ## Reply language
 

@@ -1029,6 +1029,81 @@ def repair_mmss_timestamps(
     return repaired
 
 
+# R18b: an alternate whose window mostly re-covers the main shot is worthless —
+# the same frame nudged a fraction of a second is not a real choice.
+ALTERNATE_MAX_OVERLAP = 0.5
+MAX_ALTERNATES_PER_SEGMENT = 3
+
+
+def sanitize_segment_alternates(
+    seg: dict[str, Any], clip_durations: dict[str, float]
+) -> None:
+    """Validate a segment's R18b ``alternates`` in place (drop silently, never fatal).
+
+    Three code-side rules (HANDOFF-R18b §1 — validation lives here, not in the
+    prompt): per-clip bounds like the main segment's, >50% overlap with the
+    main window on the same clip, and a hard cap of 3. NO minimum-length rule
+    at plan time — a short alternate is still usable before the voiceover is
+    recorded; the length constraint belongs to the locked swap regime in the
+    desktop UI. An empty result removes the field entirely so old and
+    no-alternate segments stay byte-identical to pre-R18b scripts.
+    """
+    raw = seg.get("alternates")
+    if raw is None:
+        return
+    if not isinstance(raw, list):
+        seg.pop("alternates", None)
+        return
+    try:
+        main_in = float(seg["sourceIn"])
+        main_out = float(seg["sourceOut"])
+    except (KeyError, TypeError, ValueError):
+        main_in = main_out = 0.0
+    main_clip = str(seg.get("sourceClip") or "")
+
+    kept: list[dict[str, Any]] = []
+    for alt in raw:
+        if len(kept) >= MAX_ALTERNATES_PER_SEGMENT:
+            break
+        if not isinstance(alt, dict):
+            continue
+        clip_id = str(alt.get("sourceClip") or "")
+        dur = clip_durations.get(clip_id)
+        if dur is None:
+            continue
+        try:
+            alt_in = float(alt["sourceIn"])
+            alt_out = float(alt["sourceOut"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if alt_in < 0 or alt_in >= dur or alt_out <= alt_in:
+            continue
+        alt_out = min(alt_out, dur)
+        window = alt_out - alt_in
+        if window <= 0:
+            continue
+        if clip_id == main_clip and main_out > main_in:
+            overlap = min(alt_out, main_out) - max(alt_in, main_in)
+            if overlap > ALTERNATE_MAX_OVERLAP * window:
+                continue
+        try:
+            mft = min(max(float(alt.get("matchedFrameTime", alt_in)), 0.0), dur)
+        except (TypeError, ValueError):
+            mft = alt_in
+        kept.append({
+            "sourceClip": clip_id,
+            "sourceIn": round(alt_in, 2),
+            "sourceOut": round(alt_out, 2),
+            "matchedFrameTime": round(mft, 2),
+            "note": str(alt.get("note") or "").strip(),
+        })
+
+    if kept:
+        seg["alternates"] = kept
+    else:
+        seg.pop("alternates", None)
+
+
 def clamp_dub_segments_to_clip_durations(
     edit_script: dict[str, Any],
     clip_durations: dict[str, float],
@@ -1115,6 +1190,7 @@ def clamp_dub_segments_to_clip_durations(
                 seg["matchedFrameTime"] = round(min(max(float(mft), 0.0), dur), 2)
             except (TypeError, ValueError):
                 pass
+        sanitize_segment_alternates(seg, clip_durations)
         kept.append(seg)
     if dropped:
         log.warning(

@@ -1,0 +1,15 @@
+Bundled overlay-text fonts — all SIL Open Font License 1.1 (free for embedding/redistribution).
+
+- Kanit-Bold.ttf        — Cadson Demak, https://fonts.google.com/specimen/Kanit
+- Prompt-Bold.ttf       — Cadson Demak, https://fonts.google.com/specimen/Prompt
+- Chonburi-Regular.ttf  — https://fonts.google.com/specimen/Chonburi
+- Mitr-SemiBold.ttf     — Cadson Demak, https://fonts.google.com/specimen/Mitr
+- Itim-Regular.ttf      — https://fonts.google.com/specimen/Itim
+- Taviraj-SemiBold.ttf  — https://fonts.google.com/specimen/Taviraj
+- Sriracha-Regular.ttf  — https://fonts.google.com/specimen/Sriracha
+
+Source: https://github.com/google/fonts (ofl/ directory), full OFL.txt text
+included with each family upstream. Fetched at build time by
+scripts/fetch-fonts.mjs — same convention as backend/data/fonts (the ASS
+caption font bundle); kanit/prompt are shared with that bundle for visual
+continuity between captions and overlay text.

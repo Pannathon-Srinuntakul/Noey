@@ -478,7 +478,6 @@ async def generate_effects_placement(
     video_path = pathlib.Path(video_path)
     duration_sec = media_duration(video_path)
     ref_path = pathlib.Path(reference_path) if reference_path else None
-
     file_ids: list[str] = []
     try:
         t_upload = time.monotonic()
