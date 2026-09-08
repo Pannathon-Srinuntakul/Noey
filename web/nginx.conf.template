@@ -1,11 +1,24 @@
 # Static host for the browser build.
 #
+# A TEMPLATE, not a finished config: the nginx image's own entrypoint
+# (/docker-entrypoint.d/20-envsubst-on-templates.sh) runs envsubst over
+# everything in /etc/nginx/templates and writes the result to conf.d.
+#
+# That exists here for one reason: `${PORT}`. A platform that assigns the port
+# at run time — Railway, Cloud Run, Heroku — routes to whatever it put in $PORT
+# and a server hard-coded to :80 answers nothing, which surfaces as a 502 with
+# no log line in the container to explain it (seen on the first deploy,
+# 2026-09-08). The Dockerfile sets PORT=80 so a plain `docker run` is unchanged.
+#
+# envsubst only substitutes variables that exist in the environment, so nginx's
+# own `$uri` is left alone.
+#
 # The app has no URL routing of its own (lib/router.tsx is an in-memory stack),
 # so every path falls back to index.html. What the rest of this file exists for
 # is the two files that must NOT be treated like ordinary assets.
 
 server {
-    listen 80;
+    listen ${PORT};
     server_name _;
     root /usr/share/nginx/html;
 

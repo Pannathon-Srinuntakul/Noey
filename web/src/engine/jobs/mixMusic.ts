@@ -9,7 +9,7 @@
  * no longer shows.
  */
 
-import { projectFilePath, readText, writeFileAtomic, deleteFile } from '../../platform/fs'
+import { projectFilePath, writeFileAtomic, deleteFile } from '../../platform/fs'
 import type { SidecarEvent } from '../../platform/types'
 import { OUTPUT_FPS } from '../cutRender'
 import { mixMusicOnto } from '../audio'
@@ -32,7 +32,11 @@ registerJob('mix-music', async (job, emit: ProgressCallback): Promise<SidecarEve
   const silent = await blobForPath(silentPath).catch(() => null)
   if (!silent) throw new Error('ยังไม่มีคลิปให้ใส่เพลง')
 
-  const scriptTxt = (await readText(projectFilePath(uid, 'script.txt'))) ?? ''
+  // Through the server-aware path: on a restored project script.txt lives on
+  // the server, and a bare read rebuilt dub_bundle.zip with an EMPTY script.
+  const scriptTxt = await blobForPath(projectFilePath(uid, 'script.txt'))
+    .then((b) => b.text())
+    .catch(() => '')
 
   const musicPath = job.musicPath ? String(job.musicPath) : ''
   const mixedPath = projectFilePath(uid, 'final_silent_music.mp4')

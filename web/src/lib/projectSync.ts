@@ -175,7 +175,13 @@ export async function pushProjectFiles(
  * would read that as "delete everything". Absence of a local copy is not
  * evidence that a file is stale.
  */
-const SWEEPABLE_ROOTS = ['clips', 'highlights']
+// Every per-render/per-edit root. Roots that were synced but never swept
+// (music, voiceover, captions, fx) accumulated on the server forever -- a
+// music track swap changes the filename, so the old object never matched a
+// local file again, was never deleted, and kept counting against the plan
+// quota with no UI able to reach it. The `localHere.size === 0` guard below
+// keeps a restored project from reading its empty cache as "delete it all".
+const SWEEPABLE_ROOTS = ['clips', 'highlights', 'captions', 'voiceover', 'music', 'fx']
 
 async function dropStaleFiles(
   session: ApiSession,
@@ -199,6 +205,20 @@ async function dropStaleFiles(
     }
   }
   return removed
+}
+
+/** Delete one server-side file explicitly (top-level names are never swept). */
+export async function deleteProjectFile(
+  session: ApiSession,
+  remoteUid: string,
+  rel: string
+): Promise<void> {
+  const res = await authedFetch(session, `/videos/${remoteUid}/files/${encodePath(rel)}`, {
+    method: 'DELETE'
+  })
+  if (!res.ok && res.status !== 404) {
+    throw new ApiError(res.status, `ลบ ${rel} บนเซิร์ฟเวอร์ไม่สำเร็จ`)
+  }
 }
 
 /** Fetch one file the local store does not have. */
@@ -248,14 +268,23 @@ interface RemoteProject {
  * the projects already on their machine.
  */
 export async function restoreMissingProjects(session: ApiSession): Promise<number> {
-  let remote: RemoteProject[]
+  // Paged: the server caps a single response, and reading only the first page
+  // silently hid every older project from a fresh browser -- which reads as
+  // data loss to the person looking for their work.
+  const remote: RemoteProject[] = []
   try {
-    const res = await authedFetch(session, '/videos')
-    if (!res.ok) return 0
-    remote = (await res.json()) as RemoteProject[]
+    const pageSize = 200
+    for (let offset = 0; offset < 5000; offset += pageSize) {
+      const res = await authedFetch(session, `/videos?limit=${pageSize}&offset=${offset}`)
+      if (!res.ok) break
+      const page = (await res.json()) as RemoteProject[]
+      remote.push(...page)
+      if (page.length < pageSize) break
+    }
   } catch {
     return 0
   }
+  if (remote.length === 0) return 0
 
   const localUids = new Set(await listProjectUids())
   let restored = 0

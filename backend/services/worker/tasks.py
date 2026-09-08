@@ -121,6 +121,15 @@ async def _update_job(job_id: str, status: str, progress: int = 0, result: dict 
             job.status = status
             job.progress = progress
             if result is not None:
+                # The one funnel every job row passes through, so it is where
+                # streamed model REASONING gets its vendor scrub: the model can
+                # name itself or its provider mid-sentence, and `thinking` is
+                # rendered in the client. Token-level, not wholesale — blanking
+                # a whole excerpt would kill the feature.
+                if isinstance(result.get("thinking"), str):
+                    from packages.core.errors import scrub_vendor_tokens
+
+                    result = {**result, "thinking": scrub_vendor_tokens(result["thinking"])}
                 job.result = result
             if error is not None:
                 job.error = error[:512]
@@ -344,9 +353,33 @@ async def _pull_project_files(project_uid: str) -> None:
     await pull_project_files(project_uid)
 
 
-async def _push_project_files(project_uid: str) -> None:
-    """Publish uploads + outputs for the next worker replica (multi-worker / S3)."""
+async def _push_project_files(project_uid: str, tenant_slug: str = "default") -> None:
+    """Publish uploads + outputs for the next worker replica (multi-worker / S3).
+
+    Skipped when the project row is POSITIVELY gone: a task that outlives its
+    project's deletion otherwise re-creates the tree on disk and in S3 with no
+    row left to attribute or ever delete it — permanent, invisible storage.
+    Fail-OPEN on any lookup problem: wrongly skipping a push loses data, while
+    wrongly pushing merely delays the delete's cleanup.
+    """
+    from packages.db.models.video_project import VideoProject
     from packages.video.s3 import push_project_files
+
+    try:
+        ts = await _tenant_session(tenant_slug)
+        try:
+            row = (
+                await ts.execute(
+                    select(VideoProject.id).where(VideoProject.uid == project_uid)
+                )
+            ).scalar_one_or_none()
+        finally:
+            await ts.close()
+        if row is None:
+            log.info("push_skipped_project_deleted", project_uid=project_uid)
+            return
+    except Exception:  # noqa: BLE001 — see docstring: fail open
+        log.exception("push_guard_lookup_failed", project_uid=project_uid)
 
     await push_project_files(project_uid)
 
@@ -512,7 +545,7 @@ async def ingest_video(ctx: dict[str, Any], *, job_id: str, project_uid: str, te
         settings = get_settings()
         pool = await create_pool(RedisSettings.from_dsn(settings.redis_url))
         if mode == "dub_first":
-            await _push_project_files(project_uid)
+            await _push_project_files(project_uid, tenant_slug)
             await _video_progress(job_id, 50, "ingest", "เตรียมวิดีโอเสร็จแล้ว กำลังวิเคราะห์ซีน…")
             await pool.enqueue_job("analyze_dub_first", job_id=job_id, project_uid=project_uid, tenant_slug=tenant_slug)
             await pool.close()
@@ -616,7 +649,7 @@ async def transcribe_video(ctx: dict[str, Any], *, job_id: str, project_uid: str
         from packages.core.settings import get_settings
         settings = get_settings()
         pool = await create_pool(RedisSettings.from_dsn(settings.redis_url))
-        await _push_project_files(project_uid)
+        await _push_project_files(project_uid, tenant_slug)
         await pool.enqueue_job("plan_edit", job_id=job_id, project_uid=project_uid, tenant_slug=tenant_slug)
         await pool.close()
 
@@ -733,7 +766,7 @@ async def plan_edit(ctx: dict[str, Any], *, job_id: str, project_uid: str, tenan
         from packages.core.settings import get_settings
         settings = get_settings()
         pool = await create_pool(RedisSettings.from_dsn(settings.redis_url))
-        await _push_project_files(project_uid)
+        await _push_project_files(project_uid, tenant_slug)
         await pool.enqueue_job("render_video", job_id=job_id, project_uid=project_uid, tenant_slug=tenant_slug)
         await pool.close()
 
@@ -999,7 +1032,7 @@ async def render_video(ctx: dict[str, Any], *, job_id: str, project_uid: str, te
         if await _abort_if_cancelled(session, project_uid, job_id):
             return {"cancelled": True}
 
-        await _push_project_files(project_uid)
+        await _push_project_files(project_uid, tenant_slug)
 
         await _update_video(session, project_uid,
                             status="done",
@@ -1148,7 +1181,7 @@ async def analyze_dub_first(ctx: dict[str, Any], *, job_id: str, project_uid: st
         from packages.core.settings import get_settings
         settings = get_settings()
         pool = await create_pool(RedisSettings.from_dsn(settings.redis_url))
-        await _push_project_files(project_uid)
+        await _push_project_files(project_uid, tenant_slug)
         await pool.enqueue_job("render_dub_silent", job_id=job_id, project_uid=project_uid, tenant_slug=tenant_slug)
         await pool.close()
 
@@ -1253,7 +1286,7 @@ async def render_dub_silent(ctx: dict[str, Any], *, job_id: str, project_uid: st
         final_rel = str(final_path.relative_to(root))
         zip_rel = str(zip_path.relative_to(root))
 
-        await _push_project_files(project_uid)
+        await _push_project_files(project_uid, tenant_slug)
 
         await _update_video(session, project_uid, status="done", final_path=final_rel, zip_path=zip_rel)
         await _update_job(
@@ -1360,7 +1393,7 @@ async def plan_dub_timeline(ctx: dict[str, Any], *, job_id: str, project_uid: st
         from packages.core.settings import get_settings
         settings = get_settings()
         pool = await create_pool(RedisSettings.from_dsn(settings.redis_url))
-        await _push_project_files(project_uid)
+        await _push_project_files(project_uid, tenant_slug)
         await pool.enqueue_job("render_video", job_id=job_id, project_uid=project_uid, tenant_slug=tenant_slug)
         await pool.close()
 
@@ -1460,7 +1493,7 @@ async def analyze_dub_local(ctx: dict[str, Any], *, job_id: str, project_uid: st
         rel = str(edit_script_path.relative_to(root))
         # Desktop app renders locally from here; server-side status parks at waiting_vo.
         await _update_video(session, project_uid, edit_script_path=rel, status="waiting_vo")
-        await _push_project_files(project_uid)
+        await _push_project_files(project_uid, tenant_slug)
 
         segments = len(edit_script.get("segments", []))
         await _update_job(
@@ -1727,7 +1760,7 @@ async def analyze_dub_video_local(
         rel = str(edit_script_path.relative_to(root))
         # Desktop app renders locally from here; server-side status parks at waiting_vo.
         await _update_video(session, project_uid, edit_script_path=rel, status="waiting_vo")
-        await _push_project_files(project_uid)
+        await _push_project_files(project_uid, tenant_slug)
 
         segments = len(edit_script.get("segments", []))
         await _update_job(
@@ -1900,7 +1933,7 @@ async def plan_effects_local(
 
         effects_path = output_dir / "effects.json"
         effects_path.write_text(json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
-        await _push_project_files(project_uid)
+        await _push_project_files(project_uid, tenant_slug)
 
         count = len(doc.get("instances", []))
         await _update_job(
@@ -2133,7 +2166,7 @@ async def reedit_dub_scenes_local(
         )
         rel = str(edit_script_path.relative_to(root))
         await _update_video(session, project_uid, edit_script_path=rel, status="waiting_vo")
-        await _push_project_files(project_uid)
+        await _push_project_files(project_uid, tenant_slug)
 
         segments = merged.get("segments", [])
         await _update_job(
@@ -2271,7 +2304,13 @@ async def plan_talking_local(ctx: dict[str, Any], *, job_id: str, project_uid: s
         timeline_path = output_dir / "timeline.json"
         timeline_path.write_text(json.dumps(timeline, ensure_ascii=False, indent=2), encoding="utf-8")
         await _update_video(session, project_uid, timeline_path=str(timeline_path.relative_to(root)))
-        await _push_project_files(project_uid)
+        await _push_project_files(project_uid, tenant_slug)
+
+        # Same retirement as the other two speech tasks (they purge at their
+        # success points; this one simply omitted the call): the WAVs have been
+        # transcribed, the transcript is kept, and keeping the audio too is
+        # exactly the accumulation the purge design exists to prevent.
+        await _purge_uploaded_media(project_uid, ("audio",))
 
         cut_count = len(timeline["timeline"])
         await _update_job(
@@ -2489,7 +2528,7 @@ async def plan_speech_local(ctx: dict[str, Any], *, job_id: str, project_uid: st
             timeline_path = output_dir / "timeline.json"
             timeline_path.write_text(json.dumps(timeline, ensure_ascii=False, indent=2), encoding="utf-8")
             await _update_video(session, project_uid, timeline_path=str(timeline_path.relative_to(root)))
-            await _push_project_files(project_uid)
+            await _push_project_files(project_uid, tenant_slug)
             count = len(render_cuts)
             await _update_job(
                 job_id, "ok", 100,
@@ -2571,7 +2610,7 @@ async def plan_speech_local(ctx: dict[str, Any], *, job_id: str, project_uid: st
         index_path = hl_dir / "index.json"
         index_path.write_text(json.dumps(index, ensure_ascii=False, indent=2), encoding="utf-8")
         await _update_video(session, project_uid, timeline_path=str(index_path.relative_to(root)))
-        await _push_project_files(project_uid)
+        await _push_project_files(project_uid, tenant_slug)
 
         await _update_job(
             job_id, "ok", 100,
@@ -2604,6 +2643,91 @@ async def plan_speech_local(ctx: dict[str, Any], *, job_id: str, project_uid: st
             from packages.llm.usage import reset_usage_ctx
 
             reset_usage_ctx(_usage_token)
+
+
+# ── housekeeping: nothing may accumulate without a deleter ───────────────────
+#
+# Two stores whose deleter is normally the CLIENT, which means a closed tab or
+# a dead battery leaves them forever:
+#   * the HEVC transcode scratch (disk + S3): DELETE /videos/transcode/{token}
+#     runs when the browser collects the result — never, if the tab died first;
+#   * `core.jobs` rows: one per transcode/analyze, read for a few minutes,
+#     kept for good.
+# A daily sweep with a generous TTL is the backstop. 24 h is far beyond any
+# legitimate poll, and 30 days of job rows is far beyond any debugging need.
+
+TRANSCODE_SCRATCH_TTL_SEC = 24 * 60 * 60
+JOB_ROW_TTL_DAYS = 30
+
+
+async def sweep_housekeeping(ctx: dict[str, Any]) -> dict:
+    import asyncio
+    import shutil
+    import time as _time
+    from datetime import datetime, timedelta, timezone
+
+    from sqlalchemy import delete as sa_delete
+
+    from packages.video.storage import data_root
+
+    removed_dirs = 0
+    scratch_root = data_root() / "video_transcode"
+    if scratch_root.is_dir():
+        cutoff = _time.time() - TRANSCODE_SCRATCH_TTL_SEC
+        for user_dir in scratch_root.iterdir():
+            if not user_dir.is_dir():
+                continue
+            for token_dir in user_dir.iterdir():
+                try:
+                    if token_dir.is_dir() and token_dir.stat().st_mtime < cutoff:
+                        shutil.rmtree(token_dir, ignore_errors=True)
+                        removed_dirs += 1
+                except OSError:
+                    continue
+
+    # The S3 half of the same scratch. Listed under the fixed prefix; each
+    # object's LastModified is the age.
+    removed_objects = 0
+    try:
+        from packages.video.s3 import _bucket, _client, s3_enabled
+
+        if s3_enabled():
+            def _sweep_s3() -> int:
+                client = _client()
+                gone = 0
+                cutoff_dt = datetime.now(timezone.utc) - timedelta(
+                    seconds=TRANSCODE_SCRATCH_TTL_SEC
+                )
+                for page in client.get_paginator("list_objects_v2").paginate(
+                    Bucket=_bucket(), Prefix="scratch/transcode/"
+                ):
+                    for obj in page.get("Contents", []) or []:
+                        if obj.get("LastModified") and obj["LastModified"] < cutoff_dt:
+                            client.delete_object(Bucket=_bucket(), Key=obj["Key"])
+                            gone += 1
+                return gone
+
+            removed_objects = await asyncio.to_thread(_sweep_s3)
+    except Exception:  # noqa: BLE001 — a sweep hiccup must not fail the cron
+        log.exception("scratch_s3_sweep_failed")
+
+    removed_rows = 0
+    session = await _core_session()
+    try:
+        cutoff_rows = datetime.now(timezone.utc) - timedelta(days=JOB_ROW_TTL_DAYS)
+        res = await session.execute(sa_delete(Job).where(Job.created_at < cutoff_rows))
+        removed_rows = int(res.rowcount or 0)
+        await session.commit()
+    finally:
+        await session.close()
+
+    log.info(
+        "housekeeping_swept",
+        scratch_dirs=removed_dirs,
+        scratch_objects=removed_objects,
+        job_rows=removed_rows,
+    )
+    return {"scratch_dirs": removed_dirs, "scratch_objects": removed_objects, "job_rows": removed_rows}
 
 
 # ── WorkerSettings ────────────────────────────────────────────────────────────
@@ -2657,6 +2781,10 @@ class WorkerSettings:
         render_dub_silent,
         plan_dub_timeline,
     ]
+    # Daily housekeeping — see sweep_housekeeping for what and why.
+    from arq import cron as _cron  # noqa: PLC0415 — class-body import, arq pattern
+
+    cron_jobs = [_cron(sweep_housekeeping, hour=19, minute=30)]  # ~02:30 Asia/Bangkok
     on_startup = startup
     on_shutdown = shutdown
     max_jobs = 10

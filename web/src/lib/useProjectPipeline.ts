@@ -161,6 +161,8 @@ export interface ProjectPipeline {
   revertRecut: () => Promise<void>
   /** R18b ปรับช็อต: persist a shot-swapped edit script and reassemble locally —
    * zero AI calls (the swap data came with the original analysis answer). */
+  /** Push this project's files to the server outside a render (voiceover takes). */
+  syncFiles: (why: string) => void
   applyShotSwap: (patchedScript: DubEditScript, swapLog?: ShotSwapLogEntry[]) => Promise<void>
   stop: () => Promise<void>
   stopping: boolean
@@ -345,7 +347,6 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
   }
 
   const resetAfterStop = async (): Promise<void> => {
-    const remoteUid = project.remote?.uid
     if (!disposedRef.current) {
       setProgressMsg('')
       setThinking('')
@@ -357,10 +358,18 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     // not as a failure that flips the card to error. beginRun() clears it when
     // the next run actually starts.
     abortRef.current = null
+    // The SAME checkpoint a reload uses, not a flat 'imported'. Parking every
+    // stop at 'imported' threw away work a crash would have kept: a stop
+    // during final_rendering hid the voiceover button and the only path back
+    // was retry() -> runAnalyze() -- a second billed AI cut over an approved
+    // script. A checkpoint that is itself busy is downgraded to 'imported' so
+    // stopping never auto-restarts the thing that was just stopped.
+    const liveStep = projectRef.current.step as ProjectStep
+    const parked = resumeStep(liveStep)
     await patchProject({
-      step: 'imported',
+      step: isBusy(parked) ? 'imported' : parked,
       error: undefined,
-      remote: remoteUid ? { uid: remoteUid } : undefined
+      remote: projectRef.current.remote
     })
   }
 
@@ -459,6 +468,10 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     if (remoteUid) {
       patchLocalStatus(session, remoteUid, 'error', message).catch(() => undefined)
     }
+    // 'error' is a resting state like waiting_vo: the project can sit here for
+    // good, holding files that were expensive to make. Without this a project
+    // that died AFTER its silent render existed only in one browser.
+    syncToServer('error')
   }
 
   // ── background music (dub_first only) ─────────────────────────────────────
@@ -502,6 +515,26 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
       setProgressMsg('')
     } finally {
       unsub()
+      // Removing the track deletes the local mix inside the job -- but the
+      // server still holds final_silent_music.mp4, and the preview probe
+      // resolves THAT copy through the service worker, so the user heard the
+      // music they had just removed. Top-level names are not swept, so the
+      // delete has to be explicit.
+      if (!music) {
+        const remoteUid = live().remote?.uid
+        if (remoteUid) {
+          void (async () => {
+            const { deleteProjectFile } = await import('./projectSync')
+            await deleteProjectFile(session, remoteUid, 'final_silent_music.mp4').catch(
+              () => undefined
+            )
+          })()
+        }
+      }
+      // Music edits happen at waiting_vo/done -- resting states where nothing
+      // else will ever sync. Both arms: even when the mix was skipped,
+      // patchProject({ music }) has already changed project.json.
+      syncToServer('music')
     }
   }
 
@@ -655,6 +688,14 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
         // is the source of truth for the user's tier choice.
         { engine: current.engine, precision: current.precision }
       )
+      // A stop pressed during the upload used to be ignored: no token check
+      // between here and the render meant the whole billed run completed and
+      // the card flipped back to busy. The job exists now, so a stale run
+      // cancels it server-side rather than paying for an answer nobody reads.
+      if (isStale(runToken)) {
+        cancelRemoteProject(session, remoteUid).catch(() => undefined)
+        return
+      }
       await patchProject({ remote: { uid: remoteUid, jobId: job_id } })
 
       abortRef.current = new AbortController()
@@ -670,8 +711,10 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
         { signal: abortRef.current.signal }
       )
 
+      if (isStale(runToken)) return
       const script = await getEditScript(session, remoteUid)
       applyEditScript(script)
+      if (isStale(runToken)) return
       await runRenderSilent(script, remoteUid)
     } catch (exc) {
       await handlePipelineError(exc)
@@ -800,13 +843,44 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
         }
       : undefined
 
-    await patchProject({
+    let afterImport = await patchProject({
       clips: (ingested.clips ?? []) as LocalProject['clips'],
       step: 'imported',
       pendingSources: undefined,
       pendingMusic: undefined,
       ...(music ? { music } : {})
     })
+
+    // The server row is created HERE, not in the analyze stage. syncToServer
+    // no-ops without remote.uid, and on a first run the row used to be born
+    // only inside runAnalyze -- which made the sync below structurally dead:
+    // an import that then failed at analyze (or a user who closed the tab)
+    // left NOTHING on the server, not even project.json, so the project did
+    // not exist anywhere but this browser.
+    if (!afterImport.remote?.uid) {
+      try {
+        const created = await createLocalProject(session, {
+          mode: (afterImport.mode ?? 'dub_first') as ProjectMode,
+          brief: afterImport.brief || null,
+          user_script: afterImport.userScript || null,
+          target_duration_sec: afterImport.targetDurationSec ?? null,
+          engine: afterImport.engine ?? null,
+          precision: afterImport.precision ?? null,
+          clips: afterImport.clips.map((c) => ({
+            id: c.id,
+            durationSec: c.durationSec,
+            width: c.width,
+            height: c.height,
+            fps: c.fps
+          }))
+        })
+        afterImport = await patchProject({ remote: { uid: created.uid } })
+      } catch (err) {
+        // Best-effort like the sync itself: the import must not fail because
+        // the row could not be made. runAnalyze retries the creation.
+        void window.noey.log.write('useProjectPipeline', `remote row create failed: ${String(err)}`)
+      }
+    }
     syncToServer('import')
     setProgressMsg('')
     return true
@@ -856,7 +930,11 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
   }
 
   // ── stage: silent render ──────────────────────────────────────────────────
-  const runRenderSilent = async (script: DubEditScript, remoteUid: string): Promise<void> => {
+  const runRenderSilent = async (
+    script: DubEditScript,
+    remoteUid: string,
+    opts?: { continueToFinal?: boolean }
+  ): Promise<void> => {
     await patchProject({ step: 'silent_rendering' })
     const projectDir = await window.noey.projects.dir(project.uid)
     const unsub = window.noey.sidecar.renderSilent.onProgress((evt: SidecarEvent) => {
@@ -911,6 +989,15 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
         ...(burnedLines ? { captionLines: burnedLines } : {})
       })
       syncToServer('render')
+    } else if (opts?.continueToFinal) {
+      // The locked shot-swap runs silent -> final as ONE job. Passing through
+      // waiting_vo here made jobs.tsx read busy->terminal and announce
+      // "ตัดคลิปเสร็จแล้ว" while the final render had not started, and queued
+      // a whole-project sync that raced the final render's own.
+      await patchProject({
+        clipDurationsSec,
+        ...(burnedLines ? { captionLines: burnedLines } : {})
+      })
     } else {
       await patchLocalStatus(session, remoteUid, 'waiting_vo')
       await patchProject({
@@ -919,6 +1006,13 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
         lastRunSeconds: runSeconds(),
         ...(burnedLines ? { captionLines: burnedLines } : {})
       })
+      // `waiting_vo` is TERMINAL — a dub project sits here until someone
+      // records a voiceover, which may be days, or never. Syncing only in the
+      // `highlight` branch meant every dub project's files stayed on the
+      // machine that made them for the whole of that wait: opening the account
+      // in another browser showed nothing at all, because even `project.json`
+      // had never been uploaded (live, production, 2026-09-08).
+      syncToServer('render')
     }
     setMediaKey((k) => k + 1)
     setProgressMsg('')
@@ -1130,6 +1224,11 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
       const { job_id } = await uploadAudio(session, remoteUid, project.uid, wavs, {
         styleUid: speechMode === 'speech_scenes' ? projectRef.current.cutStyleUid : undefined
       })
+      // Same stop-during-upload hole as runAnalyze -- see the comment there.
+      if (isStale(runToken)) {
+        cancelRemoteProject(session, remoteUid).catch(() => undefined)
+        return
+      }
       await patchProject({ remote: { uid: remoteUid, jobId: job_id } })
 
       abortRef.current = new AbortController()
@@ -1156,6 +1255,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
         { signal: abortRef.current.signal }
       )
 
+      if (isStale(runToken)) return
       const timeline = await getLocalTimeline(session, remoteUid)
       if (speechMode === 'speech_highlights') {
         await runRenderHighlights(timeline as unknown as HighlightIndex, remoteUid)
@@ -1187,6 +1287,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     }
     await patchLocalStatus(session, remoteUid, 'done')
     await patchProject({ step: 'done', lastRunSeconds: runSeconds() })
+    syncToServer('highlights')
     setMediaKey((k) => k + 1)
     setProgressMsg('')
   }
@@ -1210,6 +1311,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     }
     await patchLocalStatus(session, remoteUid, 'done')
     await patchProject({ step: 'done', lastRunSeconds: runSeconds() })
+    syncToServer('timeline')
     setMediaKey((k) => k + 1)
     setProgressMsg('')
   }
@@ -1260,7 +1362,19 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     }
   }
 
+  // Failures here become a visible error, never a silent hang. The body used
+  // to run bare: a throw out of runImport or a render resume left the project
+  // parked on a busy step with no error text, no retry button and nothing that
+  // would ever re-fire the effect -- a permanently spinning card.
   const bootstrapPipeline = async (): Promise<void> => {
+    try {
+      await bootstrapPipelineInner()
+    } catch (exc) {
+      await handlePipelineError(exc)
+    }
+  }
+
+  const bootstrapPipelineInner = async (): Promise<void> => {
     const current = projectRef.current
     const currentStep = current.step as ProjectStep
     const currentMode: ProjectMode = current.mode ?? 'dub_first'
@@ -1355,9 +1469,13 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     const currentStep = projectRef.current.step as ProjectStep
     if (isTerminal(currentStep)) return
     if (stoppingRef.current) return
-    pipelineRef.current = bootstrapPipeline().finally(() => {
-      pipelineRef.current = null
-    })
+    pipelineRef.current = bootstrapPipeline()
+      // Belt over the try/catch inside: no future branch may regress into an
+      // unobserved rejection.
+      .catch((err) => void window.noey.log.write('useProjectPipeline', `bootstrap: ${String(err)}`))
+      .finally(() => {
+        pipelineRef.current = null
+      })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session])
 
@@ -1457,6 +1575,23 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     const run = (async () => {
       await patchProject({ step: 'imported', error: undefined })
       if (await resumeFromServerPlan()) return
+      // Dub modes resume from what already exists before ever re-buying the
+      // cut: a planned timeline + recorded voiceover re-renders the final for
+      // free, and a stored edit script re-renders the silent cut for free.
+      // retry() used to go straight to runAnalyze, which billed a second cut
+      // and overwrote the approved script the voiceover was recorded against.
+      if (!isSpeechMode(mode)) {
+        const cur = projectRef.current
+        const storedScript = cur.editScript as unknown as DubEditScript | undefined
+        if (cur.voiceoverPath && cur.timeline && cur.remote?.uid) {
+          await renderFinalFromPlannedTimeline(cur.timeline as unknown as DubTimeline)
+          return
+        }
+        if (storedScript?.segments?.length && cur.remote?.uid) {
+          await runRenderSilent(storedScript, cur.remote.uid)
+          return
+        }
+      }
       if (isSpeechMode(mode)) await runTalkingHead()
       else await runAnalyze()
     })()
@@ -1496,17 +1631,24 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
       // replaces whatever was kept before, so the folder holds one spare
       // version no matter how many rounds are run.
       const files = await window.noey.projects.stashRender(project.uid)
+      // A restored project has no render artifacts in this browser, so the
+      // stash keeps NOTHING. Writing previousRender anyway offered a
+      // "ย้อนกลับ" that restored no video while patching the script back --
+      // video and script then permanently described different cuts.
       await patchProject({
         recutNotes: [...notes, { round, text: note, at: new Date().toISOString() }],
-        previousRender: {
-          round: round - 1,
-          at: current.updatedAt,
-          files,
-          editScript: current.editScript,
-          clipDurationsSec: current.clipDurationsSec,
-          timeline: current.timeline,
-          captionLines: current.captionLines
-        },
+        previousRender:
+          files.length === 0
+            ? undefined
+            : {
+                round: round - 1,
+                at: current.updatedAt,
+                files,
+                editScript: current.editScript,
+                clipDurationsSec: current.clipDurationsSec,
+                timeline: current.timeline,
+                captionLines: current.captionLines
+              },
         step: 'imported',
         error: undefined
       })
@@ -1551,6 +1693,10 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     }
     setEditScript((restored.editScript as unknown as DubEditScript | undefined) ?? null)
     setMediaKey((k) => k + 1)
+    // The server still holds the render the user just discarded, and its
+    // clips were already swept when the new cut synced. The size diff
+    // re-uploads the restored files and sweeps the reverted ones.
+    syncToServer('revert')
   }
 
   /**
@@ -1600,6 +1746,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
       lastRunSeconds: runSeconds(),
       ...(finalClipDurations?.length ? { clipDurationsSec: finalClipDurations } : {})
     })
+    syncToServer('re-render')
     setMediaKey((k) => k + 1)
     setProgressMsg('')
   }
@@ -1640,17 +1787,21 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
 
         // Keep this version the way recut does — one spare, old stash replaced.
         const files = await window.noey.projects.stashRender(project.uid)
+        // Same guard as recut: no artifacts kept -> no undo offered.
         await patchProject({
-          previousRender: {
-            round: current.recutNotes?.at(-1)?.round ?? 1,
-            at: current.updatedAt,
-            files,
-            editScript: current.editScript,
-            clipDurationsSec: current.clipDurationsSec,
-            timeline: current.timeline,
-            captionLines: current.captionLines,
-            fromShotSwap: true
-          },
+          previousRender:
+            files.length === 0
+              ? undefined
+              : {
+                  round: current.recutNotes?.at(-1)?.round ?? 1,
+                  at: current.updatedAt,
+                  files,
+                  editScript: current.editScript,
+                  clipDurationsSec: current.clipDurationsSec,
+                  timeline: current.timeline,
+                  captionLines: current.captionLines,
+                  fromShotSwap: true
+                },
           // Free regime: durations moved, so saved caption lines describe the
           // old clock — clear them and let the render re-derive from the new
           // script (dubScenesFor reads editScript live; never cache old times).
@@ -1679,7 +1830,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
             current.timeline as unknown as DubTimeline
           )
           await putLocalTimeline(session, remoteUid, patchedTimeline).catch(() => undefined)
-          await runRenderSilent(patchedScript, remoteUid) // lands at waiting_vo
+          await runRenderSilent(patchedScript, remoteUid, { continueToFinal: true })
           await renderFinalFromPlannedTimeline(patchedTimeline) // → done, same VO
         } else {
           await runRenderSilent(patchedScript, remoteUid) // waiting_vo, or done (highlight)
@@ -1745,6 +1896,10 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
   ): Promise<void> => {
     const remoteUid = live().remote?.uid
     if (!remoteUid) throw new Error('ไม่พบ remote project')
+    // Every other render entry point resets the run clock; without this the
+    // ETA and the persisted "ใช้เวลาทำ" reported the PREVIOUS run's elapsed
+    // time for a save re-render.
+    markRunStarted()
     if (target === 'edit_script') {
       const es = editScriptFromCuts(cuts)
       applyEditScript(es)
@@ -1826,6 +1981,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
         lastRunSeconds: runSeconds(),
         ...(finalClipDurations?.length ? { clipDurationsSec: finalClipDurations } : {})
       })
+      syncToServer('reassemble')
       setMediaKey((k) => k + 1)
       setProgressMsg('')
     }
@@ -2030,6 +2186,10 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     recut,
     revertRecut,
     applyShotSwap,
+    // For screens that change files OUTSIDE a render -- the voiceover page's
+    // takes above all. waiting_vo is terminal, so without an explicit sync an
+    // evening of recording existed in exactly one browser.
+    syncFiles: (why: string) => syncToServer(why),
     stop,
     stopping,
     openEditor

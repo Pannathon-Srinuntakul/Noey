@@ -22,6 +22,7 @@ import {
   type VideoReader
 } from './media'
 import { blobForPath } from './jobs/probe'
+import { openStagedWrite, readFile } from '../platform/fs'
 
 /** The pipeline renders at 30 fps; the editor's frame nudge assumes it too. */
 export const OUTPUT_FPS = 30
@@ -34,6 +35,15 @@ export interface CutSpec {
 }
 
 export interface CutRenderRequest {
+  /**
+   * Stream the finished video to this project path instead of returning it in
+   * RAM. Every encode used to buffer the WHOLE output MP4 in memory (plus
+   * mediabunny's in-memory faststart copy) -- a long 1080x1920 render held
+   * gigabytes for nothing, on exactly the devices with the least to spare.
+   * When set, `video` in the result is the (lazy, handle-backed) File that was
+   * written.
+   */
+  outPath?: string
   uid: string
   cuts: CutSpec[]
   captionStyle?: CaptionStyle
@@ -101,8 +111,14 @@ export async function renderCutList(req: CutRenderRequest): Promise<CutRenderRes
 
   const { width, height } = await outputGeometry(uid, clips, cuts[0].sourceClip)
 
+  // Only the sources the cut list references (plus the first clip, the
+  // lookup's fallback). Opening every project clip downloaded ALL of them on a
+  // restored project, and a clip the render never needed could kill it.
+  const wanted = new Set<string>(cuts.map((c) => c.sourceClip))
+  wanted.add(clips[0].id)
   const readers = new Map<string, VideoReader>()
   for (const c of clips) {
+    if (!wanted.has(c.id)) continue
     readers.set(c.id, await openVideo(await blobForPath(projectFilePath(uid, c.file))))
   }
 
@@ -171,6 +187,7 @@ export async function renderCutList(req: CutRenderRequest): Promise<CutRenderRes
 
   if (writeClips) clipWriter = await openClipWriter(width, height, OUTPUT_FPS)
 
+  const staged = req.outPath ? await openStagedWrite(req.outPath) : null
   try {
     req.onSegment?.(1, cuts.length)
 
@@ -190,7 +207,13 @@ export async function renderCutList(req: CutRenderRequest): Promise<CutRenderRes
           req.onSegment?.(segIndex + 1, cuts.length)
         }
         const src = (await pass.next()).value ?? null
-        if (!src) return false
+        // Fail LOUD. Returning false ended the whole render quietly: the
+        // output finalized, durationSec still described the requested cut
+        // list, and the bundle shipped a subset with no notice. A source that
+        // cannot produce a frame at a requested timestamp is a broken cut.
+        if (!src) {
+          throw new Error(`อ่านภาพจากคลิปต้นทางไม่ได้ที่ฉากที่ ${segIndex + 1} — ลองตัดฉากนั้นใหม่`)
+        }
 
         // COVER, never stretch: a source of a different aspect keeps its
         // proportions and loses the overflow, rather than being squashed.
@@ -218,22 +241,28 @@ export async function renderCutList(req: CutRenderRequest): Promise<CutRenderRes
         signal: req.signal,
         mirror: () => clipWriter
       },
-      {},
+      staged ? { writable: staged.writable } : {},
       (done, total) => req.onFrame?.(done, total)
     )
-    if (!video) throw new Error('ประมวลผลวิดีโอไม่สำเร็จ')
+    let published: Blob | null = video
+    if (staged) {
+      const path = await staged.publish()
+      published = await readFile(path)
+    }
+    if (!published) throw new Error('ประมวลผลวิดีโอไม่สำเร็จ')
 
     // The last cut has no successor to close it.
     await closeClip(segIndex)
 
     return {
-      video,
+      video: published,
       width,
       height,
       durationSec: Math.round((totalFrames / OUTPUT_FPS) * 1000) / 1000,
       clipDurationsSec
     }
   } catch (err) {
+    await staged?.discard().catch(() => undefined)
     // A half-written clip on disk would be indistinguishable from a finished
     // one, and the bundle zips whatever `clips/` holds. The clips already
     // written are consistent with the cut list up to this point; the one still

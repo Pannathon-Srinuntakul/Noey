@@ -28,6 +28,7 @@ import {
 import { pickFile } from '../lib/pickFile'
 import { cn } from '../lib/cn'
 import { canUseZoomEffects } from '../lib/platformFeatures'
+import { emitTokens } from '../lib/sessionBus'
 import { usePublishNavSection } from '../lib/navSection'
 import { PageHeader } from '../components/shell/PageHeader'
 import { Button } from '../components/ui/Button'
@@ -936,7 +937,11 @@ export default function EffectsStudioPage({
     baseUrl: session.baseUrl,
     accessToken: session.accessToken,
     refreshToken: session.refreshToken,
-    onTokens: () => undefined
+    // Refreshed tokens used to be DROPPED here (onTokens was a no-op), so the
+    // page kept working while the rest of the app -- App state, the service
+    // worker, the next page mounted from the same props -- stayed on the dead
+    // token. The bus hands them to App, which owns all three.
+    onTokens: (access, refresh) => emitTokens(access, refresh)
   }
 
   useStyleCounts(apiSession, styleNonce, (cut, effects) =>

@@ -15,6 +15,7 @@ import { Skeleton } from '../components/ui/Skeleton'
 import { Switch } from '../components/ui/Switch'
 import { Tabs } from '../components/ui/Tabs'
 import { authedFetch, serverMessage } from '../lib/authedFetch'
+import { emitTokens } from '../lib/sessionBus'
 import { useConfirm } from '../lib/confirm'
 import { useJobs } from '../lib/jobs'
 
@@ -96,6 +97,9 @@ async function fetchUsage(session: Session): Promise<Usage> {
     accessToken: pair.access_token,
     refreshToken: pair.refresh_token
   })
+  // Storage alone left React state and the service worker on the dead token;
+  // the bus hands the pair to App, which updates both.
+  emitTokens(pair.access_token, pair.refresh_token)
   return getUsage(session.baseUrl, accessToken)
 }
 

@@ -83,6 +83,10 @@ def _sync_upload_dir(local_dir: pathlib.Path, prefix: str) -> int:
     for f in local_dir.rglob("*"):
         if not f.is_file():
             continue
+        # Never the atomic-write stagers: a `.part` caught mid-write uploads a
+        # torn file that is then counted, hidden and undeletable in the bucket.
+        if f.name.startswith("."):
+            continue
         key = prefix + str(f.relative_to(local_dir)).replace("\\", "/")
         client.upload_file(str(f), bucket, key)
         count += 1

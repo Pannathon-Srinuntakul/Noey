@@ -11,7 +11,8 @@ import { join, resolve } from 'node:path'
 
 const SRC = resolve(__dirname, '..')
 
-const VENDOR = /anthropic|claude|openai|chatgpt|gpt-4|gemini|twelve ?labs|pegasus|eleven ?labs|elevenlabs|scribe_v|whisper|litellm|deepgram/i
+const VENDOR =
+  /anthropic|claude|openai|chatgpt|gpt-4|gemini|twelve ?labs|pegasus|eleven ?labs|elevenlabs|scribe_v|whisper|litellm|deepgram/i
 
 /** Files whose STRINGS reach a user. Comments are allowed to name reality. */
 function sourceFiles(dir: string): string[] {
@@ -34,13 +35,30 @@ function sourceFiles(dir: string): string[] {
  * positive here costs one rename while a false negative ships a leak.
  */
 function stringsOf(source: string): string[] {
-  const withoutComments = source
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/^\s*\/\/.*$/gm, '')
-  return [...withoutComments.matchAll(/'((?:[^'\\\n]|\\.)*)'|"((?:[^"\\\n]|\\.)*)"/g)].map(
+  const withoutComments = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+  // Single-quoted, double-quoted, TEMPLATE LITERALS (multi-line) and JSX text
+  // between tags. The first version saw only the quoted pair, which left
+  // backtick strings and plain JSX copy unscanned.
+  const quoted = [...withoutComments.matchAll(/'((?:[^'\\\n]|\\.)*)'|"((?:[^"\\\n]|\\.)*)"/g)].map(
     (m) => m[1] ?? m[2] ?? ''
   )
+  const templates = [...withoutComments.matchAll(/`((?:[^`\\]|\\.)*)`/g)].map((m) => m[1] ?? '')
+  const jsxText = [...withoutComments.matchAll(/>([^<>{}]+)</g)].map((m) => m[1] ?? '')
+  return [...quoted, ...templates, ...jsxText]
 }
+
+describe('nothing under web/public names the AI stack either', () => {
+  // The service worker is user-fetchable source, comments included.
+  const PUB = resolve(SRC, '../public')
+  for (const name of readdirSync(PUB)) {
+    if (!/\.(js|html|json)$/.test(name)) continue
+    it(`public/${name} is clean`, () => {
+      const text = readFileSync(join(PUB, name), 'utf8')
+      const hits = text.split('\n').filter((line) => VENDOR.test(line))
+      expect(hits, `vendor name in public/${name}`).toEqual([])
+    })
+  }
+})
 
 describe('the UI never names the AI stack', () => {
   const files = sourceFiles(SRC)

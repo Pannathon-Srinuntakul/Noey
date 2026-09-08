@@ -62,7 +62,7 @@ export async function renderTimelineInto(
   const emit = opts.emit ?? ((): void => undefined)
 
   const rawCuts = ((timeline.timeline as TimelineCut[]) ?? []).filter((c) => c.type === 'cut')
-  if (rawCuts.length === 0) throw new Error('Timeline has no cuts')
+  if (rawCuts.length === 0) throw new Error('ไทม์ไลน์ไม่มีฉากให้เรนเดอร์ — ลองวางแผนใหม่อีกครั้ง')
 
   const cuts: CutSpec[] = rawCuts.map((c) => ({
     sourceClip: String(c.source ?? 'clip0'),
@@ -76,12 +76,21 @@ export async function renderTimelineInto(
   const sources = project?.clips ?? []
   const audioByClip = new Map<string, AudioBuffer | null>()
   for (const c of sources) {
+    // Only a clip that HAS no audio may become silence. This catch used to
+    // swallow fetch and decode failures too — and these are the modes built on
+    // the original audio, so one transient failure here wrote a silent
+    // final.mp4, reported it as done, and the size-diffed sync then pushed it
+    // over the good server copy.
+    if (c.hasAudio === false) {
+      audioByClip.set(c.id, null)
+      continue
+    }
     try {
       audioByClip.set(c.id, await decodeBlob(await blobForPath(projectFilePath(uid, c.file))))
     } catch {
-      // A clip with no audio track is not fatal here — it renders silent, and
-      // `extract-audio` is where a missing track is reported.
-      audioByClip.set(c.id, null)
+      throw new Error(
+        `อ่านเสียงจากคลิปต้นฉบับไม่ได้ (${c.file.split('/').pop()}) — ลองใหม่อีกครั้ง`
+      )
     }
   }
 
@@ -123,6 +132,7 @@ export async function renderTimelineInto(
   emit({ event: 'progress', stage: 'cut', step: 1, total: cuts.length })
 
   const out = await renderCutList({
+    outPath: projectFilePath(uid, outName),
     uid,
     cuts,
     audio,
@@ -141,8 +151,6 @@ export async function renderTimelineInto(
         message: `${Math.round((done / total) * 100)}%`
       })
   })
-
-  await writeFileAtomic(projectFilePath(uid, outName), out.video)
 
   // The SRT sits beside a highlight (`hNN.srt`) but in `captions/` for the
   // single-video modes, so exporting one highlight grabs a matching pair.

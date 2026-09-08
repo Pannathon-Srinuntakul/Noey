@@ -13,6 +13,14 @@ async function exists(uid: string, rel: string): Promise<boolean> {
     // The body is a single byte, but an unread stream keeps the main-process
     // read stream (and its file handle) open until GC.
     await r.arrayBuffer().catch(() => undefined)
+    // The worker passes an expired session through as 401/403 (it used to be
+    // flattened into 404). That is not "the file is gone": nudge the API layer
+    // to refresh -- one authenticated round trip renews the token, App hands
+    // it to the worker, and the next probe sees the file again.
+    if (r.status === 401 || r.status === 403) {
+      window.dispatchEvent(new Event('noey:media-auth-stale'))
+      return false
+    }
     return r.status === 206 || r.status === 200
   } catch {
     return false

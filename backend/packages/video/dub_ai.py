@@ -1403,7 +1403,7 @@ async def plan_dub_timeline_cuts(
     parsed = parse_llm_json(raw)
     raw_cuts = parsed.get("timeline", [])
     if not raw_cuts:
-        raise ValueError("Claude returned empty timeline for dub_first")
+        raise ValueError("AI ไม่ได้ส่ง timeline กลับมา — กดลองใหม่อีกครั้ง")
 
     boundaries = build_clip_boundaries(clip_durations)
     render_cuts = filter_short_cuts(
@@ -1411,5 +1411,5 @@ async def plan_dub_timeline_cuts(
         min_sec=MIN_RENDER_CUT_SEC,
     )
     if not render_cuts:
-        raise ValueError("No valid cuts remain after localization")
+        raise ValueError("แผนตัดที่ได้ใช้ไม่ได้ — กดลองใหม่อีกครั้ง")
     return render_cuts

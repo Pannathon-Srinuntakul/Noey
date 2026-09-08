@@ -160,7 +160,7 @@ async def test_plan_dub_timeline_cuts_empty_raises(monkeypatch: pytest.MonkeyPat
         return '{"timeline": []}'
 
     monkeypatch.setattr("packages.llm.gateway.complete", fake_complete)
-    with pytest.raises(ValueError, match="empty timeline"):
+    with pytest.raises(ValueError, match="timeline"):
         await dub_ai.plan_dub_timeline_cuts({"segments": []}, 10.0, [10.0])
 
 

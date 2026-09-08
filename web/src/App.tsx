@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { onAuthLost, onTokens } from './lib/sessionBus'
 import { me, restoreSession, type Me } from './lib/api'
 import type { ApiSession } from './lib/videosLocalApi'
 import { ConfirmProvider } from './lib/confirm'
@@ -16,6 +17,27 @@ import LoginPage from './pages/LoginPage'
 // Backend URL is baked in at build time — users never see or set it.
 // Override for local dev/self-hosting: VITE_BACKEND_URL=... npm run build
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL ?? 'https://noey-api-production.up.railway.app'
+
+/**
+ * The browser's store is per ORIGIN, not per account. Logging out and signing
+ * in as someone else used to land the new account on the previous account's
+ * projects -- listed, playable, exportable. The store remembers whose it is,
+ * and a different owner starts from an empty one (their own projects come back
+ * from the server via restoreMissingProjects).
+ */
+const STORE_OWNER_KEY = 'noey.storeOwner'
+
+async function ensureStoreOwner(email: string): Promise<void> {
+  try {
+    const prev = localStorage.getItem(STORE_OWNER_KEY)
+    if (prev && prev !== email) {
+      await window.noey.storage.clearAll()
+    }
+    localStorage.setItem(STORE_OWNER_KEY, email)
+  } catch {
+    // Storage being unavailable must not block login.
+  }
+}
 
 export interface Session {
   baseUrl: string
@@ -103,6 +125,67 @@ function Workspace({
 function App(): React.JSX.Element {
   const [session, setSession] = useState<Session | null>(null)
   const [restoring, setRestoring] = useState(true)
+
+  // Tokens refreshed OUTSIDE the shared session object (the settings page's
+  // private path, the style library) and refreshes that FAIL both arrive over
+  // the bus: App owns the state and the service worker, so it is the one
+  // place that can keep every consumer on the live token -- or end the
+  // session visibly when there is no live token to be had.
+  // A media probe hit an expired token (the worker cannot refresh it). One
+  // authenticated request through the refreshing helper renews the pair, and
+  // the onTokens wiring below hands it to the worker.
+  useEffect(() => {
+    let busy = false
+    const kick = (): void => {
+      if (busy) return
+      busy = true
+      void (async () => {
+        try {
+          const raw = localStorage.getItem('noey.auth')
+          if (!raw) return
+          const stored = JSON.parse(raw) as {
+            baseUrl: string
+            email: string
+            accessToken: string
+            refreshToken: string
+          }
+          const pair = await restoreSession(BACKEND_URL, stored.accessToken, stored.refreshToken)
+          if (pair) {
+            await window.noey.auth.save({
+              ...stored,
+              accessToken: pair.access_token,
+              refreshToken: pair.refresh_token
+            })
+            setSession((s) =>
+              s ? { ...s, accessToken: pair.access_token, refreshToken: pair.refresh_token } : s
+            )
+          }
+        } catch {
+          // The next user-driven API call will surface the real state.
+        } finally {
+          setTimeout(() => {
+            busy = false
+          }, 30_000)
+        }
+      })()
+    }
+    window.addEventListener('noey:media-auth-stale', kick)
+    return () => window.removeEventListener('noey:media-auth-stale', kick)
+  }, [])
+
+  useEffect(() => {
+    const offTokens = onTokens(({ accessToken, refreshToken }) => {
+      setSession((s) => (s ? { ...s, accessToken, refreshToken } : s))
+    })
+    const offLost = onAuthLost(() => {
+      window.noey.auth.clear()
+      setSession(null)
+    })
+    return () => {
+      offTokens()
+      offLost()
+    }
+  }, [])
   // Temporary — components/ui/* preview page, no login required. See
   // PLAN.md chunk 1. Remove once the redesign ships.
   const [devUi] = useState(() => window.location.hash === '#/dev/ui')
@@ -121,6 +204,7 @@ function App(): React.JSX.Element {
         accessToken: pair.access_token,
         refreshToken: pair.refresh_token
       })
+      await ensureStoreOwner(profile.email)
       setSession({
         baseUrl: BACKEND_URL,
         accessToken: pair.access_token,
@@ -136,6 +220,11 @@ function App(): React.JSX.Element {
   const logout = useCallback(() => {
     window.noey.auth.clear()
     setSession(null)
+  }, [])
+
+  const onLogin = useCallback(async (next: Session) => {
+    await ensureStoreOwner(next.profile.email)
+    setSession(next)
   }, [])
 
   if (devUi) {
@@ -163,7 +252,7 @@ function App(): React.JSX.Element {
             กำลังโหลด…
           </div>
         ) : (
-          <LoginPage backendUrl={BACKEND_URL} onLogin={setSession} />
+          <LoginPage backendUrl={BACKEND_URL} onLogin={(next) => void onLogin(next)} />
         )}
       </div>
     </div>

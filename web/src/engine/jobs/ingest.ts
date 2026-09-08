@@ -21,7 +21,7 @@
  * concatenates streams, the composer draws frames and mixes audio separately.
  */
 
-import { projectFilePath, writeFileAtomic, deleteDir } from '../../platform/fs'
+import { projectFilePath, writeFileAtomic, deleteDir, readFile } from '../../platform/fs'
 import { stageIntoStore, stagingDir } from '../../platform/picked'
 import { signalOf, throwIfAborted } from '../abort'
 import type { LocalClip, SidecarEvent } from '../../platform/types'
@@ -116,6 +116,7 @@ registerJob('ingest', async (job, emit: ProgressCallback): Promise<SidecarEvent>
 
     // Everything ends up as H.264 in an MP4 — see PASSTHROUGH_CODEC above.
     let isMp4 = extOf(name) === '.mp4'
+    let alreadyStored = false
     if (info.codec === PASSTHROUGH_CODEC) {
       // Already the right pictures; only the container may be wrong.
       if (!isMp4) {
@@ -126,7 +127,7 @@ registerJob('ingest', async (job, emit: ProgressCallback): Promise<SidecarEvent>
           total: sources.length,
           message: `กำลังจัดรูปแบบ ${name} เป็น MP4…`
         })
-        const remuxed = await remuxToMp4(blob)
+        const remuxed = await remuxToMp4(blob, signal)
         if (remuxed) {
           blob = remuxed
           info = await probeSource(blob)
@@ -143,9 +144,16 @@ registerJob('ingest', async (job, emit: ProgressCallback): Promise<SidecarEvent>
         total: sources.length,
         message: `กำลังแปลง ${name} เป็น MP4…`
       })
-      blob = await transcodeToH264(blob, info, signal)
+      // Streamed straight into its final home -- the conversion no longer
+      // returns (or ever holds) the whole MP4 in memory.
+      const transRel = `normalized/norm_${String(i).padStart(3, '0')}.mp4`
+      await transcodeToH264(blob, info, signal, projectFilePath(uid, transRel))
+      const written = await readFile(projectFilePath(uid, transRel))
+      if (!written) throw new Error('แปลงไฟล์ไม่สำเร็จ')
+      blob = written
       info = await probeSource(blob)
       isMp4 = true
+      alreadyStored = true
     } else {
       throw new Error(undecodableMessage(name, info.codec))
     }
@@ -153,7 +161,7 @@ registerJob('ingest', async (job, emit: ProgressCallback): Promise<SidecarEvent>
     // The stored name states what the file IS, so nothing downstream has to
     // sniff it: `.mp4` unless a remux failed and the original container stayed.
     const rel = `normalized/norm_${String(i).padStart(3, '0')}${isMp4 ? '.mp4' : extOf(name)}`
-    await writeFileAtomic(projectFilePath(uid, rel), blob)
+    if (!alreadyStored) await writeFileAtomic(projectFilePath(uid, rel), blob)
 
     const id = `clip${i}`
     clips.push({

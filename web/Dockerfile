@@ -24,5 +24,13 @@ RUN npm run build
 
 FROM nginx:1.27-alpine
 COPY --from=build /app/dist /usr/share/nginx/html
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+
+# Into templates/, not conf.d/: the image's entrypoint runs envsubst over this
+# and writes the result to conf.d, which is what lets the server bind the port
+# the platform assigns at run time. See nginx.conf.template.
+COPY nginx.conf.template /etc/nginx/templates/default.conf.template
+
+# The default for a plain `docker run`. Railway, Cloud Run and Heroku all
+# override it, and the template follows whatever they set.
+ENV PORT=80
 EXPOSE 80

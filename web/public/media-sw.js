@@ -173,6 +173,18 @@ self.addEventListener('message', (event) => {
         else delete state.projects[data.uid]
       })
     )
+  } else if (data.type === 'sw:projects') {
+    // The page's full current list, REPLACING the stored map. Per-entry merges
+    // kept an entry for every project ever deleted, forever.
+    event.waitUntil(
+      updateState((state) => {
+        const next = {}
+        for (const p of data.projects || []) {
+          if (p && p.uid && p.remoteUid) next[p.uid] = p.remoteUid
+        }
+        state.projects = next
+      })
+    )
   }
 })
 

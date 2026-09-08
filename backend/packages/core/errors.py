@@ -157,13 +157,24 @@ def _is_upstream_llm_error(text: str) -> bool:
 _VENDOR_MARKERS = re.compile(
     r"(anthropic|claude|openai|gpt-|chatgpt|gemini|google|vertex|palm|"
     r"eleven\s*labs|elevenlabs|scribe|whisper|deepgram|assemblyai|"
-    r"twelve\s*labs|pegasus|litellm|bedrock|azure|huggingface|"
+    r"twelve\s*labs|pegasus|litellm|bedrock|azure|huggingface|\bLLM\b|"
     r"x-api-key|api[_-]?key|sk-[a-z0-9-]{8,}|"
     r"\b[a-z]+-\d+(\.\d+)?-(flash|pro|sonnet|haiku|opus|mini|turbo)\b)",
     re.IGNORECASE,
 )
 
 _GENERIC = "เกิดข้อผิดพลาด กรุณาลองใหม่อีกครั้ง"
+
+
+def scrub_vendor_tokens(text: str) -> str:
+    """Blank the vendor-shaped TOKENS inside free text, keeping the rest.
+
+    For streamed model reasoning ('thinking' excerpts): the model can name
+    itself or its provider mid-sentence, and the excerpt is shown in the UI.
+    Replacing the whole excerpt would kill a feature; replacing the tokens
+    keeps it honest.
+    """
+    return _VENDOR_MARKERS.sub("AI", text)
 
 
 def _scrub_vendor(text: str) -> str:

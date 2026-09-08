@@ -40,7 +40,7 @@ registerJob('render-silent', async (job, emit: ProgressCallback): Promise<Sideca
 
   const script = normalizeDubEditScript((job.editScript ?? {}) as DubEditScript)
   const segments = script.segments ?? []
-  if (segments.length === 0) throw new Error('Edit script has no segments')
+  if (segments.length === 0) throw new Error('AI ไม่ได้ส่งฉากมาเลย — กดให้ AI ตัดใหม่อีกครั้ง')
 
   const cuts: CutSpec[] = segments.map((seg) => ({
     sourceClip: String(seg.sourceClip ?? 'clip0'),
@@ -51,6 +51,7 @@ registerJob('render-silent', async (job, emit: ProgressCallback): Promise<Sideca
   emit({ event: 'progress', stage: 'cut', step: 1, total: cuts.length })
 
   const out = await renderCutList({
+    outPath: projectFilePath(uid, 'final_silent.mp4'),
     uid,
     cuts,
     captionStyle: job.captionStyle as CaptionStyle | undefined,
@@ -67,8 +68,6 @@ registerJob('render-silent', async (job, emit: ProgressCallback): Promise<Sideca
         message: `${Math.round((done / total) * 100)}%`
       })
   })
-
-  await writeFileAtomic(projectFilePath(uid, 'final_silent.mp4'), out.video)
 
   const scriptTxt = buildScriptTxt(segments, (job.brief as string) ?? null)
   await writeFileAtomic(projectFilePath(uid, 'script.txt'), new TextEncoder().encode(scriptTxt))

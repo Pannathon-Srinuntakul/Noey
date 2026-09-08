@@ -104,7 +104,17 @@ async function request<T>(
   }
 
   if (res.status === 401 && !retried) {
-    const pair = await refresh(session.baseUrl, session.refreshToken)
+    let pair
+    try {
+      pair = await refresh(session.baseUrl, session.refreshToken)
+    } catch {
+      // The refresh token itself is dead (revoked, or expired after 14 days).
+      // Nothing used to end the session here: every later call failed with an
+      // English server detail and the only way out was a manual reload.
+      const { emitAuthLost } = await import('./sessionBus')
+      emitAuthLost()
+      throw new ApiError(401, 'เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่')
+    }
     session.accessToken = pair.access_token
     session.refreshToken = pair.refresh_token
     session.onTokens?.(pair.access_token, pair.refresh_token)

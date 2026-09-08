@@ -2,7 +2,6 @@ import { useCallback, useEffect } from 'react'
 import { useConfirm } from './confirm'
 import { useJobs } from './jobs'
 import { useToast } from './toast'
-import { deleteRemote } from './videosLocalApi'
 
 /**
  * Confirm → hide → 10s undo window → actually delete (HANDOFF §6 item 3).
@@ -72,10 +71,38 @@ export function useDeleteProject(): (uid: string, name: string) => Promise<void>
 
       const commit = (): void => {
         pending.delete(uid)
-        if (remoteUid) deleteRemote(session, remoteUid).catch(() => undefined)
-        void window.noey.projects
-          .delete(uid)
-          .catch((err) => window.noey.log.write('delete', `failed uid=${uid}: ${String(err)}`))
+        const dropLocal = (): void => {
+          void window.noey.projects
+            .delete(uid)
+            .catch((err) => window.noey.log.write('delete', `failed uid=${uid}: ${String(err)}`))
+        }
+        if (!remoteUid) {
+          dropLocal()
+          return
+        }
+        // keepalive: the flush can run from `pagehide`, where an ordinary
+        // fetch is killed with the page. And the LOCAL copy only goes once the
+        // server row is gone -- deleting local-first left a surviving server
+        // row that restoreMissingProjects resurrected on the next load, which
+        // to the user is a project that refuses to die.
+        fetch(`${session.baseUrl.replace(/\/+$/, '')}/videos/${remoteUid}`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${session.accessToken}` },
+          keepalive: true
+        })
+          .then((res) => {
+            if (res.ok || res.status === 404) dropLocal()
+            else {
+              void window.noey.log.write('delete', `remote refused uid=${uid}: HTTP ${res.status}`)
+              reload()
+            }
+          })
+          .catch(() => {
+            // Offline: keep both copies consistent (both alive); the user can
+            // delete again when the connection is back.
+            void window.noey.log.write('delete', `remote unreachable uid=${uid}`)
+            reload()
+          })
       }
 
       const timer = setTimeout(commit, 10_000)

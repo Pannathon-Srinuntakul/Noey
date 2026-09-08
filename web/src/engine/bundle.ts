@@ -7,7 +7,7 @@
  */
 
 import { zipSync } from 'fflate'
-import { listProjectDir, projectFilePath, writeFileAtomic } from '../platform/fs'
+import { listDir, listProjectDir, projectFilePath, writeFileAtomic } from '../platform/fs'
 import { blobForPath } from './jobs/probe'
 
 async function bytesOf(blob: Blob): Promise<Uint8Array> {
@@ -24,7 +24,15 @@ async function bytesOf(blob: Blob): Promise<Uint8Array> {
  */
 async function perSceneClips(uid: string): Promise<Record<string, Uint8Array>> {
   const out: Record<string, Uint8Array> = {}
-  const entries = (await listProjectDir(uid, 'clips'))
+  // LOCAL first: a bundle is built right after a render, and the render just
+  // wrote this browser's clips/. The merged listing exists for the restored
+  // project whose clips live only on the server -- but merging it here too let
+  // a STALE cached manifest (from before the re-cut) add the previous run's
+  // extra scenes into the zip.
+  const localOnly = (await listDir(projectFilePath(uid, 'clips'))).filter(
+    (e) => e.kind === 'file' && e.name.endsWith('.mp4')
+  )
+  const entries = (localOnly.length > 0 ? localOnly : await listProjectDir(uid, 'clips'))
     .filter((e) => e.kind === 'file' && e.name.endsWith('.mp4'))
     .sort((a, b) => a.name.localeCompare(b.name))
   for (const e of entries) {

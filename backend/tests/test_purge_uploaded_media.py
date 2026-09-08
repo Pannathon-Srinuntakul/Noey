@@ -72,7 +72,7 @@ def test_refuses_a_directory_that_is_not_uploaded_media(project):
 
 def test_the_allow_list_is_only_uploaded_media(project):
     """Nothing a render produces may appear here."""
-    assert set(PURGEABLE_MEDIA_DIRS) == {"proxy", "audio", "music", "effects", "ai_reedit"}
+    assert set(PURGEABLE_MEDIA_DIRS) == {"proxy", "audio", "music", "effects", "ai_reedit", "frames"}
     for produced in ("clips", "normalized", "highlights", "captions", "previous"):
         assert produced not in PURGEABLE_MEDIA_DIRS
 

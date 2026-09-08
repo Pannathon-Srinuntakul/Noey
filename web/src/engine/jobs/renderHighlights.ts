@@ -10,6 +10,7 @@
  * anything reading `final.mp4` must find nothing rather than a lookalike.
  */
 
+import { deleteDir, projectFilePath } from '../../platform/fs'
 import type { SidecarEvent } from '../../platform/types'
 import { renderTimelineInto } from './renderTimeline'
 import { registerJob, type ProgressCallback } from '../index'
@@ -26,7 +27,14 @@ registerJob('render-highlights', async (job, emit: ProgressCallback): Promise<Si
     .pop() as string
   const index = (job.index ?? {}) as { items?: HighlightItem[] }
   const items = (index.items ?? []).filter((i) => i && typeof i === 'object')
-  if (items.length === 0) throw new Error('highlight index has no items')
+  if (items.length === 0) throw new Error('ไม่มีไฮไลต์ให้เรนเดอร์ — ลองถอดเสียงใหม่อีกครั้ง')
+
+  // A re-plan can produce FEWER highlights. Without this, h05/h06 from the
+  // previous run stayed on disk, appeared in the export list with nothing
+  // marking them as rejected, and were re-uploaded to S3 against the quota.
+  // Every sibling render clears its own output the same way (cutRender wipes
+  // clips/, extract-audio wipes stale WAVs).
+  await deleteDir(projectFilePath(uid, 'highlights'))
 
   const done: { id: string; final: string; srt: string; durationSec: number }[] = []
   for (let n = 0; n < items.length; n++) {

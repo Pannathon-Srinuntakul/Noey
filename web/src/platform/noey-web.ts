@@ -104,10 +104,22 @@ const noey = {
       }
 
       const entries: Record<string, Uint8Array> = {}
+      const failed: string[] = []
       for (const a of chosen) {
         const res = await fetch(mediaUrlFor(uid, a.id))
-        if (!res.ok) continue
+        // A file that cannot be fetched must FAIL the export, not shrink it:
+        // "ส่งออกไฟล์แล้ว" over a zip quietly missing half its contents is the
+        // kind of success nobody can act on.
+        if (!res.ok) {
+          failed.push(a.name)
+          continue
+        }
         entries[a.name] = new Uint8Array(await res.arrayBuffer())
+      }
+      if (failed.length > 0) {
+        throw new Error(
+          `ดึงไฟล์ไม่ได้ ${failed.length} รายการ (${failed.join(', ')}) — ลองใหม่อีกครั้ง`
+        )
       }
       const safeName = projectName.replace(/[\\/:*?"<>|]/g, '_') || 'project'
       const zipped = zipSync(entries)

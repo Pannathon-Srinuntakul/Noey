@@ -81,6 +81,10 @@ export default function VoiceoverPage({ uid }: { uid: string }): React.JSX.Eleme
   const saveTake = async (lineId: number, file: string, durationSec: number): Promise<void> => {
     const current = (await window.noey.projects.get(uid))?.voiceoverTakes ?? {}
     await patch({ voiceoverTakes: { ...current, [String(lineId)]: { file, durationSec } } })
+    // Takes are recorded at waiting_vo -- a resting state where nothing else
+    // will ever sync. Without this, an evening of recording existed in exactly
+    // one browser: the size-diffed push uploads only the new webm.
+    job?.syncFiles('voiceover-take')
   }
 
   const recorder = useVoiceoverRecorder(uid, saveTake)
@@ -205,6 +209,9 @@ export default function VoiceoverPage({ uid }: { uid: string }): React.JSX.Eleme
     delete rest[String(lineId)]
     await patch({ voiceoverTakes: rest })
     await window.noey.projects.deleteFile(uid, takeFileFor(lineId))
+    // The sweep (voiceover/ is sweepable now) removes the discarded take's
+    // server copy; project.json records the removal either way.
+    job?.syncFiles('voiceover-discard')
   }
 
   const render = async (): Promise<void> => {

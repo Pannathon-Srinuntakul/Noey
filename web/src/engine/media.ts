@@ -316,7 +316,11 @@ export async function encodeVideo(
 
   const bufferTarget = target.writable ? null : new BufferTarget()
   const output = new Output({
-    format: new Mp4OutputFormat({ fastStart: 'in-memory' }),
+    // In-memory faststart holds the WHOLE file until finalize, which defeats a
+    // streamed target. moov-at-end is fine for every consumer here: the
+    // service worker answers Range requests off OPFS, and a player fetching
+    // from the server asks for the tail with its own Range request.
+    format: new Mp4OutputFormat(target.writable ? {} : { fastStart: 'in-memory' }),
     target: target.writable
       ? new StreamTarget(target.writable, { chunked: true })
       : (bufferTarget as BufferTarget)
@@ -467,7 +471,7 @@ export async function remuxWithAudio(video: Blob, audio: AudioBuffer | null): Pr
  * Returns null when the packets cannot be copied, so the caller can fall back
  * to a real transcode.
  */
-export async function remuxToMp4(source: Blob): Promise<Blob | null> {
+export async function remuxToMp4(source: Blob, signal?: AbortSignal): Promise<Blob | null> {
   const input = new Input({ formats: ALL_FORMATS, source: new BlobSource(source) })
   try {
     const videoTrack = await input.getPrimaryVideoTrack()
@@ -503,6 +507,9 @@ export async function remuxToMp4(source: Blob): Promise<Blob | null> {
     try {
       let first = true
       for await (const packet of new EncodedPacketSink(videoTrack).packets()) {
+        // Checked per packet: a long .mov's copy used to run to completion
+        // after หยุดงาน, holding the project's job lock the whole time.
+        if (signal?.aborted) throw new DOMException('ยกเลิกแล้ว', 'AbortError')
         await videoSource.add(packet, first ? { decoderConfig: videoConfig } : undefined)
         first = false
       }
@@ -511,6 +518,7 @@ export async function remuxToMp4(source: Blob): Promise<Blob | null> {
       if (audioSource && audioTrack && audioConfig) {
         let firstAudio = true
         for await (const packet of new EncodedPacketSink(audioTrack).packets()) {
+          if (signal?.aborted) throw new DOMException('ยกเลิกแล้ว', 'AbortError')
           await audioSource.add(packet, firstAudio ? { decoderConfig: audioConfig } : undefined)
           firstAudio = false
         }
@@ -528,6 +536,92 @@ export async function remuxToMp4(source: Blob): Promise<Blob | null> {
     return null
   } finally {
     input.dispose()
+  }
+}
+
+/**
+ * Put the DONOR's audio track under an already-encoded video by packet copy,
+ * streamed to `outPath`.
+ *
+ * This is how a converted clip keeps its sound without ever decoding it: the
+ * common case (an iPhone HEVC recording) carries AAC audio, which copies
+ * straight into the MP4. The old approach decoded the donor's entire PCM into
+ * RAM first — ~384 kB per second, ~2.7 GB for a clip at the 2 h cap — and a
+ * blanket catch turned ANY failure into a silent clip that a later stage
+ * reported as "คลิปนี้ไม่มีเสียง" about footage the user could hear in their
+ * own player.
+ *
+ * Returns false when the donor has no audio the muxer can describe; the
+ * caller decides what a silent fallback should look like.
+ */
+export async function attachDonorAudio(
+  video: Blob,
+  donor: Blob,
+  outPath: string,
+  signal?: AbortSignal
+): Promise<boolean> {
+  const { openStagedWrite } = await import('../platform/fs')
+  const videoInput = new Input({ formats: ALL_FORMATS, source: new BlobSource(video) })
+  const donorInput = new Input({ formats: ALL_FORMATS, source: new BlobSource(donor) })
+  try {
+    const videoTrack = await videoInput.getPrimaryVideoTrack()
+    if (!videoTrack) return false
+    const videoCodec = await videoTrack.getCodec()
+    const videoConfig = (await videoTrack.getDecoderConfig()) as VideoDecoderConfig | null
+    if (!videoCodec || !videoConfig) return false
+
+    const audioTrack = await donorInput.getPrimaryAudioTrack()
+    if (!audioTrack) return false
+    const audioCodec = await audioTrack.getCodec()
+    const audioConfig = (await audioTrack.getDecoderConfig()) as AudioDecoderConfig | null
+    if (!audioCodec || !audioConfig) return false
+
+    const staged = await openStagedWrite(outPath)
+    const output = new Output({
+      // moov at end: both consumers (the service worker and a Range-capable
+      // player) seek fine, and in-memory faststart would defeat the stream.
+      format: new Mp4OutputFormat({}),
+      target: new StreamTarget(staged.writable, { chunked: true })
+    })
+    try {
+      const stats = await videoTrack.computePacketStats(120)
+      const videoSource = new EncodedVideoPacketSource(videoCodec)
+      output.addVideoTrack(videoSource, {
+        frameRate: Math.max(1, Math.round(stats.averagePacketRate || 30))
+      })
+      const audioSource = new EncodedAudioPacketSource(audioCodec)
+      output.addAudioTrack(audioSource)
+
+      await output.start()
+      let first = true
+      for await (const packet of new EncodedPacketSink(videoTrack).packets()) {
+        if (signal?.aborted) throw new DOMException('ยกเลิกแล้ว', 'AbortError')
+        await videoSource.add(packet, first ? { decoderConfig: videoConfig } : undefined)
+        first = false
+      }
+      videoSource.close()
+      let firstAudio = true
+      for await (const packet of new EncodedPacketSink(audioTrack).packets()) {
+        if (signal?.aborted) throw new DOMException('ยกเลิกแล้ว', 'AbortError')
+        await audioSource.add(packet, firstAudio ? { decoderConfig: audioConfig } : undefined)
+        firstAudio = false
+      }
+      audioSource.close()
+      await output.finalize()
+      await staged.publish()
+      return true
+    } catch (err) {
+      await output.cancel().catch(() => undefined)
+      await staged.discard().catch(() => undefined)
+      if (err instanceof Error && err.name === 'AbortError') throw err
+      return false
+    }
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') throw err
+    return false
+  } finally {
+    videoInput.dispose()
+    donorInput.dispose()
   }
 }
 

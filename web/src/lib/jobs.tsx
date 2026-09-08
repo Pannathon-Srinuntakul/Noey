@@ -129,6 +129,14 @@ export function JobsProvider({
 
   const reload = useCallback(() => {
     window.noey.projects.list().then((list) => {
+      // The service worker gets the uid→remoteUid map BEFORE the list renders:
+      // the first <video> mounts the moment setProjects lands, and a media
+      // request for a restored project that raced this message 404'd because
+      // the worker did not yet know which server project the uid belongs to.
+      navigator.serviceWorker?.controller?.postMessage({
+        type: 'sw:projects',
+        projects: list.map((p) => ({ uid: p.uid, remoteUid: p.remote?.uid ?? null }))
+      })
       setProjects(list)
       setLoading(false)
     })
@@ -159,9 +167,12 @@ export function JobsProvider({
   useEffect(() => {
     const sw = navigator.serviceWorker?.controller
     if (!sw) return
-    for (const p of projects) {
-      sw.postMessage({ type: 'sw:project', uid: p.uid, remoteUid: p.remote?.uid ?? null })
-    }
+    // The WHOLE map in one message, replacing what the worker holds: per-entry
+    // merges kept an entry for every project ever deleted, forever.
+    sw.postMessage({
+      type: 'sw:projects',
+      projects: projects.map((p) => ({ uid: p.uid, remoteUid: p.remote?.uid ?? null }))
+    })
   }, [projects])
 
   // A job started from the phone is written straight to disk by the main

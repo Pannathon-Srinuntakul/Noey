@@ -27,6 +27,12 @@ function fieldName(loc: unknown[] | undefined): string {
  * Falls back to `HTTP <status>` only when the body carries nothing usable.
  */
 export function apiErrorDetail(status: number, body: unknown): string {
+  // Status 0 is the web platform bridge's shape for "the request never got a
+  // response" (platform/api.ts catch) -- the body is a raw exception message,
+  // not a server detail. Without this branch every transport failure surfaced
+  // as the string "HTTP 0".
+  if (status === 0) return 'เชื่อมต่อ server ไม่ได้ ลองใหม่อีกครั้ง'
+
   const detail = (body as { detail?: unknown })?.detail
 
   if (typeof detail === 'string' && detail.trim()) return detail

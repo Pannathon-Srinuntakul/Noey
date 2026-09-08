@@ -15,7 +15,7 @@
  * to map the model's timestamps back onto the original footage.
  */
 
-import { projectFilePath, readJson, writeFileAtomic } from '../../platform/fs'
+import { projectFilePath, writeFileAtomic } from '../../platform/fs'
 import type { SidecarEvent } from '../../platform/types'
 import { encodeVideo, openVideo, probeSource } from '../media'
 import { registerJob, type ProgressCallback } from '../index'
@@ -32,7 +32,7 @@ const PROXY_BITRATE = 700_000
 interface UploadSource {
   id: string
   file: string
-  original: string
+  original?: string
 }
 
 interface ProxyEntry {
@@ -50,7 +50,20 @@ registerJob('extract-proxy', async (job, emit: ProgressCallback): Promise<Sideca
   const projectDir = String(job.projectDir ?? '')
   const uid = projectDir.split('/').pop() as string
 
-  const sources = await readJson<UploadSource[]>(projectFilePath(uid, 'upload_sources.json'))
+  // Through blobForPath, NOT a bare OPFS read: on a project restored from the
+  // server this file exists only there, and the bare read made "ให้ AI ตัดใหม่"
+  // flip a finished project to 'ยังไม่ได้นำเข้าคลิป' in every browser. The
+  // project row's clips carry the same id/file pairs, so they are the fallback
+  // for projects synced before the manifest was uploadable at all.
+  let sources: UploadSource[] | null = null
+  try {
+    const blob = await blobForPath(projectFilePath(uid, 'upload_sources.json'))
+    sources = JSON.parse(await blob.text()) as UploadSource[]
+  } catch {
+    const project = await window.noey.projects.get(uid)
+    const clips = project?.clips ?? []
+    if (clips.length > 0) sources = clips.map((c) => ({ id: c.id, file: c.file }))
+  }
   if (!sources || sources.length === 0) {
     throw new Error('ยังไม่ได้นำเข้าคลิป')
   }

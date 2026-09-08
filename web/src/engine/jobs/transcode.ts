@@ -13,18 +13,28 @@
  */
 
 import { decodeBlob } from '../audio'
-import { encodeVideo, openVideo, type SourceInfo } from '../media'
+import { deleteFile, openStagedWrite, readFile, writeFileAtomic } from '../../platform/fs'
+import { attachDonorAudio, encodeVideo, openVideo, remuxWithAudio, type SourceInfo } from '../media'
 
 /** Even dimensions — H.264 requires them, and odd sizes fail to configure. */
 function even(n: number): number {
   return n % 2 === 0 ? n : n - 1
 }
 
+/**
+ * PCM fallback ceiling. Only a donor whose audio cannot be packet-copied is
+ * ever decoded, and only up to this long: whole-file PCM is ~384 kB/s, so
+ * 15 minutes is ~350 MB — survivable once, where the 2 h cap's 2.7 GB is not.
+ * A longer donor with uncopyable audio converts silent, with an honest log.
+ */
+const PCM_FALLBACK_MAX_SEC = 15 * 60
+
 export async function transcodeToH264(
   source: Blob,
   info: SourceInfo,
-  signal?: AbortSignal
-): Promise<Blob> {
+  signal: AbortSignal | undefined,
+  outPath: string
+): Promise<void> {
   let reader
   try {
     reader = await openVideo(source)
@@ -49,34 +59,68 @@ export async function transcodeToH264(
   for (let f = 0; f < frames; f++) stamps.push(f / fps)
   const pass = reader.framesAt(stamps)
 
-  // The SOURCE's audio, carried across. Without this the conversion produced a
-  // silent file — and since every undecodable clip goes through here, a phone
-  // recording imported this way lost its sound before the user ever saw a
-  // timeline. Anything that speaks the original audio (talking_head, both
-  // speech modes) then had nothing to work from.
-  //
-  // Decoded through the browser's own audio path rather than the video one:
-  // the container opens for audio even when the video codec does not, which is
-  // exactly the case this function exists for. If it does not, the conversion
-  // still succeeds — silent, as it always was — rather than refusing the clip.
-  const audio = await decodeBlob(source).catch(() => null)
-  if (!audio) {
-    void window.noey.log.write('transcode', 'source audio could not be decoded — output is silent')
-  }
+  // Two passes, both streamed to OPFS: the video is encoded WITHOUT audio to a
+  // temp path, then the source's audio packets are copied under it. No PCM is
+  // decoded and no output MP4 is ever held in RAM — the old shape did both,
+  // which on a 2 h clip meant gigabytes.
+  const tempPath = `${outPath}.videoonly.mp4`
 
   try {
-    const out = await encodeVideo(
-      frames,
-      async (ctx) => {
-        const frame = (await pass.next()).value ?? null
-        if (!frame) return false
-        ctx.drawImage(frame, 0, 0, width, height)
-        return true
-      },
-      { width, height, fps, signal, audio }
-    )
-    if (!out) throw new Error('แปลงไฟล์ไม่สำเร็จ')
-    return out
+    const staged = await openStagedWrite(tempPath)
+    try {
+      await encodeVideo(
+        frames,
+        async (ctx) => {
+          const frame = (await pass.next()).value ?? null
+          if (!frame) return false
+          ctx.drawImage(frame, 0, 0, width, height)
+          return true
+        },
+        { width, height, fps, signal },
+        { writable: staged.writable }
+      )
+      await staged.publish()
+    } catch (err) {
+      await staged.discard().catch(() => undefined)
+      throw err
+    }
+
+    const videoOnly = await readFile(tempPath)
+    if (!videoOnly) throw new Error('แปลงไฟล์ไม่สำเร็จ')
+
+    // The common case: AAC (every iPhone recording) copies straight across.
+    if (await attachDonorAudio(videoOnly, source, outPath, signal)) {
+      await deleteFile(tempPath)
+      return
+    }
+
+    // Uncopyable audio. Decode it ONLY when the PCM is survivable; otherwise
+    // the clip converts silent — and says so in the log, not in a later
+    // stage's misdiagnosis.
+    if (info.hasAudio && info.durationSec <= PCM_FALLBACK_MAX_SEC) {
+      try {
+        const pcm = await decodeBlob(source)
+        const mixed = await remuxWithAudio(videoOnly, pcm)
+        if (mixed) {
+          await writeFileAtomic(outPath, mixed)
+          await deleteFile(tempPath)
+          return
+        }
+      } catch (err) {
+        if (err instanceof Error && err.name === 'AbortError') throw err
+        void window.noey.log.write('transcode', `audio fallback failed: ${String(err)}`)
+      }
+    }
+
+    if (info.hasAudio) {
+      void window.noey.log.write(
+        'transcode',
+        `source audio could not be carried across — output is silent (${info.durationSec.toFixed(0)}s)`
+      )
+    }
+    await writeFileAtomic(outPath, videoOnly)
+    await deleteFile(tempPath)
+    return
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') throw err
     // Say what actually went wrong. This used to report "the browser cannot

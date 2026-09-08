@@ -49,6 +49,6 @@ describe('ingest', () => {
     // the next thing the user started queued behind work the UI had already
     // said was stopped.
     expect(INGEST).toContain('throwIfAborted(signal)')
-    expect(INGEST).toContain('transcodeToH264(blob, info, signal)')
+    expect(INGEST).toContain('transcodeToH264(blob, info, signal,')
   })
 })

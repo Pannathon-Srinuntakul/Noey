@@ -457,7 +457,10 @@ async def plan_dub(
             edit_script, body.voDurationSec, body.clipDurations, music_beats=proj.music_beats
         )
     except ValueError as exc:
-        raise HTTPException(422, str(exc)) from exc
+        # Through the SAME funnel the Exception arm below uses. `str(exc)`
+        # forwarded the raiser's literal text -- which named the vendor -- into
+        # a persisted error the project card then displayed in every browser.
+        raise HTTPException(422, format_exception_message(exc)) from exc
     except HTTPException:
         raise
     except Exception as exc:
@@ -706,7 +709,13 @@ _WEB_FILE_NAMES = (
 def _web_file_path(uid: str, rel: str) -> Path:
     """Resolve a project-relative path, refusing anything that escapes it."""
     cleaned = rel.strip().lstrip("/")
-    if not cleaned or ".." in cleaned.split("/"):
+    segments = cleaned.split("/")
+    if not cleaned or ".." in segments:
+        raise HTTPException(400, "path ไม่ถูกต้อง")
+    # Dot-prefixed names are the atomic-write staging convention on every side
+    # of this system. One that reached the store was invisible to the manifest,
+    # the quota and the stale sweep -- storable, hidden, undeletable.
+    if any(seg.startswith(".") for seg in segments):
         raise HTTPException(400, "path ไม่ถูกต้อง")
     head = cleaned.split("/")[0]
     if head not in _WEB_FILE_ROOTS and cleaned not in _WEB_FILE_NAMES:
@@ -771,6 +780,15 @@ async def _project_files(uid: str) -> dict[str, int]:
     return merged
 
 
+#: user_id -> (monotonic deadline, used_bytes, project_count). A sync uploads
+#: dozens of files back to back, and the walk behind the quota check touches
+#: every project on the account (an S3 LIST each). Within one sync the answer
+#: barely moves, and the projection adds the incoming file's own size anyway --
+#: so a short cache turns O(files x projects) back into O(projects).
+_USED_CACHE: dict[int, tuple[float, int, int]] = {}
+_USED_CACHE_TTL_SEC = 20.0
+
+
 async def _storage_used(session: AsyncSession, user_id: int) -> tuple[int, int]:
     """Bytes this user's projects occupy on the server, and how many there are.
 
@@ -785,6 +803,12 @@ async def _storage_used(session: AsyncSession, user_id: int) -> tuple[int, int]:
     A number the user cannot reconcile with what they see reads as a bug in the
     quota, which is the one number here that has to be believed.
     """
+    import time
+
+    cached = _USED_CACHE.get(user_id)
+    if cached and cached[0] > time.monotonic():
+        return cached[1], cached[2]
+
     rows = (
         await session.execute(
             select(VideoProject.uid).where(VideoProject.user_id == user_id)
@@ -798,6 +822,7 @@ async def _storage_used(session: AsyncSession, user_id: int) -> tuple[int, int]:
         if size:
             total += size
             stored += 1
+    _USED_CACHE[user_id] = (time.monotonic() + _USED_CACHE_TTL_SEC, total, stored)
     return total, stored
 
 
@@ -856,6 +881,10 @@ async def put_web_file(
     # The plan's allowance, checked BEFORE the bytes are accepted. A file that
     # is replacing one already there costs only the difference, so re-rendering
     # the same project forever cannot creep over the line.
+    #
+    # quota == 0 means unlimited -- and skips the walk entirely: the check used
+    # to enumerate EVERY project on the account (one S3 LIST each) on EVERY
+    # file of every sync, which made saving a render O(projects × files).
     quota, plan = await _quota_for(session, auth.user_id)
     replacing = dest.stat().st_size if dest.is_file() else 0
 
@@ -870,12 +899,12 @@ async def put_web_file(
                 out.write(chunk)
 
         if quota:
-            # `used` is measured with the staged `.part` already on disk AND the
-            # file it replaces still there. After the rename the old one is
-            # gone and the staged one takes its place — so the finished total is
-            # simply what is on disk now, minus the copy about to be replaced.
+            # `_project_files` skips dot-prefixed names, so the staged `.part`
+            # is NOT in `used` -- the incoming size has to be added explicitly.
+            # The old arithmetic left it out, so every plan could be overshot
+            # by one whole render.
             used, _ = await _storage_used(session, auth.user_id)
-            projected = used - replacing
+            projected = used + size - replacing
             if projected > quota:
                 raise HTTPException(
                     507,
@@ -930,8 +959,12 @@ async def delete_web_file(
     dest = _web_file_path(uid, rel)
     if dest.is_file():
         dest.unlink()
-        await delete_output_file(uid, rel)
-        log.info("web_file_deleted", uid=uid, path=rel)
+    # ALWAYS, not only when this host held a local copy: on an ephemeral or
+    # multi-host deploy the file often exists only in the bucket, and gating
+    # the S3 delete on the local unlink returned a silent 204 no-op -- the
+    # object stayed in the bucket, in the manifest and in the quota forever.
+    await delete_output_file(uid, rel)
+    log.info("web_file_deleted", uid=uid, path=rel)
     return Response(status_code=204)
 
 

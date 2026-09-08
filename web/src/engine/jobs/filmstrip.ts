@@ -139,6 +139,9 @@ registerJob('filmstrip', async (job, emit: ProgressCallback): Promise<SidecarEve
       )
       results.push({ ...manifest, cached: false })
     } catch (err) {
+      // An abort is a command, not a per-clip hiccup: swallowing it made
+      // หยุดงาน a no-op here and the job still resolved 'done'.
+      if (err instanceof Error && err.name === 'AbortError') throw err
       // One clip must never take the others down. An empty lane is a lane with
       // no picture; the editor is fully usable either way.
       emit({

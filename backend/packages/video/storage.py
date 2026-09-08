@@ -77,9 +77,18 @@ def _collect_project_dirs(project_uid: str, source_files: list[str] | None) -> l
     if manifest.is_file():
         try:
             rel_paths.extend(json.loads(manifest.read_text(encoding="utf-8")))
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, OSError):
             log.warning("upload_sources_invalid", path=str(manifest))
     for rel in rel_paths:
+        # The WEB build's manifest holds {id, file, original} dicts, not the
+        # server-render chain's plain strings. pathlib.Path(dict) raised
+        # TypeError, which aborted DELETE /videos/{uid} before the S3 prefix
+        # and the DB row were touched -- the "deleted" project came back on the
+        # next restore, in every browser, forever.
+        if isinstance(rel, dict):
+            rel = rel.get("file") or ""
+        if not isinstance(rel, str) or not rel:
+            continue
         rel_path = pathlib.Path(rel)
         parts = rel_path.parts
         if not parts:
@@ -112,7 +121,7 @@ def delete_project_files(project_uid: str, *, source_files: list[str] | None = N
 
 #: What each stage may retire once it has finished. Values are directory names
 #: under a project's output dir.
-PURGEABLE_MEDIA_DIRS = ("proxy", "audio", "music", "effects", "ai_reedit")
+PURGEABLE_MEDIA_DIRS = ("proxy", "audio", "music", "effects", "ai_reedit", "frames")
 
 
 def purge_uploaded_media(project_uid: str, subdirs: tuple[str, ...] | list[str]) -> int:

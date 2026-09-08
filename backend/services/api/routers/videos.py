@@ -385,13 +385,20 @@ async def upload_video(
 async def list_projects(
     auth: CurrentUser,
     session: AsyncSession = Depends(db_session),
+    limit: int = 50,
+    offset: int = 0,
 ) -> list[VideoProjectOut]:
+    # Paged, because the web build's restore walks the WHOLE account: a hard
+    # LIMIT 50 silently hid every older project from a fresh browser, which
+    # reads as data loss to the person looking for their work.
+    limit = max(1, min(limit, 200))
     rows = (
         await session.execute(
             select(VideoProject)
             .where(VideoProject.user_id == auth.user_id)
             .order_by(VideoProject.created_at.desc())
-            .limit(50)
+            .offset(max(0, offset))
+            .limit(limit)
         )
     ).scalars().all()
     return [
@@ -435,7 +442,14 @@ async def delete_project(
         await _cancel_project(session, p)
         await session.commit()
     source_files = list(p.source_files or []) if isinstance(p.source_files, list) else None
-    delete_project_files(uid, source_files=source_files)
+    # Disk first, but never let a disk hiccup keep the row and the S3 prefix
+    # alive: those two are what make the project exist to every other browser
+    # (and what the user pays storage for). A failed rmtree is logged and the
+    # delete carries on.
+    try:
+        delete_project_files(uid, source_files=source_files)
+    except Exception:  # noqa: BLE001 — the row and S3 must still go
+        log.exception("delete_project_files_failed", uid=uid)
     await s3_delete_project(uid)
     await session.delete(p)
     await session.commit()

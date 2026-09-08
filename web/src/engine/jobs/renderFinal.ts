@@ -16,7 +16,7 @@
  * longer exists, and the effects layer clamps zoom windows against it.
  */
 
-import { projectFilePath, writeFileAtomic, deleteFile, readText } from '../../platform/fs'
+import { projectFilePath, deleteFile, readText } from '../../platform/fs'
 import type { SidecarEvent } from '../../platform/types'
 import type { CaptionLine } from '../../lib/captionLines'
 import type { CaptionStyle } from '../../lib/captionStyle'
@@ -47,14 +47,16 @@ registerJob('render-final', async (job, emit: ProgressCallback): Promise<Sidecar
       sourceIn: Number(c.in),
       sourceOut: Number(c.out)
     }))
-  if (cuts.length === 0) throw new Error('Timeline has no cuts')
+  if (cuts.length === 0) throw new Error('ไทม์ไลน์ไม่มีฉากให้เรนเดอร์ — ลองวางแผนใหม่อีกครั้ง')
 
   const voiceoverPath = String(job.voiceoverPath ?? '')
+  if (!voiceoverPath) throw new Error('ไม่พบไฟล์เสียงพากย์ — อัดเสียงพากย์ก่อนเรนเดอร์')
   // `voiceover/` is a synced root, so on a re-render in another browser the
-  // recording is on the server and not in this store. A bare read reported it
-  // as missing and killed the render.
-  const voiceoverFile = voiceoverPath ? await blobForPath(voiceoverPath).catch(() => null) : null
-  if (!voiceoverFile) throw new Error(`voiceover file not found: ${voiceoverPath}`)
+  // recording is on the server and not in this store. blobForPath's own error
+  // is kept: it already distinguishes an expired session from a missing file,
+  // and flattening both into an English string with an internal noeyfs:// path
+  // sent users hunting for a recording that was intact on the server.
+  const voiceoverFile = await blobForPath(voiceoverPath)
 
   // The mix has to be built before the frame loop starts, so its length is
   // computed from the cut list rather than measured off the finished video —
@@ -80,6 +82,7 @@ registerJob('render-final', async (job, emit: ProgressCallback): Promise<Sidecar
   emit({ event: 'progress', stage: 'cut', step: 1, total: cuts.length })
 
   const out = await renderCutList({
+    outPath: projectFilePath(uid, 'final.mp4'),
     uid,
     cuts,
     audio,
@@ -97,8 +100,6 @@ registerJob('render-final', async (job, emit: ProgressCallback): Promise<Sidecar
         message: `${Math.round((done / total) * 100)}%`
       })
   })
-
-  await writeFileAtomic(projectFilePath(uid, 'final.mp4'), out.video)
 
   emit({ event: 'progress', stage: 'bundle', step: cuts.length, total: cuts.length })
   await buildFinalBundle(uid, {

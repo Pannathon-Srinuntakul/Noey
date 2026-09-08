@@ -31,7 +31,7 @@ import {
   SERVER_MANIFEST,
   writeFileAtomic
 } from './fs'
-import { stageIntoStore } from './picked'
+import { stageIntoStore, stagingDir } from './picked'
 
 const PROJECT_FILE = 'project.json'
 
@@ -160,6 +160,10 @@ export async function update(uid: string, patch: Partial<LocalProject>): Promise
 export async function remove(uid: string): Promise<void> {
   if (!(await exists(projectFilePath(uid, PROJECT_FILE)))) return
   await deleteDir(projectDirPath(uid))
+  // The project's staged sources too: an import that failed or was abandoned
+  // left full-size clips under staging/<uid> that NO in-app action could
+  // reclaim -- not this delete, not "ล้างสำเนา".
+  await deleteDir(stagingDir(uid)).catch(() => undefined)
 }
 
 /**
@@ -173,6 +177,9 @@ export async function remove(uid: string): Promise<void> {
 export async function removeAll(): Promise<number> {
   const uids = await listProjectUids()
   for (const uid of uids) await deleteDir(projectDirPath(uid))
+  // The whole staging root: entries can outlive their project row (a failed
+  // import before the row existed), so per-uid deletes are not enough here.
+  await deleteDir('noeyfs://staging').catch(() => undefined)
   announceProjectsChanged()
   return uids.length
 }

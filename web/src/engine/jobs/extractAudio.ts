@@ -36,7 +36,7 @@ registerJob('extract-audio', async (job, emit: ProgressCallback): Promise<Sideca
   const normalized = (await listProjectDir(uid, 'normalized'))
     .filter((e) => e.kind === 'file' && e.name.startsWith('norm_'))
     .sort((a, b) => a.name.localeCompare(b.name))
-  if (normalized.length === 0) throw new Error('no normalized clips — run ingest first')
+  if (normalized.length === 0) throw new Error('ไม่พบคลิปที่นำเข้าไว้ — กดเริ่มตัดต่อใหม่อีกครั้ง')
 
   // Stale WAVs from an earlier run would be uploaded alongside the new ones.
   for (const stale of await listDir(projectFilePath(uid, 'audio'))) {

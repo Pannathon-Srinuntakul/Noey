@@ -47,6 +47,10 @@ export async function authedFetch(
     session.refreshToken = pair.refresh_token
     session.onTokens?.(pair.access_token, pair.refresh_token)
   } catch {
+    // Same contract as videosLocalApi.request: a dead refresh token ends the
+    // session visibly instead of leaving a workspace where everything fails.
+    const { emitAuthLost } = await import('./sessionBus')
+    emitAuthLost()
     return res
   }
   return authedFetch(session, path, init, true)

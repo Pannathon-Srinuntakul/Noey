@@ -734,3 +734,135 @@ and `/openapi.json` `/docs` 404, the storage panel reads the server, the
 library shows only cut styles, and the export checklist — previously empty —
 listed final.mp4 (3.1 MB) and the bundle (9.1 MB) and downloaded successfully.
 Console clean.
+
+---
+
+## Gate 17 — the missing-call sweep (2026-09-08, after the first deploy)
+
+Gate 16 shipped, and within the hour production produced a bug it had not
+caught: **`syncToServer` was called on the `highlight` branch of the silent
+render and not on the `waiting_vo` branch beside it.** A dub project rests at
+`waiting_vo` until someone records a voiceover — days, or never — so not one of
+its files, `project.json` included, ever reached the server. Opening the
+account in a second browser showed an empty workspace: the exact failure the
+whole server-storage design exists to prevent.
+
+Nothing threw. Nothing logged. Every unit test around it passed. The defect was
+an **absent call on one branch of an if/else**, and Gate 16's audit had verified
+the code that EXISTS.
+
+So this sweep used a different method — the **completeness matrix**: enumerate
+the full set of {states, events, branches, call sites} on one axis and the
+required side effects on the other, then check every cell. 14 agents (7 audit
+dimensions + 7 adversarial verifiers, Opus 5 at high effort). **76 findings
+confirmed real of 78 claimed.** All 76 fixed.
+
+Test state: web `tsc` clean · **459 vitest** · `eslint` 0 errors · backend
+`ruff` clean · **575 pytest** (the 2 long-standing `.env` failures unchanged) ·
+desktop untouched, `typecheck` + **374 tests** green.
+
+### The three blockers
+
+- **"ให้ AI ตัดใหม่" could never run on a restored project.** `extract-proxy`
+  read `upload_sources.json` with a bare OPFS call while the very next line in
+  the same loop used `blobForPath`. A restored project has only `project.json`
+  locally, so the read returned null and the job threw "ยังไม่ได้นำเข้าคลิป" —
+  which `fail()` then persisted, flipping a *finished* project to an error
+  state in every browser. Now read through the server, with `project.clips` as
+  a second fallback for projects synced before the manifest was uploadable.
+- **Deleting any web project raised `TypeError` and deleted nothing.** The web
+  build writes `upload_sources.json` as `{id, file, original}` objects; the
+  server-render chain writes plain strings, and `_collect_project_dirs` called
+  `pathlib.Path(dict)`. The exception escaped before the S3 prefix and the DB
+  row were touched, and `restoreMissingProjects` pulled the project back on the
+  next load — a project that could not be deleted, ever.
+- **`plan-dub` returned the raiser's literal text.** One arm used `str(exc)`
+  while the arm four lines below already used `format_exception_message`. The
+  string it forwarded named the vendor, `fail()` persisted it to `project.json`
+  AND the server row, and the project card rendered it. Both halves fixed: the
+  arm now uses the funnel, and the two `raise ValueError` sites are Thai.
+
+### Same class as the shipped bug — eight more found
+
+`syncToServer` never ran on: attaching, editing or removing music; every
+voiceover take; `fail()`; `revertRecut`. And `syncToServer('import')` was
+*structurally dead* on a first run — the server row was created inside
+`runAnalyze`, so at import time there was no target and the call returned
+immediately. An import that then failed left nothing on the server at all. The
+row is created at the end of the import now.
+
+Two consequences of the same shape: removing a music track deleted the local
+mix but not the server's, and the preview probe kept resolving to the server
+copy — so the user heard the music they had just removed, in the same browser.
+And four synced roots (`music`, `voiceover`, `captions`, `fx`) were never
+swept, so a track swap orphaned the old object forever against the plan quota.
+
+### Lifecycle
+
+`bootstrapPipeline` had no `try/catch`: a throw out of `runImport` or a render
+resume left the project on a busy step with no error, no retry and nothing that
+would re-fire the effect — a permanently spinning card. หยุดงาน during the AI
+upload was ignored entirely (no token check between the upload and the render),
+so the whole billed run completed and the card flipped back to busy. `stop()`
+parked every run at `imported`, discarding the checkpoint a *reload* would have
+used — so stopping a final render hid the voiceover button and `retry()` bought
+a second AI cut over an approved script. `retry()` now resumes from a stored
+timeline or edit script before it re-buys anything.
+
+### Engine
+
+Every encode buffered the finished MP4 in RAM (plus mediabunny's in-memory
+faststart copy); `openStagedWrite` existed for exactly this and had zero call
+sites. Renders stream to OPFS now — verified in a real browser: a 3-cut render
+produced a 4.65 MB file that `<video>` loads (6.10 s, 1080×1920) and **seeks**
+into at 4.00 s, with the service worker answering `206`.
+
+`transcodeToH264` decoded the source's whole PCM into RAM — ~384 kB per second,
+~2.7 GB at the 2 h cap — and a blanket `.catch(() => null)` made an allocation
+failure, a decode failure and a genuinely silent clip indistinguishable; a
+later stage then reported "คลิปนี้ไม่มีเสียง" about footage the user could hear
+in their own player. It now encodes video-only to a staged file and **copies
+the donor's audio packets** under it (measured: 12.01 s in, 12.01 s out, audio
+carried across, temp file cleaned up), decoding PCM only as a bounded fallback.
+
+`renderTimeline`'s audio catch swallowed fetch and decode failures, writing a
+silent `final.mp4` for the modes built on the original audio and then pushing it
+over the good server copy. A null frame ended the whole render quietly while
+`durationSec` still described the full cut list. `filmstrip` swallowed
+`AbortError`, so หยุดงาน was a no-op there and the job still resolved `done`.
+
+### Sessions
+
+A failed refresh ended nothing — the user sat on a workspace where every call
+failed with an English server detail. Two paths (the settings page, the style
+library) refreshed tokens and dropped them, leaving React state and the service
+worker on the dead token. And the store is per ORIGIN: signing in as a second
+account showed the first account's projects, playable and exportable.
+
+### Garbage
+
+A daily `sweep_housekeeping` cron now retires abandoned transcode scratch (disk
+AND S3, 24 h TTL — the deleter was the browser, so a closed tab meant forever)
+and job rows past 30 days. `plan_talking_local` was the one speech task of
+three that never purged its uploaded WAVs. `DELETE /files/{rel}` skipped the S3
+delete whenever the API host had no local copy — which on Railway is the normal
+case, so swept clips stayed in the bucket, in the manifest and in the quota.
+A task finishing after its project was deleted re-created the whole tree with
+no row to attribute it to.
+
+### Restore
+
+`GET /videos` was capped at 50 rows with no pagination while the restore walks
+the whole account, so older projects were silently invisible in a fresh
+browser. The service worker's uid→remoteUid map was posted *after* the first
+media requests were already in flight, and kept an entry for every deleted
+project forever.
+
+### Verified live, not just compiled
+
+Against the local API with the new backend: a real 3-cut render (183 frames =
+6.1 s × 30 fps exactly), the per-scene clips written by the same pass with the
+previous run's `clip_004` correctly gone, a real `pushProjectFiles` (6 files,
+18.6 MB, no `.part` uploaded), `extract-proxy` succeeding with
+`upload_sources.json` deliberately deleted from the store, and the delete
+manifest fix exercised against all three payload shapes.
