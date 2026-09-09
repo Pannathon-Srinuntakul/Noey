@@ -487,9 +487,9 @@ function DefaultsTab(): React.JSX.Element {
 
       <Section title="คำบรรยายบนภาพ" hint="เปิดไว้ก่อนสำหรับงานใหม่ที่ใส่คำบรรยายได้">
         <Switch
-          checked={prefs?.defaultCaptions ?? true}
+          checked={prefs?.defaultCaptions ?? false}
           onChange={(defaultCaptions) => void update({ defaultCaptions })}
-          label={(prefs?.defaultCaptions ?? true) ? 'เปิดไว้' : 'ปิดไว้'}
+          label={(prefs?.defaultCaptions ?? false) ? 'เปิดไว้' : 'ปิดไว้'}
         />
       </Section>
     </div>

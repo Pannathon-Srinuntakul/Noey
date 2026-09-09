@@ -34,6 +34,9 @@ const OVERSCAN_PX = 400
 
 interface Props {
   strip: FilmstripStrip | null
+  /** True while the strip is still being extracted — draws a quiet wash so an
+   * in-flight lane is distinguishable from a failed one (which stays empty). */
+  pending?: boolean
   /** Seconds into the source that this lane's x=0 shows. */
   sourceStartSec: number
   /** Lane width in px at the current zoom. */
@@ -49,6 +52,7 @@ interface Props {
 
 export const FilmstripCanvas = memo(function FilmstripCanvas({
   strip,
+  pending = false,
   sourceStartSec,
   laneWidthPx,
   heightPx,
@@ -62,8 +66,16 @@ export const FilmstripCanvas = memo(function FilmstripCanvas({
   // Every value the draw reads lives in a ref so the draw function itself is
   // stable: it is called from a scroll callback and from image-decode
   // callbacks, neither of which should be re-subscribed on a prop change.
-  const propsRef = useRef({ strip, sourceStartSec, laneWidthPx, heightPx, laneLeftPx, pxPerSec })
-  propsRef.current = { strip, sourceStartSec, laneWidthPx, heightPx, laneLeftPx, pxPerSec }
+  const propsRef = useRef({
+    strip,
+    pending,
+    sourceStartSec,
+    laneWidthPx,
+    heightPx,
+    laneLeftPx,
+    pxPerSec
+  })
+  propsRef.current = { strip, pending, sourceStartSec, laneWidthPx, heightPx, laneLeftPx, pxPerSec }
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -81,6 +93,17 @@ export const FilmstripCanvas = memo(function FilmstripCanvas({
       const p = propsRef.current
       const ctx = canvas.getContext('2d')
       if (!ctx || !p.strip || p.strip.count <= 0) {
+        // Still coming: a flat wash keeps the lane visibly "loading" instead
+        // of visibly "broken". Failed or absent: collapse as before.
+        if (ctx && p.pending && p.laneWidthPx > 0 && p.heightPx > 0) {
+          canvas.width = Math.min(p.laneWidthPx, 4000)
+          canvas.height = p.heightPx
+          canvas.style.width = `${canvas.width}px`
+          canvas.style.height = `${canvas.height}px`
+          ctx.fillStyle = 'rgb(243 242 242 / 0.05)'
+          ctx.fillRect(0, 0, canvas.width, canvas.height)
+          return
+        }
         canvas.width = 0
         canvas.height = 0
         return
@@ -187,7 +210,7 @@ export const FilmstripCanvas = memo(function FilmstripCanvas({
     // The draw reads live props through `propsRef`, but a change to any of
     // these changes the PICTURE, so it must repaint — hence they are deps even
     // though the closure does not capture them.
-  }, [viewport, strip, sourceStartSec, laneWidthPx, heightPx, laneLeftPx, pxPerSec])
+  }, [viewport, strip, pending, sourceStartSec, laneWidthPx, heightPx, laneLeftPx, pxPerSec])
 
   return (
     <canvas

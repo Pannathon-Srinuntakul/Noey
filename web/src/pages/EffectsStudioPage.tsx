@@ -175,6 +175,7 @@ function StyleRow({
             steps={DISTILL_STEPS}
             currentIndex={progress >= 60 ? 1 : 0}
             percent={watching ? progress : 20}
+            busy
           />
           <div className="mt-2.5 flex justify-end">
             <Button

@@ -47,6 +47,14 @@ server {
         add_header Cache-Control "public, max-age=31536000, immutable" always;
     }
 
+    # /media/ belongs to the service worker alone. Before the worker controls
+    # the page (first visit, hard reload) these requests reach nginx, and the
+    # SPA fallback answered them 200 + index.html — which made every "does
+    # this file exist" probe say yes and handed <video> an HTML document.
+    location /media/ {
+        return 404;
+    }
+
     location / {
         try_files $uri /index.html;
     }

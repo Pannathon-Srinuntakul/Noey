@@ -43,3 +43,22 @@ export const canUseAiReedit = !isBrowser
  * next person reads before deciding whether the feature can be turned on.
  */
 export const canSnapToBeat = !isBrowser
+
+/**
+ * In-app voiceover recording (VoiceoverPage + every button that leads to it).
+ *
+ * Hidden on web as a PRODUCT decision, not a capability one (the browser can
+ * record audio fine): the owner wants the web build shipped without it for
+ * now — the dub modes read as "ตัดภาพตามสคริปต์ แล้วไปพากย์เองภายหลัง", and the
+ * script panel with its copy button is the hand-off. Turning it back on is
+ * this flag alone; every entry point gates on it.
+ */
+export const canRecordVoiceover = !isBrowser
+
+/**
+ * The ใช้เสียงในคลิป choice (speech_scenes) in the wizard's เสียง row.
+ * Same story: hidden on web for now by owner's call (2026-09-09), not because
+ * the engine cannot do it. Existing speech_scenes projects still open fine —
+ * only the wizard stops offering the mode.
+ */
+export const canUseOriginalVoice = !isBrowser

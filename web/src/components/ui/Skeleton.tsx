@@ -24,5 +24,5 @@ export function Skeleton({
         ? 'bg-[rgb(243_242_242_/_0.10)]'
         : 'bg-[rgb(243_242_242_/_0.07)]'
 
-  return <div className={cn('rounded-[3px]', bg, className)} style={style} />
+  return <div className={cn('animate-pulse rounded-[3px]', bg, className)} style={style} />
 }

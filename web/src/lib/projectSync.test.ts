@@ -65,11 +65,23 @@ describe('the back-fill for projects that predate the sync', () => {
   })
 
   it('runs on mount, after the restore', () => {
+    // Both now read the session through a ref (the restore runs once per
+    // mount, not once per session identity — see jobs.tsx).
     const jobs = readFileSync(resolve(__dirname, 'jobs.tsx'), 'utf8')
     expect(jobs).toContain('backfillUnsyncedProjects')
-    expect(jobs.indexOf('restoreMissingProjects(session)')).toBeLessThan(
-      jobs.indexOf('backfillUnsyncedProjects(session)')
+    expect(jobs.indexOf('restoreMissingProjects(sessionRef.current)')).toBeLessThan(
+      jobs.indexOf('backfillUnsyncedProjects(sessionRef.current)')
     )
+  })
+
+  it('always reloads after the restore, even a superseded one', () => {
+    // The restore writes project.json BEFORE it counts it, so a run cancelled
+    // mid-way leaves projects on disk that its replacement counts as 0 — the
+    // reload must not be gated on the count ("ต้อง refresh 1 ที", 2026-09-09).
+    const jobs = readFileSync(resolve(__dirname, 'jobs.tsx'), 'utf8')
+    const idx = jobs.indexOf('await restoreMissingProjects(sessionRef.current)')
+    expect(idx).toBeGreaterThan(-1)
+    expect(jobs.slice(idx, idx + 200)).toContain('finally')
   })
 
   it('skips a project with no server row rather than guessing one', () => {

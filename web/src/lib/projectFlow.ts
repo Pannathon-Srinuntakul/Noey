@@ -83,7 +83,7 @@ export const STEP_LABELS: Record<ProjectStep, string> = {
   imported: 'นำเข้าคลิปแล้ว',
   analyzing: 'AI กำลังวิเคราะห์',
   silent_rendering: 'กำลังตัดวิดีโอ (เงียบ)',
-  waiting_vo: 'คลิปพร้อม — ใส่เสียงพากย์ได้ถ้าต้องการ',
+  waiting_vo: 'คลิปพร้อม (ภาพอย่างเดียว)',
   planning: 'กำลังวางแผน timeline',
   final_rendering: 'กำลัง render วิดีโอสุดท้าย',
   extracting_audio: 'กำลังแยกเสียงจากคลิป',
@@ -124,7 +124,7 @@ export const SHORT_STEP_LABELS: Record<ProjectStep, string> = {
  */
 export const TERMINAL_LABELS: Partial<Record<ProjectStep, string>> = {
   done: 'เสร็จแล้ว',
-  waiting_vo: 'ตัดคลิปเสร็จแล้ว — ใส่เสียงพากย์ต่อได้ถ้าต้องการ'
+  waiting_vo: 'ตัดคลิปเสร็จแล้ว — ได้คลิปภาพอย่างเดียว นำไปพากย์เสียงเองได้เลย'
 }
 
 /**

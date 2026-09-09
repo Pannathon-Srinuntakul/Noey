@@ -95,7 +95,8 @@ registerJob('ingest', async (job, emit: ProgressCallback): Promise<SidecarEvent>
     emit({ event: 'progress', stage: 'ingest', step: i + 1, total: sources.length, message: name })
 
     let info = await probeSource(blob)
-    if (info.durationSec <= 0) throw new Error(`อ่านความยาวของ ${name} ไม่ได้`)
+    if (!Number.isFinite(info.durationSec) || info.durationSec <= 0)
+      throw new Error(`อ่านความยาวของ ${name} ไม่ได้`)
 
     // Caps — same numbers, same sentences as the desktop.
     if (

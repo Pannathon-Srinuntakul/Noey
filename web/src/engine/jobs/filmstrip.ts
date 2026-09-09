@@ -7,7 +7,7 @@
  *
  *   filmstrip/<clipId>/t_00001.jpg …
  *   filmstrip/<clipId>/manifest.json   { v, durationSec, count, tileSec,
- *                                        tileWidth, tileHeight }
+ *                                        tileWidth, tileHeight, file, fileSize }
  *
  * The manifest is written LAST, so its presence means the strip is complete.
  *
@@ -17,16 +17,37 @@
  *     for 0.2 frames, and the encoder never opens);
  *   - one bad clip must not take the others down with it;
  *   - a matching manifest is reused, so re-opening the editor is nearly free.
+ *
+ * Two behaviours added 2026-09-09, both from "thumbnail ตรง timeline มันไม่แสดง
+ * ต้องรอซักพัก":
+ *   - the manifest check runs BEFORE the source is opened. It used to sit
+ *     behind `blobForPath` + `probeSource`, so a fully cached strip still paid
+ *     a container walk per clip — and on a project restored from the server,
+ *     a download of the whole source video just to compare a duration. The
+ *     clip files are immutable after ingest (`normalized/norm_NNN.mp4` is
+ *     written once), so path + size identity is a sound key without a probe.
+ *   - each clip's manifest is EMITTED as it completes, so the editor paints
+ *     lane 1 while lane 4 is still extracting instead of holding everything
+ *     until the last clip resolves.
  */
 
-import { deleteDir, listDir, projectFilePath, readJson, writeFileAtomic } from '../../platform/fs'
+import {
+  deleteDir,
+  fileSize,
+  listDir,
+  projectFilePath,
+  readJson,
+  writeFileAtomic
+} from '../../platform/fs'
 import type { SidecarEvent } from '../../platform/types'
 import { openVideo, probeSource } from '../media'
 import { registerJob, type ProgressCallback } from '../index'
 import { signalOf, throwIfAborted } from '../abort'
 import { blobForPath } from './probe'
 
-const MANIFEST_VERSION = 1
+// v2: manifests carry the source's path + byte size so a warm reopen can trust
+// them without opening the source at all. v1 manifests regenerate once.
+const MANIFEST_VERSION = 2
 const DEFAULT_TILE_HEIGHT = 96
 const DEFAULT_TILES_PER_SEC = 2
 const DEFAULT_MAX_TILES = 900
@@ -41,6 +62,10 @@ interface StripManifest {
   tileSec: number
   tileWidth: number
   tileHeight: number
+  /** The source this strip was cut from — the cache key that avoids a probe. */
+  file: string
+  /** Byte size of that source when the strip was made; null = not local then. */
+  fileSize: number | null
 }
 
 registerJob('filmstrip', async (job, emit: ProgressCallback): Promise<SidecarEvent> => {
@@ -54,6 +79,17 @@ registerJob('filmstrip', async (job, emit: ProgressCallback): Promise<SidecarEve
   const signal = signalOf(job)
 
   const results: (StripManifest & { cached: boolean })[] = []
+
+  /** Progressive delivery — see the header note. */
+  const emitStrip = (strip: StripManifest & { cached: boolean }, i: number): void => {
+    emit({
+      event: 'progress',
+      stage: 'filmstrip',
+      step: i + 1,
+      total: clips.length,
+      strip
+    })
+  }
 
   for (let i = 0; i < clips.length; i++) {
     const clip = clips[i]
@@ -70,10 +106,11 @@ registerJob('filmstrip', async (job, emit: ProgressCallback): Promise<SidecarEve
 
     try {
       throwIfAborted(signal)
-      const blob = await blobForPath(projectFilePath(uid, clip.file))
-      const info = await probeSource(blob)
-      if (info.durationSec <= 0) throw new Error('ไม่มีความยาว')
 
+      // FAST PATH — no source open. A v2 manifest for the same file (and the
+      // same byte size, when the file is local to compare against) is trusted
+      // outright; the manifest is written last, so its presence already means
+      // every tile before it landed.
       if (!force) {
         const existing = await readJson<StripManifest>(manifestPath)
         if (
@@ -81,12 +118,21 @@ registerJob('filmstrip', async (job, emit: ProgressCallback): Promise<SidecarEve
           existing.v === MANIFEST_VERSION &&
           existing.tileHeight === tileHeight &&
           existing.count > 0 &&
-          Math.abs(existing.durationSec - info.durationSec) < 0.05
+          existing.file === clip.file
         ) {
-          results.push({ ...existing, cached: true })
-          continue
+          const localSize = await fileSize(projectFilePath(uid, clip.file))
+          if (localSize === null || existing.fileSize === null || localSize === existing.fileSize) {
+            const row = { ...existing, cached: true }
+            results.push(row)
+            emitStrip(row, i)
+            continue
+          }
         }
       }
+
+      const blob = await blobForPath(projectFilePath(uid, clip.file))
+      const info = await probeSource(blob)
+      if (info.durationSec <= 0) throw new Error('ไม่มีความยาว')
 
       // Rate: capped so a long clip gets a sparser strip rather than a
       // truncated one, and floored so a very short clip still yields a frame.
@@ -139,14 +185,18 @@ registerJob('filmstrip', async (job, emit: ProgressCallback): Promise<SidecarEve
         count: written,
         tileSec: Math.round((1 / rate) * 1e6) / 1e6,
         tileWidth,
-        tileHeight
+        tileHeight,
+        file: clip.file,
+        fileSize: await fileSize(projectFilePath(uid, clip.file))
       }
       // Written last: its presence is the readiness signal.
       await writeFileAtomic(
         manifestPath,
         new TextEncoder().encode(JSON.stringify(manifest, null, 2))
       )
-      results.push({ ...manifest, cached: false })
+      const row = { ...manifest, cached: false }
+      results.push(row)
+      emitStrip(row, i)
     } catch (err) {
       // An abort is a command, not a per-clip hiccup: swallowing it made
       // หยุดงาน a no-op here and the job still resolved 'done'.

@@ -1,5 +1,5 @@
 import { Fragment } from 'react'
-import { Check } from 'lucide-react'
+import { Check, Loader2 } from 'lucide-react'
 import { cn } from '../../lib/cn'
 import {
   etaMinutes,
@@ -94,7 +94,11 @@ export function RunningJobBar({ job }: { job: ProjectPipeline }): React.JSX.Elem
             style={{ width: `${percent}%` }}
           />
         </div>
-        <p className="mt-2.5 text-sm tabular-nums text-ink-3">
+        {/* The spinner is the "not frozen" signal: the bar and percent can sit
+            still for a long stretch (a model call, a long encode step) and a
+            static line reads as a hang (owner 2026-09-09). */}
+        <p className="mt-2.5 flex items-center gap-2 text-sm tabular-nums text-ink-3">
+          <Loader2 size={13} className="shrink-0 animate-spin text-accent" />
           {percent}%{eta != null ? ` · เหลืออีกประมาณ ${eta} นาที` : ''} ·{' '}
           {job.progressMsg || SHORT_STEP_LABELS[job.step as ProjectStep]}
         </p>

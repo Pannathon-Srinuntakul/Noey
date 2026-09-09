@@ -17,8 +17,30 @@ import { ensureProjectsRoot, requestPersistentStorage } from './fs'
 type State =
   | { phase: 'checking' }
   | { phase: 'ready' }
+  | { phase: 'mobile' }
   | { phase: 'unsupported'; caps: Capabilities }
   | { phase: 'failed'; message: string }
+
+/**
+ * Phones and tablets are gated out for now (owner's call, 2026-09-09): the
+ * render is real work on a real codec, and until the mobile experience is
+ * actually good — background-suspension recovery, the memory budget, the
+ * whole layout — a clear "not yet" beats a build that dies at 60%.
+ *
+ * UA-CH first (Chromium reports `mobile` directly), then the UA string, then
+ * coarse-pointer-AND-narrow as the fallback so a touch laptop stays allowed.
+ */
+function isMobileDevice(): boolean {
+  const uaData = (navigator as { userAgentData?: { mobile?: boolean } }).userAgentData
+  if (uaData?.mobile !== undefined) return uaData.mobile
+  const ua = navigator.userAgent
+  // iPadOS 13+ masquerades as macOS; a Mac with a touchscreen does not exist.
+  const iPad = /Macintosh/.test(ua) && navigator.maxTouchPoints > 1
+  if (/Android|iPhone|iPad|iPod|Mobile/i.test(ua) || iPad) return true
+  return (
+    window.matchMedia('(pointer: coarse)').matches && Math.min(screen.width, screen.height) < 600
+  )
+}
 
 async function registerMediaWorker(): Promise<void> {
   if (!('serviceWorker' in navigator)) throw new Error('เบราว์เซอร์นี้เล่นไฟล์ในเครื่องไม่ได้')
@@ -49,6 +71,10 @@ export function WebGate({ children }: { children: ReactNode }): React.JSX.Elemen
     let cancelled = false
     void (async () => {
       try {
+        if (isMobileDevice()) {
+          setState({ phase: 'mobile' })
+          return
+        }
         const caps = await detectCapabilities()
         if (cancelled) return
         if (!caps.ok) {
@@ -84,6 +110,16 @@ export function WebGate({ children }: { children: ReactNode }): React.JSX.Elemen
 
         {state.phase === 'checking' && (
           <p className="text-sm text-muted">กำลังเตรียมพื้นที่ทำงาน…</p>
+        )}
+
+        {state.phase === 'mobile' && (
+          <>
+            <h1 className="text-xl font-semibold">ยังไม่รองรับบนมือถือ</h1>
+            <p className="text-sm leading-relaxed text-muted">
+              ตอนนี้ใช้งานได้บนคอมพิวเตอร์เท่านั้น — เปิดลิงก์นี้ด้วย Chrome หรือ Edge บนคอมได้เลย
+              เวอร์ชันมือถือกำลังตามมา
+            </p>
+          </>
         )}
 
         {state.phase === 'unsupported' && (

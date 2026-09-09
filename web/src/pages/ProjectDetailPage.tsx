@@ -27,7 +27,7 @@ import { fmtClock } from '../lib/wizardState'
 import { MODE_LABEL } from '../lib/modeLabel'
 import { usePreviewFile } from '../lib/usePreviewFile'
 import { countShotsWithAlternates } from '../lib/shotSwap'
-import { canOpenFolder, canUseZoomEffects } from '../lib/platformFeatures'
+import { canOpenFolder, canRecordVoiceover, canUseZoomEffects } from '../lib/platformFeatures'
 import { Button } from '../components/ui/Button'
 import { StatusLine } from '../components/ui/StatusLine'
 import { VideoPlayer } from '../components/ui/VideoPlayer'
@@ -70,6 +70,8 @@ function ActionButton({
  * scenes are interleaved with other lines' (see lib/dubScenes). */
 interface TimedLine {
   id: string
+  /** The dub line's own id — what an inline edit is saved under. */
+  lineId: number
   text: string
   start: number
 }
@@ -136,6 +138,16 @@ export default function ProjectDetailPage({ uid }: { uid: string }): React.JSX.E
   const [exportOpen, setExportOpen] = useState(false)
   const [swapOpen, setSwapOpen] = useState(false)
   const [scriptCopied, setScriptCopied] = useState(false)
+  // Inline script autosave plumbing — one debounce timer per line, and a
+  // timestamp that lets the header say the save actually happened.
+  const scriptSaveTimers = useRef<Map<number, number>>(new Map())
+  const [scriptSavedAt, setScriptSavedAt] = useState<number | null>(null)
+  useEffect(() => {
+    const timers = scriptSaveTimers.current
+    return () => {
+      for (const t of timers.values()) window.clearTimeout(t)
+    }
+  }, [])
   // Playback chrome lives in VideoPlayer (shared overlay transport); this ref
   // is what lets the script panel follow (and drive) the playhead.
   const videoRef = useRef<HTMLVideoElement | null>(null)
@@ -167,6 +179,24 @@ export default function ProjectDetailPage({ uid }: { uid: string }): React.JSX.E
   // Keyed like the player's own remount key, so picking another highlight or
   // re-rendering clears the error without a setState in an effect.
   const [previewBrokenKey, setPreviewBrokenKey] = useState<string | null>(null)
+  // One silent retry before declaring the file gone: right after a re-render
+  // the first load can catch the swap window (old file unlinked, new one a
+  // beat away) and the error LATCHED until a manual refresh — the "วีดีโอมัน
+  // หายไป ต้องรีเฟรช" report (owner 2026-09-09). The nonce re-keys the
+  // <video>, forcing a fresh load; only a second failure is believed.
+  const [previewNonce, setPreviewNonce] = useState(0)
+  const retriedPreviewRef = useRef<string | null>(null)
+  const handlePreviewError = (key: string): void => {
+    // An expired media session reports as an error too — nudge the refresh
+    // path the probe already uses before giving up.
+    window.dispatchEvent(new Event('noey:media-auth-stale'))
+    if (retriedPreviewRef.current !== key) {
+      retriedPreviewRef.current = key
+      window.setTimeout(() => setPreviewNonce((n) => n + 1), 600)
+      return
+    }
+    setPreviewBrokenKey(key)
+  }
   const previewFile = usePreviewFile(
     uid,
     step ?? 'imported',
@@ -189,6 +219,25 @@ export default function ProjectDetailPage({ uid }: { uid: string }): React.JSX.E
 
   const swapQuestions = countShotsWithAlternates(job.editScript)
   const running = isBusy(step)
+  // Inline script editing (dub modes only — the other panels show transcripts,
+  // which live on the timeline, not the edit script). Debounced per line so
+  // typing does not write on every keystroke; blur is covered because the
+  // debounce always fires.
+  const scriptEditable =
+    (job.mode === 'dub_first' || job.mode === 'highlight') && !running && Boolean(job.editScript)
+  const queueScriptSave = (lineId: number, text: string): void => {
+    const timers = scriptSaveTimers.current
+    window.clearTimeout(timers.get(lineId))
+    timers.set(
+      lineId,
+      window.setTimeout(() => {
+        timers.delete(lineId)
+        void job.updateScriptLine(lineId, text.trim()).then(() => {
+          setScriptSavedAt(Date.now())
+        })
+      }, 800)
+    )
+  }
   const ready = step === 'done' || step === 'waiting_vo'
   // The voiceover is optional, so `waiting_vo` is a finished clip — but it is
   // NOT the same as `done`, and the card used to tick every remaining stage
@@ -210,7 +259,7 @@ export default function ProjectDetailPage({ uid }: { uid: string }): React.JSX.E
         : dubScenesFor(job.editScript)
   const lines: TimedLine[] = linesFromScenes(scenes)
     .filter((l) => l.script)
-    .map((l) => ({ id: `line${l.lineId}`, text: l.script, start: l.start }))
+    .map((l) => ({ id: `line${l.lineId}`, lineId: l.lineId, text: l.script, start: l.start }))
   const script = lines.map((l) => l.text).join('\n')
   const previewBroken = previewBrokenKey === `${uid}-${previewFile}-${job?.mediaKey}`
   const currentLineId = lineIdAt(scenes, playheadSec)
@@ -227,7 +276,7 @@ export default function ProjectDetailPage({ uid }: { uid: string }): React.JSX.E
         ? 'ไม่พากย์'
         : job.project.voiceoverPath
           ? 'พากย์แล้ว'
-          : 'ยังไม่ได้พากย์'
+          : 'ภาพอย่างเดียว'
   const detailSubtitle = [
     `${MODE_LABEL[job.mode]} · ${audioLabel}`,
     totalClipSec > 0 ? fmtClipClock(totalClipSec) : null,
@@ -298,12 +347,12 @@ export default function ProjectDetailPage({ uid }: { uid: string }): React.JSX.E
             </div>
           ) : previewFile ? (
             <VideoPlayer
-              mediaKey={`${uid}-${previewFile}-${job.mediaKey}`}
+              mediaKey={`${uid}-${previewFile}-${job.mediaKey}-${previewNonce}`}
               videoRef={videoRef}
               src={window.noey.media.urlFor(uid, previewFile)}
               expandTitle={job.project.name}
               className="aspect-[9/16] w-full max-w-[270px] rounded-md lg:h-[480px] lg:w-[270px]"
-              onError={() => setPreviewBrokenKey(`${uid}-${previewFile}-${job.mediaKey}`)}
+              onError={() => handlePreviewError(`${uid}-${previewFile}-${job.mediaKey}`)}
             />
           ) : (
             <div className="aspect-[9/16] w-full max-w-[270px] overflow-hidden rounded-md bg-media lg:h-[480px] lg:w-[270px]" />
@@ -349,7 +398,7 @@ export default function ProjectDetailPage({ uid }: { uid: string }): React.JSX.E
                     : step === 'error'
                       ? (job.error ?? 'ทำงานไม่สำเร็จ')
                       : awaitingVoiceover
-                        ? 'คลิปพร้อมใช้ — ยังไม่ได้ใส่เสียงพากย์ (ไม่บังคับ)'
+                        ? 'คลิปพร้อมใช้ — ภาพอย่างเดียว นำไปพากย์เสียงเองได้'
                         : ready && job.mode === 'speech_highlights' && highlightItems.length > 0
                           ? `ไฮไลต์พร้อมใช้ ${highlightItems.length} คลิป`
                           : ready
@@ -379,6 +428,10 @@ export default function ProjectDetailPage({ uid }: { uid: string }): React.JSX.E
             <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-muted">
               {stepOrderFor(job.mode)
                 .filter((s) => s !== 'done')
+                // With the recorder hidden, the voiceover-era stages (planning,
+                // final render) can never run here — listing them as pending
+                // "(ถ้าต้องการ)" work promised a step this build does not have.
+                .filter((s) => canRecordVoiceover || (s !== 'planning' && s !== 'final_rendering'))
                 .map((s, i, all) => {
                   // `done` is filtered out of `all`, so a finished project has
                   // no index in it. At `waiting_vo` only the stages up to the
@@ -396,15 +449,9 @@ export default function ProjectDetailPage({ uid }: { uid: string }): React.JSX.E
                   )
                 })}
             </div>
-            {job.thinking ? (
-              <button
-                type="button"
-                onClick={() => navigate({ name: 'progress', uid })}
-                className="mt-2 text-[13px] text-accent underline hover:text-accent-hover-text"
-              >
-                ดูขั้นตอนที่ AI ตัดสินใจและเหตุผล — เปิดรายละเอียด
-              </button>
-            ) : null}
+            {/* The "AI reasoning" link is gone: the reasoning text is model
+                output verbatim and identifies the vendor (business-secret
+                rule, owner 2026-09-09). */}
           </div>
 
           {/* speech_highlights (R17.10): the N clips, under the status card and
@@ -487,13 +534,27 @@ export default function ProjectDetailPage({ uid }: { uid: string }): React.JSX.E
             )}
 
             {/* R18b ปรับช็อต — pick between frames the AI already compared
-                (edit-script modes only; zero AI calls per round). Absent
-                entirely once the cut is ready and no shot has an alternative:
-                an offer with nothing behind it wastes the press. */}
-            {(job.mode === 'dub_first' || job.mode === 'highlight') &&
-            (running || !ready || swapQuestions > 0) ? (
+                (edit-script modes only; zero AI calls per round).
+                Stays on the page with a REASON when no shot has an alternative,
+                rather than vanishing. It used to disappear outright, on the
+                grounds that an offer with nothing behind it wastes the press —
+                but a button that is there on one project and gone on the next
+                reads as the app losing a feature ("แล้วทำไมอยู่ๆ ที่ปรับช็อต
+                มันหายไป", 2026-09-09). A short source is the usual cause: the
+                alternates the model returns get dropped when they overlap the
+                shot they would replace, and on a 15-second clip most of them
+                do. */}
+            {job.mode === 'dub_first' || job.mode === 'highlight' ? (
               <ActionButton
-                reason={running ? 'รอรอบปัจจุบันเสร็จก่อน' : !ready ? 'ต้องเรนเดอร์คลิปก่อน' : null}
+                reason={
+                  running
+                    ? 'รอรอบปัจจุบันเสร็จก่อน'
+                    : !ready
+                      ? 'ต้องเรนเดอร์คลิปก่อน'
+                      : swapQuestions === 0
+                        ? 'คลิปนี้ไม่มีมุมสำรองให้เลือก — คลิปต้นฉบับสั้นไปหรือมุมซ้ำกับช็อตเดิมเกินไป'
+                        : null
+                }
                 icon={<ArrowLeftRight size={17} className="text-accent" />}
                 onClick={() => setSwapOpen(true)}
               >
@@ -530,8 +591,12 @@ export default function ProjectDetailPage({ uid }: { uid: string }): React.JSX.E
             ) : null}
 
             {/* Re-recording stays available after the render (R1 screen 3):
-                a finished dub is exactly when you hear a line you want again. */}
-            {(job.mode === 'dub_first' || job.mode === 'highlight') &&
+                a finished dub is exactly when you hear a line you want again.
+                Behind `canRecordVoiceover`: the in-app recorder is hidden on
+                web for now (owner 2026-09-09) — the script panel below is the
+                hand-off for dubbing outside the app. */}
+            {canRecordVoiceover &&
+            (job.mode === 'dub_first' || job.mode === 'highlight') &&
             (step === 'waiting_vo' || ready) ? (
               <ActionButton
                 reason={null}
@@ -559,6 +624,11 @@ export default function ProjectDetailPage({ uid }: { uid: string }): React.JSX.E
                   ? 'สคริปต์ที่ใช้พากย์'
                   : 'คำบรรยายจากการถอดเสียง'}
               </p>
+              {scriptEditable ? (
+                <span className="min-w-0 flex-1 truncate text-[13px] text-muted">
+                  {scriptSavedAt ? 'บันทึกแล้ว' : 'แก้ข้อความได้เลย — บันทึกให้อัตโนมัติ'}
+                </span>
+              ) : null}
               {script ? (
                 <button
                   type="button"
@@ -576,28 +646,64 @@ export default function ProjectDetailPage({ uid }: { uid: string }): React.JSX.E
             </div>
             {/* Lines, not one text blob: each carries its own output-time
                 range, so the one being spoken can light up while the preview
-                plays and clicking a line jumps the video to it. */}
+                plays and focusing a line jumps the video to it.
+                In the dub modes each line is EDITABLE in place and autosaves
+                (owner 2026-09-09) — the text lives on the edit script, so a
+                fix typed here is what every later render burns in. */}
             {lines.length > 0 ? (
               <div className="scroll-ghost mt-2.5 min-h-0 flex-1 overflow-y-auto">
                 {lines.map((line) => {
                   const active = line.id === activeLineId
+                  const shared = cn(
+                    'block w-full rounded-sm px-2 py-[3px] text-left text-[15px] leading-[1.75] transition-colors duration-state ease-out',
+                    active
+                      ? 'bg-accent-tint font-semibold text-accent'
+                      : 'text-ink-2 hover:bg-[rgb(243_242_242_/_0.05)]'
+                  )
+                  if (!scriptEditable) {
+                    return (
+                      <button
+                        key={line.id}
+                        type="button"
+                        onClick={() => {
+                          const v = videoRef.current
+                          if (v) v.currentTime = line.start
+                        }}
+                        className={shared}
+                      >
+                        {line.text}
+                      </button>
+                    )
+                  }
                   return (
-                    <button
+                    <textarea
                       key={line.id}
-                      type="button"
-                      onClick={() => {
+                      rows={1}
+                      defaultValue={line.text}
+                      // Grows with its content — a fixed-row textarea clips
+                      // exactly the long lines that need editing most.
+                      ref={(el) => {
+                        if (el) {
+                          el.style.height = 'auto'
+                          el.style.height = `${el.scrollHeight}px`
+                        }
+                      }}
+                      onInput={(e) => {
+                        const el = e.currentTarget
+                        el.style.height = 'auto'
+                        el.style.height = `${el.scrollHeight}px`
+                      }}
+                      onFocus={() => {
                         const v = videoRef.current
                         if (v) v.currentTime = line.start
                       }}
+                      onChange={(e) => queueScriptSave(line.lineId, e.currentTarget.value)}
                       className={cn(
-                        'block w-full rounded-sm px-2 py-[3px] text-left text-[15px] leading-[1.75] transition-colors duration-state ease-out',
-                        active
-                          ? 'bg-accent-tint font-semibold text-accent'
-                          : 'text-ink-2 hover:bg-[rgb(243_242_242_/_0.05)]'
+                        shared,
+                        'resize-none overflow-hidden border-none bg-transparent outline-none',
+                        'focus:bg-[rgb(243_242_242_/_0.05)]'
                       )}
-                    >
-                      {line.text}
-                    </button>
+                    />
                   )
                 })}
               </div>

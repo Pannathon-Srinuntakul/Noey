@@ -18,7 +18,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Film, Play, X } from 'lucide-react'
+import { Film, X } from 'lucide-react'
 import type { LocalClip } from '@renderer/platform/types'
 import { cn } from '../../lib/cn'
 import { useConfirm } from '../../lib/confirm'
@@ -75,11 +75,18 @@ function useShotThumbs(uid: string, clips: LocalClip[], wants: ThumbWant[]): Map
     video.crossOrigin = 'anonymous'
     const canvas = document.createElement('canvas')
 
-    const seekTo = (sec: number): Promise<void> =>
+    // Timed for the same reason as the load: a seek that never completes used
+    // to stall every remaining thumbnail behind it, silently and for ever.
+    const seekTo = (sec: number): Promise<boolean> =>
       new Promise((resolve) => {
-        const done = (): void => {
+        const timer = window.setTimeout(() => {
           video.removeEventListener('seeked', done)
-          resolve()
+          resolve(false)
+        }, 5000)
+        const done = (): void => {
+          window.clearTimeout(timer)
+          video.removeEventListener('seeked', done)
+          resolve(true)
         }
         video.addEventListener('seeked', done)
         video.currentTime = sec
@@ -96,13 +103,27 @@ function useShotThumbs(uid: string, clips: LocalClip[], wants: ThumbWant[]): Map
         const clip = clips.find((c) => c.id === clipId)
         if (!clip) continue
         video.src = window.noey.media.urlFor(uid, clip.file)
-        await new Promise<void>((resolve, reject) => {
-          video.addEventListener('loadeddata', () => resolve(), { once: true })
-          video.addEventListener('error', () => reject(new Error('thumb load failed')), {
-            once: true
-          })
+        // One element serves every clip in turn, and assigning `src` alone does
+        // not always restart the load algorithm on a reused element — without
+        // this, `loadeddata` can simply never fire.
+        video.load()
+        // Timed, because "never fires" is a real outcome here: the media route
+        // is a service worker, and a request it does not answer left this
+        // promise pending for ever. The card then sat on its film icon with no
+        // error anywhere (seen on a modal reopen, 2026-09-09). A missed thumb
+        // is a placeholder; a hung one costs every LATER thumb too, since they
+        // are generated in sequence behind it.
+        const loaded = await new Promise<boolean>((resolve) => {
+          const timer = window.setTimeout(() => resolve(false), 8000)
+          const finish = (ok: boolean) => (): void => {
+            window.clearTimeout(timer)
+            resolve(ok)
+          }
+          video.addEventListener('loadeddata', finish(true), { once: true })
+          video.addEventListener('error', finish(false), { once: true })
         })
         if (cancelled) return
+        if (!loaded) continue
         const ratio = (video.videoWidth || 9) / (video.videoHeight || 16)
         // Captured well above the 470px the frame is drawn at, and above that
         // again for HiDPI: grabbing at display size produced a visibly soft
@@ -113,8 +134,9 @@ function useShotThumbs(uid: string, clips: LocalClip[], wants: ThumbWant[]): Map
         if (!ctx) return
         for (const t of times) {
           if (cancelled) return
-          await seekTo(Math.max(0, Math.min(t, (video.duration || t + 1) - 0.05)))
+          const seeked = await seekTo(Math.max(0, Math.min(t, (video.duration || t + 1) - 0.05)))
           if (cancelled) return
+          if (!seeked) continue
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
           try {
             thumbCache.set(thumbKey(uid, clipId, t), canvas.toDataURL('image/jpeg', 0.72))
@@ -142,82 +164,100 @@ function useShotThumbs(uid: string, clips: LocalClip[], wants: ThumbWant[]): Map
   return out
 }
 
-/** One option's picture: a still until played, the looping window while playing. */
+/**
+ * One option's picture: the SELECTED one plays its window on a loop, the others
+ * are stills.
+ *
+ * There is no play control. This screen asks one question — which of these two
+ * shots — and the answer is in the motion, not in a frame: a still cannot show
+ * "โพสท์หันข้าง ยิ้มทักทายกล้อง". Making the user press play on each option in
+ * turn put a chore between them and the only thing they came here to compare,
+ * and the disc sat over the middle of the face while they did it. Selecting is
+ * now the whole gesture: tap an option, it plays; tap the other, that one plays
+ * and this one goes back to a still. Never two at once — one decoder, and one
+ * moving picture to look at.
+ *
+ * Muted + `playsInline` is what makes autoplay legal everywhere, iOS included.
+ */
 function OptionFrame({
   uid,
   clips,
   win,
   thumb,
-  playing,
-  onTogglePlay
+  playing
 }: {
   uid: string
   clips: LocalClip[]
   win: ShotWindow
   thumb: string | undefined
   playing: boolean
-  onTogglePlay: () => void
 }): React.JSX.Element {
   const ref = useRef<HTMLVideoElement | null>(null)
   const clip = clips.find((c) => c.id === win.sourceClip)
 
-  useEffect(() => {
+  /** Rewind into the window only when outside it, so a retry does not restart. */
+  const start = useCallback((): void => {
     const v = ref.current
-    if (!playing || !v) return
-    v.currentTime = win.sourceIn
+    if (!v) return
+    if (v.currentTime < win.sourceIn || v.currentTime > win.sourceOut) v.currentTime = win.sourceIn
     void v.play().catch(() => undefined)
-  }, [playing, win.sourceClip, win.sourceIn])
+  }, [win.sourceIn, win.sourceOut])
 
-  return (
-    <>
-      {playing && clip ? (
-        <video
-          ref={ref}
-          muted
-          playsInline
-          src={window.noey.media.urlFor(uid, clip.file)}
-          className="h-full w-full object-cover"
-          onTimeUpdate={(e) => {
-            // Loop the window rather than running on into the next shot.
-            if (e.currentTarget.currentTime >= win.sourceOut) {
-              e.currentTarget.currentTime = win.sourceIn
-            }
-          }}
-        />
-      ) : thumb ? (
-        <img src={thumb} alt="" className="h-full w-full object-cover" />
-      ) : (
-        <div className="flex h-full w-full items-center justify-center">
-          <Film size={20} className="text-muted" />
-        </div>
-      )}
+  useEffect(() => {
+    if (!playing) return
+    start()
+    // A refused autoplay is SILENT, and there is no play button left to rescue
+    // it, so one refusal would freeze the card on a still for good. Measured
+    // refusal in Chrome: "video-only background media was paused to save power"
+    // — muted video is not allowed to run while the window is unfocused, and
+    // the promise rejects with AbortError. Every retry hook below is a moment
+    // when the browser's reason to refuse may have gone away.
+    const onVisible = (): void => {
+      if (document.visibilityState === 'visible') start()
+    }
+    window.addEventListener('focus', start)
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      window.removeEventListener('focus', start)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+  }, [playing, start])
 
-      <button
-        type="button"
-        aria-label={playing ? 'หยุด' : 'เล่นดูก่อน'}
-        onClick={(e) => {
-          e.stopPropagation()
-          onTogglePlay()
+  if (playing && clip) {
+    return (
+      <video
+        ref={ref}
+        muted
+        playsInline
+        // The still stays underneath as the poster, so the swap from image to
+        // video is not a black flash while the first frame decodes.
+        poster={thumb}
+        src={window.noey.media.urlFor(uid, clip.file)}
+        className="h-full w-full object-cover"
+        // The effect fires before the element can play anything; this is the
+        // attempt that usually takes.
+        onCanPlay={start}
+        // Last resort, and the only one a person can reach: a tap on the
+        // picture. It bubbles to the card, where selecting the already-selected
+        // option is a no-op, so this cannot change the answer by accident.
+        onClick={start}
+        onLoadedMetadata={(e) => {
+          e.currentTarget.currentTime = win.sourceIn
         }}
-        className={cn(
-          'absolute left-1/2 top-1/2 flex h-[52px] w-[52px] -translate-x-1/2 -translate-y-1/2',
-          'items-center justify-center rounded-full border text-ink transition-colors duration-state ease-out',
-          // A dark disc behind it: the outline-only version vanished against a
-          // bright frame, which is most of this footage.
-          'border-[rgb(243_242_242_/_0.34)] bg-[rgb(23_22_20_/_0.55)] backdrop-blur-[2px]',
-          'hover:border-[rgb(243_242_242_/_0.6)] hover:bg-[rgb(23_22_20_/_0.72)]'
-        )}
-      >
-        {playing ? (
-          <span className="flex gap-[3px]">
-            <span className="h-3.5 w-[3px] rounded-sm bg-current" />
-            <span className="h-3.5 w-[3px] rounded-sm bg-current" />
-          </span>
-        ) : (
-          <Play size={16} className="ml-[2px] fill-current" />
-        )}
-      </button>
-    </>
+        onTimeUpdate={(e) => {
+          // Loop the window rather than running on into the next shot.
+          if (e.currentTarget.currentTime >= win.sourceOut) {
+            e.currentTarget.currentTime = win.sourceIn
+          }
+        }}
+      />
+    )
+  }
+  if (thumb) return <img src={thumb} alt="" className="h-full w-full object-cover" />
+  return (
+    <div className="flex h-full w-full items-center justify-center">
+      <Film size={20} className="text-muted" />
+    </div>
   )
 }
 
@@ -259,7 +299,6 @@ export function ShotSwapReview({
   const [cursor, setCursor] = useState(0)
   /** segIndex → chosen alternate, or null for "keep the AI's". */
   const [picks, setPicks] = useState<ReadonlyMap<number, number>>(new Map())
-  const [playing, setPlaying] = useState<number | null>(null)
   const [browsing, setBrowsing] = useState(false)
   /** Set when the strip jumps to a shot that has nothing to choose between. */
   const [noOptionShot, setNoOptionShot] = useState<number | null>(null)
@@ -289,7 +328,7 @@ export function ShotSwapReview({
       note: a.note,
       disabledReason:
         regime === 'locked' && !windowFitsLocked(a, dur)
-          ? 'ช่วงนี้สั้นกว่าช็อตเดิม ใช้ได้ก่อนอัดเสียงพากย์เท่านั้น'
+          ? 'ช่วงนี้สั้นกว่าช็อตเดิม — ใช้ได้เฉพาะตอนที่ความยาวคลิปยังปรับได้'
           : null
     }))
     return [head, ...rest]
@@ -335,7 +374,6 @@ export function ShotSwapReview({
 
   const choose = (opt: Option): void => {
     if (opt.disabledReason || segIndex === undefined) return
-    setPlaying(null)
     setPicks((prev) => {
       const next = new Map(prev)
       if (opt.altIndex === null) next.delete(segIndex)
@@ -352,7 +390,7 @@ export function ShotSwapReview({
   const last = cursor >= queue.length - 1
   const goTo = (next: number): void => {
     setNoOptionShot(null)
-    setPlaying(null)
+    // Nothing to stop: the next shot's chosen option starts playing on its own.
     setCursor(Math.max(0, Math.min(queue.length - 1, next)))
   }
 
@@ -402,9 +440,18 @@ export function ShotSwapReview({
         return
       }
       if (e.code === 'Space') {
+        // Was play/pause. The selected shot plays on its own now, so space
+        // moves the choice between the options instead — the one key that did
+        // something on this screen keeps doing something.
         e.preventDefault()
-        const picked = options.findIndex((o) => isChosen(o))
-        setPlaying((p) => (p === null ? Math.max(0, picked) : null))
+        const at = options.findIndex((o) => isChosen(o))
+        for (let step = 1; step <= options.length; step++) {
+          const next = options[(Math.max(0, at) + step) % options.length]
+          if (next && !next.disabledReason) {
+            choose(next)
+            break
+          }
+        }
         return
       }
       if (e.key === 'ArrowRight' || e.key === 'Enter') {
@@ -434,7 +481,7 @@ export function ShotSwapReview({
   const lineText = seg ? String(seg.voiceoverScript ?? '').trim() : ''
   const regimeNote =
     regime === 'locked'
-      ? 'ความยาวช็อตเท่าเดิม เสียงพากย์ไม่เคลื่อน'
+      ? 'ความยาวช็อตเท่าเดิม ไทม์ไลน์ไม่เคลื่อน'
       : 'ความยาวจะเปลี่ยนตามช็อตที่เลือก'
 
   return createPortal(
@@ -528,7 +575,12 @@ export function ShotSwapReview({
                   return (
                     <div
                       key={i}
-                      className="flex min-h-0 w-[46vw] max-w-[210px] shrink-0 flex-col sm:w-auto sm:max-w-none sm:flex-1 sm:shrink"
+                      // Shrink-wraps the picture from `sm` (no flex-1): the
+                      // cards' sizes must be identical BY CONSTRUCTION, not by
+                      // two flex resolutions happening to agree — the owner
+                      // caught one card rendering larger than the other
+                      // (2026-09-09).
+                      className="flex min-h-0 w-[46vw] max-w-[210px] shrink-0 flex-col sm:w-auto sm:max-w-[270px]"
                     >
                       {/* A div, not a <button>: the play control sits on top of
                           the picture, and a button inside a button is invalid
@@ -547,9 +599,12 @@ export function ShotSwapReview({
                             choose(opt)
                           }
                         }}
-                        style={{ maxHeight: FRAME_MAX_H }}
                         className={cn(
-                          'relative aspect-[9/16] min-h-0 flex-1 overflow-hidden rounded-[5px] bg-media outline-none transition-colors duration-state ease-out',
+                          // Width-driven below `sm` (fills the 46vw wrapper);
+                          // an explicit shared height from `sm` up — every
+                          // card gets exactly the same box, video or still.
+                          'relative aspect-[9/16] w-full overflow-hidden rounded-[5px] bg-media outline-none transition-colors duration-state ease-out',
+                          'sm:h-[min(470px,56dvh)] sm:w-auto',
                           // One accent border, never a border plus a ring —
                           // stacked rings read as two overlapping edges.
                           chosen
@@ -559,13 +614,14 @@ export function ShotSwapReview({
                           replaced && 'opacity-50'
                         )}
                       >
+                        {/* Selection IS playback — see OptionFrame. A disabled
+                            option can never be selected, so it never plays. */}
                         <OptionFrame
                           uid={project.uid}
                           clips={project.clips}
                           win={opt.window}
                           thumb={thumbFor(opt.window)}
-                          playing={playing === i}
-                          onTogglePlay={() => setPlaying((p) => (p === i ? null : i))}
+                          playing={chosen && !opt.disabledReason}
                         />
                         {chosen ? (
                           <span className="pointer-events-none absolute left-3 top-3 flex items-center gap-1.5 rounded-full bg-[rgb(23_22_20_/_0.82)] py-[5px] pl-2 pr-3 text-[13px] font-semibold text-accent">
@@ -609,7 +665,6 @@ export function ShotSwapReview({
                     type="button"
                     aria-label={`ช็อตที่ ${i + 1}`}
                     onClick={() => {
-                      setPlaying(null)
                       const q = queue.indexOf(i)
                       if (q >= 0) {
                         setNoOptionShot(null)
@@ -645,7 +700,7 @@ export function ShotSwapReview({
                 ของเดิมย้อนกลับได้เสมอ
               </>
             ) : (
-              'แตะภาพเพื่อเลือก · กดปุ่มเล่นเพื่อดูก่อน'
+              'แตะภาพเพื่อเลือก — อันที่เลือกจะเล่นวนให้ดู'
             )}
           </span>
           <button
@@ -656,28 +711,30 @@ export function ShotSwapReview({
             {browsing ? 'ซ่อนรายการช็อต' : `ไล่ดูทั้ง ${segments.length} ช็อต`}
           </button>
           <span className="flex-1" />
-          {last && diffCount > 0 ? (
-            <Button variant="secondary" onClick={() => setPicks(new Map())}>
+          {/* ย้อนกลับ walks to the previous shot (it used to RESET every pick
+              under that label — a destructive act wearing a navigation word),
+              and ทำคลิปใหม่ is available the moment anything changed: nobody
+              should have to walk all 19 questions to commit the two they came
+              for (owner 2026-09-09). */}
+          {cursor > 0 ? (
+            <Button variant="ghost" onClick={() => goTo(cursor - 1)}>
               ย้อนกลับ
-            </Button>
-          ) : !last ? (
-            <Button variant="ghost" onClick={() => goTo(cursor + 1)}>
-              ใช้ของ AI ต่อ
             </Button>
           ) : null}
           {!last ? (
             <Button variant="secondary" onClick={() => goTo(cursor + 1)}>
               ถัดไป
             </Button>
-          ) : diffCount > 0 ? (
+          ) : null}
+          {diffCount > 0 ? (
             <Button variant="primary" onClick={apply}>
-              ทำคลิปใหม่
+              ทำคลิปใหม่ · {diffCount} ช็อต
             </Button>
-          ) : (
+          ) : last ? (
             <Button variant="secondary" onClick={onClose}>
               เสร็จแล้ว
             </Button>
-          )}
+          ) : null}
         </div>
       </div>
     </div>,

@@ -201,6 +201,7 @@ async def create_local_project(
         clips=len(body.clips),
         engine=proj.engine,
         precision=proj.precision,
+        target_duration_sec=proj.target_duration_sec,
     )
     return LocalProjectOut(uid=proj.uid)
 

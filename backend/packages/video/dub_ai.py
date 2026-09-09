@@ -383,7 +383,7 @@ Adjacent cuts must be visually distinct, but distance in TIME is not what makes 
 <script>
 This is step 5 of <method>: the spans and moments are already chosen. Write the script to fit that footage, never footage to fit a line you already wrote. Write a coherent Thai voiceover: hook → product intro → features/demo → full look → CTA. Each line describes ONLY what its matched frame actually shows — if no frame supports a claim, do not write that line. Do not repeat a feature already mentioned; move to the next point.
 Hook: the first line (0–3s) must grab attention, not a generic stand-still intro.
-Length: each line ≈ one spoken beat, 3–8s summed across its cuts. Calibration, not a quota: a typical TikTok affiliate review runs about 45 seconds, and most strong ones land between 45 and 60. The right length for THIS video is decided by its strong spans — a rich shoot justifies the full 60s; a thin one is better served by a tight 25–35s cut than by a padded 50s one. The number of lines follows the strong spans; never stretch it with weak spans, repeats, or invented timestamps.
+Length: each line ≈ one spoken beat, 3–8s summed across its cuts. Calibration, not a quota: a typical TikTok affiliate review runs about 45 seconds, and most strong ones land between 45 and 60. The right length for THIS video is decided by its strong spans — a rich shoot justifies the full 60s; a thin one is better served by a short cut made only of strong spans than by one padded toward the norm. The number of lines follows the strong spans; never stretch it with weak spans, repeats, or invented timestamps.
 QUALITY OVER DURATION: the ~45s norm above is calibration only — never a license to pad toward it. A shorter video built purely from strong spans beats a longer one padded with mediocre ones, every time. Never invent a timestamp beyond a clip's real duration, and never reuse a moment past the reuse limits in <editing_style>, just to run longer. Every segment must point at real, distinct footage that actually exists — and every segment must earn its place: if you would cut it from a client's video, cut it from this one.
 Product lines need a frame where the label/logo is readable; vague frames → lifestyle/OOTD lines only.
 Last line = CTA ("สั่งได้เลยที่ TikTok Shop" / "คลิกลิงค์ใน bio เลย"), matched to a closing frame: creator facing camera or presenting the product toward camera.
@@ -445,6 +445,8 @@ Work in this order. Finish each step before starting the next.
 3. DECIDE, span by span, whether to use it at all. Apply <reject_span>, then ask whether this span is strong enough to earn screen time when the rest of the footage is competing for it. Dropping most spans of a long take is the normal outcome, not a failure.
 4. PICK the single best moment inside each span you kept (<shot_quality>).
 5. ORDER the moments you kept into the final cut. There is no script to write.
+
+Length follows the footage, not a preset: the total is however many genuinely strong moments the material holds, and it must scale with the material — a long shoot rich in strong spans should produce a meaningfully longer reel than a thin one, and two shoots of very different length landing on the same total is a sign the length was assumed rather than decided. A short reel because the strong material ran out is a correct result.
 
 Step 3 is the one that decides whether the video is good. A frame that survives every rule in <reject_prep> can still sit inside a span that should never have been used — judge the span first, the frame second.
 </method>
@@ -906,7 +908,7 @@ def build_dub_edit_instruction_text_video(
         duration_hint = (
             f"Requested video length: ~{target_duration_sec} seconds — an AIM and a CEILING, never a quota to pad toward. Land close when the strong material supports it; never exceed it; and if the strong spans genuinely run out sooner, deliver the shorter honest cut instead. totalEstimatedSec = sum of ALL segment durationSec = actual rendered video length. Roughly {_line_count_hint(target_duration_sec)} lines usually fits this length (calibration, not a count to force) with multi-angle where the footage supports it — NEVER by inventing timestamps beyond a clip's real duration (see <clips> above). "
             if target_duration_sec
-            else f"No target set. Calibration: a typical TikTok affiliate review runs about 45 seconds, and most strong ones land between 45 and 60 — but the right length for THIS video is decided by the footage. Total available footage across all clips is {total_footage:.1f}s; only its genuinely strong spans should appear. totalEstimatedSec = sum of ALL segment durationSec = actual rendered video length. Build from the strongest spans outward and stop when the next span would be filler: a tight 25–35s cut from thin footage beats a padded 50s one, and running past 45s is right exactly when every added span is strong. Never invent or reuse moments to run longer. "
+            else f"No target set. Calibration: a typical TikTok affiliate review runs about 45 seconds, and most strong ones land between 45 and 60 — but the right length for THIS video is decided by the footage, and it must SCALE with the footage: total available footage across all clips is {total_footage:.1f}s, and a long shoot rich in strong moments should produce a meaningfully longer cut than a thin one — two sources of very different length landing on the same total is a sign the length was assumed, not decided. totalEstimatedSec = sum of ALL segment durationSec = actual rendered video length. Build from the strongest spans outward and stop when the next span would be filler: a short cut made only of strong spans beats a longer one padded with mediocre ones, and running past the calibration is right exactly when every added span is strong. Never invent or reuse moments to run longer. "
         )
     # The bound restated in the last thing the model reads, per clip, in the
     # concrete form its failures take (a number bigger than the clip). Measured
@@ -1044,6 +1046,11 @@ async def generate_dub_edit_script_video(
             fps=sample_fps,
             clip_count=len(clip_videos),
             upload_ms=upload_ms,
+            # The length inputs, so "why did it come back at Ns" is answerable
+            # from logs instead of a code read (2026-09-09: two projects of
+            # 2:42 and 10:00 both cut to exactly 0:30 on the no-target path).
+            target_duration_sec=target_duration_sec,
+            duration_branch="target" if target_duration_sec else "no_target",
         )
 
         resolved_system = apply_cut_style(

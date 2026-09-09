@@ -127,19 +127,28 @@ export function JobsProvider({
   const [pipelines, setPipelines] = useState<ReadonlyMap<string, ProjectPipeline>>(new Map())
   const { showToast } = useToast()
 
+  // Monotonic id so a SLOW earlier listing cannot land after a newer one and
+  // put stale rows on screen; the catch keeps a failed listing from pinning
+  // the page on its skeletons forever.
+  const reloadSeq = useRef(0)
   const reload = useCallback(() => {
-    window.noey.projects.list().then((list) => {
-      // The service worker gets the uid→remoteUid map BEFORE the list renders:
-      // the first <video> mounts the moment setProjects lands, and a media
-      // request for a restored project that raced this message 404'd because
-      // the worker did not yet know which server project the uid belongs to.
-      navigator.serviceWorker?.controller?.postMessage({
-        type: 'sw:projects',
-        projects: list.map((p) => ({ uid: p.uid, remoteUid: p.remote?.uid ?? null }))
+    const seq = ++reloadSeq.current
+    window.noey.projects
+      .list()
+      .then((list) => {
+        if (seq !== reloadSeq.current) return
+        // The service worker gets the uid→remoteUid map BEFORE the list renders:
+        // the first <video> mounts the moment setProjects lands, and a media
+        // request for a restored project that raced this message 404'd because
+        // the worker did not yet know which server project the uid belongs to.
+        navigator.serviceWorker?.controller?.postMessage({
+          type: 'sw:projects',
+          projects: list.map((p) => ({ uid: p.uid, remoteUid: p.remote?.uid ?? null }))
+        })
+        setProjects(list)
+        setLoading(false)
       })
-      setProjects(list)
-      setLoading(false)
-    })
+      .catch(() => setLoading(false))
   }, [])
 
   useEffect(reload, [reload])
@@ -148,12 +157,32 @@ export function JobsProvider({
   // pulled back from the server before the first list render. Only the small
   // `project.json` is fetched; the media follows on demand through the service
   // worker, so this costs a few kilobytes rather than a download per project.
+  // The session object is replaced on every token refresh but is mutated IN
+  // PLACE first (authedFetch), so a captured reference never holds a dead
+  // token. Kept in a ref so the restore below runs once per mount instead of
+  // once per session identity — each re-run raced the previous one.
+  const sessionRef = useRef(session)
+  useEffect(() => {
+    sessionRef.current = session
+  }, [session])
+
   useEffect(() => {
     let cancelled = false
     void (async () => {
       const { restoreMissingProjects, backfillUnsyncedProjects } = await import('./projectSync')
-      const restored = await restoreMissingProjects(session)
-      if (restored > 0 && !cancelled) reload()
+      try {
+        await restoreMissingProjects(sessionRef.current)
+      } finally {
+        // ALWAYS re-read the store, even when this run was superseded or threw
+        // half-way. The restore writes each project.json BEFORE it counts it,
+        // and its count covers only what THIS run wrote — a run cancelled
+        // after its first write (StrictMode remount, a token refresh swapping
+        // the session) left the project on disk with nothing on screen, and
+        // the replacement run, seeing it already there, counted 0 and
+        // reloaded nothing either. That is the "ต้อง refresh 1 ที" report
+        // (owner 2026-09-09).
+        reload()
+      }
       if (cancelled) return
 
       // Then the other direction. Every push point is a pipeline TRANSITION,
@@ -161,7 +190,7 @@ export function JobsProvider({
       // done — so a project finished before its transition learned to sync
       // stays on one machine for good. This is the one-time catch-up, and it
       // is a no-op for a project the server already has.
-      const pushed = await backfillUnsyncedProjects(session)
+      const pushed = await backfillUnsyncedProjects(sessionRef.current)
       if (pushed > 0) {
         void window.noey.log.write('projectSync', `backfilled ${pushed} project(s)`)
       }
@@ -169,7 +198,33 @@ export function JobsProvider({
     return () => {
       cancelled = true
     }
-  }, [session, reload])
+  }, [reload])
+
+  // A project created on ANOTHER machine while this tab sits open: re-check
+  // when the tab comes back to the foreground, at most once a minute. This is
+  // what makes the list live across machines instead of only at page load.
+  useEffect(() => {
+    let last = 0
+    const resync = (): void => {
+      if (document.visibilityState !== 'visible') return
+      if (Date.now() - last < 60_000) return
+      last = Date.now()
+      void (async () => {
+        const { restoreMissingProjects } = await import('./projectSync')
+        try {
+          await restoreMissingProjects(sessionRef.current)
+        } finally {
+          reload()
+        }
+      })()
+    }
+    document.addEventListener('visibilitychange', resync)
+    window.addEventListener('focus', resync)
+    return () => {
+      document.removeEventListener('visibilitychange', resync)
+      window.removeEventListener('focus', resync)
+    }
+  }, [reload])
 
   // The service worker serves media by project uid, and only the page knows
   // which server-side project a local uid belongs to. Telling it here means

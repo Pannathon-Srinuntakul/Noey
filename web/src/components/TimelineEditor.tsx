@@ -559,6 +559,10 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
   const [cuts, setCuts] = useState<WorkingCut[]>([])
   const [editorPhase, setEditorPhase] = useState<'loading' | 'preparing' | 'ready'>('loading')
   const [prepareHint, setPrepareHint] = useState('')
+  // Set once the timeline + first preview are in: from then on only the
+  // filmstrip is being waited for, and the effect below owns the flip to
+  // 'ready' (strips landed / failed / wait cap / user pressed skip).
+  const [filmstripGateArmed, setFilmstripGateArmed] = useState(false)
   const [error, setError] = useState<string | null>(null)
   // What "ลองอีกครั้ง" on the error bar re-runs — only a failed save is retryable.
   const [errorRetry, setErrorRetry] = useState<'save' | null>(null)
@@ -656,10 +660,11 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
   // (engine/jobs/filmstrip.ts), the lanes draw the JPEGs into a canvas. Nothing about
   // them lives in this component's state — see FilmstripCanvas.
   const filmstripSources = editorApi.filmstripSources()
-  const strips = useFilmstripStrips(
+  const filmstrip = useFilmstripStrips(
     filmstripSources?.localUid ?? null,
     filmstripSources?.clips ?? EMPTY_FILMSTRIP_CLIPS
   )
+  const strips = filmstrip.strips
   // Scroll is published to the lanes imperatively so it never re-renders the
   // timeline; the store is per-mount so nothing survives a close/reopen.
   const viewportStore = useMemo(() => createTimelineViewportStore(), [])
@@ -815,9 +820,27 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
     void applySnapshot(next)
   }
 
+  // The filmstrip half of the preparing gate. Bounded at 8s: past that the
+  // in-lane pending wash takes over and the user edits while lanes fill in.
+  useEffect(() => {
+    if (!filmstripGateArmed || editorPhase === 'ready') return
+    if (filmstrip.status === 'ready' || filmstrip.status === 'error' || filmstrip.total === 0) {
+      setEditorPhase('ready')
+      return
+    }
+    setPrepareHint(
+      filmstrip.total > 1
+        ? `กำลังเตรียมภาพตัวอย่างวิดีโอ… (${Math.min(filmstrip.done + 1, filmstrip.total)}/${filmstrip.total})`
+        : 'กำลังเตรียมภาพตัวอย่างวิดีโอ…'
+    )
+    const cap = window.setTimeout(() => setEditorPhase('ready'), 8000)
+    return () => window.clearTimeout(cap)
+  }, [filmstripGateArmed, editorPhase, filmstrip.status, filmstrip.done, filmstrip.total])
+
   useEffect(() => {
     let cancelled = false
     setEditorPhase('loading')
+    setFilmstripGateArmed(false)
     setPrepareHint('')
     setError(null)
     setPreviewSrc(null)
@@ -841,11 +864,15 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
           setPrepareHint('กำลังโหลดตัวอย่างเล่น…')
           await loadPreviewFor(firstCut.source)
         }
-        // The thumbnail lanes are no longer waited for: ffmpeg extracts them in
-        // its own process (see useFilmstripStrips) and each lane paints itself
-        // when its tiles decode. Blocking the editor on them was only necessary
-        // while capture ran on this thread.
-        if (!cancelled) setEditorPhase('ready')
+        // The thumbnail lanes gate the door, bounded: a lane-less editor reads
+        // as broken ("thumbnail ตรง timeline มันไม่แสดงเลย", owner 2026-09-09),
+        // so the preparing screen holds until the strips are in hand — but a
+        // COLD first extraction of a long source is tens of seconds of work,
+        // and locking someone out of the editor for thumbnails is the worse
+        // trade past a point. The separate effect below flips to 'ready' when
+        // the strips land, on failure, or after the wait cap — and a warm
+        // reopen (cached manifests) passes through in one frame.
+        if (!cancelled) setFilmstripGateArmed(true)
       })
       .catch((e) => {
         if (!cancelled) {
@@ -2703,6 +2730,17 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
                 <Loader2 size={13} className="animate-spin" /> {prepareHint}
               </p>
             )}
+            {/* The way out for a long cold extraction: edit now, lanes fill in
+                behind (their pending wash marks the ones still coming). */}
+            {filmstripGateArmed && (
+              <button
+                type="button"
+                onClick={() => setEditorPhase('ready')}
+                className="text-[13px] text-accent underline underline-offset-2 hover:text-accent-hover-text"
+              >
+                เข้าไปแก้ไขเลย — ภาพตัวอย่างจะตามมาเอง
+              </button>
+            )}
           </div>
         ) : !timeline ? null : (
           <>
@@ -2818,7 +2856,7 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
                   <Tabs
                     className="shrink-0 px-4"
                     items={[
-                      { key: 'script', label: isHighlight ? 'โน้ตประกอบ' : 'เสียงพากย์' },
+                      { key: 'script', label: isHighlight ? 'โน้ตประกอบ' : 'บทพากย์' },
                       captionLines
                         ? { key: 'caption', label: 'คำบรรยายบนภาพ' }
                         : {
@@ -3272,6 +3310,7 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
                                     selected={c.id === selectedId}
                                     playOrder={playOrderMap.get(c.id) ?? 0}
                                     strip={strips[c.source] ?? null}
+                                    pending={filmstrip.status === 'running'}
                                     sourceDurationSec={
                                       timeline.sources.find((s) => s.id === c.source)
                                         ?.durationSec ?? 0
@@ -3304,7 +3343,7 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
                           style={{ height: VO_LANE_PX, marginBottom: TRACK_GAP_PX }}
                         >
                           <div className={trackLabelCls} style={{ width: HEADER_COL_PX }}>
-                            เสียงพากย์
+                            บทพากย์
                           </div>
                           <div
                             className="relative h-full rounded-md bg-surface"
@@ -3348,7 +3387,7 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
                             })}
                             {voBlocks.length === 0 && (
                               <p className="flex h-full items-center px-3 text-[13px] text-muted">
-                                ยังไม่มีเสียงพากย์ช่วงนี้
+                                ยังไม่มีบทพากย์ช่วงนี้
                               </p>
                             )}
                           </div>
@@ -3516,6 +3555,7 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
                             <SourceLaneRow
                               laneDurationSec={getSourceDurationSec(src.id)}
                               strip={strips[src.id] ?? null}
+                              pending={filmstrip.status === 'running'}
                               cuts={cuts.filter((c) => c.source === src.id)}
                               playOrderMap={playOrderMap}
                               selectedId={selectedId}
@@ -3746,6 +3786,7 @@ function TrimBar({
 function SourceLaneRow({
   laneDurationSec,
   strip,
+  pending = false,
   cuts,
   playOrderMap,
   selectedId,
@@ -3758,6 +3799,7 @@ function SourceLaneRow({
 }: {
   laneDurationSec: number
   strip: FilmstripStrip | null
+  pending?: boolean
   cuts: WorkingCut[]
   playOrderMap: Map<string, number>
   selectedId: string | null
@@ -3779,6 +3821,7 @@ function SourceLaneRow({
     >
       <FilmstripCanvas
         strip={strip}
+        pending={pending}
         sourceStartSec={0}
         laneWidthPx={width}
         heightPx={IMG_LANE_PX}
@@ -3820,6 +3863,7 @@ function SourceCutBlock({
   onDragEnd
 }: {
   cut: WorkingCut
+  pending?: boolean
   sourceCuts: EditCut[]
   laneDurationSec: number
   selected: boolean
@@ -3927,6 +3971,7 @@ function EditedCutBlock({
   selected,
   playOrder,
   strip,
+  pending = false,
   sourceDurationSec,
   pxPerSec,
   onSelect,
@@ -3940,6 +3985,7 @@ function EditedCutBlock({
   musicTrimInSec = 0
 }: {
   cut: WorkingCut
+  pending?: boolean
   selected: boolean
   playOrder: number
   strip: FilmstripStrip | null
@@ -4047,6 +4093,7 @@ function EditedCutBlock({
             crop any more. A block that is offscreen draws nothing at all. */}
         <FilmstripCanvas
           strip={strip}
+          pending={pending}
           sourceStartSec={cut.in}
           laneWidthPx={widthPx}
           heightPx={IMG_LANE_PX}

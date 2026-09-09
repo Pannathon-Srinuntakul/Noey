@@ -68,7 +68,12 @@ export function dubTargetDurationSec(
   if (scriptDuration === 'music' && musicDurationSec) {
     return Math.round(Math.min(Math.max(musicDurationSec, 15), 600))
   }
-  if (scriptDuration === 'custom' && scriptCustomSec) return parseInt(scriptCustomSec, 10)
+  if (scriptDuration === 'custom' && scriptCustomSec) {
+    // Same clamp the server enforces (15–600) — a value typed outside it used
+    // to sail through and come back as a pydantic 422 nobody could read.
+    const n = parseInt(scriptCustomSec, 10)
+    return Number.isFinite(n) ? Math.min(Math.max(n, 15), 600) : null
+  }
   if (
     scriptDuration &&
     scriptDuration !== 'auto' &&

@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
-import { Square } from 'lucide-react'
+import { useEffect, useRef } from 'react'
+import { Loader2, Square } from 'lucide-react'
 import { useJobs } from '../lib/jobs'
 import {
   etaMinutes,
@@ -26,27 +26,15 @@ function formatDuration(totalSec: number): string {
  * Where "ดูรายละเอียด" on a running job lands — never the editor, which stays
  * unreachable until the job finishes (HANDOFF §5 item 6, §6 item 7).
  *
- * This is also the only place the AI thinking log is shown, and it is
- * collapsed by default.
+ * The AI thinking log is deliberately NOT shown anywhere on this build — raw
+ * reasoning text identifies the vendor behind it (business-secret rule).
  */
 export default function JobProgressPage({ uid }: { uid: string }): React.JSX.Element {
   const { jobFor } = useJobs()
   const { navigate } = useRouter()
   const job = jobFor(uid)
-  const [logOpen, setLogOpen] = useState(false)
-  const logRef = useRef<HTMLPreElement>(null)
-
   const step = job?.step as ProjectStep | undefined
   const busy = step ? isBusy(step) : false
-
-  // Follow the tail as new thinking arrives, but only while the user is
-  // already at the bottom — otherwise scrolling back to read is fought.
-  useEffect(() => {
-    const el = logRef.current
-    if (!el || !logOpen) return
-    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 48
-    if (nearBottom) el.scrollTop = el.scrollHeight
-  }, [job?.thinking, logOpen])
 
   /**
    * A job that FINISHES while this page is open has nothing left to show — send
@@ -93,7 +81,12 @@ export default function JobProgressPage({ uid }: { uid: string }): React.JSX.Ele
         title={job.project.name}
         backLabel="โปรเจกต์ทั้งหมด"
         onBack={() => navigate({ name: 'projects' })}
-        subtitle={`${MODE_LABEL[mode]} · กำลังทำงาน — แก้ไขได้เมื่อเรนเดอร์เสร็จ`}
+        subtitle={
+          <span className="inline-flex items-center gap-1.5">
+            <Loader2 size={13} className="animate-spin text-accent" />
+            {`${MODE_LABEL[mode]} · กำลังทำงาน — แก้ไขได้เมื่อเรนเดอร์เสร็จ`}
+          </span>
+        }
         actions={
           <Button
             variant="danger"
@@ -117,33 +110,23 @@ export default function JobProgressPage({ uid }: { uid: string }): React.JSX.Ele
               currentIndex={currentIndex}
               percent={percent}
               etaMinutes={etaMinutes(job.runStartedAt, percent) ?? undefined}
+              busy={busy}
             />
           </div>
 
+          {/* The raw thinking log is GONE from this card on purpose — it was
+              model reasoning verbatim, in English, and reading it is enough to
+              identify whose model it is. Business-secret rule: nothing a user
+              sees may say or show which vendor is behind the AI. The Thai
+              progress line carries what the user actually needs (what stage,
+              how far), and the spinner says "still moving" (both: owner's
+              request 2026-09-09). */}
           <div className="rounded-md border border-divider px-5 py-[18px]">
-            <div className="flex items-center justify-between gap-3">
-              <p className="text-[15px] font-semibold text-ink">สิ่งที่ AI กำลังทำ</p>
-              <button
-                type="button"
-                onClick={() => setLogOpen((v) => !v)}
-                className="text-sm text-accent hover:text-accent-hover-text"
-              >
-                {logOpen ? 'ซ่อนรายละเอียด' : 'ดูรายละเอียด'}
-              </button>
-            </div>
-            {logOpen ? (
-              <pre
-                ref={logRef}
-                className="scroll-ghost mt-3 max-h-64 overflow-y-auto whitespace-pre-wrap font-mono text-[13px] leading-[1.7] text-muted"
-                style={{ userSelect: 'text' }}
-              >
-                {job.thinking || 'ยังไม่มีรายละเอียดจาก AI'}
-              </pre>
-            ) : (
-              <p className="mt-2.5 text-sm text-muted">
-                {job.progressMsg || SHORT_STEP_LABELS[step as ProjectStep]}
-              </p>
-            )}
+            <p className="text-[15px] font-semibold text-ink">สิ่งที่ AI กำลังทำ</p>
+            <p className="mt-2.5 flex items-center gap-2 text-sm text-muted">
+              <Loader2 size={14} className="shrink-0 animate-spin text-accent" />
+              {job.progressMsg || SHORT_STEP_LABELS[step as ProjectStep]}
+            </p>
           </div>
         </div>
 

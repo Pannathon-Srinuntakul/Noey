@@ -14,6 +14,7 @@ import ProjectsPage from '../../pages/ProjectsPage'
 import SettingsPage from '../../pages/SettingsPage'
 import TimelineRoute from '../../pages/TimelineRoute'
 import VoiceoverPage from '../../pages/VoiceoverPage'
+import { canRecordVoiceover } from '../../lib/platformFeatures'
 import WizardPage from '../../pages/WizardPage'
 
 /** Screens the router knows about but later chunks build (PLAN.md 4–10).
@@ -58,6 +59,10 @@ export function RouteView({
         </Suspense>
       )
     case 'voiceover':
+      // The recorder is hidden on this build (see lib/platformFeatures) — a
+      // stale link or restored route lands on the project instead of a screen
+      // full of controls that were meant to be gone.
+      if (!canRecordVoiceover) return <ProjectDetailPage uid={route.uid} />
       return <VoiceoverPage uid={route.uid} />
     default:
       return <NotBuiltYet what="หน้านี้" />

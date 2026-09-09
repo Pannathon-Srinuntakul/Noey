@@ -1131,3 +1131,167 @@ window, iOS suspends it the same way, service workers cannot run long compute
 (and have no WebCodecs guarantee), and Background Sync does not exist on iOS at
 all. Wake Lock — already held for every job — is the only lever, and it only
 covers the screen dimming while the user is watching.
+
+---
+
+## Gate 21 — ปรับช็อต: selection is playback (2026-09-09)
+
+### The play button is gone; the selected shot plays itself
+
+This screen asks one question — which of these two shots — and the answer is in
+the MOTION. A still cannot show "โพสท์หันข้าง ยิ้มทักทายกล้อง". Pressing play on
+each option in turn was a chore in front of the only thing the screen exists
+for, and the disc sat over the middle of the face while you did it.
+
+Selecting is now the whole gesture: tap an option and it plays its window on a
+loop; tap the other and that one plays while this one goes back to a still.
+Never two at once. `Space` used to be play/pause and now moves the choice
+between the options, so the one key on this screen still does something.
+
+Measured in the app: time cycles between 3.50 and 5.79 s and never leaves the
+shot's window, `paused` stays false, and exactly one `<video>` is playing.
+Reopened three times — every time: selected = playing video, other = still,
+one playing.
+
+### Two defects found by doing it
+
+**A refused autoplay never retried.** With the play button gone, one refusal
+would freeze the card on a still for good and leave no way back. Caught by
+patching `play()` and reading the rejection instead of guessing:
+
+    AbortError: The play() request was interrupted because video-only
+    background media was paused to save power.
+
+Chrome will not run muted video while the window is unfocused. Now the play
+attempt is retried on `canplay`, on window focus, on the tab becoming visible,
+and on a tap on the picture — the retry seeks only when the head is outside the
+window, so it resumes rather than restarting.
+
+**The thumbnail generator could hang for ever.** One hidden `<video>` serves
+every clip in turn, and neither the `loadeddata` wait nor the seek had a
+timeout. A request the media service worker never answered left the promise
+pending, and because the thumbs are generated in sequence, every LATER thumb was
+lost behind it — the card sat on its film icon with no error anywhere. Both
+waits are now timed (8 s / 5 s) and skip to the next thumb, and `load()` is
+called explicitly because assigning `src` to a REUSED element does not always
+restart the load.
+
+### "แล้วทำไมอยู่ๆ ที่ปรับช็อตมันหายไป"
+
+Not a regression — that project has no alternates at all. Read straight out of
+OPFS:
+
+    short_test   dub_first  3 segments · 2 with alternates → button offered
+    iphone_hevc  highlight  4 segments · 0 with alternates → button was hidden
+
+A short source is the usual cause: `sanitize_segment_alternates` drops an
+alternate that overlaps the shot it would replace by more than half, and on a
+15-second clip most of them do.
+
+The button no longer vanishes. A control that is present on one project and
+gone on the next reads as the app losing a feature, and the app already has one
+way to say "not now": disabled, with the reason. Verified on the project that
+has none — present, disabled, "คลิปนี้ไม่มีมุมสำรองให้เลือก — คลิปต้นฉบับสั้นไป
+หรือมุมซ้ำกับช็อตเดิมเกินไป".
+
+Test state: web `tsc` clean · **578 vitest** · `eslint` 0 errors.
+
+### The same project, two browsers, one missing button
+
+Reported right after: ปรับช็อต reads "19 ช็อตมีตัวเลือกอื่น" in one browser and
+is absent in another, on the same project.
+
+Traced with live data rather than reasoning:
+
+- the SERVER's copy is intact — `getEditScript` returns 3 segments, 2 carrying
+  `alternates`, and the server's `project.json` has them too;
+- so the degraded copy is the LOCAL one. A script written from the editor's
+  cuts (`editScriptFromCuts`) carries no alternates at all, and a project.json
+  that arrives in a browser from elsewhere can be a stripped copy.
+
+The resume path only refilled a script that was MISSING (`!editScript`). A
+script that was merely *stripped* passed that check and stayed stripped for
+good — the button was then correctly hidden on data that was wrong.
+
+Now the refill also fires when the local script has ZERO shots with
+alternates, and adopts the server's copy only when it carries more (never a
+downgrade). Reproduced the exact failure — strip `alternates` out of
+project.json, keep everything else, reload — and the button was gone; with the
+fix it returns as "ปรับช็อต · 2 ช็อตมีตัวเลือกอื่น", with the log line
+`edit-script refilled from server: 2 shot(s) with alternates` to prove which
+path ran.
+
+Also found while looking: only 2 of the 20 newest server projects have a
+`project.json` at all (the rest are older desktop runs), so a fresh browser
+restores nothing for them. That is expected for pre-sync projects and is what
+`backfillUnsyncedProjects` exists to fix going forward.
+
+---
+
+## Gate 22 — the owner's batch of 2026-09-09 (all 15 items)
+
+Investigated with a 7-agent read-only workflow (Opus, ~1.1M tokens), implemented
+in the main loop, verified in the live app. Per item:
+
+1. **Stale project list** — the restore wrote project.json BEFORE counting it,
+   so a superseded run (StrictMode remount / session identity change) left
+   projects on disk that its replacement counted as 0 and never reloaded.
+   Reload is now unconditional in a `finally`; the restore keys off a session
+   REF (once per mount); a focus/visibility re-sync (60s throttle) makes the
+   list live across machines; `reload` carries a monotonic id.
+2. **Filmstrip** — manifest v2 (file + byte size) checked BEFORE the source is
+   opened, so a warm reopen pays zero probes and zero downloads; each clip's
+   strip is EMITTED as it lands (progressive lanes); the preparing door now
+   waits for strips (8s no-progress cap + เข้าไปแก้ไขเลย skip); pending lanes
+   draw a wash instead of nothing; strips pre-generate during the AI poll.
+   Verified live: door shows hint+skip → ready; warm reopen 992 ms; lanes paint.
+3. **In-app voiceover recorder hidden** (`canRecordVoiceover`) + full wording
+   sweep: every string that read as "record in the app" reworded to the truth
+   ("ภาพอย่างเดียว นำไปพากย์เสียงเองได้"); step rail drops the voiceover-era
+   stages; the route falls back to the detail page.
+4. **Mobile gate** — UA-CH/UA/coarse-pointer detection → "ยังไม่รองรับบนมือถือ".
+5. **ใช้เสียงในคลิป hidden** in the wizard (`canUseOriginalVoice`) + explainer
+   under the เสียง row: the dub modes never use the clip's own audio.
+   Verified live: 3 choices, explainer present.
+6. **Captions** — default OFF (prefs + settings fallback); the preview thumb
+   falls back to the server poster frame when the browser cannot decode the
+   source (HEVC — exactly the "บางทีไม่ขึ้น" case), with a 4s quiet timeout.
+7. **Spinners** — progress page card (now progressMsg + Loader2), page header
+   subtitle, RunningJobBar line, `Progress` gained `busy`, `Skeleton` pulses.
+8. **AI thinking never shown** — the ดูรายละเอียด log and the detail page's
+   reasoning link are gone; raw reasoning identifies the vendor.
+9. **ปรับช็อต** — cards identical by construction (explicit shared height, no
+   flex resolution); ย้อนกลับ = previous shot (it used to RESET every pick
+   under that label); ทำคลิปใหม่ · N ช็อต available from any shot.
+10. **Preview vanish after re-render** — mediaKey bumps BEFORE the terminal
+    step and AT stash/restore; `usePreviewFile` falls back to the cascade tail
+    instead of null while probing (+4s probe timeout, text/html rejected);
+    onError retries once before latching (detail page + grid card); nginx
+    404s /media/ instead of serving the SPA shell; the SW 404s zero-byte
+    files; the server's stale `final_fx.mp4` is deleted after re-renders.
+11. **Script inline edit + autosave** — dub-mode lines are auto-growing
+    textareas; focus seeks the preview; 800 ms debounce →
+    `updateScriptLine` rewrites the segments, persists project.json AND
+    pushes the server copy. Verified live: edit landed in the edit script,
+    revert too.
+12. **"AI เลือกความยาว" pinned at 0:30** — real, and a PROMPT bug, not code:
+    `target_duration_sec` travels as null end-to-end (verified by the agent
+    against every occurrence), but the no-target branch endorsed exactly one
+    numeric band — "a tight 25–35s cut" — and on the highlight/no-VO path that
+    was the only positively-framed number in the whole request. Two sources
+    (2:42 and 10:00) both cut to exactly 0:30 = anchoring, not judgment.
+    Rewritten: band removed, footage total made operative (length must scale
+    with the material), NO_VO got a length policy of its own, and the length
+    inputs are now logged (`duration_branch=`) so next time the logs answer.
+13. **422 + ERR_HTTP2_PROTOCOL_ERROR** — the DELETE ran in a `finally`, so one
+    dropped download destroyed the server's converted file and every retry
+    404'd; retry() then stamped the import-less project 'imported' and sent
+    `clips: []` → pydantic 422, forever. Now: DELETE only after verified
+    bytes; the download resumes with Range (5 attempts, expected size from
+    the worker's own `bytes`); retry() re-runs the import when clips are
+    empty; `clipsForApi` makes the 422 structurally unreachable with a Thai
+    error; ingest rejects NaN durations; custom duration clamps to 15–600.
+14. **Parity rule** — CLAUDE.md + AGENTS.md rule 8, PARITY.md ledger seeded.
+15. **State**: web tsc clean · eslint 0 errors · 579 vitest · production build
+    clean · backend ruff clean · pytest 583 passed (2 pre-existing .env
+    failures) · desktop untouched.

@@ -69,7 +69,7 @@ export function stripIndexTimelines(index: HighlightIndex): HighlightIndex {
   return { ...index, items: index.items.map(({ timeline: _t, ...rest }) => ({ ...rest })) }
 }
 import { dubScenesFor, timelineScenesFor } from './dubScenes'
-import { retimeTimelineForSwap, type ShotSwapLogEntry } from './shotSwap'
+import { countShotsWithAlternates, retimeTimelineForSwap, type ShotSwapLogEntry } from './shotSwap'
 import type { CaptionStyle } from './captionStyle'
 import { pickFile } from './pickFile'
 import type { ProjectMode, ProjectStep } from './projectFlow'
@@ -164,6 +164,9 @@ export interface ProjectPipeline {
   /** Push this project's files to the server outside a render (voiceover takes). */
   syncFiles: (why: string) => void
   applyShotSwap: (patchedScript: DubEditScript, swapLog?: ShotSwapLogEntry[]) => Promise<void>
+  /** Rewrite one dub line's text everywhere it lives (edit script + server) —
+   * the detail page's inline script editing. Text only; no re-render. */
+  updateScriptLine: (lineId: number, text: string) => Promise<void>
   stop: () => Promise<void>
   stopping: boolean
   openEditor: () => void
@@ -174,6 +177,34 @@ export interface ProjectPipeline {
  * for. Durations accumulate because the segments play back to back, which is
  * what makes an output-time caption possible without re-measuring the render.
  */
+
+/**
+ * The clip list POST /videos/local will actually accept — validated HERE so a
+ * bad list fails with an actionable Thai sentence instead of the server's
+ * pydantic 422 (which is what a dropped import produced: `clips: []`, a 422,
+ * and an English error nobody could act on — live 2026-09-09).
+ */
+function clipsForApi(clips: LocalProject['clips'] | undefined): {
+  id: string
+  durationSec: number
+  width: number
+  height: number
+  fps: number
+}[] {
+  const out = (clips ?? [])
+    .filter((c) => Number.isFinite(c.durationSec) && c.durationSec > 0)
+    .map((c) => ({
+      id: c.id,
+      durationSec: Number(c.durationSec),
+      width: Number.isFinite(c.width) ? Math.round(c.width) : 0,
+      height: Number.isFinite(c.height) ? Math.round(c.height) : 0,
+      fps: Number.isFinite(c.fps) && c.fps > 0 ? Math.round(c.fps) : 30
+    }))
+  if (out.length === 0) {
+    throw new Error('ยังไม่ได้นำเข้าคลิป — กด "ลองใหม่" เพื่อเริ่มนำเข้าอีกครั้ง')
+  }
+  return out
+}
 
 export function useProjectPipeline(initial: LocalProject, session: ApiSession): ProjectPipeline {
   const [project, setProject] = useState<LocalProject>(initial)
@@ -344,6 +375,19 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
   const applyEditScript = (script: DubEditScript): void => {
     setEditScript(script)
     void patchProject({ editScript: script as unknown as Record<string, unknown> })
+  }
+
+  /** The zoom bake belongs to the render it was baked ON. Local jobs delete it
+   * (engine/jobs/renderSilent.ts) but top-level names are never swept, so the
+   * server's copy must go explicitly or the preview cascade — which prefers
+   * final_fx.mp4 — resurrects last round's bake over the new cut. */
+  const dropServerFxBake = (): void => {
+    const remoteUid = projectRef.current.remote?.uid
+    if (!remoteUid) return
+    void (async () => {
+      const { deleteProjectFile } = await import('./projectSync')
+      await deleteProjectFile(session, remoteUid, 'final_fx.mp4').catch(() => undefined)
+    })()
   }
 
   const resetAfterStop = async (): Promise<void> => {
@@ -615,13 +659,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
           target_duration_sec: current.targetDurationSec ?? null,
           engine: current.engine ?? null,
           precision: current.precision ?? null,
-          clips: current.clips.map((c) => ({
-            id: c.id,
-            durationSec: c.durationSec,
-            width: c.width,
-            height: c.height,
-            fps: c.fps
-          }))
+          clips: clipsForApi(current.clips)
         })
         remoteUid = created.uid
         current = await patchProject({ remote: { uid: remoteUid } })
@@ -688,6 +726,18 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
         // is the source of truth for the user's tier choice.
         { engine: current.engine, precision: current.precision }
       )
+
+      // Warm the editor's thumbnail lanes while the AI poll runs — the engine
+      // is idle for those minutes, and the first editor open used to pay this
+      // cost at the door ("thumbnail ไม่แสดง ต้องรอ", 2026-09-09). Idempotent
+      // (the job trusts its manifests) and behind the project lock, so it can
+      // never interleave with the render that follows the plan.
+      void window.noey.sidecar.filmstrip
+        .run({
+          projectDir,
+          clips: (projectRef.current.clips ?? []).map((c) => ({ id: c.id, file: c.file }))
+        })
+        .catch(() => undefined)
       // A stop pressed during the upload used to be ignored: no token check
       // between here and the render meant the whole billed run completed and
       // the card flipped back to busy. The job exists now, so a stale run
@@ -866,13 +916,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
           target_duration_sec: afterImport.targetDurationSec ?? null,
           engine: afterImport.engine ?? null,
           precision: afterImport.precision ?? null,
-          clips: afterImport.clips.map((c) => ({
-            id: c.id,
-            durationSec: c.durationSec,
-            width: c.width,
-            height: c.height,
-            fps: c.fps
-          }))
+          clips: clipsForApi(afterImport.clips)
         })
         afterImport = await patchProject({ remote: { uid: created.uid } })
       } catch (err) {
@@ -988,6 +1032,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
         lastRunSeconds: runSeconds(),
         ...(burnedLines ? { captionLines: burnedLines } : {})
       })
+      dropServerFxBake()
       syncToServer('render')
     } else if (opts?.continueToFinal) {
       // The locked shot-swap runs silent -> final as ONE job. Passing through
@@ -999,6 +1044,10 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
         ...(burnedLines ? { captionLines: burnedLines } : {})
       })
     } else {
+      // Key first, terminal step second: the moment consumers see waiting_vo
+      // they probe for the preview, and probing under the OLD key caches a
+      // placeholder-era answer for the new render.
+      setMediaKey((k) => k + 1)
       await patchLocalStatus(session, remoteUid, 'waiting_vo')
       await patchProject({
         step: 'waiting_vo',
@@ -1142,10 +1191,10 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
         }
       }
 
+      setMediaKey((k) => k + 1)
       await patchLocalStatus(session, remoteUid, 'done')
       await patchProject({ step: 'done', lastRunSeconds: runSeconds() })
       syncToServer('final-render')
-      setMediaKey((k) => k + 1)
       setProgressMsg('')
     } catch (exc) {
       await handlePipelineError(exc)
@@ -1190,13 +1239,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
           mode: speechMode,
           brief: current.brief || null,
           target_duration_sec: current.targetDurationSec ?? null,
-          clips: current.clips.map((c) => ({
-            id: c.id,
-            durationSec: c.durationSec,
-            width: c.width,
-            height: c.height,
-            fps: c.fps
-          })),
+          clips: clipsForApi(current.clips),
           caption_style: (current.captionStyle as CaptionStyleIn | undefined) ?? null
         })
         remoteUid = created.uid
@@ -1285,10 +1328,10 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     } finally {
       unsub()
     }
+    setMediaKey((k) => k + 1)
     await patchLocalStatus(session, remoteUid, 'done')
     await patchProject({ step: 'done', lastRunSeconds: runSeconds() })
     syncToServer('highlights')
-    setMediaKey((k) => k + 1)
     setProgressMsg('')
   }
 
@@ -1309,10 +1352,11 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     } finally {
       unsub()
     }
+    setMediaKey((k) => k + 1)
     await patchLocalStatus(session, remoteUid, 'done')
     await patchProject({ step: 'done', lastRunSeconds: runSeconds() })
+    dropServerFxBake()
     syncToServer('timeline')
-    setMediaKey((k) => k + 1)
     setProgressMsg('')
   }
 
@@ -1490,9 +1534,38 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
       )
     }
     if (!remoteUid) return
-    if (hasEditScript && !editScript && (step === 'waiting_vo' || step === 'done')) {
+    // Also when the local copy HAS a script but no `alternates` in it.
+    //
+    // The stored script and the server's are not always the same document: one
+    // written from the editor's cuts carries no alternates at all, and a
+    // project.json that reached this browser from somewhere else can be a
+    // degraded copy. The old condition only refilled a script that was
+    // MISSING, so a script that was merely stripped stayed stripped — which is
+    // how ปรับช็อต read "19 ช็อตมีตัวเลือกอื่น" in one browser and was absent
+    // in another on the same project (2026-09-09).
+    //
+    // Verified against the live server: `getEditScript` does return
+    // `alternates` (3 segments, 2 with backups), so the data was there to be
+    // had the whole time.
+    const localAlternates = countShotsWithAlternates(editScript)
+    if (hasEditScript && localAlternates === 0 && (step === 'waiting_vo' || step === 'done')) {
       getEditScript(session, remoteUid)
-        .then(applyEditScript)
+        .then((script) => {
+          // Never downgrade: adopt the server's copy only when it is missing
+          // here, or when it actually carries more than what is held.
+          if (!editScript) {
+            applyEditScript(script)
+            return
+          }
+          const remoteAlternates = countShotsWithAlternates(script)
+          if (remoteAlternates > localAlternates) {
+            void window.noey.log.write(
+              'useProjectPipeline',
+              `edit-script refilled from server: ${remoteAlternates} shot(s) with alternates`
+            )
+            applyEditScript(script)
+          }
+        })
         .catch((err) =>
           window.noey.log.write(
             'useProjectPipeline',
@@ -1573,7 +1646,18 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     void window.noey.log.write('useProjectPipeline', `retry uid=${project.uid} step=${step}`)
     setError(null)
     const run = (async () => {
-      await patchProject({ step: 'imported', error: undefined })
+      // When the IMPORT is what failed (a dropped transcode download, a closed
+      // tab mid-copy) the project has pendingSources and no clips — stamping
+      // it 'imported' anyway sent the create call `clips: []`, the server
+      // answered 422, and every further retry re-sent the same empty list
+      // ("กดลองใหม่ก็ไม่ได้", live 2026-09-09). The sources are still staged in
+      // OPFS, so the honest retry is to run the import again.
+      const cur0 = projectRef.current
+      const needsImport = (cur0.pendingSources?.length ?? 0) > 0 || (cur0.clips?.length ?? 0) === 0
+      await patchProject({ step: needsImport ? 'importing' : 'imported', error: undefined })
+      if (needsImport) {
+        if (!(await runImport())) return
+      }
       if (await resumeFromServerPlan()) return
       // Dub modes resume from what already exists before ever re-buying the
       // cut: a planned timeline + recorded voiceover re-renders the final for
@@ -1680,6 +1764,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     if (!kept || pipelineRef.current) return
     void window.noey.log.write('useProjectPipeline', `revertRecut uid=${project.uid}`)
     await window.noey.projects.restoreRender(project.uid)
+    setMediaKey((k) => k + 1)
     const restored = await patchProject({
       previousRender: undefined,
       editScript: kept.editScript,
@@ -1746,8 +1831,9 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
       lastRunSeconds: runSeconds(),
       ...(finalClipDurations?.length ? { clipDurationsSec: finalClipDurations } : {})
     })
-    syncToServer('re-render')
     setMediaKey((k) => k + 1)
+    dropServerFxBake()
+    syncToServer('re-render')
     setProgressMsg('')
   }
 
@@ -1787,6 +1873,9 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
 
         // Keep this version the way recut does — one spare, old stash replaced.
         const files = await window.noey.projects.stashRender(project.uid)
+        // The files the mounted <video> is streaming just moved to the stash —
+        // re-key it now, not when the new render lands.
+        setMediaKey((k) => k + 1)
         // Same guard as recut: no artifacts kept -> no undo offered.
         await patchProject({
           previousRender:
@@ -1981,8 +2070,9 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
         lastRunSeconds: runSeconds(),
         ...(finalClipDurations?.length ? { clipDurationsSec: finalClipDurations } : {})
       })
-      syncToServer('reassemble')
       setMediaKey((k) => k + 1)
+      dropServerFxBake()
+      syncToServer('reassemble')
       setProgressMsg('')
     }
   }
@@ -2190,6 +2280,32 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     // takes above all. waiting_vo is terminal, so without an explicit sync an
     // evening of recording existed in exactly one browser.
     syncFiles: (why: string) => syncToServer(why),
+    updateScriptLine: async (lineId, text) => {
+      // Text only: the cut, the timing and the render are untouched, so this
+      // never queues a job — it rewrites the line in the edit script, persists
+      // it, and pushes the server's copy so every other browser reads the same
+      // words. A line's text lives on EVERY segment cut for that line.
+      const current =
+        (projectRef.current.editScript as unknown as DubEditScript | undefined) ??
+        editScript ??
+        null
+      if (!current?.segments) return
+      const next: DubEditScript = {
+        ...current,
+        segments: current.segments.map((s) => {
+          const seg = s as Record<string, unknown>
+          const sid = Number(seg.voiceoverLineId ?? seg.order)
+          return sid === lineId ? { ...seg, voiceoverScript: text } : s
+        })
+      }
+      applyEditScript(next)
+      const remoteUid = projectRef.current.remote?.uid
+      if (remoteUid) {
+        await putLocalEditScript(session, remoteUid, next).catch((err) =>
+          window.noey.log.write('useProjectPipeline', `script edit push failed: ${String(err)}`)
+        )
+      }
+    },
     stop,
     stopping,
     openEditor

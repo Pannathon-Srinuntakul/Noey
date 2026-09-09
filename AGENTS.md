@@ -34,6 +34,17 @@ dashboard with provider-agnostic AI (analysis, chatbot, prompt-cron). See
    for migrations, `playwright install` / `playwright codegen` for browser setup. Only
    hand-write files the scaffolder doesn't produce (small shared libs, glue, config).
 
+8. **Keep web and desktop in step — write down every gap.** The two clients are
+   one product and must move together. Whenever a feature, fix or behaviour
+   change lands on ONE side only, record it in `PARITY.md` (what changed, which
+   side has it, which side is missing it, and why) in the same session that
+   makes the change. The note is the point: an undocumented gap is one nobody
+   remembers to close.
+   The one exception: something DELIBERATELY hidden on a side because that side
+   cannot support it yet (e.g. a web feature that needs an API the browser does
+   not have). That is a platform limit, not drift — do not add a parity note for
+   it. Note only work that could exist on both and currently does not.
+
 ## Language & Stack
 
 - **Backend (all of it): Python 3.12** — scraper, API, worker.

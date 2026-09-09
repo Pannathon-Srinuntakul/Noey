@@ -156,8 +156,14 @@ function App(): React.JSX.Element {
               accessToken: pair.access_token,
               refreshToken: pair.refresh_token
             })
+            // Only allocate a NEW session object when the tokens actually
+            // changed: every identity change re-fires each session-keyed
+            // effect app-wide, and a refresh that returns the same pair is
+            // common.
             setSession((s) =>
-              s ? { ...s, accessToken: pair.access_token, refreshToken: pair.refresh_token } : s
+              !s || (s.accessToken === pair.access_token && s.refreshToken === pair.refresh_token)
+                ? s
+                : { ...s, accessToken: pair.access_token, refreshToken: pair.refresh_token }
             )
           }
         } catch {

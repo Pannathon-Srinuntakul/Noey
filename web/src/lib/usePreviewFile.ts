@@ -4,11 +4,14 @@ import type { ProjectMode, ProjectStep } from './projectFlow'
 /** Probe a project-relative file without downloading it. */
 async function exists(uid: string, rel: string): Promise<boolean> {
   try {
+    // Bounded: a probe that never settles used to hold the whole candidate
+    // cascade hostage — the preview stayed null with no error.
     const r = await fetch(window.noey.media.urlFor(uid, rel), {
       headers: { Range: 'bytes=0-0' },
       // A previous probe's 206 must not answer for a file that has since been
       // written (or deleted — removing music unlinks final_silent_music.mp4).
-      cache: 'no-store'
+      cache: 'no-store',
+      signal: AbortSignal.timeout(4000)
     })
     // The body is a single byte, but an unread stream keeps the main-process
     // read stream (and its file handle) open until GC.
@@ -21,7 +24,11 @@ async function exists(uid: string, rel: string): Promise<boolean> {
       window.dispatchEvent(new Event('noey:media-auth-stale'))
       return false
     }
-    return r.status === 206 || r.status === 200
+    if (r.status === 206) return true
+    // A bare 200 can be the SPA shell: with no service worker controlling yet,
+    // nginx answers /media/... with 200 + index.html, and every candidate
+    // "existed". HTML is never a video.
+    return r.status === 200 && !(r.headers.get('content-type') ?? '').includes('text/html')
   } catch {
     return false
   }
@@ -125,13 +132,16 @@ export function usePreviewFile(
 
   if (settled) return settled
   if (candidates) {
-    // Null (an empty frame for the few ms the probe takes), never the raw
-    // source clip: falling back to it here made a finished project open on the
-    // UNCUT footage — no music, wrong length — and then swap to the real cut a
-    // moment later, which read as "the music only arrives if you wait"
-    // (live report 2026-08-13). The source is a placeholder for a project with
-    // no render at all, not for one whose render is still being identified.
-    return probed?.key === probeKey ? probed.file : null
+    // While the probe is in flight, fall back to the cascade's own LAST entry
+    // — documented always-present (final.mp4 / final_silent.mp4) — never null
+    // and never the raw source clip. Null here was how a finished preview
+    // VANISHED after a re-render until a refresh: the mediaKey bump re-keyed
+    // the probe, and for its whole in-flight window the player was handed
+    // nothing (owner 2026-09-09). The source-clip fallback stays wrong for the
+    // older reason (2026-08-13: a finished project opened on the UNCUT
+    // footage), but the cascade tail is the same RENDERED clip family the
+    // probe would pick anyway.
+    return probed?.key === probeKey ? probed.file : candidates[candidates.length - 1]
   }
   return fallbackClipFile ?? null
 }

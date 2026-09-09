@@ -245,6 +245,13 @@ async function serve(request) {
     return new Response('not found', { status: 404 })
   }
 
+  // A zero-byte file is a write that never finished (the atomic rename means
+  // this should not happen, but the answer must still not be "yes, it
+  // exists") — a 200 here made the preview probe trust an empty clip.
+  if (file.size === 0) {
+    return new Response('not found', { status: 404 })
+  }
+
   const contentType = mimeFor(url.pathname)
   const range = parseRange(request.headers.get('range'), file.size)
 

@@ -23,7 +23,7 @@ import { Switch } from '../ui/Switch'
 import { Textarea } from '../ui/Input'
 import { Checkbox } from '../ui/Checkbox'
 import { CaptionPanel } from './CaptionPanel'
-import { canSnapToBeat } from '../../lib/platformFeatures'
+import { canSnapToBeat, canUseOriginalVoice } from '../../lib/platformFeatures'
 
 type Patch = (patch: Partial<WizardState>) => void
 
@@ -51,7 +51,11 @@ const MODE_CARDS: { value: UiMode; icon: typeof Mic; blurb: string; badge?: stri
   }
 ]
 
-const VOICEOVER_CHOICES: VoiceoverChoice[] = ['ai', 'own', 'none', 'original']
+// `original` (ใช้เสียงในคลิป) is offered only where the build enables it —
+// hidden on web for now by owner's call (see lib/platformFeatures.ts).
+const VOICEOVER_CHOICES: VoiceoverChoice[] = canUseOriginalVoice
+  ? ['ai', 'own', 'none', 'original']
+  : ['ai', 'own', 'none']
 
 /** What ตัดไฮไลต์จากคลิปยาว does — same shape as the silence-mode row (R14.8):
  * an explanation, not a setting, shown where it is read. */
@@ -229,7 +233,14 @@ export function WizardStepOutcome({
                   AI อ่านคำพูดในคลิปแล้วเลือกช่วงที่ร้อยเป็นเรื่องเดียวกัน คงเสียงต้นฉบับ
                   ไม่มีเสียงพากย์ · ไม่ส่งวิดีโอขึ้นเซิร์ฟเวอร์
                 </p>
-              ) : null}
+              ) : (
+                // What this family of choices actually means for the sound —
+                // said HERE, before anything is cut, not discovered from a
+                // silent result (owner's request 2026-09-09).
+                <p className="mt-[7px] text-[13px] leading-[1.55] text-[#8a8681]">
+                  โหมดนี้ไม่ใช้เสียงในคลิปเลย — ได้คลิปที่ตัดภาพไว้ให้ แล้วนำไปพากย์เสียงเองภายหลัง
+                </p>
+              )}
             </Row>
 
             {/* Both of these answer "where does the script come from", so they

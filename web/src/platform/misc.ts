@@ -45,7 +45,8 @@ const PREFS_DEFAULT: Prefs = {
   projectsDir: null,
   defaultMode: 'silence',
   defaultDuration: '',
-  defaultCaptions: true,
+  // OFF by default on web (owner's call 2026-09-09) — captions are opt-in.
+  defaultCaptions: false,
   notifications: true
 }
 

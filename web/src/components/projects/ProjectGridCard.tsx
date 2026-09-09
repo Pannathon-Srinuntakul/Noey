@@ -114,6 +114,10 @@ export function ProjectGridCard({
   // render changes the key changes, so the error clears itself instead of
   // needing a setState inside an effect.
   const [brokenKey, setBrokenKey] = useState<string | null>(null)
+  // One silent retry before believing the error — the first load right after a
+  // re-render can catch the file-swap window (same fix as the detail page).
+  const [previewNonce, setPreviewNonce] = useState(0)
+  const retriedRef = useRef<string | null>(null)
   // Which highlight the big player is on. Always opens at the first: the card
   // shows that one's still, so starting anywhere else would not match the
   // picture that was clicked.
@@ -144,7 +148,7 @@ export function ProjectGridCard({
   }))
   const playing = playlist[playerIndex]
   const modalFile = playlist.length > 1 && playing ? `highlights/${playing.id}.mp4` : previewFile
-  const previewKey = `${job.project.uid}-${previewFile}-${job.mediaKey}`
+  const previewKey = `${job.project.uid}-${previewFile}-${job.mediaKey}-${previewNonce}`
   const broken = brokenKey === previewKey
 
   /** Menu width + row heights are fixed, so its box can be measured from the
@@ -265,7 +269,17 @@ export function ProjectGridCard({
               // A <video> whose source 404s stays a solid box on bg-media, so a
               // missing file looked exactly like a black clip and nothing said
               // otherwise (live report 2026-08-21).
-              onError={() => setBrokenKey(previewKey)}
+              onError={() => {
+                window.dispatchEvent(new Event('noey:media-auth-stale'))
+                // Marker excludes the nonce, or every retry would arm another.
+                const base = `${job.project.uid}-${previewFile}-${job.mediaKey}`
+                if (retriedRef.current !== base) {
+                  retriedRef.current = base
+                  window.setTimeout(() => setPreviewNonce((n) => n + 1), 600)
+                  return
+                }
+                setBrokenKey(previewKey)
+              }}
             />
             <span className="absolute inset-0 flex items-center justify-center bg-[rgb(23_22_20_/_0.35)] opacity-0 transition-opacity duration-state ease-out group-hover:opacity-100">
               <Play size={26} className="text-ink" fill="currentColor" />

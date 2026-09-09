@@ -1,5 +1,5 @@
 import { Fragment } from 'react'
-import { Check } from 'lucide-react'
+import { Check, Loader2 } from 'lucide-react'
 import { cn } from '../../lib/cn'
 
 export interface ProgressProps {
@@ -11,6 +11,8 @@ export interface ProgressProps {
   currentIndex: number
   percent: number
   etaMinutes?: number
+  /** Work is live right now — draws the spinner next to the percent. */
+  busy?: boolean
   className?: string
 }
 
@@ -19,6 +21,7 @@ export function Progress({
   currentIndex,
   percent,
   etaMinutes,
+  busy = false,
   className
 }: ProgressProps): React.JSX.Element {
   return (
@@ -65,7 +68,10 @@ export function Progress({
           style={{ width: `${Math.min(100, Math.max(0, percent))}%` }}
         />
       </div>
-      <p className="mt-3 text-[15px] tabular-nums text-ink-3">
+      {/* The spinner is the only motion between stage transitions — the fill
+          only animates when percent CHANGES, and stages are minutes apart. */}
+      <p className="mt-3 flex items-center gap-1.5 text-[15px] tabular-nums text-ink-3">
+        {busy ? <Loader2 size={13} className="shrink-0 animate-spin text-accent" /> : null}
         {Math.round(percent)}%{etaMinutes != null ? ` · เหลืออีกประมาณ ${etaMinutes} นาที` : null}
       </p>
     </div>

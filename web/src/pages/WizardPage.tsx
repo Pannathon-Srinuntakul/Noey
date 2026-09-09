@@ -205,8 +205,37 @@ export default function WizardPage({
     )
     video.addEventListener('seeked', capture, { once: true })
 
+    // The <video> path silently produces nothing for a clip this browser
+    // cannot decode — an iPhone HEVC file, exactly the footage this wizard
+    // sees most ("ภาพ thumbnail บางทีไม่ขึ้น", owner 2026-09-09). The server
+    // can decode ONE frame from the tiny key-packet clip the demuxer can
+    // always cut, so that is the fallback; on error AND on a quiet timeout,
+    // because an undecodable source sometimes just never fires loadeddata.
+    let fellBack = false
+    const fallback = (): void => {
+      if (cancelled || fellBack) return
+      fellBack = true
+      void (async () => {
+        const { posterFrameFromServer } = await import('../lib/serverTranscode')
+        const jpeg = await posterFrameFromServer(session, firstFile)
+        if (cancelled || !jpeg) return
+        const reader = new FileReader()
+        reader.onload = () => {
+          if (!cancelled && typeof reader.result === 'string') {
+            setCapturedThumb({ key: firstFile, url: reader.result })
+          }
+        }
+        reader.readAsDataURL(jpeg)
+      })()
+    }
+    video.addEventListener('error', fallback, { once: true })
+    const fallbackTimer = window.setTimeout(() => {
+      if (video.readyState < 2) fallback()
+    }, 4000)
+
     return () => {
       cancelled = true
+      window.clearTimeout(fallbackTimer)
       video.src = ''
       URL.revokeObjectURL(url)
     }
