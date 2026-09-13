@@ -604,7 +604,7 @@ export function ShotSwapReview({
                           // an explicit shared height from `sm` up — every
                           // card gets exactly the same box, video or still.
                           'relative aspect-[9/16] w-full overflow-hidden rounded-[5px] bg-media outline-none transition-colors duration-state ease-out',
-                          'sm:h-[min(470px,56dvh)] sm:w-auto',
+                          'sm:h-[min(470px,56dvh)] sm:w-[calc(min(470px,56dvh)*9/16)]',
                           // One accent border, never a border plus a ring —
                           // stacked rings read as two overlapping edges.
                           chosen

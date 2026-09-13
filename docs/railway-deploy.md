@@ -1,3 +1,5 @@
+> **2026-09-09:** `frontend/` (the legacy dashboard this doc's frontend section described) has been DELETED. The Railway frontend service builds from `web/` now; every mention of `frontend/` below is historical.
+
 # Deploy Noey Tiktok บน Railway
 
 > อัปเดต: 2026-09-08 — เขียนใหม่ทั้งไฟล์

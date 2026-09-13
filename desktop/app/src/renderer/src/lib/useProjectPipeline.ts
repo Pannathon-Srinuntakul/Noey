@@ -69,7 +69,7 @@ export function stripIndexTimelines(index: HighlightIndex): HighlightIndex {
   return { ...index, items: index.items.map(({ timeline: _t, ...rest }) => ({ ...rest })) }
 }
 import { dubScenesFor, timelineScenesFor } from './dubScenes'
-import { retimeTimelineForSwap, type ShotSwapLogEntry } from './shotSwap'
+import { countShotsWithAlternates, retimeTimelineForSwap, type ShotSwapLogEntry } from './shotSwap'
 import type { CaptionStyle } from './captionStyle'
 import { pickFile } from './pickFile'
 import type { ProjectMode, ProjectStep } from './projectFlow'
@@ -160,6 +160,9 @@ export interface ProjectPipeline {
   /** R18b ปรับช็อต: persist a shot-swapped edit script and reassemble locally —
    * zero AI calls (the swap data came with the original analysis answer). */
   applyShotSwap: (patchedScript: DubEditScript, swapLog?: ShotSwapLogEntry[]) => Promise<void>
+  /** Rewrite one dub line's text everywhere it lives (edit script + server) —
+   * the detail page's inline script editing. Text only; no re-render. */
+  updateScriptLine: (lineId: number, text: string) => Promise<void>
   stop: () => Promise<void>
   stopping: boolean
   openEditor: () => void
@@ -1289,9 +1292,30 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
       )
     }
     if (!remoteUid) return
-    if (hasEditScript && !editScript && (step === 'waiting_vo' || step === 'done')) {
+    // Also when the local copy HAS a script but no `alternates` in it: a
+    // script written from the editor's cuts carries none, and the old
+    // condition only refilled a MISSING script — so a stripped one stayed
+    // stripped and ปรับช็อต quietly lost its options (found on web,
+    // 2026-09-09; the desktop holds a stripped script the same way).
+    const localAlternates = countShotsWithAlternates(editScript)
+    if (hasEditScript && localAlternates === 0 && (step === 'waiting_vo' || step === 'done')) {
       getEditScript(session, remoteUid)
-        .then(applyEditScript)
+        .then((script) => {
+          // Never downgrade: adopt the server's copy only when it is missing
+          // here, or when it actually carries more than what is held.
+          if (!editScript) {
+            applyEditScript(script)
+            return
+          }
+          const remoteAlternates = countShotsWithAlternates(script)
+          if (remoteAlternates > localAlternates) {
+            void window.noey.log.write(
+              'useProjectPipeline',
+              `edit-script refilled from server: ${remoteAlternates} shot(s) with alternates`
+            )
+            applyEditScript(script)
+          }
+        })
         .catch((err) =>
           window.noey.log.write(
             'useProjectPipeline',
@@ -1947,6 +1971,32 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     recut,
     revertRecut,
     applyShotSwap,
+    updateScriptLine: async (lineId, text) => {
+      // Text only: the cut, the timing and the render are untouched, so this
+      // never queues a job — it rewrites the line in the edit script, persists
+      // it, and pushes the server's copy so every machine reads the same
+      // words. A line's text lives on EVERY segment cut for that line.
+      const current =
+        (projectRef.current.editScript as unknown as DubEditScript | undefined) ??
+        editScript ??
+        null
+      if (!current?.segments) return
+      const next: DubEditScript = {
+        ...current,
+        segments: current.segments.map((s) => {
+          const seg = s as Record<string, unknown>
+          const sid = Number(seg.voiceoverLineId ?? seg.order)
+          return sid === lineId ? { ...seg, voiceoverScript: text } : s
+        })
+      }
+      applyEditScript(next)
+      const remoteUid = projectRef.current.remote?.uid
+      if (remoteUid) {
+        await putLocalEditScript(session, remoteUid, next).catch((err) =>
+          window.noey.log.write('useProjectPipeline', `script edit push failed: ${String(err)}`)
+        )
+      }
+    },
     stop,
     stopping,
     openEditor

@@ -10,23 +10,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from packages.core.logging import configure_logging, get_logger
 from packages.core.settings import _ENV_FILES, assert_production_secrets, get_settings
 from services.api.routers import (
-    analytics,
     auth,
-    chat,
-    creators,
-    workspace,
-    custom_tables,
     effect_styles,
-    import_csv,
     jobs,
-    market,
-    metrics,
-    products,
-    prompt_cron,
     releases,
-    runs,
-    settings,
-    table_io,
+    transfer,
     usage,
     videos,
     videos_local,
@@ -112,31 +100,16 @@ def create_app() -> FastAPI:
 
     for r in (
         auth,
-        workspace,
-        analytics,
-        import_csv,
-        metrics,
-        products,
-        creators,
-        market,
-        prompt_cron,
-        releases,
-        runs,
-        chat,
-        settings,
-        custom_tables,
         effect_styles,
-        table_io,
-        # BEFORE `videos`: both mount under /videos, and FastAPI matches in
-        # registration order. `videos` owns `GET /videos/{uid}`, which would
-        # otherwise swallow this router's literal paths — `/videos/storage`
-        # arrived as a project uid and 404'd as a missing project. Safe to put
-        # first because `videos_local` has no bare `/videos/{uid}` of its own,
-        # so it shadows nothing.
+        jobs,
+        releases,
+        usage,
+        # `/videos/transfer/...` is all literal paths — before the two below
+        # because `videos` owns GET /videos/{uid}, and FastAPI matches in
+        # registration order.
+        transfer,
         videos_local,
         videos,
-        jobs,
-        usage,
     ):
         app.include_router(r.router)
 

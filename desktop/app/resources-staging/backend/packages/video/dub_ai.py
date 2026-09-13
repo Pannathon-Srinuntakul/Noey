@@ -23,6 +23,20 @@ log = get_logger(__name__)
 # the full list, and a huge list wastes context for no benefit.
 _MAX_PROMPT_BEATS = 240
 
+# R18b: per-segment backup shots, returned inside the SAME analysis call — no
+# extra model calls, ever. Shared verbatim by the fresh-edit prompts (Claude
+# frames + both Gemini video variants); the reedit prompt carries its own
+# shorter variant (see DUB_REEDIT_SYSTEM_VIDEO).
+ALTERNATES_BLOCK = """<alternates>
+For each segment, AFTER picking its winning moment, also return the runners-up as "alternates" (max 3 per segment). Two sources qualify:
+(a) frames/moments at the SAME beat that lost the comparison above but still pass EVERY rule (safety, no-prep, shot completeness);
+(b) a moment ELSEWHERE in the footage that fits that line's content, passes every rule, and is not used by any other segment.
+Every alternate MUST carry: sourceClip, sourceIn, sourceOut, matchedFrameTime (same bounds rules as the main segment — real timestamps only), and a one-line Thai "note" saying how it differs from the chosen shot (e.g. "ชิดกว่า เห็นเลข SPF ใหญ่ แต่ขอบขวดหลุดเฟรมบน") — the user decides from the note without opening each one.
+An alternate does NOT need to match the main segment's duration — give its natural window.
+All reject rules (<reject_safety>, <reject_prep>) apply to alternates IN FULL — an alternate that breaks a safety rule is a safety bug.
+If no candidate passes every rule, return an empty alternates array for that segment. NEVER pad to three or lower the bar — quantity is not the goal.
+</alternates>"""
+
 
 def format_music_block(music_beats: dict[str, Any] | None) -> str:
     """Render detect_beats() output (packages/video/beat_analysis.py) into a
@@ -68,6 +82,8 @@ Classify every frame before using it: hook / product-display / close-up / on-bod
 <compare>
 Passing USE is not the same as being the BEST choice. Sample frames are taken on a fixed time grid, so several frames often land within the same real-world moment or the same scene segment (same pose, same angle, same action, just a fraction of a second apart). Do not settle for the first frame that merely passes USE — look across all candidate frames near that moment/segment and pick the single strongest one, comparing: sharpest focus (not blurry/motion-smeared), best framing (subject/product fully in frame, not cut off or off-center), clearest product/logo visibility, most natural and confident expression, best lighting. If two candidate frames show essentially the same content, always prefer the objectively clearer/better-composed one over a mediocre one you happened to check first.
 </compare>
+
+""" + ALTERNATES_BLOCK + """
 
 <reject_safety>
 HARD REJECT — never use a frame or trim that shows or leads into: putting on OR taking off pants/skirts/shorts/trousers; holding bottoms open at the waist (fly open, waistband spread, stepping in); pulling clothing up/down before fully worn; ANY visible underwear (panties/briefs/boxers/bra-only); partial undress or wardrobe change.
@@ -134,7 +150,11 @@ Return ONLY a valid JSON object, no prose or markdown. totalEstimatedSec = sum o
       "order": 2, "voiceoverLineId": 2,
       "sourceClip": "clip0", "sourceIn": 12.0, "sourceOut": 14.0, "durationSec": 2.0,
       "matchedFrameTime": 12.0, "visualDescription": "close-up เนื้อสินค้า",
-      "cutStyle": "jump_cut", "voiceoverScript": "เนื้อบางเบา ซึมไว"
+      "cutStyle": "jump_cut", "voiceoverScript": "เนื้อบางเบา ซึมไว",
+      "alternates": [
+        { "sourceClip": "clip0", "sourceIn": 31.0, "sourceOut": 34.1, "matchedFrameTime": 31.2,
+          "note": "ชิดกว่า เห็นเนื้อครีมชัด แต่แสงมืดกว่า" }
+      ]
     },
     {
       "order": 3, "voiceoverLineId": 2,
@@ -311,6 +331,8 @@ Within a chosen span, rank MOMENTS:
 A neutral, camera-ready frame that merely looks fine ranks BELOW the deliberate action that follows it inside the same span. If the moment you are considering is followed, within its span, by the same subject in a fuller or more committed version of the same action, then what you are looking at is the run-up — move forward.
 </shot_quality>
 
+""" + ALTERNATES_BLOCK + """
+
 <reject_span>
 Some stretches exist because the video was being MADE, not because they show anything. Drop the whole span when its purpose is production rather than content:
 - the creator moves toward or away from the camera, reaches for it, or repositions it
@@ -361,7 +383,7 @@ Adjacent cuts must be visually distinct, but distance in TIME is not what makes 
 <script>
 This is step 5 of <method>: the spans and moments are already chosen. Write the script to fit that footage, never footage to fit a line you already wrote. Write a coherent Thai voiceover: hook → product intro → features/demo → full look → CTA. Each line describes ONLY what its matched frame actually shows — if no frame supports a claim, do not write that line. Do not repeat a feature already mentioned; move to the next point.
 Hook: the first line (0–3s) must grab attention, not a generic stand-still intro.
-Length: each line ≈ one spoken beat, 3–8s summed across its cuts. Calibration, not a quota: a typical TikTok affiliate review runs about 45 seconds, and most strong ones land between 45 and 60. The right length for THIS video is decided by its strong spans — a rich shoot justifies the full 60s; a thin one is better served by a tight 25–35s cut than by a padded 50s one. The number of lines follows the strong spans; never stretch it with weak spans, repeats, or invented timestamps.
+Length: each line ≈ one spoken beat, 3–8s summed across its cuts. Calibration, not a quota: a typical TikTok affiliate review runs about 45 seconds, and most strong ones land between 45 and 60. The right length for THIS video is decided by its strong spans — a rich shoot justifies the full 60s; a thin one is better served by a short cut made only of strong spans than by one padded toward the norm. The number of lines follows the strong spans; never stretch it with weak spans, repeats, or invented timestamps.
 QUALITY OVER DURATION: the ~45s norm above is calibration only — never a license to pad toward it. A shorter video built purely from strong spans beats a longer one padded with mediocre ones, every time. Never invent a timestamp beyond a clip's real duration, and never reuse a moment past the reuse limits in <editing_style>, just to run longer. Every segment must point at real, distinct footage that actually exists — and every segment must earn its place: if you would cut it from a client's video, cut it from this one.
 Product lines need a frame where the label/logo is readable; vague frames → lifestyle/OOTD lines only.
 Last line = CTA ("สั่งได้เลยที่ TikTok Shop" / "คลิกลิงค์ใน bio เลย"), matched to a closing frame: creator facing camera or presenting the product toward camera.
@@ -393,7 +415,11 @@ Return ONLY a valid JSON object, no prose or markdown. totalEstimatedSec = sum o
       "order": 2, "voiceoverLineId": 2,
       "sourceClip": "clip0", "sourceIn": 12.0, "sourceOut": 14.0, "durationSec": 2.0,
       "matchedFrameTime": 12.0, "visualDescription": "close-up เนื้อสินค้า",
-      "cutStyle": "jump_cut", "voiceoverScript": "เนื้อบางเบา ซึมไว"
+      "cutStyle": "jump_cut", "voiceoverScript": "เนื้อบางเบา ซึมไว",
+      "alternates": [
+        { "sourceClip": "clip0", "sourceIn": 31.0, "sourceOut": 34.1, "matchedFrameTime": 31.2,
+          "note": "ชิดกว่า เห็นเนื้อครีมชัด แต่แสงมืดกว่า" }
+      ]
     },
     {
       "order": 3, "voiceoverLineId": 2,
@@ -419,6 +445,8 @@ Work in this order. Finish each step before starting the next.
 3. DECIDE, span by span, whether to use it at all. Apply <reject_span>, then ask whether this span is strong enough to earn screen time when the rest of the footage is competing for it. Dropping most spans of a long take is the normal outcome, not a failure.
 4. PICK the single best moment inside each span you kept (<shot_quality>).
 5. ORDER the moments you kept into the final cut. There is no script to write.
+
+Length follows the footage, not a preset: the total is however many genuinely strong moments the material holds, and it must scale with the material — a long shoot rich in strong spans should produce a meaningfully longer reel than a thin one, and two shoots of very different length landing on the same total is a sign the length was assumed rather than decided. A short reel because the strong material ran out is a correct result.
 
 Step 3 is the one that decides whether the video is good. A frame that survives every rule in <reject_prep> can still sit inside a span that should never have been used — judge the span first, the frame second.
 </method>
@@ -467,6 +495,8 @@ Within a chosen span, rank MOMENTS:
 - what you will claim in the description is visible AT that instant, not merely nearby
 A neutral, camera-ready frame that merely looks fine ranks BELOW the deliberate action that follows it inside the same span. If the moment you are considering is followed, within its span, by the same subject in a fuller or more committed version of the same action, then what you are looking at is the run-up — move forward.
 </shot_quality>
+
+""" + ALTERNATES_BLOCK + """
 
 <reject_span>
 Some stretches exist because the video was being MADE, not because they show anything. Drop the whole span when its purpose is production rather than content:
@@ -545,7 +575,11 @@ Return ONLY a valid JSON object, no prose or markdown. totalEstimatedSec = sum o
       "order": 2, "voiceoverLineId": 2,
       "sourceClip": "clip0", "sourceIn": 12.0, "sourceOut": 14.0, "durationSec": 2.0,
       "matchedFrameTime": 12.0, "visualDescription": "close-up เนื้อสินค้า",
-      "cutStyle": "jump_cut"
+      "cutStyle": "jump_cut",
+      "alternates": [
+        { "sourceClip": "clip0", "sourceIn": 31.0, "sourceOut": 34.1, "matchedFrameTime": 31.2,
+          "note": "มุมชิดกว่า เห็นสินค้าเต็มเฟรม" }
+      ]
     }
   ]
 }
@@ -709,10 +743,36 @@ DUB_EDIT_SCHEMA_VIDEO: dict[str, Any] = {
                         "enum": ["jump_cut", "standard", "zoom_in", "zoom_out"],
                     },
                     "voiceoverScript": {"type": "string"},
+                    # R18b backup shots: max 3, validated in code (bounds +
+                    # overlap) by sanitize_segment_alternates. REQUIRED with an
+                    # empty array meaning "no candidate passed": two live runs
+                    # (2026-09-01) showed Gemini's enforced decoding simply
+                    # never fills an optional field, even when the instruction
+                    # tail demands it. sanitize_segment_alternates strips empty
+                    # arrays, so the stored contract (no backups = field
+                    # absent) is unchanged.
+                    "alternates": {
+                        "type": "array",
+                        "maxItems": 3,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "sourceClip": {"type": "string"},
+                                "sourceIn": {"type": "number"},
+                                "sourceOut": {"type": "number"},
+                                "matchedFrameTime": {"type": "number"},
+                                "note": {"type": "string"},
+                            },
+                            "required": [
+                                "sourceClip", "sourceIn", "sourceOut",
+                                "matchedFrameTime", "note",
+                            ],
+                        },
+                    },
                 },
                 "required": [
                     "order", "voiceoverLineId", "sourceClip", "sourceIn", "sourceOut",
-                    "matchedFrameTime", "cutStyle", "visualDescription",
+                    "matchedFrameTime", "cutStyle", "visualDescription", "alternates",
                 ],
             },
         },
@@ -848,7 +908,7 @@ def build_dub_edit_instruction_text_video(
         duration_hint = (
             f"Requested video length: ~{target_duration_sec} seconds — an AIM and a CEILING, never a quota to pad toward. Land close when the strong material supports it; never exceed it; and if the strong spans genuinely run out sooner, deliver the shorter honest cut instead. totalEstimatedSec = sum of ALL segment durationSec = actual rendered video length. Roughly {_line_count_hint(target_duration_sec)} lines usually fits this length (calibration, not a count to force) with multi-angle where the footage supports it — NEVER by inventing timestamps beyond a clip's real duration (see <clips> above). "
             if target_duration_sec
-            else f"No target set. Calibration: a typical TikTok affiliate review runs about 45 seconds, and most strong ones land between 45 and 60 — but the right length for THIS video is decided by the footage. Total available footage across all clips is {total_footage:.1f}s; only its genuinely strong spans should appear. totalEstimatedSec = sum of ALL segment durationSec = actual rendered video length. Build from the strongest spans outward and stop when the next span would be filler: a tight 25–35s cut from thin footage beats a padded 50s one, and running past 45s is right exactly when every added span is strong. Never invent or reuse moments to run longer. "
+            else f"No target set. Calibration: a typical TikTok affiliate review runs about 45 seconds, and most strong ones land between 45 and 60 — but the right length for THIS video is decided by the footage, and it must SCALE with the footage: total available footage across all clips is {total_footage:.1f}s, and a long shoot rich in strong moments should produce a meaningfully longer cut than a thin one — two sources of very different length landing on the same total is a sign the length was assumed, not decided. totalEstimatedSec = sum of ALL segment durationSec = actual rendered video length. Build from the strongest spans outward and stop when the next span would be filler: a short cut made only of strong spans beats a longer one padded with mediocre ones, and running past the calibration is right exactly when every added span is strong. Never invent or reuse moments to run longer. "
         )
     # The bound restated in the last thing the model reads, per clip, in the
     # concrete form its failures take (a number bigger than the clip). Measured
@@ -869,7 +929,19 @@ def build_dub_edit_instruction_text_video(
         "Default multi-angle on product/demo/OOTD lines. Follow all system rules (safety, no-prep, frame-match, shot completeness, visual variety, timing, CTA, coverage). "
         f"HARD LIMIT: {bounds_reminder} "
         "Start the JSON with clipBounds echoing those end times, then the segments. "
-        "Return ONLY the Edit Script JSON."
+        # R18b, v2 only (the v1 system prompt has no <alternates> block to obey).
+        # Restated here because directives at the tail are the ones Gemini
+        # follows — same lesson as clipBounds above: a first live run with the
+        # block only in the system prompt returned 0/12 segments with
+        # alternates (2026-09-01).
+        + (
+            'For each segment, also fill "alternates" (max 3) per the <alternates> rules: the '
+            "runner-up moments you compared that still pass every rule, each with a one-line "
+            "Thai note — an empty array only when no candidate passes; never pad. "
+            if _prompt_version(version) != "v1"
+            else ""
+        )
+        + "Return ONLY the Edit Script JSON."
         "</instruction>"
     )
 
@@ -885,6 +957,8 @@ async def generate_dub_edit_script_video(
     system: str = DUB_EDIT_SYSTEM_VIDEO,
     style_prompt: str = "",
     default_cut_style_prose: str | None = None,
+    model: str | None = None,
+    fps: int | None = None,
     on_thinking: Callable[[str], Awaitable[None]] | None = None,
 ) -> dict[str, Any]:
     """Run the Gemini native-video edit-script call: proxy clips → normalized Edit Script dict.
@@ -915,7 +989,9 @@ async def generate_dub_edit_script_video(
     )
 
     settings = get_settings()
-    model = f"gemini/{settings.dub_vision_model}"
+    # ``model`` is the bare provider model id from the project's Engine tier
+    # (packages/video/quality.py); unset keeps DUB_VISION_MODEL.
+    resolved_model = f"gemini/{model or settings.dub_vision_model}"
 
     file_ids: list[str] = []
     try:
@@ -925,25 +1001,33 @@ async def generate_dub_edit_script_video(
         upload_ms = round((time.monotonic() - t_upload) * 1000)
 
         clip_durations = [(clip_id, duration) for clip_id, _path, duration in clip_videos]
-        # Gemini's long-video guidance: data first, directives last — video
-        # blocks sit between the context text and the instruction text.
-        user_msg_content: list[dict[str, Any]] = [{"type": "text", "text": build_dub_edit_context_text_video(
-            brief=brief,
-            user_script=user_script,
-            clip_durations=clip_durations,
-            music_beats=music_beats,
-        )}]
-        for (clip_id, _path, _duration), file_id in zip(clip_videos, file_ids, strict=True):
-            user_msg_content.append({"type": "text", "text": f"=== {clip_id} ==="})
-            user_msg_content.append(gemini_video_block(file_id))
-        user_msg_content.append({"type": "text", "text": build_dub_edit_instruction_text_video(
-            target_duration_sec=target_duration_sec,
-            clip_durations=clip_durations,
-        )})
-        user_msg_content.append({"type": "text", "text": DUB_EDIT_REMINDER})
 
-        messages = [{"role": "user", "content": user_msg_content}]
-        extra = call_kwargs(model=model, effort=settings.dub_vision_effort)
+        def _build_content(sample_fps: int) -> list[dict[str, Any]]:
+            """Gemini's long-video guidance: data first, directives last — the
+            video blocks sit between the context text and the instruction text.
+            Rebuilt rather than mutated so the content-filter fallback below can
+            re-issue the identical request at a lower sampling rate."""
+            content: list[dict[str, Any]] = [{"type": "text", "text": build_dub_edit_context_text_video(
+                brief=brief,
+                user_script=user_script,
+                clip_durations=clip_durations,
+                music_beats=music_beats,
+            )}]
+            for (clip_id, _path, _duration), file_id in zip(clip_videos, file_ids, strict=True):
+                content.append({"type": "text", "text": f"=== {clip_id} ==="})
+                content.append(gemini_video_block(file_id, fps=sample_fps))
+            content.append({"type": "text", "text": build_dub_edit_instruction_text_video(
+                target_duration_sec=target_duration_sec,
+                clip_durations=clip_durations,
+            )})
+            content.append({"type": "text", "text": DUB_EDIT_REMINDER})
+            return content
+
+        # Frame sampling: explicit arg wins, else the DUB_VISION_FPS setting.
+        # 0/None = Gemini's default ~1 fps (today's behavior).
+        sample_fps = fps if fps is not None else settings.dub_vision_fps
+        messages = [{"role": "user", "content": _build_content(sample_fps)}]
+        extra = call_kwargs(model=resolved_model, effort=settings.dub_vision_effort)
         extra["timeout"] = settings.dub_vision_timeout_sec
         # Gemini does not reliably follow a JSON shape from prose instructions
         # alone (observed in production: it invented its own top-level keys
@@ -958,9 +1042,15 @@ async def generate_dub_edit_script_video(
         log.info(
             "analyze_dub_video_payload",
             project_uid=project_uid,
-            model=model,
+            model=resolved_model,
+            fps=sample_fps,
             clip_count=len(clip_videos),
             upload_ms=upload_ms,
+            # The length inputs, so "why did it come back at Ns" is answerable
+            # from logs instead of a code read (2026-09-09: two projects of
+            # 2:42 and 10:00 both cut to exactly 0:30 on the no-target path).
+            target_duration_sec=target_duration_sec,
+            duration_branch="target" if target_duration_sec else "no_target",
         )
 
         resolved_system = apply_cut_style(
@@ -974,7 +1064,16 @@ async def generate_dub_edit_script_video(
         # a retry that comes back worse must not replace a usable first answer.
         best: dict[str, Any] | None = None
         best_kept = -1
-        for attempt in range(1, MAX_BOUNDS_ATTEMPTS + 1):
+        # High precision samples ~5x the frames, and a denser read of the same
+        # footage is exactly what tips Google's PROHIBITED_CONTENT classifier
+        # (measured 2026-09-07: identical clip and frame count passes when the
+        # detail is lower). Refusal returns no content at all, so retry once at
+        # the provider default rather than failing a job the user paid for.
+        # Costs nothing when precision is already standard.
+        filter_fallback_used = False
+        attempt = 0
+        while attempt < MAX_BOUNDS_ATTEMPTS:
+            attempt += 1
             resp = await acompletion_stream_thinking(
                 messages,
                 system=resolved_system,
@@ -982,7 +1081,27 @@ async def generate_dub_edit_script_video(
                 on_thinking=on_thinking,
                 **extra,
             )
-            candidate = parse_llm_json(resp.choices[0].message.content or "")
+            raw_text = resp.choices[0].message.content or ""
+            if not raw_text.strip():
+                finish = getattr(resp.choices[0], "finish_reason", None)
+                if finish == "content_filter" and sample_fps > 0 and not filter_fallback_used:
+                    filter_fallback_used = True
+                    log.warning(
+                        "dub_video_content_filter_fallback",
+                        project_uid=project_uid,
+                        from_fps=sample_fps,
+                        model=resolved_model,
+                    )
+                    sample_fps = 0
+                    messages = [{"role": "user", "content": _build_content(0)}]
+                    attempt -= 1  # the refusal never produced an answer to judge
+                    continue
+                if finish == "content_filter":
+                    raise ValueError(
+                        "ผู้ให้บริการ AI ปฏิเสธวิดีโอนี้ — ลองตัดคลิปให้สั้นลง "
+                        "หรือเลือกช่วงอื่นแล้วลองใหม่"
+                    )
+            candidate = parse_llm_json(raw_text)
             asked = len([s for s in (candidate.get("segments") or []) if isinstance(s, dict)])
             over = out_of_range_segments(candidate, bounds)
             candidate = clamp_dub_segments_to_clip_durations(candidate, bounds)
@@ -1082,6 +1201,7 @@ Interpret the instruction and apply the correct operation(s) to the selected/imp
 - SPLIT into multi-angle → 2-3 cuts under one voiceoverLineId, each a genuinely different angle/distance.
 - REWRITE voiceoverScript wording only → keep sourceIn/sourceOut/matchedFrameTime unchanged, change only the Thai text.
 Combine operations freely when the instruction implies it (e.g. "shorten this and make the wording punchier" = both a duration change and a script rewrite on the same segment).
+ALTERNATES: segments in the current edit script may carry an "alternates" array (max 3 backup shots, each with sourceClip/sourceIn/sourceOut/matchedFrameTime and a one-line Thai "note"). Every segment you REVISE must come back with a FRESH alternates set of its own (runners-up for the new moment that pass every reject rule; an empty array when nothing passes — never pad). Every segment you do NOT touch must keep its existing alternates byte-identical — never silently strip them from the script.
 </task>
 
 <anchor>
@@ -1290,7 +1410,7 @@ async def plan_dub_timeline_cuts(
     parsed = parse_llm_json(raw)
     raw_cuts = parsed.get("timeline", [])
     if not raw_cuts:
-        raise ValueError("Claude returned empty timeline for dub_first")
+        raise ValueError("AI ไม่ได้ส่ง timeline กลับมา — กดลองใหม่อีกครั้ง")
 
     boundaries = build_clip_boundaries(clip_durations)
     render_cuts = filter_short_cuts(
@@ -1298,5 +1418,5 @@ async def plan_dub_timeline_cuts(
         min_sec=MIN_RENDER_CUT_SEC,
     )
     if not render_cuts:
-        raise ValueError("No valid cuts remain after localization")
+        raise ValueError("แผนตัดที่ได้ใช้ไม่ได้ — กดลองใหม่อีกครั้ง")
     return render_cuts

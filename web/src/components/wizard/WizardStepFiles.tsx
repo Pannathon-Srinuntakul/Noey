@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Upload } from 'lucide-react'
+import { Smartphone, Upload } from 'lucide-react'
 import { cn } from '../../lib/cn'
 import { pickVideoFiles, toPickedVideoFiles, type PickedVideoFile } from '../../lib/pickVideoFiles'
 import {
@@ -12,6 +12,8 @@ import {
   type WizardState
 } from '../../lib/wizardState'
 import { ClipList } from './ClipList'
+import { ReceiveFromPhoneModal } from './ReceiveFromPhoneModal'
+import { useJobs } from '../../lib/jobs'
 
 export function WizardStepFiles({
   state,
@@ -24,6 +26,8 @@ export function WizardStepFiles({
   setFiles: (update: (prev: WizardFile[]) => WizardFile[]) => void
 }): React.JSX.Element {
   const [dragOver, setDragOver] = useState(false)
+  const [receiveOpen, setReceiveOpen] = useState(false)
+  const { session } = useJobs()
   const { files } = state
 
   const add = (picked: PickedVideoFile[]): void => {
@@ -68,7 +72,26 @@ export function WizardStepFiles({
             เลือกไฟล์จากเครื่อง
           </span>
         </button>
+
+        {/* The web's รับจากมือถือ — the desktop does this over LAN; here the
+            backend couriers the bytes and keeps nothing (transfer.py). */}
+        <button
+          type="button"
+          onClick={() => setReceiveOpen(true)}
+          className="flex h-12 shrink-0 items-center justify-center gap-2.5 rounded-md border border-border text-[15px] font-semibold text-ink transition-colors duration-state ease-out hover:border-border-strong"
+        >
+          <Smartphone size={17} className="text-accent" />
+          รับวิดีโอจากมือถือ
+        </button>
       </div>
+
+      {receiveOpen ? (
+        <ReceiveFromPhoneModal
+          session={session}
+          onClose={() => setReceiveOpen(false)}
+          onReceived={(received) => add(toPickedVideoFiles(received))}
+        />
+      ) : null}
 
       <div className="flex w-full shrink-0 flex-col overflow-hidden rounded-md border border-divider lg:w-[440px]">
         <div className="flex shrink-0 items-baseline justify-between gap-3 border-b border-divider px-5 py-4">

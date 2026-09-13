@@ -1,5 +1,6 @@
 """Centralized configuration (env-driven). Single source of truth for all services."""
 
+import os
 from functools import lru_cache
 from pathlib import Path
 
@@ -13,6 +14,27 @@ _ENV_FILES = tuple(
     for p in (_REPO_ROOT / ".env", _BACKEND_DIR / ".env")
     if p.is_file()
 )
+
+
+#: What `jwt_secret` falls back to when nothing sets it. Only ever acceptable on
+#: a developer's own machine.
+DEV_JWT_SECRET = "dev_change_me_in_production"
+
+#: The seed script's fallback admin password. A fresh production database seeded
+#: with this has a publicly known admin login.
+DEV_ADMIN_PASSWORD = "ChangeMe123!"
+
+#: `postgres_password`'s fallback.
+DEV_POSTGRES_PASSWORD = "change_me"
+
+#: Hosts that mean "this is someone's laptop". Anything else is treated as a
+#: real deployment, where the placeholder secret is a refusal.
+LOCAL_DB_HOSTS = {"localhost", "127.0.0.1", "::1", "postgres", "db", "host.docker.internal"}
+
+
+def is_local_deployment(host: str | None) -> bool:
+    """Whether the configured database host means "a developer's machine"."""
+    return (host or "").strip().lower() in LOCAL_DB_HOSTS
 
 
 class Settings(BaseSettings):
@@ -30,17 +52,26 @@ class Settings(BaseSettings):
     postgres_port: int = 5432
 
     # --- LLM gateway (provider-agnostic) ---
-    llm_model: str = "anthropic/claude-haiku-4-5-20251001"
-    llm_vision_model: str | None = "anthropic/claude-sonnet-4-6"
-    # Claude 4.6 effort: low | medium | high — only applies to models that support it
-    llm_effort: str | None = None          # default text model (Haiku) — no effort param
-    llm_vision_effort: str | None = "medium"  # Sonnet 4.6 vision tasks
+    # Gemini across the board (2026-09-08). The defaults used to be Anthropic
+    # while every VIDEO path already ran on Gemini, so a single unnoticed
+    # dependency — `plan-dub`, the only synchronous model call — kept a third
+    # provider's billing alive. The owner uses two providers: Gemini for
+    # everything a model does, and the speech service for transcription.
+    llm_model: str = "gemini/gemini-3.7-flash"
+    llm_vision_model: str | None = "gemini/gemini-3.1-pro-preview"
+    # low | medium | high — Gemini maps this to thinking_level.
+    llm_effort: str | None = None
+    llm_vision_effort: str | None = "medium"
     llm_timeout_sec: int = 300  # text/chat — fail fast if API hangs
     llm_vision_timeout_sec: int = 900  # vision (22 frames) — up to 15 min
     llm_max_retries: int = 2  # retries on connection / 5xx / timeout
     llm_base_url: str | None = None
     llm_web_search_enabled: bool = True
-    # API keys — passed explicitly to LiteLLM so os.environ is not required
+    # API keys — passed explicitly to LiteLLM so os.environ is not required.
+    # `anthropic_api_key`/`openai_api_key` stay declared but unset: the gateway
+    # still resolves a key per model, so pointing any setting at one of those
+    # providers keeps working without a code change. Nothing ships pointing at
+    # them.
     anthropic_api_key: str | None = None
     openai_api_key: str | None = None
     gemini_api_key: str | None = None
@@ -78,6 +109,22 @@ class Settings(BaseSettings):
     # Enable ONLY after scripts/probe_gemini_fps.py confirms LiteLLM passes it
     # through to Gemini — PySceneDetect stats carry the rhythm signal regardless.
     cut_style_ref_fps: int = 0
+    # Frame sampling rate for the dub/highlight cut call. 0 = Gemini's default
+    # (~1 fps). The probe above now confirms per-block passthrough works, and
+    # 5 fps measured ±0.08s cut-timestamp error vs ±0.42s at 1 fps while also
+    # surfacing moments 1 fps never saw — at ~5x the video input tokens.
+    # Intended as the backend half of a user-facing Precision tier.
+    # ONLY safe because every caller uploads a 270x480 proxy: the same footage
+    # at full resolution and >=8 fps is refused outright by Google
+    # (PROHIBITED_CONTENT, not adjustable). See packages/llm/files.py.
+    # Practical ceiling ~40 min of footage at 5 fps before the 1M context fills.
+    dub_vision_fps: int = 0
+    # User-facing quality tiers (packages/video/quality.py). The desktop shows
+    # them as Engine lite|pro and Precision standard|high; only these two lines
+    # know which provider model / frame rate that means.
+    dub_engine_lite: str = "gemini-3.7-flash"
+    dub_engine_pro: str = "gemini-3.8-flash"
+    dub_precision_high_fps: int = 5
     # Which ตัดฉากเด่น edit-prompt generation the native-video call uses.
     # "v2" (2026-08-15): spans bounded by complete action arcs, spans/moments
     # RANKED rather than merely filtered, state continuity required, and no
@@ -102,7 +149,10 @@ class Settings(BaseSettings):
     effects_vision_effort: str = "high"
 
     # --- Auth (JWT) ---
-    jwt_secret: str = "dev_change_me_in_production"
+    #: The default is a PLACEHOLDER and is refused outside local development —
+    #: see `assert_production_secrets()`. It is in the source, so anything
+    #: signed with it can be forged by anyone who can read the repo.
+    jwt_secret: str = DEV_JWT_SECRET
     jwt_algorithm: str = "HS256"
     jwt_access_ttl: int = 60 * 30  # seconds (30 min)
     jwt_refresh_ttl: int = 60 * 60 * 24 * 14  # 14 days
@@ -121,8 +171,20 @@ class Settings(BaseSettings):
     # --- Background workers (arq / Redis) ---
     redis_url: str = "redis://localhost:6379/0"
 
+    # --- API surface ---
+    #: `/docs`, `/redoc` and `/openapi.json`. OFF by default: the schema lists
+    #: every route with its docstring, and those docstrings name the providers.
+    #: Nothing the product ships reads the schema — only a developer does, so it
+    #: is opt-in per environment rather than public by default.
+    api_docs_enabled: bool = False
+
     # --- Video processing ---
     ffmpeg_path: str | None = None  # optional override; else auto-detect PATH / WinGet
+    #: Where uploads, renders and web project files live. Unset → `backend/data`,
+    #: which is INSIDE the container image: on a redeploy every byte written
+    #: there is gone. A deployment must point this at a mounted volume (or
+    #: configure S3), and `data_root()` in packages/video/storage.py honours it.
+    data_dir: str | None = None
 
     # --- S3-compatible object storage (optional — local filesystem used when unset) ---
     s3_bucket: str | None = None
@@ -195,6 +257,26 @@ class Settings(BaseSettings):
         }
         return mapping.get(plan, self.plan_free_monthly_tokens)
 
+    # --- Server storage per plan (web build) ---
+    # How much project storage an account may keep on the server. Same shape as
+    # the token limits above and settable by env for the same reason: the plans
+    # differ in exactly these figures, and the number must live in ONE place.
+    # 10 GB across the board today — the tiers are not sold yet.
+    plan_free_storage_bytes: int = 10 * 1024**3
+    plan_starter_storage_bytes: int = 10 * 1024**3
+    plan_pro_storage_bytes: int = 10 * 1024**3
+    plan_enterprise_storage_bytes: int = 0  # 0 = unlimited
+
+    def plan_storage_limit(self, plan: str) -> int:
+        """Bytes of server storage the given plan allows. 0 means unlimited."""
+        mapping = {
+            "free":       self.plan_free_storage_bytes,
+            "starter":    self.plan_starter_storage_bytes,
+            "pro":        self.plan_pro_storage_bytes,
+            "enterprise": self.plan_enterprise_storage_bytes,
+        }
+        return mapping.get(plan, self.plan_free_storage_bytes)
+
     @property
     def cors_origins(self) -> list[str]:
         origins = [self.frontend_url.rstrip("/")]
@@ -202,6 +284,16 @@ class Settings(BaseSettings):
             origin = raw.strip().rstrip("/")
             if origin and origin not in origins:
                 origins.append(origin)
+        # On a developer's machine, allow BOTH dev servers without anyone having
+        # to configure it: the legacy dashboard runs on 5173 and the web build on
+        # 5174, and `frontend_url` can only name one of them. Never added on a
+        # real deployment — there, every origin is explicit.
+        if is_local_deployment(self.postgres_host):
+            for port in (5173, 5174):
+                for host in ("localhost", "127.0.0.1"):
+                    dev = f"http://{host}:{port}"
+                    if dev not in origins:
+                        origins.append(dev)
         # Electron desktop (file://) sends Origin: null
         if "null" not in origins:
             origins.append("null")
@@ -235,3 +327,50 @@ def reload_settings() -> Settings:
     from packages.llm.config import sync_llm_env
     sync_llm_env()
     return settings
+
+
+class InsecureConfiguration(RuntimeError):
+    """Raised at startup when a deployment is running on development secrets."""
+
+
+def assert_production_secrets() -> None:
+    """Refuse to start a real deployment that is still on development secrets.
+
+    Every value checked here has a default so a developer can clone and run,
+    and every one of those defaults is a string in this repository: a token
+    signed with the placeholder JWT secret can be MINTED by anyone who can read
+    the source, for any account including an admin one, and a database seeded
+    with the placeholder admin password has a publicly known login. JWT_SECRET
+    was in fact unset on the live deployment (found 2026-09-08) — documentation
+    alone clearly does not prevent that, so the process refuses to boot instead.
+
+    "Real deployment" is inferred from the database host rather than an
+    APP_ENV variable, because an APP_ENV that must be remembered is exactly as
+    forgettable as the secret it is guarding.
+    """
+    s = get_settings()
+    if is_local_deployment(s.postgres_host):
+        return
+
+    problems: list[str] = []
+    if s.jwt_secret == DEV_JWT_SECRET:
+        problems.append(
+            "JWT_SECRET is the development placeholder — tokens signed with it "
+            "can be forged by anyone who can read the source. Set it to a long "
+            "random value on EVERY service (api AND worker); they must match."
+        )
+    if s.postgres_password == DEV_POSTGRES_PASSWORD:
+        problems.append("POSTGRES_PASSWORD is the development placeholder.")
+    seed_password = os.getenv("ADMIN_PASSWORD")
+    if seed_password in (None, DEV_ADMIN_PASSWORD):
+        problems.append(
+            "ADMIN_PASSWORD is unset, so a fresh database is seeded with the "
+            "placeholder admin login from scripts/migrate_to_multitenant.py."
+        )
+    if not problems:
+        return
+    raise InsecureConfiguration(
+        f"Refusing to start: POSTGRES_HOST is {s.postgres_host!r} (a real "
+        "deployment) but development secrets are still in place.\n  - "
+        + "\n  - ".join(problems)
+    )

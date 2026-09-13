@@ -20,17 +20,25 @@ limits" at the bottom, which is a reference, not a to-do list.
 |---|---|---|---|
 | Sequential decode (`framesAt`) in `extract-proxy` / `filmstrip` / music re-encode — 13× faster, byte-identical output | web | desktop (n/a — ffmpeg already sequential) | Web-only defect from the port; the desktop sidecar never had it. No action needed. |
 | Persisted activity log + Settings → บันทึกการทำงาน (lifecycle trace, engine heartbeat, wake-lock result) | web | desktop | Built to diagnose iOS render stalls. The desktop writes `userData/logs/app.log` and has a console, so the need is weaker — but the lifecycle/heartbeat lines would still help there. |
-| Edit-script refill when the local copy has zero `alternates` | web | desktop | Found on web (same project, two browsers, ปรับช็อต missing in one). The desktop can hold a stripped script for the same reason — an editor save writes a script with no alternates. |
-| ปรับช็อต shown DISABLED with a reason when no shot has alternates (was hidden outright) | web | desktop | Web fix after the button "vanished" between projects. |
-| Shot swap: selection is playback (no play button, selected option loops) | web | desktop | Web UX change. |
 | `mobile-probe.js` — collapse/starvation/reachability harness | web | n/a | Browser-only concern. |
-| Inline script editing + autosave on the project detail page | web | desktop | Owner asked for it on web first (2026-09-09); desktop's script panel is still read-only. |
-| ปรับช็อต: selection-is-playback, ย้อนกลับ button, ทำคลิปใหม่ from any shot, equal card sizing by construction | web | desktop | Same session; desktop still has the play-button overlay and last-shot-only commit. |
-| Spinners on every working surface (progress card, job bar, Progress primitive `busy`, pulsing Skeleton) | web | desktop | Owner request 2026-09-09. |
-| Captions default OFF for new projects | web | desktop | Web pref default flipped 2026-09-09; desktop default is still ON. Decide one way and align. |
 | Caption preview thumb falls back to the server poster frame for undecodable (HEVC) sources | web | n/a | Desktop decodes HEVC locally; no gap. |
 | Transcode download resume + retry-safe DELETE | web | n/a | Server transcode exists only on web. |
 | No-target cut length: prompt anchor removed (25–35s band), footage-scaled wording, NO_VO length policy | shared backend | — | Fixes both clients at once; no gap. |
+
+**Matched with different transports (not a gap):** รับวิดีโอจากมือถือ — the
+desktop receives over LAN (Electron main-process listener); the web receives
+through the backend as a courier (`routers/transfer.py`: single-use 30-min
+ticket, unauthenticated phone upload where the token is the credential, web
+polls + downloads + DELETEs; abandoned tickets swept with the transcode
+scratch). Same feature, transport per platform.
+
+**Closed 2026-09-09 (ported to desktop, shipping in the next build):** inline
+script edit + autosave · ปรับช็อต v3 (selection-is-playback, ย้อนกลับ, commit
+from any shot, identical card sizing, disabled-with-reason, thumb timeouts,
+autoplay retry) · edit-script alternates refill · spinners + pulsing Skeleton ·
+AI thinking hidden on the progress page · captions default OFF (both sides now
+OFF). Still open: persisted lifecycle log / Settings diagnostics tab (desktop
+has app.log — weaker need).
 
 ## Platform limits — hidden on purpose, NOT a to-do
 

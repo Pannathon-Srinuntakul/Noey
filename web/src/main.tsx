@@ -24,6 +24,23 @@ async function boot(): Promise<void> {
   // how we learn iOS threw the page away rather than the job failing.
   installLifecycleTrace()
   const root = createRoot(document.getElementById('root')!)
+
+  // `/transfer/<token>` — the page a PHONE lands on after scanning the
+  // รับจากมือถือ QR. It renders before (and without) everything else on
+  // purpose: no login, no WebGate — the gate blocks phones, and a phone is
+  // exactly who this page is for. Lazy so the phone downloads only what one
+  // file input needs, not the whole editor.
+  const transfer = /^\/transfer\/([a-f0-9]{32})$/.exec(window.location.pathname)
+  if (transfer) {
+    const { default: TransferUploadPage } = await import('./pages/TransferUploadPage')
+    root.render(
+      <StrictMode>
+        <TransferUploadPage token={transfer[1]} />
+      </StrictMode>
+    )
+    return
+  }
+
   root.render(
     <StrictMode>
       <WebGate>

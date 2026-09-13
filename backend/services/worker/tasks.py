@@ -12,8 +12,6 @@ Job lifecycle:
 
 from __future__ import annotations
 
-import csv
-import io
 import json
 import pathlib
 import shutil
@@ -134,127 +132,6 @@ async def _update_job(job_id: str, status: str, progress: int = 0, result: dict 
             if error is not None:
                 job.error = error[:512]
             await session.commit()
-    finally:
-        await session.close()
-
-
-# ── task: CSV export ──────────────────────────────────────────────────────────
-
-
-async def csv_export(ctx: dict[str, Any], *, job_id: str, tenant_slug: str, table_id: int, row_ids: list[int] | None = None) -> dict:
-    """Export table to CSV. Returns {csv_data: str, filename: str}."""
-    await _update_job(job_id, "running", 10)
-    session = await _tenant_session(tenant_slug)
-    try:
-        from sqlalchemy import select as sa_select
-        from packages.db.models.custom_table import CustomTableMeta
-
-        meta = (await session.execute(
-            sa_select(CustomTableMeta).where(CustomTableMeta.id == table_id)
-        )).scalar_one_or_none()
-        if meta is None:
-            raise ValueError(f"table {table_id} not found")
-
-        pg = meta.pg_table_name
-        await _update_job(job_id, "running", 30)
-
-        if row_ids:
-            rows = (await session.execute(
-                text(f'SELECT * FROM "{pg}" WHERE id = ANY(:ids) ORDER BY id'),
-                {"ids": row_ids},
-            )).mappings().all()
-        else:
-            rows = (await session.execute(text(f'SELECT * FROM "{pg}" ORDER BY id'))).mappings().all()
-
-        await _update_job(job_id, "running", 70)
-        buf = io.StringIO()
-        writer = csv.writer(buf)
-        writer.writerow([c["label"] for c in meta.columns])
-        for row in rows:
-            writer.writerow([row.get(c["key"], "") for c in meta.columns])
-
-        result = {"csv_data": buf.getvalue(), "filename": f"{meta.display_name}.csv", "row_count": len(rows)}
-        await _update_job(job_id, "ok", 100, result={"filename": result["filename"], "row_count": result["row_count"]})
-        await session.commit()
-        return result
-    except Exception as exc:
-        await _update_job(job_id, "error", 0, error=format_exception_message(exc))
-        raise
-    finally:
-        await session.close()
-
-
-# ── task: CSV import ──────────────────────────────────────────────────────────
-
-
-async def csv_import(ctx: dict[str, Any], *, job_id: str, tenant_slug: str, table_id: int, csv_data: str) -> dict:
-    """Import CSV rows into a table. Returns {rows_inserted, rows_skipped, errors}."""
-    await _update_job(job_id, "running", 5)
-    session = await _tenant_session(tenant_slug)
-    try:
-        from packages.db.models.custom_table import CustomTableMeta
-        from sqlalchemy import select as sa_select
-        from decimal import Decimal
-        from datetime import date, datetime as dt
-
-        meta = (await session.execute(
-            sa_select(CustomTableMeta).where(CustomTableMeta.id == table_id)
-        )).scalar_one_or_none()
-        if meta is None:
-            raise ValueError(f"table {table_id} not found")
-
-        pg = meta.pg_table_name
-        label_to_col = {c["label"]: c for c in meta.columns if c.get("ui_type") != "formula"}
-
-        reader = csv.DictReader(io.StringIO(csv_data))
-        header_map = {h: label_to_col[h] for h in (reader.fieldnames or []) if h in label_to_col}
-        if not header_map:
-            raise ValueError("No matching columns in CSV")
-
-        all_rows = list(reader)
-        total = len(all_rows)
-        inserted = 0
-        skipped = 0
-        errors: list[str] = []
-
-        UI_COERCE: dict = {
-            "number": lambda v: Decimal(v) if v else None,
-            "date": lambda v: date.fromisoformat(v) if v else None,
-            "datetime": lambda v: dt.fromisoformat(v) if v else None,
-            "boolean": lambda v: v.lower() in ("true", "1", "yes", "ใช่") if v else None,
-            "multi_select": lambda v: [x.strip() for x in v.split(",")] if v else [],
-        }
-
-        for i, csv_row in enumerate(all_rows):
-            await _update_job(job_id, "running", int(10 + 80 * i / max(total, 1)))
-            try:
-                params: dict[str, Any] = {}
-                for h, col in header_map.items():
-                    v = (csv_row.get(h) or "").strip()
-                    coerce = UI_COERCE.get(col["ui_type"])
-                    params[col["key"]] = coerce(v) if (coerce and v) else (v or None)
-
-                cols_ins = [c for c in header_map.values() if params.get(c["key"]) is not None]
-                if not cols_ins:
-                    skipped += 1
-                    continue
-
-                collist = ", ".join(f'"{c["key"]}"' for c in cols_ins)
-                vallist = ", ".join(f":{c['key']}" for c in cols_ins)
-                await session.execute(text(f'INSERT INTO "{pg}" ({collist}) VALUES ({vallist})'), params)
-                inserted += 1
-            except Exception as exc:
-                errors.append(f"แถว {i+2}: {exc}")
-                skipped += 1
-                await session.rollback()
-
-        await session.commit()
-        result = {"rows_inserted": inserted, "rows_skipped": skipped, "errors": errors[:20]}
-        await _update_job(job_id, "ok", 100, result=result)
-        return result
-    except Exception as exc:
-        await _update_job(job_id, "error", 0, error=format_exception_message(exc))
-        raise
     finally:
         await session.close()
 
@@ -382,40 +259,6 @@ async def _push_project_files(project_uid: str, tenant_slug: str = "default") ->
         log.exception("push_guard_lookup_failed", project_uid=project_uid)
 
     await push_project_files(project_uid)
-
-
-# ── task: AI processing ───────────────────────────────────────────────────────
-
-
-async def ai_process(
-    ctx: dict[str, Any],
-    *,
-    job_id: str,
-    prompt: str,
-    user_id: int | None = None,
-    tenant_id: int | None = None,
-) -> dict:
-    """Run an AI prompt in the background. Returns {answer: str}."""
-    await _update_job(job_id, "running", 10)
-    _usage_token = None
-    try:
-        from packages.llm.gateway import complete
-        if user_id is not None and tenant_id is not None:
-            from packages.llm.usage import UsageCtx, set_usage_ctx
-            _usage_token = set_usage_ctx(
-                UsageCtx(user_id=user_id, tenant_id=tenant_id, feature="prompt_cron", reference_id=job_id)
-            )
-        answer = await complete(prompt)
-        result = {"answer": answer}
-        await _update_job(job_id, "ok", 100, result=result)
-        return result
-    except Exception as exc:
-        await _update_job(job_id, "error", 0, error=format_exception_message(exc))
-        raise
-    finally:
-        if _usage_token is not None:
-            from packages.llm.usage import reset_usage_ctx
-            reset_usage_ctx(_usage_token)
 
 
 # ── task: ingest_video ────────────────────────────────────────────────────────
@@ -2685,6 +2528,20 @@ async def sweep_housekeeping(ctx: dict[str, Any]) -> dict:
                 except OSError:
                     continue
 
+    # The phone→web transfer scratch: same courier contract as the transcode
+    # scratch (the web DELETEs the ticket the moment it has the bytes; this
+    # reclaims abandoned ones). Flat token dirs, no user level.
+    transfer_root = data_root() / "video_transfer"
+    if transfer_root.is_dir():
+        cutoff = _time.time() - TRANSCODE_SCRATCH_TTL_SEC
+        for token_dir in transfer_root.iterdir():
+            try:
+                if token_dir.is_dir() and token_dir.stat().st_mtime < cutoff:
+                    shutil.rmtree(token_dir, ignore_errors=True)
+                    removed_dirs += 1
+            except OSError:
+                continue
+
     # The S3 half of the same scratch. Listed under the fixed prefix; each
     # object's LastModified is the age.
     removed_objects = 0
@@ -2698,13 +2555,15 @@ async def sweep_housekeeping(ctx: dict[str, Any]) -> dict:
                 cutoff_dt = datetime.now(timezone.utc) - timedelta(
                     seconds=TRANSCODE_SCRATCH_TTL_SEC
                 )
-                for page in client.get_paginator("list_objects_v2").paginate(
-                    Bucket=_bucket(), Prefix="scratch/transcode/"
-                ):
-                    for obj in page.get("Contents", []) or []:
-                        if obj.get("LastModified") and obj["LastModified"] < cutoff_dt:
-                            client.delete_object(Bucket=_bucket(), Key=obj["Key"])
-                            gone += 1
+                # Both scratch families — transcode and the phone transfer.
+                for prefix in ("scratch/transcode/", "scratch/transfer/"):
+                    for page in client.get_paginator("list_objects_v2").paginate(
+                        Bucket=_bucket(), Prefix=prefix
+                    ):
+                        for obj in page.get("Contents", []) or []:
+                            if obj.get("LastModified") and obj["LastModified"] < cutoff_dt:
+                                client.delete_object(Bucket=_bucket(), Key=obj["Key"])
+                                gone += 1
                 return gone
 
             removed_objects = await asyncio.to_thread(_sweep_s3)
@@ -2763,9 +2622,6 @@ async def shutdown(ctx: dict[str, Any]) -> None:
 
 class WorkerSettings:
     functions = [
-        csv_export,
-        csv_import,
-        ai_process,
         ingest_video,
         plan_edit,
         render_video,

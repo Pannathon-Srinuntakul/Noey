@@ -6,8 +6,9 @@ import os
 import shutil
 import subprocess
 import time
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from packages.core.logging import get_logger
 
@@ -137,8 +138,28 @@ def add_silent_audio_track(path: str | Path) -> None:
     tmp.replace(src)
 
 
+def stream_rotation(stream: dict[str, Any]) -> int:
+    """Display-matrix rotation in degrees, normalised to 0/90/180/270.
+
+    A phone clip records landscape and carries a rotation instead of being
+    re-encoded, so the CODED size and the size you actually see differ.
+    """
+    for side in stream.get("side_data_list") or []:
+        if "rotation" in side:
+            try:
+                return int(round(float(side["rotation"]))) % 360
+            except (TypeError, ValueError):
+                return 0
+    return 0
+
+
 def video_stream_info(path: str | Path) -> dict[str, Any]:
-    """Return width, height, rounded fps, and codec name for the primary video stream."""
+    """Width, height, rounded fps, codec name and rotation of the video stream.
+
+    `width`/`height` are the CODED size, exactly as ffprobe reports them. For
+    the size a player (and ffmpeg's own filter graph) actually produces, use
+    `display_size` — a rotated clip's two differ.
+    """
     meta = probe_media(path)
     stream = next(s for s in meta.get("streams", []) if s.get("codec_type") == "video")
     fps_raw = stream.get("r_frame_rate") or stream.get("avg_frame_rate") or "30/1"
@@ -152,7 +173,22 @@ def video_stream_info(path: str | Path) -> dict[str, Any]:
         "height": int(stream["height"]),
         "fps": max(fps, 1),
         "codec_name": str(stream.get("codec_name") or ""),
+        "rotation": stream_rotation(stream),
     }
+
+
+def display_size(info: dict[str, Any]) -> tuple[int, int]:
+    """The (width, height) a decoded frame comes out as, rotation applied.
+
+    ffmpeg's filter graph auto-applies the display matrix, so a trim of a
+    1920x1080 clip carrying `rotation=-90` writes a 1080x1920 file. ffprobe
+    does NOT auto-rotate, so comparing raw stream dimensions against a filter's
+    output silently compares two different things — which made the concat
+    conform push a portrait clip to landscape (measured on a real project's
+    .mov, 2026-09-07).
+    """
+    w, h = int(info["width"]), int(info["height"])
+    return (h, w) if int(info.get("rotation", 0)) in (90, 270) else (w, h)
 
 
 # Video codecs Chromium/Electron's <video> element can reliably play AND seek.
@@ -166,16 +202,38 @@ def is_browser_safe_video_codec(codec_name: str) -> bool:
 
 
 def transcode_to_h264(src: Path, dest: Path) -> None:
-    """Re-encode `src` to H.264/AAC with faststart into `dest` (may be the same
-    path as `src` — writes to a temp file first, then replaces atomically)."""
+    """Re-encode `src` to H.264 with faststart into `dest` (may be the same
+    path as `src` — writes to a temp file first, then replaces atomically).
+
+    The RESOLUTION is the source's own: this changes the codec, not the frame.
+
+    Audio is copied when it is already AAC, which it is for anything a phone
+    produced. Re-encoding it would cost time and a generation of quality for a
+    stream the browser could already play — only the video codec was ever the
+    problem.
+    """
     import ffmpeg
+
+    try:
+        audio_codec = next(
+            (
+                st.get("codec_name", "")
+                for st in probe_media(src).get("streams", [])
+                if st.get("codec_type") == "audio"
+            ),
+            "",
+        )
+    except Exception:  # noqa: BLE001 — a probe failure must not block the transcode
+        audio_codec = ""
+    audio_kwargs: dict[str, Any] = (
+        {"acodec": "copy"} if audio_codec == "aac" else {"acodec": "aac", "audio_bitrate": "192k"}
+    )
 
     tmp = dest.with_name(f".{dest.name}.transcoding{dest.suffix}")
     stream = ffmpeg.input(str(src), **hwaccel_input_kwargs()).output(
         str(tmp),
         **video_encode_kwargs(crf=20, preset="veryfast"),
-        acodec="aac",
-        audio_bitrate="192k",
+        **audio_kwargs,
         movflags="+faststart",
     )
     run_ffmpeg(stream.overwrite_output(), label="transcode_to_h264")
@@ -311,6 +369,106 @@ def video_encode_kwargs(*, crf: int = 18, preset: str = "fast") -> dict[str, Any
     return {"vcodec": encoder, **extra}
 
 
+class VideoGeometry(NamedTuple):
+    """The shape every clip in one concat must share."""
+
+    width: int
+    height: int
+    fps: int
+
+
+def target_geometry(paths: Sequence[str | Path]) -> VideoGeometry:
+    """The geometry a render conforms every clip to: that of its FIRST source.
+
+    Deliberately the first source rather than, say, the largest: a project whose
+    clips all match — which is nearly all of them — then produces byte-identical
+    output to a pipeline with no conforming at all, so this cannot regress the
+    common case.
+    """
+    info = video_stream_info(paths[0])
+    w, h = display_size(info)
+    return VideoGeometry(w, h, int(info["fps"]))
+
+
+def conform_video(stream: Any, src: str | Path, target: VideoGeometry) -> Any:
+    """Scale/pad/rate a trimmed video stream onto `target`, or pass it through.
+
+    WHY THIS EXISTS. Every per-cut trim re-encodes, and the results are then
+    joined with the concat DEMUXER under ``-c copy``. Stream copy muxes the
+    packets verbatim, so if two cuts came from sources of different size the
+    output CHANGES RESOLUTION MID-STREAM while its container header keeps
+    advertising the first clip's size.
+
+    Measured on two synthetic sources, 1080x1920 and 1920x1080, one 2-second cut
+    from each (2026-09-07)::
+
+        header:  width=1080 height=1920 nb_frames=120
+        frames:  t=0.000  1080x1920
+                 t=2.000  1920x1080   <-- changes here, header still says 1080x1920
+
+    ffmpeg exits 0 and its own decoder copes, so nothing upstream notices. A
+    player does not necessarily: a hardware decode path sizes its surface pool
+    from the header, and a mid-stream change either forces a reconfigure (a
+    visible hitch at the cut) or hands back an uninitialised surface (a solid
+    green picture). That is the "บางทีมันก็กระตุก หรือคลิปจอเขียวไปเลย" report
+    (2026-09-07), and it explains why it looked intermittent: single-source
+    projects are fine, only mixed-source ones produce a second resolution.
+
+    NOT measured here: which Chromium decode path breaks and how. What is
+    established is that the file we were shipping is malformed in exactly the
+    way that class of failure needs, and that conforming removes it.
+
+    Nothing upstream normalizes geometry — ``sidecar/ingest.py`` copies sources
+    verbatim on purpose (``normalized/`` also feeds the preview, the AI proxy
+    and frame extraction) — so the conforming belongs here, on clips that are
+    being re-encoded anyway and therefore get it for free.
+
+    Letterboxes rather than crops: a portrait cut dropped into a landscape
+    project loses no picture, and the pad is black like the stage behind it.
+    """
+    info = video_stream_info(src)
+    # DISPLAY size, not the coded one: the filters below run after ffmpeg has
+    # already applied the display matrix, so a rotated source is compared and
+    # scaled in the orientation it actually decodes to.
+    w, h = display_size(info)
+    if w == target.width and h == target.height and int(info["fps"]) == target.fps:
+        return stream
+    log.info(
+        "conform_video",
+        src=Path(src).name,
+        frm=f"{w}x{h}@{info['fps']}",
+        to=f"{target.width}x{target.height}@{target.fps}",
+    )
+    return (
+        stream.filter(
+            "scale", target.width, target.height, force_original_aspect_ratio="decrease"
+        )
+        .filter("pad", target.width, target.height, "(ow-iw)/2", "(oh-ih)/2")
+        .filter("setsar", 1)
+        .filter("fps", fps=target.fps)
+    )
+
+
+def geometries_match(paths: Sequence[str | Path]) -> bool:
+    """Do all these clips share width/height/fps? Guard before a stream copy."""
+    if len(paths) < 2:
+        return True
+    first = video_stream_info(paths[0])
+    key = (*display_size(first), first["fps"])
+    for p in paths[1:]:
+        info = video_stream_info(p)
+        got = (*display_size(info), info["fps"])
+        if got != key:
+            log.warning(
+                "concat_geometry_mismatch",
+                first=f"{key[0]}x{key[1]}@{key[2]}",
+                offender=Path(p).name,
+                got=f"{got[0]}x{got[1]}@{got[2]}",
+            )
+            return False
+    return True
+
+
 def run_ffmpeg(stream: Any, *, label: str = "ffmpeg") -> None:
     """Run an ffmpeg-python pipeline; log stderr and raise a readable error on failure."""
     import ffmpeg
@@ -412,6 +570,7 @@ def trim_media(
     duration: float,
     *,
     include_audio: bool = True,
+    geometry: "VideoGeometry | None" = None,
 ) -> None:
     """Accurate A/V trim with re-encode (trim/atrim filters keep lip-sync).
 
@@ -441,6 +600,11 @@ def trim_media(
     offset = start - pre
     inp = ffmpeg.input(str(input_path), ss=pre, **hwaccel_input_kwargs())
     v = inp.video.filter("trim", start=offset, duration=duration).filter("setpts", "PTS-STARTPTS")
+    # These cuts are concatenated with `-c copy` downstream, which keeps only
+    # the first clip's parameter set — see `conform_video` for what a mismatch
+    # looks like on screen.
+    if geometry is not None:
+        v = conform_video(v, input_path, geometry)
     if not include_audio:
         run_ffmpeg(
             ffmpeg.output(
@@ -462,6 +626,11 @@ def trim_media(
             **video_encode_kwargs(),
             acodec="aac",
             audio_bitrate="192k",
+            # Pin the audio shape for the same reason as the video's: a concat
+            # stream copy keeps the first clip's channel layout and sample rate
+            # too, so mixed-source cuts otherwise desync or drop a channel.
+            ar=48000,
+            ac=2,
             avoid_negative_ts="make_zero",
         ).overwrite_output(),
         label="render_cut",

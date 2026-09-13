@@ -4,10 +4,12 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 
 # Noey Tiktok — Project Rules & Architecture
 
-Personal analytics system for a TikTok **affiliate creator**: scrape the owner's **own**
-TikTok back-office data (Playwright), store in PostgreSQL, expose a 3D-data-world
-dashboard with provider-agnostic AI (analysis, chatbot, prompt-cron). See
-`PROJECT_REQUIREMENTS.md` for the full spec and `ARCHITECTURE.md` for the service map.
+AI video-editing product for a TikTok **affiliate creator**, in two clients over
+one backend: a **desktop app** (`desktop/`) and a **web build** (`web/`), both
+cutting affiliate clips with provider-agnostic AI. The original 3D-data-world
+analytics dashboard (`frontend/`), its 13 API routers and its DB tables were
+REMOVED on 2026-09-09 — `PROJECT_REQUIREMENTS.md`/`ARCHITECTURE.md` describe
+that removed system and are historical only.
 
 ## Hard Rules (non-negotiable)
 
@@ -47,26 +49,29 @@ dashboard with provider-agnostic AI (analysis, chatbot, prompt-cron). See
 
 ## Language & Stack
 
-- **Backend (all of it): Python 3.12** — scraper, API, worker.
-- **Frontend: TypeScript + React (Vite).**
-- Postgres + SQLAlchemy + Alembic; FastAPI; arq + Redis (background jobs); LiteLLM; React Three Fiber.
+- **Backend (all of it): Python 3.12** — API, worker (scraper never built).
+- **Clients: TypeScript + React (Vite)** — `web/` (browser, WebCodecs render) and `desktop/app` (Electron).
+- Postgres + SQLAlchemy + Alembic; FastAPI; arq + Redis (background jobs); LiteLLM.
 
 ## Conventions
 
-- Monorepo split: **`backend/` = all Python, `frontend/` = all TypeScript/React.**
+- Monorepo split: **`backend/` = all Python; `web/` + `desktop/app` = TypeScript/React.**
   Inside `backend/`: shared libs in `packages/`, deployable units in `services/`.
   Run all Python tooling (pytest, alembic, uvicorn) from `backend/`.
 - Python: Ruff + mypy, type hints everywhere, Pydantic models at boundaries.
 - TS: ESLint + Prettier, strict mode.
-- Tests: pytest (backend), Vitest + Playwright (frontend).
+- Tests: pytest (backend), Vitest (web + desktop), Playwright only when a real browser is genuinely needed.
 - Structured JSON logging; every scrape/AI run recorded in audit tables.
 
 ## DB Schema Architecture
 
 Two-layer schema design in PostgreSQL:
 
-- **`core` schema** — auth + platform: `users`, `tenants`, `memberships`, `jobs` (arq job status).
-- **`tenant_<slug>` schema** — per-tenant business data: analytics tables (CSV-imported), `custom_table_meta` registry, and all user-defined tables (`udt_*`).
+- **`core` schema** — auth + platform: `users`, `tenants`, `memberships`, `jobs` (arq job status), `llm_usage_logs`, `stt_usage_logs`.
+- **`tenant_<slug>` schema** — per-tenant business data: `video_projects`, `effect_styles`.
+  (The analytics/CSV tables, `custom_table_meta` + `udt_*`, chat, prompts and
+  scrape-run tables were dropped 2026-09-09 with the dashboard — migration
+  `32f7cd8e7c1d`.)
 
 Every API request sets `SET search_path TO "tenant_<slug>", core` via `deps.py` so SQLAlchemy models resolve to the right schema automatically. `packages/db/tenancy.py` owns schema creation/drop and search_path SQL generation.
 
@@ -85,16 +90,13 @@ Every API request sets `SET search_path TO "tenant_<slug>", core` via `deps.py` 
     - `models/app_setting.py` — key-value app settings (per-tenant).
     - `models/scrape_run.py` — scrape run audit log.
   - `llm/` — LiteLLM gateway (`gateway.py`: `acompletion`, `acompletion_stream_thinking` for streamed extended-thinking, `complete`, `chat_once` — with retry/timeout/error-phase classification), `config.py` (`sync_llm_env`, `model_params`, `call_kwargs`, `vision_call_kwargs`, `anthropic_file_kwargs`, `model_supports_effort`), `files.py` (Anthropic Files API upload/delete for vision frames — via LiteLLM, never the `anthropic` SDK), `tools.py`, `usage.py` (per-user token tracking via ContextVar — set `UsageCtx` before any LLM call). **Only AI entry point.**
-  - `tables/` — `formula.py` (compile formula spec → safe PostgreSQL GENERATED ALWAYS AS expression), `workspace.py` (provision 5 default TikTok Affiliate tables for new tenants).
   - `video/` — `storage.py` (file paths under `backend/data/`), `ffmpeg_bin.py` (ffmpeg/ffprobe wrapper, reads `FFMPEG_PATH`), `timeline.py` (transcript → cut list, AI highlight planning), `scene.py` (frame extraction for dub_first), `elevenlabs_stt.py` (**the only speech-to-text path** — ElevenLabs Scribe client + the word-gap arithmetic that decides the silence cut), `caption.py` (ASS subtitle generation), `overlay.py` (visual effects/stickers render), `stickers.py` (sticker asset resolution), `face_tracker.py` (face bbox tracking), `style_profile.py` (PySceneDetect + Codex Vision → Style Profile JSON), `assets.py` (SFX catalog + rule-based placement), `fonts.py` (bundled Thai-capable caption fonts in `backend/data/fonts/`), `s3.py` (S3/R2 sync for multi-host deployments — no-op when `S3_BUCKET` unset).
     - Effects layer (see "Effects Layer" below): `effects.py`, `effects_ai.py`, `effects_catalog.py`, `effects_codegen.py`, `effects_render.py`, `effects_capcut.py`, `transforms.py`.
 - **`backend/services/api/`** — FastAPI app. Routers: `auth`, `workspace`, `analytics`, `import_csv`, `metrics`, `products`, `creators`, `market`, `prompt_cron`, `runs`, `chat`, `settings`, `custom_tables`, `table_io`, `jobs`, `videos`, `videos_local`, `usage`, `releases` (unauthenticated presigned-S3 redirect for the desktop installer). Logic split: `queries.py` (read), `csv_importer.py`, `chat_service.py`, `schemas.py`, `deps.py` (DI + JWT extraction + search_path injection).
-- **`backend/services/worker/`** — arq background worker (queue `arq:default`). Tasks: `csv_export`, `csv_import`, `ai_process`, `ingest_video` (AI cut selection → ffmpeg render → CapCut ZIP). API enqueues → returns `job_id` → frontend polls `GET /jobs/{job_id}`. Run: `python -m services.worker`.
+- **`backend/services/worker/`** — arq background worker (queue `arq:default`). Tasks: the video chains (`ingest_video` … `plan_dub_timeline`, the `*_local` family), `transcode_for_web`, and the `sweep_housekeeping` cron. API enqueues → returns `job_id` → the client polls `GET /jobs/{job_id}`. Run: `python -m services.worker`.
 - **`backend/scripts/`** — one-off operational/smoke scripts (NOT pytest): `check_project.py` (inspect a video_project row), `probe_stream_thinking.py` (verify streamed thinking chunks), `vision_smoke_test.py` (Files API vs base64 vision latency), `probe_elevenlabs.py` (Scribe on a real Thai clip → token shape, gap distribution, logprob spread, wall clock). Run from `backend/` with `python scripts/<name>.py`.
 - **`backend/packages/db/alembic/`** — migrations live here (not `backend/alembic`); `alembic.ini` at `backend/` points `script_location` to it. Run alembic from `backend/`.
-- **`frontend/src/`** — `auth/` (AuthContext, RequireAuth), `pages/` (Login, Island, Revenue, Catalog, Market, Import, Settings, TablePage, CreateTablePage, ManageFieldsPage, VideoPage), `scene/` (R3F: IslandWorld, DataWorld, InteractiveRoom, SphereField, DrillCard), `hud/` (TableEditor, AddColumnModal, ColumnSettingsPopover, ColumnFilterPopover, ConfirmModal, ImportModal, TemplateGallery, ChatPanel, Filters, MetricBar, PromptCron, RevenueOverlay, Room, RoomPage; `rooms/` sub-dir has per-route HUDs: CatalogRoom, ImportRoom, MarketRoom, SettingsRoom), `fallback/TableView.tsx` (2D fallback when R3F not supported), `lib/` (columnTypes, encoding, optionColors, tablePresets), `navigation/NavigationContext.tsx`, `api.ts` (backend client), `errors.ts` (central parser turning FastAPI/worker/LiteLLM/Anthropic error payloads into user-facing Thai strings — use `readApiError`/`formatUserError` instead of showing raw messages; covered by `errors.test.ts`), `types.ts`.
-
-- **`desktop/`** — standalone desktop app for the AI video-edit feature, **both modes** (dub_first + talking_head) end-to-end (see `DESKTOP_VIDEO_APP_REQUIREMENTS.md` + `desktop/README.md`). Isolated from `backend/`/`frontend/` — additive backend changes only. `desktop/app/` = Electron + React + TS (electron-vite, Tailwind v4): own JWT login against existing `/auth/*` (no session sharing), safeStorage token store, local project registry (`userData/projects/<uid>/project.json`), `media://` privileged protocol for local video preview, mode-aware wizard (`pages/WizardPage.tsx` — dub: analyze → silent cut, which is where a dub run normally ENDS; the voiceover + final render are optional work offered afterwards. talking_head: extract-audio → server transcribe+plan → local render), TimelineEditor ported from the web editor (IO seam in `lib/editorApi.ts`). `desktop/sidecar/` = Python render engine spawned by Electron main; imports `backend/packages/video` read-only via `sys.path` (`bootstrap.py`, `NOEY_BACKEND_DIR` override); JSON-lines protocol on stdout (`ping`/`probe`/`ingest`/`extract-frames`/`render-silent`/`render-final`/`extract-audio`/`render-timeline`), logs on stderr. Video files stay on the user's machine — only frame JPEGs (dub) / speech WAVs (talking_head) upload for AI. Packaging: PyInstaller sidecar + bundled ffmpeg + electron-builder NSIS/dmg (`npm run build:win`).
+- **`desktop/`** — standalone desktop app for the AI video-edit feature, **both modes** (dub_first + talking_head) end-to-end (see `DESKTOP_VIDEO_APP_REQUIREMENTS.md` + `desktop/README.md`). Isolated from `backend/` — additive backend changes only. `desktop/app/` = Electron + React + TS (electron-vite, Tailwind v4): own JWT login against existing `/auth/*` (no session sharing), safeStorage token store, local project registry (`userData/projects/<uid>/project.json`), `media://` privileged protocol for local video preview, mode-aware wizard (`pages/WizardPage.tsx` — dub: analyze → silent cut, which is where a dub run normally ENDS; the voiceover + final render are optional work offered afterwards. talking_head: extract-audio → server transcribe+plan → local render), TimelineEditor ported from the web editor (IO seam in `lib/editorApi.ts`). `desktop/sidecar/` = Python render engine spawned by Electron main; imports `backend/packages/video` read-only via `sys.path` (`bootstrap.py`, `NOEY_BACKEND_DIR` override); JSON-lines protocol on stdout (`ping`/`probe`/`ingest`/`extract-frames`/`render-silent`/`render-final`/`extract-audio`/`render-timeline`), logs on stderr. Video files stay on the user's machine — only frame JPEGs (dub) / speech WAVs (talking_head) upload for AI. Packaging: PyInstaller sidecar + bundled ffmpeg + electron-builder NSIS/dmg (`npm run build:win`).
 - **Local-render backend surface** (additive): `routers/videos_local.py` (`POST /videos/local`, `POST /videos/{uid}/analyze-frames`, `POST /videos/{uid}/plan-dub`, `POST /videos/{uid}/transcribe-audio`, `GET/PUT /videos/{uid}/local-timeline`, `PATCH /videos/{uid}/local-status`, `PUT /videos/{uid}/local-edit-script`), arq tasks `analyze_dub_local` + `plan_talking_local`, `video_projects.origin/local_meta` columns. Shared cores extracted from worker tasks into `packages/video/`: `dub_ai.py` (dub prompts + LLM calls), `dub_render.py` (dub ffmpeg cores), `plan_core.py` (talking_head planning incl. Haiku passes), `elevenlabs_stt.py` (Scribe transport + transcript assembly), `audio_extract.py` (speech WAV chain), `render_common.py` (SRT + CapCut bundle) — worker and sidecar/API both use them; do not fork their behavior.
 
 ## Effects Layer (AI-assisted effects/stickers on top of the cut)
@@ -219,11 +221,10 @@ Skill files live in `.Codex/skills/<name>/`.
 - `backend-api` — FastAPI service structure and conventions.
 - `llm-gateway` — provider-agnostic AI usage (cloud + local).
 - `database` — SQLAlchemy models + Alembic migrations.
-- `frontend-3d` — the 3D-data-world UI design language.
 
 ## Commands
 
-All Python commands run from `backend/`. All frontend commands run from `frontend/`.
+All Python commands run from `backend/`. Web commands run from `web/`; desktop from `desktop/app`.
 
 **Backend**
 ```bash
@@ -253,12 +254,12 @@ cd backend && alembic upgrade head
 cd backend && alembic revision --autogenerate -m "description"
 ```
 
-**Frontend**
+**Web**
 ```bash
-cd frontend && npm run dev      # dev server (localhost:5173)
-cd frontend && npm run build    # production build
-cd frontend && npm run lint     # ESLint
-cd frontend && npm run test     # Vitest unit tests
+cd web && npx vite --port 5174   # dev server
+cd web && npx vite build         # production build
+cd web && npm run lint           # ESLint
+cd web && npx vitest run         # Vitest unit tests
 ```
 
 **Desktop app** (from `desktop/app` unless noted)

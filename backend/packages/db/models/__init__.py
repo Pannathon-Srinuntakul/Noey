@@ -1,57 +1,27 @@
-"""Import all models so Alembic autogenerate sees them via Base.metadata."""
+"""Model registry.
 
-from packages.db.models.ai_prompt import AiPrompt
-from packages.db.models.video_project import VideoProject
-from packages.db.models.chat_session import ChatMessage, ChatSession
-from packages.db.models.ai_run import AiRun
-from packages.db.models.app_setting import AppSetting
+Importing this module registers every model on Base.metadata — alembic's
+autogenerate and the tenant-schema provisioning both read that registry, so a
+model missing here is a table that silently never exists.
+
+The analytics/dashboard family (CSV imports, custom tables, chat, prompts,
+scrape runs, products/creators/market) was removed 2026-09-09 along with the
+legacy frontend that was its only consumer.
+"""
+
 from packages.db.models.core_auth import Job, Membership, Tenant, User
-from packages.db.models.creator import Creator
-from packages.db.models.custom_table import CustomTableMeta
 from packages.db.models.effect_style import EffectStyle
 from packages.db.models.llm_usage import LlmUsageLog
-from packages.db.models.market import MarketTrend
-from packages.db.models.product import Product
-from packages.db.models.sales import SalesDaily
-from packages.db.models.scrape_run import ScrapeRun
 from packages.db.models.stt_usage import SttUsageLog
-from packages.db.models.tiktok_csv import (
-    CsvImportRun,
-    FollowerActivity,
-    FollowerGender,
-    FollowerHistory,
-    FollowerTerritory,
-    OverviewDaily,
-    VideoContent,
-    ViewersDaily,
-)
+from packages.db.models.video_project import VideoProject
 
 __all__ = [
-    "ChatSession",
-    "ChatMessage",
-    "Product",
-    "Creator",
-    "SalesDaily",
-    "MarketTrend",
-    "AiPrompt",
-    "AiRun",
-    "ScrapeRun",
-    "AppSetting",
-    "CustomTableMeta",
     "EffectStyle",
-    "SttUsageLog",
+    "Job",
     "LlmUsageLog",
+    "Membership",
+    "SttUsageLog",
     "Tenant",
     "User",
-    "Membership",
-    "Job",
-    "OverviewDaily",
-    "VideoContent",
-    "FollowerHistory",
-    "FollowerActivity",
-    "FollowerGender",
-    "FollowerTerritory",
-    "ViewersDaily",
-    "CsvImportRun",
     "VideoProject",
 ]

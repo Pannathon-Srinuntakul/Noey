@@ -124,7 +124,7 @@ def _map_http_status(status: int) -> str | None:
     if status == 529:
         return "AI รับงานเต็มชั่วคราว กรุณารอ 1–2 นาทีแล้วกดลองใหม่"
     if status == 520:
-        return "เซิร์ฟเวอร์ AI (Anthropic) มีปัญหาชั่วคราว กรุณารอ 1–2 นาทีแล้วกดลองใหม่"
+        return "เซิร์ฟเวอร์ AI มีปัญหาชั่วคราว กรุณารอ 1–2 นาทีแล้วกดลองใหม่"
     if status in (502, 503, 504):
         return "เซิร์ฟเวอร์ AI ไม่พร้อมชั่วคราว กรุณาลองใหม่ภายหลัง"
     if status >= 500:
@@ -149,8 +149,51 @@ def _is_upstream_llm_error(text: str) -> bool:
     return any(m in lower for m in markers)
 
 
+#: Names, product names and model-id shapes that must never reach a user. The
+#: mapping table below only recognises the phrasings that have actually been
+#: seen; a provider that words a new error differently used to fall straight
+#: through `return text` and print its own name on screen. This list is the
+#: backstop for everything the table has not met yet.
+_VENDOR_MARKERS = re.compile(
+    r"(anthropic|claude|openai|gpt-|chatgpt|gemini|google|vertex|palm|"
+    r"eleven\s*labs|elevenlabs|scribe|whisper|deepgram|assemblyai|"
+    r"twelve\s*labs|pegasus|litellm|bedrock|azure|huggingface|\bLLM\b|"
+    r"x-api-key|api[_-]?key|sk-[a-z0-9-]{8,}|"
+    r"\b[a-z]+-\d+(\.\d+)?-(flash|pro|sonnet|haiku|opus|mini|turbo)\b)",
+    re.IGNORECASE,
+)
+
+_GENERIC = "เกิดข้อผิดพลาด กรุณาลองใหม่อีกครั้ง"
+
+
+def scrub_vendor_tokens(text: str) -> str:
+    """Blank the vendor-shaped TOKENS inside free text, keeping the rest.
+
+    For streamed model reasoning ('thinking' excerpts): the model can name
+    itself or its provider mid-sentence, and the excerpt is shown in the UI.
+    Replacing the whole excerpt would kill a feature; replacing the tokens
+    keeps it honest.
+    """
+    return _VENDOR_MARKERS.sub("AI", text)
+
+
+def _scrub_vendor(text: str) -> str:
+    """Replace anything that names the stack with the generic message.
+
+    Applied to EVERY return value of `sanitize_technical_error`, including its
+    fall-through. The fall-through is the whole point: it returns the raw
+    exception text, which is correct for the app's own Thai errors and a
+    business-secret leak for anything raised by a provider SDK.
+    """
+    return _GENERIC if _VENDOR_MARKERS.search(text) else text
+
+
 def sanitize_technical_error(message: str) -> str:
     """Map raw upstream / SDK exception text to a short user-facing Thai message."""
+    return _scrub_vendor(_classify_technical_error(message))
+
+
+def _classify_technical_error(message: str) -> str:
     text = message.strip()
     if not text:
         return "เกิดข้อผิดพลาด กรุณาลองใหม่อีกครั้ง"
@@ -205,7 +248,7 @@ def sanitize_technical_error(message: str) -> str:
             return "เชื่อมต่อ AI ไม่สำเร็จ กรุณารอสักครู่แล้วกดลองใหม่"
 
     if "error 520" in lower or "error_520" in lower:
-        return "เซิร์ฟเวอร์ AI (Anthropic) มีปัญหาชั่วคราว กรุณารอ 1–2 นาทีแล้วกดลองใหม่"
+        return "เซิร์ฟเวอร์ AI มีปัญหาชั่วคราว กรุณารอ 1–2 นาทีแล้วกดลองใหม่"
 
     if "error 502" in lower or "error 503" in lower or "error 504" in lower or "error 529" in lower:
         return "เซิร์ฟเวอร์ AI ไม่พร้อมชั่วคราว กรุณาลองใหม่ภายหลัง"
@@ -235,7 +278,10 @@ def format_exception_message(exc: BaseException) -> str:
     from fastapi import HTTPException
 
     if isinstance(exc, HTTPException):
-        return format_http_detail(exc.status_code, exc.detail)
+        # Scrubbed as well: a router is free to build a detail out of an
+        # upstream string, and this is the one funnel every one of them exits
+        # through on the way to a job row or a UI toast.
+        return _scrub_vendor(format_http_detail(exc.status_code, exc.detail))
 
     return sanitize_technical_error(str(exc))
 

@@ -452,6 +452,54 @@ async def delete_scratch(user_id: int, token: str) -> None:
     await asyncio.to_thread(_sync_delete_prefix, f"scratch/transcode/{user_id}/{token}/")
 
 
+# ── scratch (phone→web transfer: keyed by TOKEN alone) ─────────────────────
+#
+# The phone-side uploader is unauthenticated — the single-use token IS its
+# credential — so nothing on that request knows a user_id. These helpers key
+# the same scratch mechanism by token only; the ticket file inside carries the
+# owner for the authenticated half to verify.
+
+def _transfer_key(token: str, filename: str) -> str:
+    return f"scratch/transfer/{token}/{filename}"
+
+
+async def push_transfer_file(token: str, local_path: pathlib.Path) -> None:
+    """Upload one transfer file. No-op when S3 is off or the file is missing."""
+    if not _s3_enabled() or not local_path.is_file():
+        return
+    key = _transfer_key(token, local_path.name)
+    await asyncio.to_thread(_sync_upload_one, local_path, key)
+    log.info("s3_transfer_push", key=key)
+
+
+async def pull_transfer_file(token: str, local_path: pathlib.Path) -> bool:
+    """Fetch one transfer file if the local copy is missing. True when present after."""
+    if local_path.is_file():
+        return True
+    if not _s3_enabled():
+        return False
+    key = _transfer_key(token, local_path.name)
+
+    def _download() -> bool:
+        from botocore.exceptions import ClientError
+
+        local_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            _client().download_file(_bucket(), key, str(local_path))
+            return True
+        except ClientError:
+            return False
+
+    return await asyncio.to_thread(_download)
+
+
+async def delete_transfer(token: str) -> None:
+    """Remove everything stored for one transfer ticket."""
+    if not _s3_enabled():
+        return
+    await asyncio.to_thread(_sync_delete_prefix, f"scratch/transfer/{token}/")
+
+
 # ── static releases (desktop app installers, not project-scoped) ────────────
 
 def _release_key(filename: str) -> str:

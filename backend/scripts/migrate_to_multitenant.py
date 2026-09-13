@@ -16,13 +16,6 @@ from sqlalchemy import text
 
 log = get_logger(__name__)
 
-BUSINESS_TABLES = [
-    "ai_prompts", "ai_runs", "app_settings", "creators", "csv_import_runs",
-    "custom_table_meta", "follower_activity", "follower_gender", "follower_history",
-    "follower_territory", "market_trends", "overview_daily", "products",
-    "sales_daily", "scrape_runs", "video_content", "viewers_daily",
-]
-
 ADMIN_EMAIL = os.getenv("SEED_EMAIL", "admin@noey.local")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "ChangeMe123!")
 
@@ -36,28 +29,6 @@ async def main() -> None:
         # Step 1: create tenant_default schema
         await conn.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{TARGET_SCHEMA}"'))
         log.info("schema_ready", schema=TARGET_SCHEMA)
-
-        # Step 2: move business tables public → tenant_default
-        existing = {row[0] for row in await conn.execute(
-            text("SELECT tablename FROM pg_tables WHERE schemaname='public'")
-        )}
-        already_moved = {row[0] for row in await conn.execute(
-            text(f"SELECT tablename FROM pg_tables WHERE schemaname='{TARGET_SCHEMA}'")
-        )}
-
-        for table in BUSINESS_TABLES:
-            if table in already_moved or table not in existing:
-                continue
-            await conn.execute(text(f'ALTER TABLE public."{table}" SET SCHEMA "{TARGET_SCHEMA}"'))
-            log.info("table_moved", table=table, schema=TARGET_SCHEMA)
-
-        # Move leftover udt_* tables
-        udt_tables = [row[0] for row in await conn.execute(
-            text("SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename LIKE 'udt_%'")
-        )]
-        for table in udt_tables:
-            await conn.execute(text(f'ALTER TABLE public."{table}" SET SCHEMA "{TARGET_SCHEMA}"'))
-            log.info("udt_moved", table=table)
 
         # Step 3: seed tenant
         existing_tenant = (await conn.execute(
@@ -103,32 +74,6 @@ async def main() -> None:
                 {"uid": user_id, "tid": tenant_id},
             )
             log.info("membership_created", role="owner")
-
-    # Step 6: default workspace tables (custom_table_meta + udt_*) — idempotent
-    await _provision_default_workspace()
-
-    log.info("seed_complete", email=ADMIN_EMAIL, schema=TARGET_SCHEMA)
-
-
-async def _provision_default_workspace() -> None:
-    """Create 5 default TikTok Affiliate tables when tenant_default has none yet."""
-    from sqlalchemy import func, select
-
-    from packages.db.models.custom_table import CustomTableMeta
-    from packages.db.session import bind_tenant_search_path, get_sessionmaker
-    from packages.tables.workspace import provision_workspace
-
-    maker = get_sessionmaker()
-    async with maker() as session:
-        await bind_tenant_search_path(session, DEFAULT_TENANT_SLUG)
-        before = (await session.execute(select(func.count()).select_from(CustomTableMeta))).scalar_one()
-        await provision_workspace(session, DEFAULT_TENANT_SLUG)
-        after = (await session.execute(select(func.count()).select_from(CustomTableMeta))).scalar_one()
-    if after > before:
-        log.info("workspace_provisioned", table_count=after)
-    else:
-        log.info("workspace_already_provisioned", table_count=after)
-
 
 if __name__ == "__main__":
     from packages.core.logging import configure_logging

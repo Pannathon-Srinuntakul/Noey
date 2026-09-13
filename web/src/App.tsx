@@ -14,9 +14,7 @@ import { TitleBar } from './components/shell/TitleBar'
 import DevUiPage from './pages/DevUiPage'
 import LoginPage from './pages/LoginPage'
 
-// Backend URL is baked in at build time — users never see or set it.
-// Override for local dev/self-hosting: VITE_BACKEND_URL=... npm run build
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL ?? 'https://noey-api-production.up.railway.app'
+import { BACKEND_URL } from './lib/backendUrl'
 
 /**
  * The browser's store is per ORIGIN, not per account. Logging out and signing

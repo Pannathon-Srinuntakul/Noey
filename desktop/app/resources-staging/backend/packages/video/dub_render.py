@@ -13,7 +13,15 @@ from pathlib import Path
 from typing import Any
 
 from packages.core.logging import get_logger
-from packages.video.ffmpeg_bin import hwaccel_input_kwargs, run_ffmpeg, video_encode_kwargs
+from packages.video.ffmpeg_bin import (
+    VideoGeometry,
+    conform_video,
+    geometries_match,
+    hwaccel_input_kwargs,
+    run_ffmpeg,
+    target_geometry,
+    video_encode_kwargs,
+)
 
 log = get_logger(__name__)
 
@@ -34,14 +42,32 @@ def prepare_clips_dir(clips_dir: Path) -> None:
         stale.unlink(missing_ok=True)
 
 
+def segment_geometry(norm_files_sorted: list[Path], segments: list[dict[str, Any]]) -> VideoGeometry:
+    """The shape every trimmed clip of this render is conformed to.
+
+    Taken from the source the FIRST segment uses, so a single-source project —
+    which is most of them — is conformed to itself and nothing changes.
+    """
+    first = norm_for_clip(norm_files_sorted, (segments[0] if segments else {}).get("sourceClip", "clip0"))
+    return target_geometry([first])
+
+
 def trim_one_segment(
     norm_files_sorted: list[Path],
     seg: dict[str, Any],
     clips_dir: Path,
     index: int,
     total: int,
+    *,
+    geometry: VideoGeometry | None = None,
 ) -> Path:
-    """Frame-accurate silent trim of one segment (re-encoded for concat)."""
+    """Frame-accurate silent trim of one segment (re-encoded for concat).
+
+    `geometry` is the shape the whole concat must share — see `conform_video`.
+    It is optional only so the older single-segment callers keep working; a
+    caller that renders more than one segment must pass it, or a mixed-source
+    project produces a green picture at every source switch.
+    """
     import ffmpeg as ffmpeg_lib
 
     src = norm_for_clip(norm_files_sorted, seg.get("sourceClip", "clip0"))
@@ -51,11 +77,16 @@ def trim_one_segment(
     log.info("render_dub_clip", idx=index + 1, total=total, src=src.name, in_=round(src_in, 2), out=round(src_out, 2))
     # Frame-accurate trim via video filter + reset PTS (avoids keyframe-stutter from vcodec=copy).
     # Re-encode to h264/yuv420p so concat timestamps are always consistent.
-    run_ffmpeg(
+    video = (
         ffmpeg_lib.input(str(src), **hwaccel_input_kwargs())
         .video
         .filter("trim", start=src_in, end=src_out)
         .filter("setpts", "PTS-STARTPTS")
+    )
+    if geometry is not None:
+        video = conform_video(video, src, geometry)
+    run_ffmpeg(
+        video
         .output(str(clip_out),
                 **video_encode_kwargs(),
                 pix_fmt="yuv420p",
@@ -78,15 +109,25 @@ def trim_segments_silent(
     prepare_clips_dir(clips_dir)
     clip_paths: list[Path] = []
     total = len(segments)
+    geometry = segment_geometry(norm_files_sorted, segments) if segments else None
     for i, seg in enumerate(segments):
         if on_progress:
             on_progress(i + 1, total)
-        clip_paths.append(trim_one_segment(norm_files_sorted, seg, clips_dir, i, total))
+        clip_paths.append(
+            trim_one_segment(norm_files_sorted, seg, clips_dir, i, total, geometry=geometry)
+        )
     return clip_paths
 
 
 def concat_stream_copy(clip_paths: list[Path], out_path: Path, list_path: Path) -> None:
-    """Join re-encoded clips with the concat demuxer (stream copy + faststart)."""
+    """Join re-encoded clips with the concat demuxer.
+
+    Stream copy when every clip really does share a geometry, and a re-encode
+    when they do not. The check is not paranoia: under ``-c copy`` a mismatch
+    produces a file whose resolution changes mid-stream while its header still
+    advertises the first clip's — measured, see `conform_video`. ffmpeg exits 0
+    on it, so code is the only thing that can catch it.
+    """
     import ffmpeg as ffmpeg_lib
 
     base = list_path.parent
@@ -94,11 +135,24 @@ def concat_stream_copy(clip_paths: list[Path], out_path: Path, list_path: Path) 
         "\n".join(f"file '{p.relative_to(base).as_posix()}'" for p in clip_paths),
         encoding="utf-8",
     )
+    inp = ffmpeg_lib.input(str(list_path), format="concat", safe=0)
+    if geometries_match(clip_paths):
+        run_ffmpeg(
+            inp.output(str(out_path), c="copy", movflags="+faststart").overwrite_output(),
+            label="dub_concat",
+        )
+        return
+    # Should not happen once the trims conform — but a wrong picture is worse
+    # than a slow one, so fall back rather than trust the caller.
+    log.warning("dub_concat_reencode", reason="clip geometry mismatch", clips=len(clip_paths))
     run_ffmpeg(
-        ffmpeg_lib.input(str(list_path), format="concat", safe=0)
-        .output(str(out_path), c="copy", movflags="+faststart")
-        .overwrite_output(),
-        label="dub_concat",
+        inp.output(
+            str(out_path),
+            **video_encode_kwargs(),
+            pix_fmt="yuv420p",
+            movflags="+faststart",
+        ).overwrite_output(),
+        label="dub_concat_reencode",
     )
 
 

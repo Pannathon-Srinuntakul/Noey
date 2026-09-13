@@ -1295,3 +1295,39 @@ in the main loop, verified in the live app. Per item:
 15. **State**: web tsc clean · eslint 0 errors · 579 vitest · production build
     clean · backend ruff clean · pytest 583 passed (2 pre-existing .env
     failures) · desktop untouched.
+
+---
+
+## Gate 23 — รับวิดีโอจากมือถือ, web edition (2026-09-09)
+
+Receive-only, per the owner: the phone SENDS footage; it controls nothing.
+
+A browser cannot listen on a LAN, so where the desktop runs a listener the web
+uses the backend as a COURIER (`backend/services/api/routers/transfer.py`):
+the wizard's รับวิดีโอจากมือถือ opens a single-use ticket (30 min, uuid4.hex),
+shows a QR of `<origin>/transfer/<token>`, and polls. The phone lands on
+`TransferUploadPage` — rendered by main.tsx BEFORE login and BEFORE the
+capability/mobile gate, because a phone is exactly who it is for — and uploads
+over XHR with a real progress bar, one file at a time. นำเข้า pulls each file
+down as a `File` into the wizard's normal picked-file path and DELETEs the
+ticket; closing without importing deletes it too; abandoned tickets are swept
+by the same housekeeping cron as the transcode scratch. Scratch is keyed by
+TOKEN alone (`s3.py` transfer helpers) because the phone request knows no
+user — the ticket file inside carries the owner for the authed half to verify.
+
+Verified END TO END against a live local API driven from the real UI:
+login → wizard → modal (QR rendered, "รอไฟล์จากมือถือ…") → the transfer page in
+a 390px frame fed a real File → "ส่งแล้ว 1 ไฟล์" → modal polled it in →
+"นำเข้า 1 ไฟล์" → wizard lists it once → ticket dir empty on the server.
+Plus 6 backend unit tests: full lifecycle leaves nothing behind, the token is
+the phone's credential but never the reader's (owner-only reads, 403),
+expiry 410, suffix/empty 422 with no partial left, file cap 429, garbage
+token 400 before any disk touch.
+
+Caught live during verification: queueing the upload inside the `setRows`
+UPDATER sent every clip twice — React may run an updater more than once
+(StrictMode does, always), so the queue side effect moved out and indices come
+from a ref. The fix is exactly why the e2e ran before shipping.
+
+Test state: web tsc clean · eslint 0 errors · 584 vitest · build clean ·
+backend ruff clean · transfer tests 6/6. Desktop untouched by this gate.
