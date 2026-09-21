@@ -48,6 +48,35 @@ export function dubScenesFor(script: DubEditScript | null): DubScene[] {
   return withInheritedScripts(scenes)
 }
 
+/** The silent cut as source windows, in play order, on the same clock as
+ * dubScenesFor — what a stored caption edit's anchor is resolved against. */
+export function dubCutsFor(
+  script: DubEditScript | null
+): { source: string; in: number; out: number }[] {
+  return (script?.segments ?? []).map((seg) => {
+    const srcIn = Number(seg.sourceIn ?? 0)
+    const duration = Number(seg.durationSec ?? Math.max(0, Number(seg.sourceOut ?? 0) - srcIn))
+    return {
+      source: String(seg.sourceClip ?? 'clip0'),
+      in: srcIn,
+      out: srcIn + (Number.isFinite(duration) ? duration : 0)
+    }
+  })
+}
+
+/** The planned timeline's cuts, in play order. */
+export function timelineCutsFor(
+  timeline: DubTimeline | Record<string, unknown> | undefined
+): { source: string; in: number; out: number }[] {
+  const raw = (timeline as DubTimeline | undefined)?.timeline
+  const cuts = Array.isArray(raw) ? raw.filter((c) => (c.type ?? 'cut') === 'cut') : []
+  return cuts.map((c) => ({
+    source: String(c.source ?? 'clip0'),
+    in: Number(c.in),
+    out: Number(c.out)
+  }))
+}
+
 /**
  * Scenes on the PLANNED timeline's clock (post-voiceover).
  *
@@ -56,6 +85,10 @@ export function dubScenesFor(script: DubEditScript | null): DubScene[] {
  * to cuts in order (`plan_dub_timeline_cuts`), so cut i carries segment i's
  * line; a short cut the planner dropped shifts the tail, which costs the last
  * scenes their exact text rather than the whole mapping.
+ *
+ * A cut the timeline editor saved carries its own `voiceoverLineId` /
+ * `voiceoverScript`, and those win: after a reorder or a delete in the editor
+ * cut i is no longer segment i.
  */
 export function timelineScenesFor(
   timeline: DubTimeline | Record<string, unknown> | undefined,
@@ -64,16 +97,18 @@ export function timelineScenesFor(
   const raw = (timeline as DubTimeline | undefined)?.timeline
   const cuts = Array.isArray(raw) ? raw.filter((c) => (c.type ?? 'cut') === 'cut') : []
   const segments = script?.segments ?? []
-  if (cuts.length === 0 || segments.length === 0) return []
+  const ownLines = cuts.some((c) => (c as { voiceoverLineId?: unknown }).voiceoverLineId != null)
+  if (cuts.length === 0 || (segments.length === 0 && !ownLines)) return []
   const scenes: DubScene[] = []
   let cursor = 0
   cuts.forEach((cut, i) => {
-    const seg = segments[Math.min(i, segments.length - 1)]
+    const seg: Record<string, unknown> = segments[Math.min(i, segments.length - 1)] ?? {}
+    const own = cut as { voiceoverLineId?: unknown; voiceoverScript?: unknown }
     const start = cursor
     cursor += Math.max(0, Number(cut.out) - Number(cut.in))
     scenes.push({
-      lineId: Number(seg.voiceoverLineId ?? seg.order ?? i + 1),
-      script: String(seg.voiceoverScript ?? '').trim(),
+      lineId: Number(own.voiceoverLineId ?? seg.voiceoverLineId ?? seg.order ?? i + 1),
+      script: String(own.voiceoverScript ?? seg.voiceoverScript ?? '').trim(),
       start,
       end: cursor
     })

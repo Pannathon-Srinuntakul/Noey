@@ -132,7 +132,7 @@ async def test_generate_dub_edit_script_message_assembly(monkeypatch: pytest.Mon
 
 @pytest.mark.asyncio
 async def test_plan_dub_timeline_cuts_pipeline(monkeypatch: pytest.MonkeyPatch) -> None:
-    """LLM cuts run through localize + short-cut filtering against clip boundaries."""
+    """LLM cuts are clamped per clip, then short cuts are filtered out."""
 
     async def fake_complete(prompt: str, *, system: str) -> str:
         assert system == dub_ai.DUB_TIMELINE_SYSTEM
@@ -152,6 +152,90 @@ async def test_plan_dub_timeline_cuts_pipeline(monkeypatch: pytest.MonkeyPatch) 
     # 0.1s cut dropped by MIN_RENDER_CUT_SEC filter; two survive.
     assert len(cuts) == 2
     assert all(c["out"] - c["in"] >= 0.5 for c in cuts)
+
+
+@pytest.mark.asyncio
+async def test_plan_dub_timeline_cuts_keeps_clip1_source_and_local_times(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: the planner returns per-clip in/out (it copies sourceClip +
+    sourceIn/sourceOut). Running them through localize_cuts read them as
+    combined time — {clip1, 5-8} rendered clip0 5-8, and {clip1, 28-33} was
+    split across the clip0/clip1 seam."""
+
+    async def fake_complete(prompt: str, *, system: str) -> str:
+        return (
+            '{"timeline": ['
+            '{"type": "cut", "source": "clip1", "in": 5.0, "out": 8.0, "label": "opening"},'
+            '{"type": "cut", "source": "clip1", "in": 28.0, "out": 33.0, "label": "speech"},'
+            '{"type": "cut", "source": "clip0", "in": 27.0, "out": 31.0, "label": "speech"},'
+            '{"type": "cut", "source": "clip7", "in": 1.0, "out": 3.0, "label": "conclusion"}'
+            "]}"
+        )
+
+    monkeypatch.setattr("packages.llm.gateway.complete", fake_complete)
+    cuts = await dub_ai.plan_dub_timeline_cuts(
+        {"segments": []}, vo_duration=12.0, clip_durations=[30.0, 40.0]
+    )
+    assert [(c["source"], c["in"], c["out"]) for c in cuts] == [
+        ("clip1", 5.0, 8.0),
+        ("clip1", 28.0, 33.0),
+        # Clamped to clip0's own length, never spilled into clip1.
+        ("clip0", 27.0, 30.0),
+        # An unknown clip id in a multi-clip project is dropped, not guessed.
+    ]
+    assert cuts[0]["label"] == "opening"
+
+
+@pytest.mark.asyncio
+async def test_plan_dub_timeline_cuts_single_clip_pins_missing_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_complete(prompt: str, *, system: str) -> str:
+        return '{"timeline": [{"type": "cut", "in": 2.0, "out": 4.0, "label": "opening"}]}'
+
+    monkeypatch.setattr("packages.llm.gateway.complete", fake_complete)
+    cuts = await dub_ai.plan_dub_timeline_cuts({"segments": []}, 5.0, [10.0])
+    assert [(c["source"], c["in"], c["out"]) for c in cuts] == [("clip0", 2.0, 4.0)]
+
+
+def test_music_beats_on_output_defaults_are_identity() -> None:
+    beats = {"tempo": 120.0, "beats": [0.5, 1.0, 1.5]}
+    assert dub_ai.music_beats_on_output(beats) is beats
+    assert dub_ai.music_beats_on_output(None) is None
+
+
+def test_music_beats_on_output_maps_trim_and_offset_to_output_time() -> None:
+    beats = {"tempo": 120.0, "beats": [1.0, 4.0, 5.0, 6.5, 9.0, 12.0]}
+    out = dub_ai.music_beats_on_output(
+        beats, offset_sec=2.0, trim_in_sec=4.0, trim_out_sec=9.0
+    )
+    assert out is not None
+    # File beat b plays at b - trimIn + offset; 1.0 (before trimIn) and
+    # 9.0/12.0 (at/after trimOut) are never heard.
+    assert out["beats"] == [2.0, 3.0, 4.5]
+    assert out["tempo"] == 120.0
+    assert beats["beats"] == [1.0, 4.0, 5.0, 6.5, 9.0, 12.0]  # input untouched
+
+
+@pytest.mark.asyncio
+async def test_plan_dub_timeline_cuts_sends_output_time_beats(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prompts: list[str] = []
+
+    async def fake_complete(prompt: str, *, system: str) -> str:
+        prompts.append(prompt)
+        return '{"timeline": [{"type": "cut", "source": "clip0", "in": 0.0, "out": 4.0}]}'
+
+    monkeypatch.setattr("packages.llm.gateway.complete", fake_complete)
+    await dub_ai.plan_dub_timeline_cuts(
+        {"segments": []}, 4.0, [10.0],
+        music_beats={"tempo": 120.0, "beats": [10.0, 11.0, 12.0]},
+        music_trim_in_sec=10.0,
+        music_offset_sec=1.0,
+    )
+    assert "beat_timestamps_sec: [1.00, 2.00, 3.00]" in prompts[0]
 
 
 @pytest.mark.asyncio

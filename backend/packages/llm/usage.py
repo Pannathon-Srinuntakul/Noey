@@ -180,6 +180,36 @@ class UsageLimitExceeded(Exception):
 
 
 # ---------------------------------------------------------------------------
+# Verified-email gate for paid AI work
+# ---------------------------------------------------------------------------
+
+EMAIL_NOT_VERIFIED_DETAIL = (
+    "ยืนยันอีเมลก่อนใช้งาน AI — เปิดลิงก์ในอีเมลที่เราส่งให้ หรือกดส่งใหม่ได้ที่หน้าบัญชี"
+)
+
+
+class EmailNotVerified(Exception):
+    """The account must verify its email before it may start paid AI work."""
+
+    def __init__(self) -> None:
+        super().__init__(EMAIL_NOT_VERIFIED_DETAIL)
+
+
+def ai_access_problem(user: Any) -> str | None:
+    """Why this user may not START paid AI work, or None.
+
+    THE policy, read by the request-time gate (services/api/ai_gate.py) and by
+    `check_limit` before every model call. REQUIRE_VERIFIED_EMAIL_FOR_AI off,
+    an admin, or a verified email → allowed.
+    """
+    if not get_settings().require_verified_email_for_ai:
+        return None
+    if getattr(user, "is_admin", False) or getattr(user, "email_verified_at", None) is not None:
+        return None
+    return EMAIL_NOT_VERIFIED_DETAIL
+
+
+# ---------------------------------------------------------------------------
 # Task grouping
 # ---------------------------------------------------------------------------
 
@@ -318,6 +348,11 @@ async def check_limit(ctx: UsageCtx) -> None:
         ).scalar_one_or_none()
         if user is None:
             return  # no user → don't block (can't check plan)
+
+        # Defense in depth behind the request-time gate: work enqueued before
+        # the gate, or by a route missing from its list, still stops here.
+        if ai_access_problem(user):
+            raise EmailNotVerified()
 
         plan = str(user.plan or "free")
         limit = settings.plan_token_limit(plan)

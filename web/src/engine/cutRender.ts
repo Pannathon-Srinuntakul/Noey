@@ -22,7 +22,7 @@ import {
   type VideoReader
 } from './media'
 import { blobForPath } from './jobs/probe'
-import { openStagedWrite, readFile } from '../platform/fs'
+import { listDir, openStagedWrite, readFile } from '../platform/fs'
 
 /** The pipeline renders at 30 fps; the editor's frame nudge assumes it too. */
 export const OUTPUT_FPS = 30
@@ -94,6 +94,21 @@ async function outputGeometry(
   return { width: even(info.width), height: even(info.height) }
 }
 
+/** Where a render writes its per-scene clips until the render is done. */
+const CLIPS_STAGING = '.clips_next'
+
+/** Replace `clips/` with the finished staging set (OPFS has no rename). */
+async function publishClips(uid: string): Promise<void> {
+  const staging = projectFilePath(uid, CLIPS_STAGING)
+  await deleteDir(projectFilePath(uid, 'clips'))
+  for (const e of await listDir(staging)) {
+    if (e.kind !== 'file') continue
+    const file = await readFile(`${staging}/${e.name}`)
+    if (file) await writeFileAtomic(projectFilePath(uid, `clips/${e.name}`), file)
+  }
+  await deleteDir(staging)
+}
+
 /**
  * Cut, join, caption and encode — and write `clips/clip_NNN.mp4` on the way.
  *
@@ -137,7 +152,13 @@ export async function renderCutList(req: CutRenderRequest): Promise<CutRenderRes
   const totalFrames = timeline.reduce((n, s) => n + s.frames, 0)
 
   const writeClips = req.writeClips !== false
-  if (writeClips) await deleteDir(projectFilePath(uid, 'clips'))
+  // The new cut's clips are written beside the old set and swapped in only
+  // once the joined output is published. Deleting `clips/` up front meant a
+  // stop or a failure mid-render left the OLD final and bundle next to the
+  // first few scenes of the NEW cut: export listed that mix, and the next sync
+  // swept the old scenes off the server to match it. The dot keeps the
+  // staging folder out of every sync and export listing.
+  if (writeClips) await deleteDir(projectFilePath(uid, CLIPS_STAGING))
 
   /**
    * The per-scene clip being written right now — ONE encoder, not one per cut.
@@ -175,7 +196,8 @@ export async function renderCutList(req: CutRenderRequest): Promise<CutRenderRes
   }
   let pass = openPass(0)
 
-  const clipName = (index: number): string => `clips/clip_${String(index + 1).padStart(3, '0')}.mp4`
+  const clipName = (index: number): string =>
+    `${CLIPS_STAGING}/clip_${String(index + 1).padStart(3, '0')}.mp4`
 
   /** Finish the open clip and write it out, freeing its encoder and its bytes. */
   const closeClip = async (index: number): Promise<void> => {
@@ -253,6 +275,7 @@ export async function renderCutList(req: CutRenderRequest): Promise<CutRenderRes
 
     // The last cut has no successor to close it.
     await closeClip(segIndex)
+    if (writeClips) await publishClips(uid)
 
     return {
       video: published,
@@ -269,6 +292,8 @@ export async function renderCutList(req: CutRenderRequest): Promise<CutRenderRes
     // open is not, so it is dropped rather than flushed.
     await clipWriter?.cancel()
     clipWriter = null
+    // The old `clips/` is untouched; only the unfinished new set goes.
+    if (writeClips) await deleteDir(projectFilePath(uid, CLIPS_STAGING)).catch(() => undefined)
     throw err
   } finally {
     await pass.return(undefined).catch(() => undefined)

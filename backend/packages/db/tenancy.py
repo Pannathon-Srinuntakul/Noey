@@ -1,12 +1,18 @@
 """Tenant provisioning: create/drop per-tenant PostgreSQL schemas.
 
-Each tenant gets a schema ``tenant_<slug>`` containing:
-- All dynamic user tables (udt_*) and their custom_table_meta registry
-- Analytics tables (overview_daily, video_content, follower_*, viewers_daily,
-  csv_import_runs, products, creators, sales_daily, market_trends, scrape_runs,
-  ai_prompts, ai_runs, app_settings)
+Each tenant owns a schema ``tenant_<slug>``. The tenant business tables
+(``video_projects``, ``effect_styles``) are Alembic-managed and exist in ONE
+schema only, ``tenant_default`` — every migration that touches them names that
+schema. Rows are isolated per user by ``user_id``, which every router filters
+on; the API's ``db_session`` binds ``default`` for every caller.
 
-The ``core`` schema holds auth (users, tenants, memberships, jobs).
+A tenant created later (self-service registration) therefore gets its schema
+but no tables of its own, and its search path falls back to the shared data
+schema — see ``set_search_path_sql``. Giving each tenant real tables is a
+separate project: every tenant-table migration would have to fan out over all
+tenant schemas, and the API would have to bind the caller's tenant.
+
+The ``core`` schema holds auth (users, tenants, memberships, jobs) and billing.
 """
 
 from sqlalchemy import text
@@ -23,6 +29,10 @@ def tenant_schema(slug: str) -> str:
     return f"tenant_{slug}"
 
 
+#: Where the tenant business tables live — for every tenant, today.
+SHARED_DATA_SCHEMA = tenant_schema(DEFAULT_TENANT_SLUG)
+
+
 async def create_tenant_schema(session: AsyncSession, slug: str) -> None:
     """Create the per-tenant schema (idempotent)."""
     schema = tenant_schema(slug)
@@ -36,6 +46,17 @@ async def drop_tenant_schema(session: AsyncSession, slug: str) -> None:
 
 
 def set_search_path_sql(slug: str) -> str:
-    """Return the SET search_path statement for a tenant request."""
+    """Return the SET search_path statement for a tenant request.
+
+    The shared data schema follows the tenant's own, so the tenant tables
+    resolve for EVERY tenant. Without it, a tenant other than ``default``
+    resolves ``video_projects`` to nothing: the routers that re-bind the
+    caller's tenant after writing a core Job row, and every worker task (which
+    binds the job's tenant), would fail on that tenant's first AI job — while
+    ``db_session`` had created the project in the shared schema. For
+    ``default`` the statement is exactly what it always was.
+    """
     schema = tenant_schema(slug)
-    return f'SET search_path TO "{schema}", {CORE_SCHEMA}'
+    if schema == SHARED_DATA_SCHEMA:
+        return f'SET search_path TO "{schema}", {CORE_SCHEMA}'
+    return f'SET search_path TO "{schema}", "{SHARED_DATA_SCHEMA}", {CORE_SCHEMA}'

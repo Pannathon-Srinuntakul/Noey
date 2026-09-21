@@ -70,6 +70,37 @@ def format_music_block(music_beats: dict[str, Any] | None) -> str:
     return f"<music>\ntempo_bpm: {tempo}\nbeat_timestamps_sec: [{beats_str}]\n</music>"
 
 
+def music_beats_on_output(
+    music_beats: dict[str, Any] | None,
+    *,
+    offset_sec: float = 0.0,
+    trim_in_sec: float = 0.0,
+    trim_out_sec: float | None = None,
+) -> dict[str, Any] | None:
+    """Move detect_beats() output from music-FILE time to OUTPUT-timeline time.
+
+    detect_beats runs on the whole uploaded file, but the prompts read
+    beat_timestamps_sec as positions in the finished video. Once the user
+    trims the song's intro or slides the track, file time and output time
+    disagree and cuts snap to where a beat would be in the untrimmed file.
+    A file beat b plays at b - trim_in + offset; beats before trim_in or at or
+    after trim_out are never heard and are dropped.
+
+    With the defaults (untrimmed track at 0) the input comes back unchanged, so
+    clients that never send a window get byte-identical prompts.
+    """
+    if not music_beats:
+        return music_beats
+    if offset_sec == 0 and trim_in_sec == 0 and trim_out_sec is None:
+        return music_beats
+    mapped = [
+        round(float(b) - trim_in_sec + offset_sec, 3)
+        for b in music_beats.get("beats") or []
+        if float(b) >= trim_in_sec and (trim_out_sec is None or float(b) < trim_out_sec)
+    ]
+    return {**music_beats, "beats": mapped}
+
+
 def _line_count_hint(target_duration_sec: int) -> str:
     """Suggested line count scaled to an explicit target duration, instead of
     the fixed "12-18 lines" figure that only makes sense at the default
@@ -200,11 +231,14 @@ Return ONLY a valid JSON object, no prose or markdown. totalEstimatedSec = sum o
 # "prefer the same span") made the model split one static hold into
 # neighbouring seconds that look identical; removing multi-angle altogether
 # instead produced a few long, slow cuts — the owner rejected both.
+# Same day, on a 5.5-minute shoe review: "2–3 quick cuts" per line held while
+# the lines grew to 8–10s, so every cut stretched to ~3s (2.9s average against
+# 1.9s before). The limit is now on cut length, not on cut count.
 
 DEFAULT_CUT_STYLE_PROSE = """Per line, set visual intent:
-- "multi-angle" — the default for product intro, features/demo, and result lines: 2–3 quick cuts of 0.5–1.5s each that show the line's point from different moments — a different gesture, a different part of the product, a different distance or angle, or a changed state (<distinct_shots>). Aim for multi-angle on most of these lines.
+- "multi-angle" — the default for product intro, features/demo, and result lines: quick cuts of about 0.8–2s each, as many as the line's length needs, that show the line's point from different moments — a different gesture, a different part of the product, a different distance or angle, or a changed state (<distinct_shots>). Aim for multi-angle on most of these lines.
 - "single-shot" — the hook and a calm CTA: one cut of 1.5–3s.
-Pace: switch shots often — the viewer should never stare at one shot. Each quick cut shows the PEAK of its action, the moment it has arrived, never the start of it.
+Pace: switch shots often — the viewer should never stare at one shot. Outside the hook and the CTA, no cut runs past about 2s: when a line needs more time, give it another moment, not a longer cut. Each quick cut shows the PEAK of its action, the moment it has arrived, never the start of it.
 Never build a multi-angle line from neighbouring seconds of one hold — that is one shot with a jump in it, not two angles. Each line must look VISUALLY DIFFERENT from the line before it.
 Important shots — the product reveal, a demo's result, a full view, a hero close-up — play COMPLETE within their cut; never cut mid-action.
 Prioritize: a strong product reveal, clear demonstrations, confident camera-facing delivery, clear product interaction (holding, showing, using), genuine reactions, and a strong conclusion."""
@@ -338,11 +372,17 @@ Within a chosen span, rank MOMENTS:
 A neutral, camera-ready frame that merely looks fine ranks BELOW the deliberate action that follows it inside the same span. If the moment you are considering is followed, within its span, by the same subject in a fuller or more committed version of the same action, then what you are looking at is the run-up — move forward.
 </shot_quality>"""
 
+# Movement (2026-09-21, shoe review): "moves toward or away from the camera"
+# was read as production and dropped the try-on (stepping back to show the shoe
+# worn) and the swing toward the lens — the two shots the owner missed most.
+# Only the walk to and from the camera is production.
 _VIDEO_REJECT_SPAN = """<reject_span>
 Some stretches exist because the video was being MADE, not because they show anything. Drop the whole span when its purpose is production rather than content:
-- the creator moves toward or away from the camera, reaches for it, or repositions it. The last seconds of a clip usually end this way — the creator walking up to stop the recording — so check any cut near a clip's end
+- the creator walks up to the camera to reach it, stop it, or reposition it, or walks back into place afterwards. The last seconds of a clip usually end this way — the creator walking up to stop the recording — so check any cut near a clip's end
 - resetting between takes: dropping the pose, checking the phone, picking up or putting down a prop, stepping out of frame
-- the framing collapses because the subject came close to the lens. A body part filling the frame with the head or shoulders cut off, moments after a full-body shot, is someone walking up to the camera — not a close-up. A real close-up holds still: the subject stays where they are and the framing is deliberate.
+- the framing collapses because the subject came close to the lens. A body part filling the frame with the head or shoulders cut off, moments after a full-body shot, is someone walking up to the camera — not a close-up. A real close-up is deliberate: the subject holds still, or pushes the product toward the lens to show it.
+
+Movement alone is not production. Stepping back so the product can be seen worn or in full, turning to show it, or swinging it toward the lens is a presentation — content. Judge a movement by what the viewer sees during it: the product being shown is content; only handling the camera, or walking to and from it, is production.
 
 Drop the ENTIRE span, however good a single frame inside it looks. These frames are the ones most likely to survive the frame-level rules — the product fills the frame, nothing is being adjusted, nobody is looking away — which is exactly why the decision has to be made at span level instead.
 </reject_span>"""
@@ -362,9 +402,12 @@ STYLING IS NOT UNDRESS — a layer (jacket, cardigan, shirt) deliberately worn o
 PRODUCT EXCEPTION — only when the product being reviewed is itself upper-body underwear or a swimwear top (a bra, bralette, bikini top): that product worn under an open or draped layer is the product being shown, not "visible underwear", and a removable part of it (a pad, an insert) taken out and held up to the camera is a product demo. Neither clause relaxes anything else: changing, and every rule above about bottoms and the waist, still apply in full.
 </reject_safety>"""
 
+# Try-on (same shoe review): "doing up fastenings is prep" dropped the whole
+# putting-on stretch, the worn result on a lifted foot included.
 _VIDEO_REJECT_PREP = """<reject_prep>
 Skip any moment where the creator is fixing hair, reaching for or touching the camera, setting up, looking away from both the camera and the product, stepping into a pose, or not yet ready. Use only settled, intentional moments — never a trim that starts before the ready moment.
 Demonstrating is not adjusting. Stretching, pressing, opening, applying, or pointing at the product to SHOW a feature to the camera is a demo — use it. Adjusting is incidental fixing that shows the viewer nothing: putting things back in place, doing up or undoing fastenings, arranging the setup. That is prep — use the settled result once the hands have left it, even when the script talks about that step. If the hands are still working a fastening, it is not finished yet.
+Putting the product on or into use works the same way: the fiddling is prep, the result is the demo. The moment it is ON or WORKING and shown to the camera — worn and displayed (a shoe on a lifted foot, a garment turned toward the camera), applied, switched on — is often the strongest shot in the footage. Use it even when a hand still rests on the product; only hands still working it are prep. Never drop a whole try-on or first use — drop only its start. <reject_safety> still decides what may be shown while clothing goes on or off.
 A shot turned away from the camera is not automatically prep: when it deliberately shows a side of the product that sells it (the back of a garment, the rear of a device) and the pose is settled, not mid-turn, use it.
 </reject_prep>"""
 
@@ -403,11 +446,11 @@ def _video_verify(closing_check: str) -> str:
 Before returning, check each point in English and fix what fails:
 - you watched every clip to its FULL given duration and chose on strength wherever it sits — not the first acceptable moment, not a cluster at the start;
 - you judged each span before its frames — every cut comes from a span you decided to USE, and no cut comes from a span whose purpose was production rather than content (<reject_span>);
-- every strong moment the footage offers — each demonstrated feature, a new camera position or setup, a changed state, a part shown on its own, a different distance — is in the cut, unless a rule rejects it;
+- every strong moment the footage offers — each demonstrated feature, the product worn or in use, a new camera position or setup, a changed state, a part shown on its own, a different distance — is in the cut, unless a rule rejects it;
 - no shot appears twice (<distinct_shots>): no moment reused, no second take of an action already shown, no two cuts from neighbouring seconds of one hold — compare every cut with every other cut, not only with its neighbour;
-- no cut shows prep — fixing, adjusting, fastening, or setting anything up (<reject_prep>). Reread each visualDescription you wrote: if it describes fastening, adjusting, or putting something in place, that cut shows prep — replace it;
+- no cut shows prep — fixing, adjusting, fastening, or setting anything up (<reject_prep>). Reread each visualDescription you wrote: if it describes fastening, adjusting, or putting something in place, that cut shows prep — replace it. A product already on or in use and shown to the camera is the result, not prep;
 - every anchor sits inside its span's HOLD — no later moment in that span shows a fuller, more committed version of the same action;
-- look at the frame at every sourceOut: if the pose has already dropped, or the hands are already reaching for, fastening, or adjusting anything, move sourceOut earlier;
+- look at the frame at every sourceOut: if the pose has already dropped, or the hands are already reaching for, fastening, or adjusting anything, move sourceOut earlier. For the last cut taken from each clip, also compare its sourceOut frame with its sourceIn frame: if the subject has grown larger in frame or started toward the camera, the walk to stop the recording has begun — end the cut before it, and when in doubt, half a second earlier;
 - go through the segments one by one and compare each sourceOut against that clip's end time in "clipBounds"; if even one is larger, fix it rather than trusting that you stayed in range;
 - cuts play in the order the material was given (clip order, then forward in time inside each clip), except a CTA closing on an earlier moment;
 - the total follows the strong material (<length>); an explicit target_duration_sec is a ceiling — never exceeded;
@@ -452,9 +495,9 @@ totalEstimatedSec = sum of all segment durationSec = the actual silent-video len
     _VIDEO_ANCHOR,
     _VIDEO_LENGTH,
     """<script>
-This is step 6 of <method>: the moments are already chosen. Write the script to fit that footage, never footage to fit a line you already wrote. Write a coherent Thai voiceover: hook → product intro → features/demo → result → CTA. Each line describes ONLY what its own cuts show — if no cut shows a claim, do not write that line. Never repeat a point already made.
+This is step 6 of <method>: the moments are already chosen. Write the script to fit that footage, never footage to fit a line you already wrote. Write a coherent Thai voiceover: hook → product intro → features/demo → result → CTA. Each line describes ONLY what its own cuts show — if no cut shows a claim, do not write that line; a line about how the product looks worn, applied, or in use needs a cut that shows exactly that. Never repeat a point already made.
 Hook: the first line must grab attention in its first seconds — not a generic stand-still intro.
-Lines: one spoken beat each, 3–6s summed across its cuts — durationSec is all the time the creator gets to say the line, and a Thai feature line needs about 3s or more. Build that length from quick cuts of different moments (<editing_style>), never by stretching one cut past its hold. Write each line to fit the time its cuts give it.
+Lines: one spoken beat each, 3–6s summed across its cuts — durationSec is all the time the creator gets to say the line, and a Thai feature line needs about 3s or more. A point that needs more than about 6s becomes two lines. Build that length from quick cuts of different moments (<editing_style>), never by stretching one cut past its hold. Write each line to fit the time its cuts give it.
 Product lines need a cut where the label/logo is readable; with vague footage, write lifestyle lines instead.
 Last line = CTA ("สั่งได้เลยที่ TikTok Shop" / "คลิกลิงค์ใน bio เลย"), matched to a closing moment: the creator facing the camera or presenting the product toward it.
 Source: full user_script → keep wording exactly, split into lines of 3–6s. Brief only → write from the brief and the footage. Neither → infer from the footage.
@@ -930,7 +973,7 @@ def build_dub_edit_instruction_text_video(
         # follows. Both were observed failing live on 2026-09-21 with the rule
         # stated only in the system prompt.
         "Never show the same shot twice: no moment reused, no second take of an action already shown (keep the best take, put the others in its alternates), and no two cuts from neighbouring seconds of one hold. "
-        "No cut may show prep — fixing, adjusting, fastening, or setting anything up — and every cut ends before its hold breaks. "
+        "No cut may show prep — fixing, adjusting, fastening, or setting anything up; a product already on or in use and shown to the camera is the result, not prep — and every cut ends before its hold breaks. "
         f"HARD LIMIT: {bounds_reminder} "
         "Start the JSON with clipBounds echoing those end times, then the segments. "
         # R18b. Restated here for the same reason: a first live run with the
@@ -984,6 +1027,7 @@ async def generate_dub_edit_script_video(
         clamp_dub_segments_to_clip_durations,
         normalize_dub_edit_script,
         parse_llm_json,
+        pull_back_clip_tails,
     )
 
     settings = get_settings()
@@ -1102,7 +1146,7 @@ async def generate_dub_edit_script_video(
             candidate = parse_llm_json(raw_text)
             asked = len([s for s in (candidate.get("segments") or []) if isinstance(s, dict)])
             over = out_of_range_segments(candidate, bounds)
-            candidate = clamp_dub_segments_to_clip_durations(candidate, bounds)
+            candidate = pull_back_clip_tails(clamp_dub_segments_to_clip_durations(candidate, bounds), bounds)
             kept = len(candidate.get("segments") or [])
             if kept > best_kept:
                 best, best_kept = candidate, kept
@@ -1286,7 +1330,11 @@ async def generate_dub_reedit_script_video(
     from packages.llm.config import call_kwargs
     from packages.llm.files import delete_gemini_files, gemini_video_block, upload_gemini_file
     from packages.llm.gateway import acompletion_stream_thinking
-    from packages.video.timeline import clamp_dub_segments_to_clip_durations, parse_llm_json
+    from packages.video.timeline import (
+        clamp_dub_segments_to_clip_durations,
+        parse_llm_json,
+        pull_back_clip_tails,
+    )
 
     settings = get_settings()
     model = f"gemini/{settings.dub_vision_model}"
@@ -1347,7 +1395,7 @@ async def generate_dub_reedit_script_video(
         segments = result.get("segments") or []
         clip_durations = {clip_id: duration for clip_id, _path, duration in clip_videos}
         clamped = clamp_dub_segments_to_clip_durations({"segments": segments}, clip_durations)
-        return clamped.get("segments") or []
+        return pull_back_clip_tails(clamped, clip_durations).get("segments") or []
     finally:
         await delete_gemini_files(file_ids)
 
@@ -1381,23 +1429,38 @@ async def plan_dub_timeline_cuts(
     vo_duration: float,
     clip_durations: list[float],
     music_beats: dict[str, Any] | None = None,
+    *,
+    music_offset_sec: float = 0.0,
+    music_trim_in_sec: float = 0.0,
+    music_trim_out_sec: float | None = None,
 ) -> list[dict[str, Any]]:
     """Claude text call mapping Edit Script segments to render cuts.
 
-    Returns localized, length-filtered render cuts (same post-processing the
+    ``music_*`` place the attached track on the output timeline (see
+    music_beats_on_output); the defaults mean an untrimmed track starting at 0.
+
+    Returns per-clip, length-filtered render cuts (same post-processing the
     worker applies). Raises ValueError on empty/invalid model output.
     """
     from packages.llm.gateway import complete
     from packages.video.timeline import (
         MIN_RENDER_CUT_SEC,
-        build_clip_boundaries,
+        clamp_per_clip_cuts,
         filter_short_cuts,
-        localize_cuts,
         parse_llm_json,
     )
 
     raw = await complete(
-        build_dub_timeline_prompt(edit_script, vo_duration, music_beats),
+        build_dub_timeline_prompt(
+            edit_script,
+            vo_duration,
+            music_beats_on_output(
+                music_beats,
+                offset_sec=music_offset_sec,
+                trim_in_sec=music_trim_in_sec,
+                trim_out_sec=music_trim_out_sec,
+            ),
+        ),
         system=DUB_TIMELINE_SYSTEM,
     )
     parsed = parse_llm_json(raw)
@@ -1405,9 +1468,12 @@ async def plan_dub_timeline_cuts(
     if not raw_cuts:
         raise ValueError("AI ไม่ได้ส่ง timeline กลับมา — กดลองใหม่อีกครั้ง")
 
-    boundaries = build_clip_boundaries(clip_durations)
+    # The planner copies each segment's sourceClip + per-clip sourceIn/Out
+    # (DUB_TIMELINE_SYSTEM), so the cuts are already local to their source —
+    # localize_cuts would re-read them as combined time and play clip1+ shots
+    # from clip0.
     render_cuts = filter_short_cuts(
-        localize_cuts(raw_cuts, boundaries),
+        clamp_per_clip_cuts(raw_cuts, clip_durations),
         min_sec=MIN_RENDER_CUT_SEC,
     )
     if not render_cuts:

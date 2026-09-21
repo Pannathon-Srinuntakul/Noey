@@ -56,6 +56,8 @@ const noey = {
       projectStore.removeFile(uid, relPath),
     importMusic: (uid: string, srcPath: string): Promise<string> =>
       projectStore.importMusic(uid, srcPath),
+    pruneMusic: (uid: string, keep: string | readonly string[] | undefined): Promise<number> =>
+      projectStore.pruneMusic(uid, keep),
     stashRender: (uid: string): Promise<string[]> => projectStore.stashRender(uid),
     restoreRender: (uid: string): Promise<void> => projectStore.restoreRender(uid),
 

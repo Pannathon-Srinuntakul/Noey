@@ -65,6 +65,11 @@ describe('snapshot equality', () => {
     expect(sameCaptionLines(base, [...base])).toBe(true)
   })
 
+  it('sees an edited caption being deleted (same id, now a tombstone)', () => {
+    const base = [{ id: 'ed1', text: '', start: 0, end: 1, edited: true }]
+    expect(sameCaptionLines(base, [{ ...base[0], deleted: true }])).toBe(false)
+  })
+
   it('distinguishes no captions at all from an empty list', () => {
     expect(sameCaptionLines(null, [])).toBe(false)
     expect(sameCaptionLines(null, null)).toBe(true)
@@ -138,5 +143,73 @@ describe('history kept across leaving the editor', () => {
       edits: 1
     })
     expect(takeHistory('p2', snap([cut('cut0', 9)]))).toBeNull()
+  })
+
+  it('names the highest new-cut number anywhere in it, so a reopened editor never reissues one', async () => {
+    const { highestNewCutNumber } = await import('./editorHistory')
+    expect(
+      highestNewCutNumber({
+        undo: [snap([cut('cut0', 1), cut('new2', 3)])],
+        redo: [snap([cut('new7', 1)])],
+        at: snap([cut('new4', 4)]),
+        edits: 3
+      })
+    ).toBe(7)
+    expect(
+      highestNewCutNumber({
+        undo: [snap([cut('new12', 1)])],
+        redo: [],
+        at: snap([cut('new3', 4)]),
+        edits: 1
+      })
+    ).toBe(12)
+  })
+
+  it('is 0 when no cut was created in the editor, and ignores look-alike ids', async () => {
+    const { highestNewCutNumber } = await import('./editorHistory')
+    expect(
+      highestNewCutNumber({
+        undo: [snap([cut('cut9', 1), cut('new', 2), cut('renew5', 3), cut('new5x', 4)])],
+        redo: [],
+        at: snap([cut('cut0', 4)]),
+        edits: 1
+      })
+    ).toBe(0)
+  })
+})
+
+describe('what a closed editor leaves behind for the music prune', () => {
+  const withMusic = (path: string | null): EditorSnapshot =>
+    snap({ music: path ? music({ path }) : null })
+
+  it('names every track the kept history can restore', async () => {
+    const { keepHistory, keptMusicPaths } = await import('./editorHistory')
+    keepHistory('m1', {
+      undo: [withMusic('music/a.mp3'), withMusic(null)],
+      redo: [withMusic('music/c.mp3')],
+      at: withMusic('music/b.mp3'),
+      edits: 3
+    })
+    expect(keptMusicPaths('m1').sort()).toEqual(['music/a.mp3', 'music/b.mp3', 'music/c.mp3'])
+    expect(keptMusicPaths('nothing-kept')).toEqual([])
+  })
+
+  it('waits for the editor to close, and knows one reopened meanwhile', async () => {
+    const { editorClosed, editorOpened, isEditorOpen, whenEditorClosed } =
+      await import('./editorHistory')
+    let closed = false
+    editorOpened('m2')
+    const waiting = whenEditorClosed('m2').then(() => {
+      closed = true
+    })
+    await Promise.resolve()
+    expect(closed).toBe(false)
+    editorClosed('m2')
+    await waiting
+    expect(closed).toBe(true)
+    expect(isEditorOpen('m2')).toBe(false)
+    editorOpened('m2')
+    expect(isEditorOpen('m2')).toBe(true)
+    editorClosed('m2')
   })
 })

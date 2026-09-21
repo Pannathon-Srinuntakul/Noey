@@ -78,7 +78,9 @@ export function ProjectGridCard({
   const [menuOpen, setMenuOpen] = useState(false)
   const [playerOpen, setPlayerOpen] = useState(false)
   const [recutOpen, setRecutOpen] = useState(false)
-  const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null)
+  const [menuPos, setMenuPos] = useState<{ top?: number; bottom?: number; left: number } | null>(
+    null
+  )
   const menuRef = useRef<HTMLDivElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
@@ -159,12 +161,19 @@ export function ProjectGridCard({
     const r = triggerRef.current?.getBoundingClientRect()
     if (!r) return
     const MENU_W = 210
-    const height = kept ? 210 : 196 // one row is taller when it has a sublabel
+    // Upper bound, used only to decide whether the menu fits below the button
+    // (one row is taller with a sublabel; the folder row exists only where it
+    // can open). Opening upward is anchored by the menu's BOTTOM edge: placing
+    // its top at r.top - estimate left a gap as tall as the estimate's excess
+    // wherever the real menu was shorter (live report 2026-09-21, web).
+    const height = kept ? 210 : 196
     const below = window.innerHeight - r.bottom
-    setMenuPos({
-      top: below >= height + 12 ? r.bottom + 4 : Math.max(8, r.top - height - 4),
-      left: Math.max(8, Math.min(r.right - MENU_W, window.innerWidth - MENU_W - 8))
-    })
+    const left = Math.max(8, Math.min(r.right - MENU_W, window.innerWidth - MENU_W - 8))
+    setMenuPos(
+      below >= height + 12
+        ? { top: r.bottom + 4, left }
+        : { bottom: window.innerHeight - r.top + 4, left }
+    )
     setMenuOpen(true)
   }
 
@@ -329,7 +338,12 @@ export function ProjectGridCard({
               ? createPortal(
                   <div
                     ref={panelRef}
-                    style={{ position: 'fixed', top: menuPos.top, left: menuPos.left }}
+                    style={{
+                      position: 'fixed',
+                      top: menuPos.top,
+                      bottom: menuPos.bottom,
+                      left: menuPos.left
+                    }}
                   >
                     <Menu
                       items={[

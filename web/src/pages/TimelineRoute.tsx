@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { useJobs } from '../lib/jobs'
 import { useRouter } from '../lib/router'
+import { useStableCallback } from '../lib/useStableCallback'
 import { VideoTimelineEditor } from '../components/TimelineEditor'
 
 /**
@@ -34,6 +35,15 @@ export default function TimelineRoute({ uid }: { uid: string }): React.JSX.Eleme
     job.openEditor()
   }, [job, ready, uid])
 
+  // One identity for the editor's life. `job` is a new object on every jobs
+  // publish — a draft save is one — so a plain closure changed every time and
+  // re-rendered the whole (memoized) editor for nothing. Declared above the
+  // early returns: it is a hook.
+  const close = useStableCallback((): void => {
+    job?.setShowEditor(false)
+    navigate({ name: 'detail', uid })
+  })
+
   if (!job) {
     return (
       <div className="flex flex-1 items-center justify-center">
@@ -47,11 +57,6 @@ export default function TimelineRoute({ uid }: { uid: string }): React.JSX.Eleme
         <p className="text-sm text-muted">กำลังเปิดตัวแก้ไข…</p>
       </div>
     )
-  }
-
-  const close = (): void => {
-    job.setShowEditor(false)
-    navigate({ name: 'detail', uid })
   }
 
   return (

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { Session } from '../../App'
 import { useJobs } from '../../lib/jobs'
+import { useReloadGuard } from '../../lib/reloadGuard'
 import { useRouter } from '../../lib/router'
 import { useIsCompact } from '../../lib/useMediaQuery'
 import { routeHasNav } from '../../lib/routes'
@@ -47,6 +48,7 @@ export function AppShell({
   children: React.ReactNode
 }): React.JSX.Element {
   const { route, navigate } = useRouter()
+  useReloadGuard()
   const label = useTitleBarLabel()
   const compact = useIsCompact()
   const showNav = routeHasNav(route)

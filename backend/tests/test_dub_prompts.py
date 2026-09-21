@@ -172,6 +172,30 @@ def test_default_cut_style_is_a_multi_angle_montage_of_different_moments():
     assert "Aim for multi-angle on ≥60% of lines" in dub.DUB_EDIT_SYSTEM
 
 
+def test_a_worn_or_working_product_is_the_result_not_prep():
+    # Shoe review, 2026-09-21: "fastenings are prep" dropped the whole try-on,
+    # the worn result on a lifted foot included, and a line about how the
+    # shoe looks worn played over a shoe held at the chest.
+    for prompt in (dub.DUB_EDIT_SYSTEM_VIDEO, dub.DUB_EDIT_SYSTEM_VIDEO_NO_VO, dub.DUB_REEDIT_SYSTEM_VIDEO):
+        block = re.search(r"<reject_prep>(.*?)</reject_prep>", prompt, re.DOTALL).group(1)
+        assert "the fiddling is prep, the result is the demo" in block
+        assert "Never drop a whole try-on or first use" in block
+        assert "<reject_safety> still decides what may be shown while clothing goes on or off" in block
+    for prompt in (dub.DUB_EDIT_SYSTEM_VIDEO, dub.DUB_EDIT_SYSTEM_VIDEO_NO_VO):
+        verify = re.search(r"<verify>(.*?)</verify>", prompt, re.DOTALL).group(1)
+        assert "the product worn or in use" in verify
+        assert "is the result, not prep" in verify
+        # The last cut of a clip ran into the walk up to stop the recording.
+        assert "the walk to stop the recording has begun" in verify
+    script = re.search(r"<script>(.*?)</script>", dub.DUB_EDIT_SYSTEM_VIDEO, re.DOTALL).group(1)
+    assert "needs a cut that shows exactly that" in script
+    assert "A point that needs more than about 6s becomes two lines." in script
+    tail = dub.build_dub_edit_instruction_text_video(
+        target_duration_sec=None, clip_durations=[("clip0", 120.0)], version="v2"
+    )
+    assert "is the result, not prep" in tail
+
+
 def test_live_prompts_stay_product_agnostic():
     # Clips are not only fashion. The safety block is apparel-specific on
     # purpose; every other rule must read for any product category.

@@ -20,7 +20,8 @@
 import { projectFilePath, writeFileAtomic, deleteFile } from '../../platform/fs'
 import type { SidecarEvent } from '../../platform/types'
 import type { CaptionStyle } from '../../lib/captionStyle'
-import { groupWordsIntoLines, captionLinesToSrt, type CaptionLine } from '../../lib/captionLines'
+import { captionLinesToSrt } from '../../lib/captionLines'
+import { plainCaptionLines, timelineCaptionLines } from '../../lib/captionEdits'
 import { clipAbsOffsets, remapWordsToOutput, type TimedWord } from '../../lib/timelineMath'
 import { renderCutList, OUTPUT_FPS, type CutSpec } from '../cutRender'
 import { concatSourceAudio, decodeBlob, type SourceAudioCut } from '../audio'
@@ -106,9 +107,8 @@ export async function renderTimelineInto(
   // way `build_ass_captions` groups them.
   const words = (timeline.words as TimedWord[] | undefined) ?? []
   const captionStyle = timeline.captionStyle as CaptionStyle | undefined
-  const absOffsets = clipAbsOffsets(
-    sources.map((c) => Number((c as { durationSec?: number }).durationSec ?? 0))
-  )
+  const clipDurations = sources.map((c) => Number((c as { durationSec?: number }).durationSec ?? 0))
+  const absOffsets = clipAbsOffsets(clipDurations)
   const outputWords = words.length
     ? remapWordsToOutput(
         words,
@@ -120,14 +120,10 @@ export async function renderTimelineInto(
         absOffsets
       )
     : []
-  // Lines the editor saved win over auto-grouping — they are already on the
-  // output clock (`captionTimeBase: 'output'`).
-  const storedLines = (timeline.captionLines as CaptionLine[] | undefined) ?? []
-  const captionLines = storedLines.length
-    ? storedLines
-    : outputWords.length
-      ? groupWordsIntoLines(outputWords)
-      : []
+  // Grouped from THIS cut every time, with the lines the user edited in the
+  // editor laid over (captionEdits.ts). A stored full list used to win here,
+  // so a trim or a deleted scene burned every later line at its old time.
+  const captionLines = plainCaptionLines(timelineCaptionLines(timeline, clipDurations))
 
   emit({ event: 'progress', stage: 'cut', step: 1, total: cuts.length })
 
@@ -155,12 +151,18 @@ export async function renderTimelineInto(
   // The SRT sits beside a highlight (`hNN.srt`) but in `captions/` for the
   // single-video modes, so exporting one highlight grabs a matching pair.
   const srtRel = withBundle ? 'captions/subtitles.srt' : outName.replace(/\.mp4$/, '.srt')
-  const timelineCaptions =
-    (timeline.captions as { start: number; end: number; text: string }[]) ?? []
-  const srt = timelineCaptions.length
-    ? buildSrt(timelineCaptions)
-    : captionLines.length
-      ? captionLinesToSrt(captionLines)
+  // The SRT is the lines just burned. It used to prefer the server plan's
+  // `timeline.captions`, built for the AI's ORIGINAL cut, so after any edit
+  // the exported subtitles and the CapCut bundle drifted off the speech.
+  // Only a timeline with no transcript at all falls back to the plan's copy —
+  // there is nothing to derive from, and no editor edit to lose.
+  const planCaptions = words.length
+    ? []
+    : ((timeline.captions as { start: number; end: number; text: string }[] | undefined) ?? [])
+  const srt = captionLines.length
+    ? captionLinesToSrt(captionLines)
+    : planCaptions.length
+      ? buildSrt(planCaptions)
       : ''
   await writeFileAtomic(projectFilePath(uid, srtRel), new TextEncoder().encode(srt))
 

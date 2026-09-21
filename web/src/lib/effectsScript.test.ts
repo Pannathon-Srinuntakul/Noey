@@ -48,36 +48,78 @@ describe('buildEffectsScriptText', () => {
     expect(text).toContain('2.0s-5.0s: รองเท้าคู่นี้ดีมาก')
   })
 
-  it('prefers saved captionLines for talking_head', () => {
+  // talking_head reads the lines the render burns: the transcript on the SAVED
+  // cut, with the user's caption edits laid over. A stored full list used to
+  // win, and it described the cut as it was when the editor first opened.
+  const words = [
+    { word: 'สวัสดี', start: 0, end: 0.4 },
+    { word: 'ค่ะ', start: 0.4, end: 0.7 },
+    { word: 'วันนี้', start: 10, end: 10.5 }
+  ]
+  const clips = [{ id: 'clip0', file: 'a.mp4', durationSec: 20 }] as LocalProject['clips']
+
+  it('derives talking_head lines from the words on the saved cut, output clock', () => {
     const project = baseProject({
       mode: 'talking_head',
+      clips,
       timeline: {
-        captionLines: [{ id: 'l1', text: 'สวัสดีค่ะ', start: 0, end: 1.5 }]
+        timeline: [{ type: 'cut', source: 'clip0', in: 10, out: 11, label: '' }],
+        words
       }
     })
-    expect(buildEffectsScriptText(project)).toBe('0.0s-1.5s: สวัสดีค่ะ')
+    // Only the cut's word, at OUTPUT time 0 — not source 10.
+    expect(buildEffectsScriptText(project)).toBe('0.0s-0.5s: วันนี้')
   })
 
-  it('falls back to raw words for talking_head when no captionLines', () => {
+  it('lays a caption edit over the derived line', () => {
     const project = baseProject({
       mode: 'talking_head',
+      clips,
       timeline: {
-        words: [
-          { word: 'สวัสดี', start: 0, end: 0.4 },
-          { word: 'ค่ะ', start: 0.4, end: 0.7 }
+        timeline: [{ type: 'cut', source: 'clip0', in: 0, out: 1, label: '' }],
+        words,
+        captionLines: [
+          {
+            id: 'ed1',
+            text: 'สวัสดีจ้า',
+            start: 0,
+            end: 0.7,
+            edited: true,
+            anchor: [{ source: 'clip0', in: 0, out: 0.7 }]
+          }
         ]
       }
     })
-    const text = buildEffectsScriptText(project)
-    expect(text).toContain('0.0s-0.7s')
+    expect(buildEffectsScriptText(project)).toBe('0.0s-0.7s: สวัสดีจ้า')
   })
 
-  it('drops blank lines', () => {
+  it('keeps the hand-fixed text of a full list stored by an older build', () => {
+    // Older builds stored every line, unmarked. A line whose text the
+    // derivation does not say is a user's fix and must survive the upgrade.
     const project = baseProject({
       mode: 'talking_head',
-      timeline: { captionLines: [{ id: 'l1', text: '   ', start: 0, end: 1 }] }
+      clips,
+      timeline: {
+        timeline: [{ type: 'cut', source: 'clip0', in: 0, out: 1, label: '' }],
+        words,
+        captionLines: [{ id: 'l1', text: 'ข้อความแก้เอง', start: 0, end: 1 }]
+      }
     })
-    expect(buildEffectsScriptText(project)).toBe('')
+    expect(buildEffectsScriptText(project)).toBe('0.0s-1.0s: ข้อความแก้เอง')
+  })
+
+  it('re-derives an unmarked stored line the transcript still says', () => {
+    const project = baseProject({
+      mode: 'talking_head',
+      clips,
+      timeline: {
+        timeline: [{ type: 'cut', source: 'clip0', in: 0, out: 1, label: '' }],
+        words,
+        // Stale timing, untouched text: not a fix, so the derivation wins.
+        captionLines: [{ id: 'l1', text: 'สวัสดีค่ะ', start: 0.2, end: 1 }]
+      }
+    })
+    expect(buildEffectsScriptText(project)).toBe('0.0s-0.7s: สวัสดีค่ะ')
   })
 
   it('falls back to [scene] visualDescription when a line has no voiceoverScript', () => {

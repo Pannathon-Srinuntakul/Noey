@@ -35,6 +35,17 @@ export interface LocalClip {
   originalPath?: string
 }
 
+/** A stored caption line — mirrors lib/captionLines.ts CaptionLine. */
+export interface CaptionLineRecord {
+  id: string
+  text: string
+  start: number
+  end: number
+  edited?: boolean
+  deleted?: boolean
+  anchor?: { source: string; in: number; out: number }[]
+}
+
 export interface LocalProject {
   uid: string
   name: string
@@ -60,6 +71,8 @@ export interface LocalProject {
   clips: LocalClip[]
   brief?: string
   userScript?: string
+  /** Legacy: written by the removed script-style picker (2026-09-21). Older
+   * project.json files still carry it; nothing reads or writes it now. */
   scriptStyles?: string[]
   targetDurationSec?: number
   // Saved cut-style (EffectStyle kind="cut") uid chosen at creation; threads
@@ -95,6 +108,11 @@ export interface LocalProject {
    * (useProjectPipeline `renderSig`), so a draft undone back to exactly that
    * state is not reported as unrendered. */
   renderedSig?: string
+  /** Set by "ให้ AI ตัดใหม่" until the new cut's script arrives. While it is
+   * set, the stored script and planned timeline describe the round the user
+   * asked to replace, so retry() must run the analysis rather than re-render
+   * them for free (which reported the old cut as the recut). */
+  analysisOwed?: boolean
   remote?: { uid: string; jobId?: string }
   voiceoverPath?: string
   /** Recorded per-line takes, keyed by `voiceoverLineId`. The assembled
@@ -129,12 +147,12 @@ export interface LocalProject {
   clipDurationsSec?: number[]
   error?: string
   captionStyle?: { font: string; mode: string; color: string; border_color: string; size: number }
-  /** dub_first/highlight caption lines in OUTPUT time. There are no word
-   * timestamps for a dub (the voiceover is recorded against the cut, never
-   * transcribed), so the lines themselves are the source of truth: derived
-   * from the cut on first render, overwritten by the timeline editor, and
-   * burned in by the sidecar on every later render. */
-  captionLines?: { id: string; text: string; start: number; end: number }[]
+  /** dub_first/highlight caption lines the user EDITED in the timeline editor
+   * (lib/captionEdits.ts), each anchored in the source footage. Every other
+   * line is derived from the cut on each render, so it follows every trim,
+   * delete, reorder and retyped script line. Full lists stored by older
+   * builds carry no `edited` mark and are ignored. */
+  captionLines?: CaptionLineRecord[]
   /** Every recut comment the user has sent, oldest first. Round 1 is the
    * original cut and has no entry — the first entry is round 2. */
   recutNotes?: { round: number; text: string; at: string }[]
@@ -151,10 +169,17 @@ export interface LocalProject {
     editScript?: Record<string, unknown>
     clipDurationsSec?: number[]
     timeline?: Record<string, unknown>
-    captionLines?: { id: string; text: string; start: number; end: number }[]
+    captionLines?: CaptionLineRecord[]
     /** R18b: this stash came from ปรับช็อต (shot swap), not a recut — the
      * revert path uses it to log the matching taste event. */
     fromShotSwap?: boolean
+    /** The resting step the kept render was shown at, and its render
+     * fingerprint — restored with it, so undoing a recut that failed or was
+     * stopped does not leave the card on 'error'/'imported' over the restored
+     * video. Absent on stashes made before these were kept. */
+    step?: 'waiting_vo' | 'done'
+    renderedSig?: string
+    needsRender?: boolean
   }
 }
 

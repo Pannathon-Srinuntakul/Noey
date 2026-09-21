@@ -35,6 +35,19 @@ describe('renders stream to disk instead of buffering the whole MP4', () => {
   })
 })
 
+describe('a stopped render leaves the previous clips/ intact', () => {
+  it('writes scene clips to a staging folder and swaps them in after publish', () => {
+    // clips/ used to be deleted before the encode: a stop mid-render left the
+    // old final beside a partial set of the new cut's scenes.
+    const src = read('cutRender.ts')
+    const body = src.slice(src.indexOf('export async function renderCutList'))
+    expect(body.indexOf("deleteDir(projectFilePath(uid, 'clips'))")).toBe(-1)
+    expect(body.indexOf('publishClips(uid)')).toBeGreaterThan(body.indexOf('staged.publish()'))
+    const onError = body.slice(body.indexOf('} catch (err) {'))
+    expect(onError.slice(0, 900)).toContain('deleteDir(projectFilePath(uid, CLIPS_STAGING))')
+  })
+})
+
 describe('a cut that cannot produce a frame fails loudly', () => {
   it('cutRender throws instead of ending the render early', () => {
     // Returning false finalized the output, still reported durationSec for the

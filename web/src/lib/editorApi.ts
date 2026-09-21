@@ -12,6 +12,7 @@ import { ApiError } from './api'
 import type { CaptionLine } from './captionLines'
 import type { CaptionStyle } from './captionStyle'
 import { dubSegmentsFromEditCuts, type EditCutIn } from './dubSegments'
+import { timelineScenesFor } from './dubScenes'
 import type { DubEditScript, DubTimeline } from './videosLocalApi'
 import type { LocalClip, LocalProject } from '@renderer/platform/types'
 
@@ -57,10 +58,14 @@ export interface EditorContext {
   editTarget: 'timeline' | 'edit_script'
   editScript?: DubEditScript | null
   timeline?: DubTimeline | null
-  /** Initial burned-caption lines (talking_head only) — undefined when the
-   * project has no caption_style/words, empty array when captions are
-   * enabled but not yet grouped/edited. */
-  captionLines?: CaptionLine[]
+  /** The caption lines the user has edited (captionEdits.ts) — undefined when
+   * the project has captions off. Every other line is derived from the cut by
+   * `deriveCaptionLines`, so the lane follows each trim, delete and reorder
+   * the way the render will. */
+  captionEdits?: CaptionLine[]
+  /** The cut's own caption lines, on the output clock, before any edit —
+   * the same derivation the render uses. */
+  deriveCaptionLines?: (cuts: EditCut[]) => CaptionLine[]
   /** See initialCaptionTimeBase. */
   captionTimeBase?: 'source' | 'output'
   /** How those lines are burned in (font/mode/colour/size). Present whenever
@@ -79,7 +84,8 @@ export interface EditorContext {
   onSetMusic?: (music: EditorMusic | null) => Promise<void>
   onPickMusic?: () => Promise<EditorMusic | undefined>
   onRemoveMusic?: () => Promise<void>
-  /** Persist + re-render; useProjectPipeline owns the flow. */
+  /** Persist + re-render; useProjectPipeline owns the flow. `captionLines`
+   * are the EDITS only, never the derived lines. */
   onSave: (cuts: SaveCutPayload[], captionLines?: CaptionLine[]) => Promise<void>
   /** Persist WITHOUT rendering — the editor's draft autosave. Losing an hour of
    * trims to a crash is the failure this exists to prevent; rendering on every
@@ -106,9 +112,21 @@ function requireCtx(): EditorContext {
   return ctx
 }
 
-/** Initial caption lines for the currently-configured project, if any. */
-export function initialCaptionLines(): CaptionLine[] | undefined {
-  return ctx?.captionLines
+/** Whether the configured project can carry background music at all. Only
+ * dub_first/highlight render a music mix; the other modes get no music
+ * callbacks, and their lane's "เพิ่มเพลงประกอบ" button did nothing. */
+export function musicSupported(): boolean {
+  return Boolean(ctx?.onPickMusic)
+}
+
+/** The configured project's caption edits — undefined when captions are off. */
+export function initialCaptionEdits(): CaptionLine[] | undefined {
+  return ctx?.captionEdits
+}
+
+/** How the configured project derives its caption lines from a cut list. */
+export function captionDeriver(): ((cuts: EditCut[]) => CaptionLine[]) | undefined {
+  return ctx?.deriveCaptionLines
 }
 
 /** Which clock `captionLines` are timed on. dub_first lines are laid out along
@@ -139,13 +157,31 @@ export function editTimelineFromContext(c: EditorContext): EditTimeline {
   let cuts: EditCut[]
   if (c.editTarget === 'timeline') {
     const raw = c.timeline?.timeline ?? []
-    cuts = raw.map((t, i) => ({
-      id: `cut${i}`,
-      source: String(t.source),
-      in: Number(t.in),
-      out: Number(t.out),
-      label: String(t.label ?? '')
-    }))
+    // A voiced dub edits its planned timeline, whose cuts carry no voiceover
+    // line until the editor has saved one. Take it from the scene mapping the
+    // render uses, so the VO lane and the caption split start from the same
+    // lines the video shows.
+    const scenes = c.editScript?.segments?.length
+      ? timelineScenesFor(c.timeline ?? undefined, c.editScript)
+      : []
+    const seenLine = new Set<number>()
+    cuts = raw.map((t, i) => {
+      const cut: EditCut = {
+        id: `cut${i}`,
+        source: String(t.source),
+        in: Number(t.in),
+        out: Number(t.out),
+        label: String(t.label ?? '')
+      }
+      const scene = scenes[i]
+      if (scene) {
+        cut.voiceoverLineId = scene.lineId
+        // The line's text sits on its first scene only, as in a segment list.
+        cut.voiceoverScript = seenLine.has(scene.lineId) ? '' : scene.script
+        seenLine.add(scene.lineId)
+      }
+      return cut
+    })
   } else {
     cuts = editCutsFromDubSegments(c.editScript?.segments ?? [])
   }

@@ -3,6 +3,7 @@
 import os
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -35,6 +36,12 @@ LOCAL_DB_HOSTS = {"localhost", "127.0.0.1", "::1", "postgres", "db", "host.docke
 def is_local_deployment(host: str | None) -> bool:
     """Whether the configured database host means "a developer's machine"."""
     return (host or "").strip().lower() in LOCAL_DB_HOSTS
+
+
+def is_localhost_url(url: str | None) -> bool:
+    """Whether a URL points at the machine it is opened on (a dev default)."""
+    host = (urlsplit((url or "").strip()).hostname or "").lower()
+    return host in {"localhost", "127.0.0.1", "::1"}
 
 
 class Settings(BaseSettings):
@@ -243,16 +250,24 @@ class Settings(BaseSettings):
     # Raise it here or via PLAN_FREE_MONTHLY_TOKENS — do not hardcode the number
     # anywhere else.
     plan_free_monthly_tokens: int = 10_000_000
+    # PLACEHOLDER (2026-09-21): lite and studio were added with self-service
+    # billing before the owner costed them. The numbers only keep the paid
+    # ladder in price order around starter/pro — they are not a decision.
+    # Override via PLAN_LITE_MONTHLY_TOKENS / PLAN_STUDIO_MONTHLY_TOKENS.
+    plan_lite_monthly_tokens: int = 1_000_000
     plan_starter_monthly_tokens: int = 2_000_000
     plan_pro_monthly_tokens: int = 10_000_000
+    plan_studio_monthly_tokens: int = 20_000_000
     plan_enterprise_monthly_tokens: int = 0  # 0 = unlimited
 
     def plan_token_limit(self, plan: str) -> int:
         """Return the per-day token limit for the given plan name. 0 means unlimited."""
         mapping = {
             "free":       self.plan_free_monthly_tokens,
+            "lite":       self.plan_lite_monthly_tokens,
             "starter":    self.plan_starter_monthly_tokens,
             "pro":        self.plan_pro_monthly_tokens,
+            "studio":     self.plan_studio_monthly_tokens,
             "enterprise": self.plan_enterprise_monthly_tokens,
         }
         return mapping.get(plan, self.plan_free_monthly_tokens)
@@ -261,21 +276,74 @@ class Settings(BaseSettings):
     # How much project storage an account may keep on the server. Same shape as
     # the token limits above and settable by env for the same reason: the plans
     # differ in exactly these figures, and the number must live in ONE place.
-    # 10 GB across the board today — the tiers are not sold yet.
+    # 10 GB across the board for the original four — the tiers were not sold
+    # yet. The owner's pricing design says free 1 GB / starter 5 GB / pro 10 GB;
+    # aligning these is the owner's call, so they are deliberately untouched.
+    # lite and studio take the design's figures (3 GB / 30 GB).
     plan_free_storage_bytes: int = 10 * 1024**3
+    plan_lite_storage_bytes: int = 3 * 1024**3
     plan_starter_storage_bytes: int = 10 * 1024**3
     plan_pro_storage_bytes: int = 10 * 1024**3
+    plan_studio_storage_bytes: int = 30 * 1024**3
     plan_enterprise_storage_bytes: int = 0  # 0 = unlimited
 
     def plan_storage_limit(self, plan: str) -> int:
         """Bytes of server storage the given plan allows. 0 means unlimited."""
         mapping = {
             "free":       self.plan_free_storage_bytes,
+            "lite":       self.plan_lite_storage_bytes,
             "starter":    self.plan_starter_storage_bytes,
             "pro":        self.plan_pro_storage_bytes,
+            "studio":     self.plan_studio_storage_bytes,
             "enterprise": self.plan_enterprise_storage_bytes,
         }
         return mapping.get(plan, self.plan_free_storage_bytes)
+
+    # --- Billing (Stripe) — see docs/billing-stripe.md ---
+    # Everything below is optional: with the key or the webhook secret unset,
+    # the /billing endpoints answer 503 and nothing else changes.
+    #: A RESTRICTED key (`rk_…`) is the recommendation; a full secret key
+    #: (`sk_…`) also works. Never a publishable key.
+    stripe_secret_key: str | None = None
+    #: The signing secret (`whsec_…`) of the webhook endpoint that targets
+    #: POST /billing/webhook. Billing refuses to take money without it: a
+    #: subscription whose events cannot be verified would never reach the plan.
+    stripe_webhook_secret: str | None = None
+    #: Customer-portal configuration (`bpc_…`) printed by scripts/stripe_seed.py.
+    #: Unset → the account's default portal configuration.
+    stripe_portal_configuration_id: str | None = None
+    #: Origin of the public marketing site: Checkout and the portal send the
+    #: customer back here, and the browser calls this API from it (CORS).
+    site_url: str = "http://localhost:3000"
+    #: Stripe Tax on Checkout. OFF: it needs a head-office address and an
+    #: active tax registration first, and does not apply to a business located
+    #: in Thailand at all (see the tax note in docs/billing-stripe.md).
+    billing_automatic_tax: bool = False
+
+    # --- Self-service registration bot check (Cloudflare Turnstile) ---
+    #: When set, POST /auth/register (and /auth/forgot-password, /contact)
+    #: require a `turnstile_token` and verify it server-side. Unset → no check.
+    turnstile_secret_key: str | None = None
+
+    # --- Transactional email (SendGrid) — see docs/email-sendgrid.md ---
+    # Unset key or sender → every endpoint whose job is to send mail answers
+    # 503; registration still succeeds and logs that the mail was skipped.
+    #: A RESTRICTED key with only "Mail Send" access.
+    sendgrid_api_key: str | None = None
+    #: The From address. Must belong to a domain authenticated in SendGrid
+    #: (or be a verified single sender), or SendGrid refuses with 403.
+    email_from_address: str | None = None
+    email_from_name: str = "Noey Studio"
+    #: Where POST /contact delivers (Reply-To is the visitor). Unset → /contact 503.
+    contact_to_email: str | None = None
+    #: Unverified, non-admin accounts cannot START paid AI work (403) — see
+    #: services/api/ai_gate.py for the endpoints it covers.
+    require_verified_email_for_ai: bool = True
+
+    # --- Client IP behind proxies (rate limits) ---
+    #: How many trusted reverse proxies append to X-Forwarded-For in front of
+    #: the API. 0 = use the socket peer. Railway: 1 (docs/email-sendgrid.md).
+    trusted_proxy_hops: int = 0
 
     @property
     def cors_origins(self) -> list[str]:
@@ -284,6 +352,17 @@ class Settings(BaseSettings):
             origin = raw.strip().rstrip("/")
             if origin and origin not in origins:
                 origins.append(origin)
+        # The marketing site signs people up and runs billing from the browser,
+        # so its origin is allowed without a second place to remember it —
+        # except the localhost default on a real deployment, where it can only
+        # mean SITE_URL was never set.
+        site = self.site_url.strip().rstrip("/")
+        if (
+            site
+            and site not in origins
+            and (is_local_deployment(self.postgres_host) or not is_localhost_url(site))
+        ):
+            origins.append(site)
         # On a developer's machine, allow BOTH dev servers without anyone having
         # to configure it: the legacy dashboard runs on 5173 and the web build on
         # 5174, and `frontend_url` can only name one of them. Never added on a

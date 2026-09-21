@@ -37,6 +37,9 @@ dependencies = [
     # background workers
     "arq>=0.26",
     "redis>=5.2",
+    # billing — Stripe subscriptions (packages/billing). 15.6 pins API
+    # version 2026-08-26.dahlia, which packages/billing/client.py also pins.
+    "stripe>=15.6",
     # video editing
     "ffmpeg-python>=0.2",
     "scenedetect[opencv]>=0.7",

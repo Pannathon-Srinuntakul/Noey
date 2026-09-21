@@ -105,7 +105,10 @@ export function VideoTransport({
           const dir = e.key === 'ArrowLeft' ? -1 : e.key === 'ArrowRight' ? 1 : 0
           if (!dir) return
           e.preventDefault()
-          const next = Math.min(dur, Math.max(0, currentSec + dir * ARROW_STEP_SEC))
+          // A driver writes the live position into the input itself and need
+          // not re-render us with it, so step from what the input holds.
+          const from = seekRef?.current ? Number(seekRef.current.value) : currentSec
+          const next = Math.min(dur, Math.max(0, from + dir * ARROW_STEP_SEC))
           if (seekRef?.current) {
             seekRef.current.value = String(next)
             paintSeekProgress(seekRef.current)

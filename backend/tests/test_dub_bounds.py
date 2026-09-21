@@ -215,3 +215,92 @@ async def test_bounded_schema_is_the_one_sent(monkeypatch, tmp_path):
         target_duration_sec=None, project_uid="p1", on_thinking=None,
     )
     assert captured["response_format"]["response_schema"] == dub_ai.DUB_EDIT_SCHEMA_VIDEO_BOUNDED
+
+
+# ── Tail guard: the walk up to stop the recording ─────────────────────────────
+# A 332s shoe take (2026-09-21): the last cut ran 0.2-0.6s into the creator
+# walking up to the camera in 5 of 11 runs, under one sampled frame at ~5fps.
+
+
+def _tail_script(*windows: tuple[float, float], clip: str = "clip0") -> dict[str, Any]:
+    return {"segments": [
+        {"order": i + 1, "sourceClip": clip, "sourceIn": a, "sourceOut": b, "matchedFrameTime": a}
+        for i, (a, b) in enumerate(windows)
+    ]}
+
+
+def test_tail_guard_slides_a_late_last_cut_earlier_keeping_its_length():
+    from packages.video.timeline import DUB_TAIL_GUARD_SEC, pull_back_clip_tails
+
+    out = pull_back_clip_tails(_tail_script((304.4, 306.2), (328.6, 330.6)), {"clip0": 332.4})
+    last = out["segments"][-1]
+    assert last["sourceOut"] == round(332.4 - DUB_TAIL_GUARD_SEC, 2)
+    assert round(last["sourceOut"] - last["sourceIn"], 2) == 2.0
+    assert last["sourceIn"] <= last["matchedFrameTime"] <= last["sourceOut"]
+    # Untouched: the cut that already ended well before the tail.
+    assert out["segments"][0]["sourceIn"] == 304.4 and out["segments"][0]["sourceOut"] == 306.2
+
+
+def test_tail_guard_trims_when_sliding_would_run_into_the_previous_cut():
+    from packages.video.timeline import pull_back_clip_tails
+
+    out = pull_back_clip_tails(_tail_script((326.0, 328.0), (328.6, 331.6)), {"clip0": 332.4})
+    last = out["segments"][-1]
+    # Sliding 1.4s would start before 328.0, so the end is trimmed instead.
+    assert last["sourceIn"] == 328.6
+    assert last["sourceOut"] == 330.2
+
+
+def test_tail_guard_leaves_short_clips_and_too_short_cuts_alone():
+    from packages.video.timeline import pull_back_clip_tails
+
+    # A 40s clip has usually been trimmed already: its ending may be the point.
+    short = pull_back_clip_tails(_tail_script((38.0, 39.9)), {"clip0": 40.0})
+    assert short["segments"][0]["sourceOut"] == 39.9
+    # Blocked from sliding and too short to trim: kept as the model chose it.
+    tight = pull_back_clip_tails(_tail_script((329.9, 330.1), (330.1, 331.4)), {"clip0": 332.4})
+    assert (tight["segments"][1]["sourceIn"], tight["segments"][1]["sourceOut"]) == (330.1, 331.4)
+
+
+def test_tail_guard_and_clamp_keep_duration_sec_in_step():
+    # normalize_dub_edit_script keeps a stored durationSec, and the silent-clock
+    # captions and VO line windows are placed from it (bug hunt 2026-09-21).
+    from packages.video.timeline import (
+        DUB_TAIL_GUARD_SEC,
+        clamp_dub_segments_to_clip_durations,
+        pull_back_clip_tails,
+    )
+
+    script = _tail_script((95.0, 99.5), (96.0, 100.0))
+    for seg in script["segments"]:
+        seg["durationSec"] = round(seg["sourceOut"] - seg["sourceIn"], 2)
+    out = pull_back_clip_tails(script, {"clip0": 100.0})
+    trimmed = out["segments"][1]
+    assert trimmed["sourceOut"] == round(100.0 - DUB_TAIL_GUARD_SEC, 2)
+    assert trimmed["durationSec"] == round(trimmed["sourceOut"] - trimmed["sourceIn"], 2)
+
+    over = {"segments": [{"order": 1, "sourceClip": "clip0", "sourceIn": 10.0, "sourceOut": 45.0, "durationSec": 35.0}]}
+    clamped = clamp_dub_segments_to_clip_durations(over, {"clip0": 40.0})
+    assert clamped["segments"][0]["durationSec"] == 30.0
+
+
+def test_tail_guard_covers_alternates():
+    # A free-regime shot swap adopts an alternate's window whole, so a backup
+    # ending in the walk up to the camera would bring the tail straight back.
+    from packages.video.timeline import DUB_TAIL_GUARD_SEC, pull_back_clip_tails
+
+    script = _tail_script((50.0, 53.0))
+    script["segments"][0]["alternates"] = [
+        {"sourceClip": "clip0", "sourceIn": 97.0, "sourceOut": 100.0, "matchedFrameTime": 99.5, "note": "ท้ายคลิป"},
+        {"sourceClip": "clip0", "sourceIn": 99.6, "sourceOut": 100.0, "note": "สั้นเกิน"},
+        {"sourceClip": "clip0", "sourceIn": 20.0, "sourceOut": 22.0, "note": "ปกติ"},
+    ]
+    out = pull_back_clip_tails(script, {"clip0": 100.0})
+    alts = out["segments"][0]["alternates"]
+    limit = round(100.0 - DUB_TAIL_GUARD_SEC, 2)
+    assert all(a["sourceOut"] <= limit for a in alts)
+    slid = next(a for a in alts if a["note"] == "ท้ายคลิป")
+    assert round(slid["sourceOut"] - slid["sourceIn"], 2) == 3.0
+    assert slid["sourceIn"] <= slid["matchedFrameTime"] <= slid["sourceOut"]
+    # The 0.4s backup slides to a 0.4s window: under the minimum, so it is dropped.
+    assert [a["note"] for a in alts] == ["ท้ายคลิป", "ปกติ"]

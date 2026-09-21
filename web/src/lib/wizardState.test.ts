@@ -235,17 +235,13 @@ describe('buildSubmission', () => {
     expect(buildSubmission(stateWith({ note: '  รีวิวรองเท้า ' })).brief).toBe('รีวิวรองเท้า')
   })
 
-  it('folds styles and duration into the brief for ตัดฉากเด่น', () => {
-    const s = stateWith({
-      uiMode: 'highlight',
-      duration: '30',
-      scriptStyles: ['review'],
-      note: 'เน้นกลิ่น'
-    })
+  it('folds the duration and note into the brief for ตัดฉากเด่น', () => {
+    const s = stateWith({ uiMode: 'highlight', duration: '30', note: 'เน้นกลิ่น' })
     const brief = buildSubmission(s).brief
-    expect(brief).toContain('รีวิวสินค้า')
     expect(brief).toContain('30')
     expect(brief).toContain('เน้นกลิ่น')
+    // The script-style picker is gone: nothing adds a "สไตล์:" line any more.
+    expect(brief).not.toContain('สไตล์')
   })
 
   it('resolves the target duration from the chip', () => {

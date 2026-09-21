@@ -7,14 +7,15 @@
  * Falls back to `[scene] <visualDescription>` per line when there's no
  * voiceoverScript — always true for highlight mode, and possible for any
  * dub_first line with no VO text — so the effects AI still gets SOME textual
- * context instead of pure vision. talking_head: derived from the saved
- * timeline's captionLines (or raw word timestamps if none were ever edited)
- * — already has real spoken-word context, untouched here.
+ * context instead of pure vision. talking_head: the caption lines the render
+ * burns (timelineCaptionLines — transcript words on the saved cut, with the
+ * user's caption edits laid over), so the timing is the output clock the
+ * effects are placed on.
  */
 
 import type { LocalProject } from '@renderer/platform/types'
 import { groupScriptLines } from './dubScript'
-import { groupWordsIntoLines, type CaptionWord } from './captionLines'
+import { timelineCaptionLines } from './captionEdits'
 import type { DubEditScript } from './videosLocalApi'
 
 function fmt(lines: { start: number; end: number; text: string }[]): string {
@@ -37,16 +38,12 @@ export function buildEffectsScriptText(project: LocalProject): string {
   }
 
   if (project.mode === 'talking_head' && project.timeline) {
-    const timeline = project.timeline as {
-      captionLines?: { start: number; end: number; text: string }[]
-      words?: CaptionWord[]
-    }
-    if (timeline.captionLines?.length) {
-      return fmt(timeline.captionLines)
-    }
-    if (timeline.words?.length) {
-      return fmt(groupWordsIntoLines(timeline.words))
-    }
+    return fmt(
+      timelineCaptionLines(
+        project.timeline,
+        (project.clips ?? []).map((c) => c.durationSec)
+      )
+    )
   }
 
   return ''

@@ -11,6 +11,7 @@ import {
   ZoomIn
 } from 'lucide-react'
 import { cn } from '../lib/cn'
+import { timelineCaptionLines } from '../lib/captionEdits'
 import {
   dubScenesFor,
   lineIdAt,
@@ -86,9 +87,18 @@ interface TimedLine {
 /** talking_head's equivalent of the script: the burned-in caption text, read
  * off the saved timeline. The panel used to show a "there is no script" note
  * under a heading that promised the transcript — a whole panel of nothing on a
- * project that HAS the text. */
-function captionScenesFor(timeline: Record<string, unknown> | undefined): DubScene[] {
-  const captions = timeline?.captions
+ * project that HAS the text.
+ *
+ * The lines are the ones the render burns (timelineCaptionLines). The plan's
+ * `captions` were built for the AI's ORIGINAL cut, so after an editor save the
+ * panel jumped to times the video no longer has; they are only the fallback
+ * for a timeline with no transcript to derive from. */
+function captionScenesFor(
+  timeline: Record<string, unknown> | undefined,
+  clipDurationsSec: number[]
+): DubScene[] {
+  const derived = timelineCaptionLines(timeline, clipDurationsSec)
+  const captions = derived.length > 0 ? derived : timeline?.captions
   if (!Array.isArray(captions)) return []
   return captions
     .map((c, i) => {
@@ -260,7 +270,10 @@ export default function ProjectDetailPage({ uid }: { uid: string }): React.JSX.E
   // lines', so only a scene can say which line is on screen right now.
   const scenes =
     job.mode === 'talking_head' || job.mode === 'speech_scenes'
-      ? captionScenesFor(job.project.timeline)
+      ? captionScenesFor(
+          job.project.timeline,
+          (job.project.clips ?? []).map((c) => c.durationSec)
+        )
       : ready && job.project.voiceoverPath && job.project.timeline
         ? timelineScenesFor(job.project.timeline, job.editScript)
         : dubScenesFor(job.editScript)

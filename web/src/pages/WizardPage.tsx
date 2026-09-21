@@ -341,7 +341,6 @@ export default function WizardPage({
               : undefined,
           brief: s.brief,
           userScript: s.userScript,
-          scriptStyles: s.scriptStyles,
           targetDurationSec: s.targetDurationSec,
           cutStyleUid: s.cutStyleUid,
           engine: state.engine,

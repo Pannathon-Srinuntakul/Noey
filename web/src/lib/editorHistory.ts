@@ -12,6 +12,8 @@ import type { EditCut, EditorMusic } from './editorApi'
  */
 export interface EditorSnapshot {
   cuts: EditCut[]
+  /** The caption EDITS (captionEdits.ts), not the lines on screen — those are
+   * derived from `cuts`, so restoring the cuts restores them. */
   captionLines: CaptionLine[] | null
   captionStyle: CaptionStyle | null
   music: EditorMusic | null
@@ -68,7 +70,14 @@ export function sameCaptionLines(a: CaptionLine[] | null, b: CaptionLine[] | nul
   if (a.length !== b.length) return false
   return a.every((l, i) => {
     const o = b[i]
-    return l.id === o.id && l.text === o.text && l.start === o.start && l.end === o.end
+    // `deleted` too: removing an edited line keeps its id and only flips this.
+    return (
+      l.id === o.id &&
+      l.text === o.text &&
+      l.start === o.start &&
+      l.end === o.end &&
+      !!l.deleted === !!o.deleted
+    )
   })
 }
 
@@ -121,4 +130,73 @@ export function takeHistory(uid: string, loaded: EditorSnapshot): KeptHistory | 
   keptHistory.delete(uid)
   if (!kept || !sameSnapshotIgnoringIds(kept.at, loaded)) return null
   return kept
+}
+
+/**
+ * Every music file a kept history can still restore — its end state and both
+ * stacks. A replaced track must outlive the editor for as long as one of
+ * these names it: pruning it left a reopened editor's เลิกทำ pointing at a
+ * deleted file (bug hunt #24).
+ */
+export function keptMusicPaths(uid: string): string[] {
+  const kept = keptHistory.get(uid)
+  if (!kept) return []
+  const paths = new Set<string>()
+  for (const snapshot of [kept.at, ...kept.undo, ...kept.redo]) {
+    if (snapshot.music?.path) paths.add(snapshot.music.path)
+  }
+  return [...paths]
+}
+
+/**
+ * Editors open right now, by project. The editor hands its history in on its
+ * way OUT (unmount), which runs after whatever closed it — so a cleanup that
+ * must see that history (useProjectPipeline pruning replaced music) waits for
+ * the close here, and can tell an editor reopened meanwhile from one gone.
+ */
+const openEditors = new Map<string, { closed: Promise<void>; done: () => void }>()
+
+export function editorOpened(uid: string): void {
+  let done: () => void = () => undefined
+  const closed = new Promise<void>((resolve) => {
+    done = resolve
+  })
+  openEditors.get(uid)?.done()
+  openEditors.set(uid, { closed, done })
+}
+
+export function editorClosed(uid: string): void {
+  const open = openEditors.get(uid)
+  openEditors.delete(uid)
+  open?.done()
+}
+
+export function isEditorOpen(uid: string): boolean {
+  return openEditors.has(uid)
+}
+
+/** Resolves once no editor is open on `uid` (at once if none is). */
+export function whenEditorClosed(uid: string): Promise<void> {
+  return openEditors.get(uid)?.closed ?? Promise.resolve()
+}
+
+/**
+ * The largest N among the `new<N>` cut ids anywhere in a kept history — the
+ * state it ended at and both stacks — or 0.
+ *
+ * The editor names the cuts it creates `new1`, `new2`, … from a counter that
+ * started at 0 on every open, while a resumed history keeps its own ids. So
+ * the first cut created after reopening could be a second `new1`, and every
+ * edit addressed by id (a trim, a delete) then hit both cuts. The counter
+ * resumes from here instead.
+ */
+export function highestNewCutNumber(kept: KeptHistory): number {
+  let highest = 0
+  for (const snapshot of [kept.at, ...kept.undo, ...kept.redo]) {
+    for (const c of snapshot.cuts) {
+      const m = /^new(\d+)$/.exec(c.id)
+      if (m) highest = Math.max(highest, Number(m[1]))
+    }
+  }
+  return highest
 }

@@ -145,14 +145,23 @@ export function swapSegment(
     sourceOut = round2(win.sourceOut)
     durationSec = round2(win.sourceOut - win.sourceIn)
   }
-  return {
+  // The FIRST pre-swap window is the one worth keeping: it is the AI's own
+  // choice. Overwriting it on a second swap recorded the first backup as the
+  // "original", and the AI's shot could no longer be offered back at all.
+  const original = segmentSwappedFrom(seg)
+  const next: Record<string, unknown> = {
     ...seg,
     sourceClip: win.sourceClip,
     sourceIn,
     sourceOut,
     matchedFrameTime: round2(win.matchedFrameTime),
-    durationSec,
-    swappedFrom: {
+    durationSec
+  }
+  if (original) {
+    // Swapping back to the AI's shot makes the segment unswapped again.
+    if (sameWindow(original, win)) delete next.swappedFrom
+  } else {
+    next.swappedFrom = {
       sourceClip: current.sourceClip,
       sourceIn: current.sourceIn,
       sourceOut: current.sourceOut,
@@ -160,6 +169,46 @@ export function swapSegment(
       durationSec: duration
     }
   }
+  return next
+}
+
+/** One shot the tray can offer instead of the one in use. */
+export interface SwapCandidate {
+  window: ShotWindow
+  note: string
+  /** The AI's own pick, kept in `swappedFrom` after a swap. */
+  original: boolean
+}
+
+/**
+ * What a segment can be swapped TO: the AI's original shot when a swap
+ * replaced it, then the backups — never the window already in use.
+ *
+ * Built from the alternates alone, the tray lost the AI's shot after one swap
+ * and offered the chosen backup twice (as "AI เลือกไว้" and as itself).
+ */
+export function swapCandidates(seg: Record<string, unknown>): SwapCandidate[] {
+  const current = segmentWindow(seg)
+  const original = segmentSwappedFrom(seg)
+  const out: SwapCandidate[] = []
+  if (original && !sameWindow(original, current)) {
+    out.push({ window: original, note: String(seg.visualDescription ?? ''), original: true })
+  }
+  for (const a of segmentAlternates(seg)) {
+    if (sameWindow(a, current)) continue
+    if (original && sameWindow(a, original)) continue
+    out.push({
+      window: {
+        sourceClip: a.sourceClip,
+        sourceIn: a.sourceIn,
+        sourceOut: a.sourceOut,
+        matchedFrameTime: a.matchedFrameTime
+      },
+      note: a.note,
+      original: false
+    })
+  }
+  return out
 }
 
 /** One chosen swap: which segment (by index in `segments`) gets which window. */
@@ -215,45 +264,61 @@ export function scriptTotalSec(script: DubEditScript | null): number {
 }
 
 /**
- * Locked-regime timeline patch: the planned timeline maps cut i to segment i
- * (see lib/dubScenes timelineScenesFor), and the locked rule kept every
- * durationSec identical — so a swap only has to re-point the affected cuts at
- * the new source window, keeping each cut's own (VO-scaled) length. Zero AI:
- * this is why the length is locked in the first place.
+ * Locked-regime timeline patch: the locked rule kept every durationSec
+ * identical, so a swap only has to re-point the planned cuts that showed the
+ * replaced shot at the new source window, keeping each cut's own (VO-scaled)
+ * length and its offset inside the shot. Zero AI: this is why the length is
+ * locked in the first place.
  *
- * A cut whose old window doesn't contain the mapped old segment (the planner
- * dropped a short cut and shifted the tail) is left untouched rather than
- * guessed at.
+ * Cuts are matched to swapped segments by source and overlap, not by index:
+ * the planner may nudge a boundary toward a beat (cut 4.8-7.5 for a 5.0-7.5
+ * segment), and the post-voiceover editor can delete, add, split or reorder
+ * cuts — cut i is then no longer segment i. Index matching silently skipped
+ * those, and the voiced final kept the old shot while the script said the new
+ * one. A swapped segment no cut could be matched to is reported in `missed`,
+ * so the caller can refuse it instead of rendering an unchanged video.
  */
 export function retimeTimelineForSwap(
   oldSegments: Record<string, unknown>[],
   newSegments: Record<string, unknown>[],
   timeline: DubTimeline
-): DubTimeline {
+): { timeline: DubTimeline; missed: number[] } {
+  const changed: number[] = []
+  oldSegments.forEach((oldSeg, j) => {
+    const newSeg = newSegments[j]
+    if (newSeg && !sameWindow(segmentWindow(oldSeg), segmentWindow(newSeg))) changed.push(j)
+  })
+  const matched = new Set<number>()
   const cuts = (timeline.timeline ?? []).map((c) => ({ ...c }))
-  cuts.forEach((cut, i) => {
-    if ((cut.type ?? 'cut') !== 'cut') return
-    const oldSeg = oldSegments[i]
-    const newSeg = newSegments[i]
-    if (!oldSeg || !newSeg) return
-    const before = segmentWindow(oldSeg)
-    const after = segmentWindow(newSeg)
-    if (sameWindow(before, after)) return
-    // Sanity: the cut must belong to the old segment's window.
-    if (
-      String(cut.source) !== before.sourceClip ||
-      Number(cut.in) < before.sourceIn - 0.05 ||
-      Number(cut.out) > before.sourceOut + 0.05
-    ) {
-      return
+  for (const cut of cuts) {
+    if ((cut.type ?? 'cut') !== 'cut') continue
+    const cutIn = Number(cut.in)
+    const cutOut = Number(cut.out)
+    const len = cutOut - cutIn
+    if (!(len > 0)) continue
+    // The swapped segment this cut shows: most of the cut inside its old window.
+    let best: number | null = null
+    let bestOverlap = 0
+    for (const j of changed) {
+      const before = segmentWindow(oldSegments[j])
+      if (String(cut.source) !== before.sourceClip) continue
+      const overlap = Math.min(cutOut, before.sourceOut) - Math.max(cutIn, before.sourceIn)
+      if (overlap >= len * 0.5 && overlap > bestOverlap) {
+        best = j
+        bestOverlap = overlap
+      }
     }
-    const len = Math.max(0, Number(cut.out) - Number(cut.in))
-    const lo = after.sourceIn
-    const hi = Math.max(lo, after.sourceOut - len)
-    const newIn = round2(Math.min(Math.max(after.matchedFrameTime - 0.2, lo), hi))
+    if (best === null) continue
+    const before = segmentWindow(oldSegments[best])
+    const after = segmentWindow(newSegments[best])
+    const newIn = Math.max(0, round2(after.sourceIn + (cutIn - before.sourceIn)))
     cut.source = after.sourceClip
     cut.in = newIn
-    cut.out = round2(Math.min(newIn + len, after.sourceOut))
-  })
-  return { ...timeline, timeline: cuts as DubTimeline['timeline'] }
+    cut.out = round2(newIn + len)
+    matched.add(best)
+  }
+  return {
+    timeline: { ...timeline, timeline: cuts as DubTimeline['timeline'] },
+    missed: changed.filter((j) => !matched.has(j))
+  }
 }

@@ -1,16 +1,9 @@
-/** dub_first style picker + duration-chip helpers — ported 1:1 from the web
- * app's DUB_SCRIPT_STYLES/buildBrief() (frontend/src/pages/VideoPage.tsx). */
-
-export const DUB_SCRIPT_STYLES = [
-  { value: 'review', label: 'รีวิวสินค้า' },
-  { value: 'funny', label: 'ตลก / สนุก' },
-  { value: 'informative', label: 'ให้ข้อมูล' },
-  { value: 'story', label: 'เล่าเรื่อง' }
-] as const
-
-export const DUB_SCRIPT_STYLE_LABELS: Record<string, string> = Object.fromEntries(
-  DUB_SCRIPT_STYLES.map(({ value, label }) => [value, label])
-)
+/** dub_first duration-chip helpers — ported from the web app's buildBrief()
+ * (frontend/src/pages/VideoPage.tsx).
+ *
+ * The script-style picker (รีวิวสินค้า / ตลก / ให้ข้อมูล / เล่าเรื่อง) was
+ * removed 2026-09-21: it only added a "สไตล์: …" line to the brief, no prompt
+ * rule read it, and ตัดฉากเด่น always writes a selling script anyway. */
 
 /**
  * Length choices, in two sets because they are two different kinds of answer
@@ -34,18 +27,14 @@ export const DUB_DURATION_AUTO = [
   { value: 'music', label: 'ตามความยาวเพลง' }
 ] as const
 
-/** Combine style/duration/note into one text field — same shape as web's
+/** Combine duration/note into one text field — same shape as web's
  * buildBrief(), since the backend/LLM only expects a single free-text brief. */
 export function buildDubBrief(
   scriptDuration: string,
   scriptCustomSec: string,
-  note: string,
-  styles: string[]
+  note: string
 ): string | undefined {
   const parts: string[] = []
-  if (styles.length > 0) {
-    parts.push(`สไตล์: ${styles.map((s) => DUB_SCRIPT_STYLE_LABELS[s] ?? s).join(', ')}`)
-  }
   if (scriptDuration === 'auto') parts.push('ความยาว: ให้ AI ประเมิน')
   else if (scriptDuration === 'music') parts.push('ความยาวเป้าหมาย: ตามความยาวเพลงประกอบ')
   else if (scriptDuration === 'custom' && scriptCustomSec)

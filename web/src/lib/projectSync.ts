@@ -114,11 +114,21 @@ export interface SyncProgress {
 }
 
 /**
+ * Files rewritten IN PLACE, which the size match below cannot see change.
+ * `project.json` is rewritten by every patch, and a same-length edit (music
+ * volume 0.25 → 0.35, a retyped word of the same length) kept its size — the
+ * server copy another browser restores from silently stayed on the old value.
+ * It is a few KB, so it is simply always sent.
+ */
+const REWRITTEN_IN_PLACE = new Set(['project.json'])
+
+/**
  * Send everything the server does not already have, byte-size matched.
  *
  * Size is the whole comparison on purpose: these files are written once by an
  * atomic rename and never edited in place, so a name plus a length identifies
  * them. A checksum would mean reading every byte of every clip on every sync.
+ * The exception is REWRITTEN_IN_PLACE, sent every time.
  */
 export async function pushProjectFiles(
   session: ApiSession,
@@ -132,7 +142,9 @@ export async function pushProjectFiles(
     serverManifest(session, remoteUid, uid).catch(() => [] as ServerFile[])
   ])
   const have = new Map(remote.map((f) => [f.path, f.bytes]))
-  const missing = local.filter((f) => have.get(f.path) !== f.bytes)
+  const missing = local.filter(
+    (f) => REWRITTEN_IN_PLACE.has(f.path) || have.get(f.path) !== f.bytes
+  )
 
   let uploaded = 0
   let bytes = 0

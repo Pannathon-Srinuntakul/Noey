@@ -24,12 +24,14 @@ import { cn } from '../../lib/cn'
 import { useConfirm } from '../../lib/confirm'
 import { useRouter } from '../../lib/router'
 import type { ProjectPipeline } from '../../lib/useProjectPipeline'
-import type { DubEditScript } from '../../lib/videosLocalApi'
+import type { DubEditScript, DubTimeline } from '../../lib/videosLocalApi'
 import {
   applySwapsToScript,
+  retimeTimelineForSwap,
   sameWindow,
-  segmentAlternates,
+  segmentSwappedFrom,
   segmentWindow,
+  swapCandidates,
   swapRegimeFor,
   windowFitsLocked,
   type ShotSwapLogEntry,
@@ -263,7 +265,7 @@ function OptionFrame({
 }
 
 interface Option {
-  /** null = the shot the AI chose (or whatever is current); else the alternate. */
+  /** null = the shot in use now; else an index into `swapCandidates(seg)`. */
   altIndex: number | null
   window: ShotWindow
   label: string
@@ -294,12 +296,12 @@ export function ShotSwapReview({
   /** Only shots that pose a question. No alternatives = no decision = not in
    * the queue; v1 walked you to those anyway and showed an empty-state box. */
   const queue = useMemo(
-    () => segments.map((_, i) => i).filter((i) => segmentAlternates(segments[i]).length > 0),
+    () => segments.map((_, i) => i).filter((i) => swapCandidates(segments[i]).length > 0),
     [segments]
   )
 
   const [cursor, setCursor] = useState(0)
-  /** segIndex → chosen alternate, or null for "keep the AI's". */
+  /** segIndex → chosen candidate; absent = keep the shot in use. */
   const [picks, setPicks] = useState<ReadonlyMap<number, number>>(new Map())
   const [browsing, setBrowsing] = useState(false)
   /** Set when the strip jumps to a shot that has nothing to choose between. */
@@ -308,7 +310,7 @@ export function ShotSwapReview({
   const panelRef = useRef<HTMLDivElement>(null)
   const segIndex = noOptionShot ?? queue[cursor]
   const seg = segments[segIndex] as Record<string, unknown> | undefined
-  const alternates = seg ? segmentAlternates(seg) : []
+  const candidates = seg ? swapCandidates(seg) : []
   const durationOf = (s: Record<string, unknown>): number =>
     num(s.durationSec) || Math.max(0, num(s.sourceOut) - num(s.sourceIn))
 
@@ -316,20 +318,24 @@ export function ShotSwapReview({
     if (!seg || noOptionShot !== null) return []
     const dur = durationOf(seg)
     const current = segmentWindow(seg)
+    // After a swap the shot in use is a backup, and the AI's own pick is one
+    // of the candidates — labelled as such, so it is never offered twice or
+    // lost (it used to vanish, and the backup showed up as "AI เลือกไว้").
+    const swapped = segmentSwappedFrom(seg) !== null
     const head: Option = {
       altIndex: null,
       window: current,
-      label: 'AI เลือกไว้',
-      note: String(seg.visualDescription ?? ''),
+      label: swapped ? 'ที่ใช้อยู่ตอนนี้' : 'AI เลือกไว้',
+      note: swapped ? '' : String(seg.visualDescription ?? ''),
       disabledReason: null
     }
-    const rest = alternates.map((a, i) => ({
+    const rest = candidates.map((c, i) => ({
       altIndex: i,
-      window: a as ShotWindow,
-      label: 'อีกมุมหนึ่ง',
-      note: a.note,
+      window: c.window,
+      label: c.original ? 'AI เลือกไว้ (ตัวเดิม)' : 'อีกมุมหนึ่ง',
+      note: c.note,
       disabledReason:
-        regime === 'locked' && !windowFitsLocked(a, dur)
+        regime === 'locked' && !windowFitsLocked(c.window, dur)
           ? 'ช่วงนี้สั้นกว่าช็อตเดิม — ใช้ได้เฉพาะตอนที่ความยาวคลิปยังปรับได้'
           : null
     }))
@@ -348,7 +354,7 @@ export function ShotSwapReview({
     const nextSeg = segments[queue[cursor + 1]] as Record<string, unknown> | undefined
     if (nextSeg) {
       push(segmentWindow(nextSeg))
-      for (const a of segmentAlternates(nextSeg)) push(a as ShotWindow)
+      for (const c of swapCandidates(nextSeg)) push(c.window)
     }
     // The strip shows every shot once opened.
     if (browsing) for (const s of segments) push(segmentWindow(s as Record<string, unknown>))
@@ -367,8 +373,8 @@ export function ShotSwapReview({
     for (const [idx, altIndex] of picks) {
       const s = segments[idx] as Record<string, unknown> | undefined
       if (!s) continue
-      const alt = segmentAlternates(s)[altIndex]
-      if (alt) list.push({ segIndex: idx, window: alt as ShotWindow })
+      const cand = swapCandidates(s)[altIndex]
+      if (cand) list.push({ segIndex: idx, window: cand.window })
     }
     return applySwapsToScript(script, list, regime)
   }, [picks, script, segments, regime])
@@ -412,11 +418,40 @@ export function ShotSwapReview({
     })
   }, [confirm, diffCount, onClose])
 
-  const apply = (): void => {
+  const apply = async (): Promise<void> => {
     if (diffCount === 0) return
-    const log: ShotSwapLogEntry[] = pending.applied.map((c) => {
+    // Locked regime: the voiced final is rendered from the planned timeline,
+    // so every swap must find the cut(s) that show its shot there. One that
+    // cannot (the post-voiceover editor removed or replaced that footage) used
+    // to be dropped silently — the project reported done with the old shot.
+    let commit = pending
+    if (regime === 'locked' && project.timeline) {
+      const { missed } = retimeTimelineForSwap(
+        segments as Record<string, unknown>[],
+        pending.script.segments,
+        project.timeline as unknown as DubTimeline
+      )
+      if (missed.length > 0) {
+        const shots = missed.map((i) => i + 1).join(', ')
+        const rest = pending.applied.filter((c) => !missed.includes(c.segIndex))
+        const ok = await confirm({
+          title: 'บางช็อตเปลี่ยนในคลิปที่พากย์แล้วไม่ได้',
+          body: `ช็อตที่ ${shots} ไม่อยู่ในไทม์ไลน์หลังพากย์เสียงแล้ว (ถูกแก้ในตัวแก้ไขวิดีโอ) — เปลี่ยนช็อตนั้นในตัวแก้ไขวิดีโอแทน`,
+          confirmLabel:
+            rest.length > 0 ? `ทำคลิปใหม่เฉพาะ ${rest.length} ช็อตที่เหลือ` : 'เข้าใจแล้ว',
+          cancelLabel: 'เลือกต่อ'
+        })
+        if (!ok || rest.length === 0) return
+        commit = applySwapsToScript(
+          script,
+          rest.map((c) => ({ segIndex: c.segIndex, window: c.window })),
+          regime
+        )
+      }
+    }
+    const log: ShotSwapLogEntry[] = commit.applied.map((c) => {
       const original = segments[c.segIndex] as Record<string, unknown>
-      const match = segmentAlternates(original).find((a) => sameWindow(a, c.window))
+      const match = swapCandidates(original).find((cand) => sameWindow(cand.window, c.window))
       return {
         line: num(original.voiceoverLineId ?? original.order),
         from: {
@@ -427,7 +462,7 @@ export function ShotSwapReview({
       }
     })
     onClose()
-    void job.applyShotSwap(pending.script, log)
+    void job.applyShotSwap(commit.script, log)
     // Straight to the progress screen, the way every other run is shown. The
     // project page has no progress view of its own, so after pressing
     // ทำคลิปใหม่ nothing visibly happened and the user went home and pressed
@@ -664,7 +699,7 @@ export function ShotSwapReview({
             <div className="flex flex-wrap gap-[5px]">
               {segments.map((s, i) => {
                 const w = segmentWindow(s as Record<string, unknown>)
-                const hasAlts = segmentAlternates(s as Record<string, unknown>).length > 0
+                const hasAlts = swapCandidates(s as Record<string, unknown>).length > 0
                 const current = i === segIndex
                 return (
                   <button
@@ -734,7 +769,7 @@ export function ShotSwapReview({
             </Button>
           ) : null}
           {diffCount > 0 ? (
-            <Button variant="primary" onClick={apply}>
+            <Button variant="primary" onClick={() => void apply()}>
               ทำคลิปใหม่ · {diffCount} ช็อต
             </Button>
           ) : last ? (

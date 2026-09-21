@@ -11,6 +11,24 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
+def _no_redis_no_mail(monkeypatch):
+    """No test reaches Redis or SendGrid.
+
+    Every test gets a fresh in-memory rate-limit store (so counters never leak
+    between tests, and no Redis client outlives its event loop), and email is
+    off unless a test overrides the mailer dependency with a fake.
+    """
+    from packages.core.settings import get_settings
+    from services.api import ratelimit
+
+    monkeypatch.setattr(ratelimit, "_limiter", ratelimit.RateLimiter(ratelimit.MemoryCounterStore()))
+    monkeypatch.setenv("SENDGRID_API_KEY", "")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
+@pytest.fixture(autouse=True)
 async def _dispose_db_engine():
     yield
     from packages.db.session import get_engine, get_sessionmaker

@@ -67,7 +67,6 @@ export interface WizardState {
    * picked yet. */
   duration: string
   customSec: string
-  scriptStyles: string[]
   /** Free-text context for the AI — one field for both modes. */
   note: string
   /** Only used when `voiceover === 'own'`. */
@@ -105,7 +104,6 @@ export const WIZARD_INITIAL: WizardState = {
   projectNameTouched: false,
   duration: '30',
   customSec: '',
-  scriptStyles: [],
   note: '',
   userScript: '',
   cutStyleUid: '',
@@ -340,7 +338,6 @@ export interface WizardSubmission {
   mode: ProjectMode
   brief: string
   userScript: string
-  scriptStyles: string[]
   targetDurationSec: number | undefined
   cutStyleUid: string | undefined
   captionStyle: CaptionStyle | undefined
@@ -355,14 +352,11 @@ export function buildSubmission(state: WizardState): WizardSubmission {
 
   return {
     mode,
-    // Speech modes: the free-text note travels alone — the style/duration
-    // prefixes buildDubBrief adds exist for the video prompt, and the speech
-    // selector receives duration as a real field instead.
-    brief: isCut
-      ? (buildDubBrief(state.duration, state.customSec, state.note, state.scriptStyles) ?? '')
-      : state.note.trim(),
+    // Speech modes: the free-text note travels alone — the duration prefix
+    // buildDubBrief adds exists for the video prompt, and the speech selector
+    // receives duration as a real field instead.
+    brief: isCut ? (buildDubBrief(state.duration, state.customSec, state.note) ?? '') : state.note.trim(),
     userScript: state.voiceover === 'own' && mode === 'dub_first' ? state.userScript.trim() : '',
-    scriptStyles: isCut ? state.scriptStyles : [],
     targetDurationSec:
       isCut || isSpeech
         ? (dubTargetDurationSec(state.duration, state.customSec, musicLen) ?? undefined)

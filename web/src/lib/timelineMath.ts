@@ -53,6 +53,13 @@ export function parseTimecode(input: string): number | null {
   return null
 }
 
+/** What a timecode field commits on blur: nothing when the text is still
+ * what focus showed (the field shows tenths, so re-parsing it would floor the
+ * real value — 3.4667 → 3.4), nothing for text that does not parse. */
+export function timecodeCommitValue(draft: string, focusText: string | null): number | null {
+  return draft === focusText ? null : parseTimecode(draft)
+}
+
 /** Ruler label step: smallest "round" step whose labels stay ≥ ~140px apart —
  * 5s at the default 40px/วิ, coarser as you zoom out, finer as you zoom in. */
 export function rulerStepSec(pxPerSec: number): number {
@@ -86,7 +93,13 @@ export function computeEditedDuration(cuts: EditCut[]): number {
 
 /** Find which cut a position on the concatenated edited timeline falls into. */
 export function findEditedSegment(cuts: EditCut[], t: number): EditedSegment | null {
-  const segs = computeEditedSegments(cuts)
+  return findSegmentAt(computeEditedSegments(cuts), t)
+}
+
+/** findEditedSegment over segments already laid out — for the playback frame
+ * loop and the scrub, which ask many times against one cut list and must not
+ * rebuild the whole layout for every answer. */
+export function findSegmentAt(segs: EditedSegment[], t: number): EditedSegment | null {
   if (segs.length === 0) return null
   for (const seg of segs) {
     if (t < seg.editedOut - 0.001) return seg
@@ -122,6 +135,28 @@ export function sourceNeighborBounds(
     minIn: prev ? prev.out : 0,
     maxOut: next ? next.in : laneDurationSec
   }
+}
+
+/**
+ * sourceNeighborBounds for every cut on one lane, from a single sort.
+ *
+ * Asking per cut sorted the whole lane once per block on every render. Same
+ * order, same neighbours, same answer; a repeated id keeps its first place in
+ * that order, as findIndex does there.
+ */
+export function sourceNeighborBoundsById(
+  sourceCuts: EditCut[],
+  laneDurationSec: number
+): Map<string, { minIn: number; maxOut: number }> {
+  const sorted = [...sourceCuts].sort((a, b) => a.in - b.in || a.out - b.out)
+  const bounds = new Map<string, { minIn: number; maxOut: number }>()
+  sorted.forEach((c, i) => {
+    if (bounds.has(c.id)) return
+    const prev = i > 0 ? sorted[i - 1] : null
+    const next = i < sorted.length - 1 ? sorted[i + 1] : null
+    bounds.set(c.id, { minIn: prev ? prev.out : 0, maxOut: next ? next.in : laneDurationSec })
+  })
+  return bounds
 }
 
 export const BEAT_SNAP_THRESHOLD_SEC = 0.2
@@ -384,11 +419,114 @@ export function cutsInLine(cuts: EditCut[], lineId: number): EditCut[] {
 }
 
 export function lineScriptFor(cuts: EditCut[], lineId: number): string {
-  return (
-    cutsInLine(cuts, lineId)
-      .find((c) => c.voiceoverScript?.trim())
-      ?.voiceoverScript?.trim() ?? ''
-  )
+  return lineScriptDraft(cuts, lineId).trim()
+}
+
+/**
+ * A line's script exactly as it was typed — what the script box shows. Trimmed
+ * on every keystroke, a space at the end of the box was gone before the next
+ * word could follow it, and so was a new line (owner, 2026-09-22); the value is
+ * trimmed where it is stored instead (cutPayload).
+ */
+export function lineScriptDraft(cuts: EditCut[], lineId: number): string {
+  const line = cutsInLine(cuts, lineId)
+  // The cut that carries the words — on a loaded script it can be a later
+  // angle. A box holding only whitespace so far lives on the first cut.
+  const carrier = line.find((c) => c.voiceoverScript?.trim()) ?? line[0]
+  return carrier?.voiceoverScript ?? ''
+}
+
+/**
+ * A voiceover line's angles play back to back, so its cuts must sit next to
+ * each other in the list: the VO lane draws a line as one block from its first
+ * cut for the summed length of all of them, and the render spans a line from
+ * its first in to its last out. A line split by another scene claims that
+ * scene's time too (bug hunt 2026-09-22, #13). Every edit that adds or moves a
+ * cut keeps that true through these two.
+ *
+ * `idx` as an insert position, moved to the end of the line run it would land
+ * inside of — unchanged when it falls between two lines. Line 0 (a cut with
+ * no line) never forms a run.
+ */
+export function insertIndexOutsideLineRuns(cuts: EditCut[], idx: number): number {
+  let i = idx
+  while (i > 0 && i < cuts.length) {
+    const lineId = cutLineId(cuts[i - 1])
+    if (lineId === 0 || cutLineId(cuts[i]) !== lineId) break
+    i += 1
+  }
+  return i
+}
+
+/** The index just past the contiguous run of line cuts that holds `idx`. */
+function lineRunEnd(cuts: EditCut[], idx: number): number {
+  const lineId = cutLineId(cuts[idx])
+  let end = idx + 1
+  if (lineId === 0) return end
+  while (end < cuts.length && cutLineId(cuts[end]) === lineId) end += 1
+  return end
+}
+
+/**
+ * ลากตัวบล็อกเพื่อสลับลำดับ — the list with cut `activeId` moved to where
+ * `overId` is. In a dub project it keeps every voiceover line in one piece:
+ * a scene dropped between two angles of ANOTHER line lands past that line, on
+ * the side it was dragged towards; an angle dragged away from its own line
+ * becomes a line of its own (its script, when it carried the line's, stays
+ * with the angles left behind). Null when nothing moves.
+ */
+export function withReorder(
+  prev: EditCut[],
+  activeId: string,
+  overId: string,
+  isDub: boolean
+): EditCut[] | null {
+  const from = prev.findIndex((c) => c.id === activeId)
+  const to = prev.findIndex((c) => c.id === overId)
+  if (from < 0 || to < 0 || from === to) return null
+  const moved = prev[from]
+  const rest = [...prev.slice(0, from), ...prev.slice(from + 1)]
+  if (!isDub) return [...rest.slice(0, to), moved, ...rest.slice(to)]
+
+  const ownLine = cutLineId(moved)
+  let at = to
+  // Inside another line's run: jump over it in the drag's direction.
+  if (at > 0 && at < rest.length) {
+    const splitLine = cutLineId(rest[at - 1])
+    if (splitLine !== 0 && splitLine !== ownLine && cutLineId(rest[at]) === splitLine) {
+      if (to > from) {
+        at = insertIndexOutsideLineRuns(rest, at)
+      } else {
+        while (at > 0 && cutLineId(rest[at - 1]) === splitLine) at -= 1
+      }
+    }
+  }
+  const next = [...rest.slice(0, at), moved, ...rest.slice(at)]
+  if (at === from) return null
+
+  // Still next to an angle of its own line (or the line's only cut)?
+  const others = rest.filter((c) => cutLineId(c) === ownLine)
+  const touchesOwn =
+    (at > 0 && cutLineId(next[at - 1]) === ownLine) ||
+    (at + 1 < next.length && cutLineId(next[at + 1]) === ownLine)
+  if (ownLine === 0 || others.length === 0 || touchesOwn) return next
+
+  const newLineId = nextVoiceoverLineId(prev)
+  const carried = moved.voiceoverScript ?? ''
+  const keeperId = others[0].id
+  const keeperNeedsScript = !lineScriptFor(others, ownLine) && carried.trim() !== ''
+  return next.map((c) => {
+    if (c.id === moved.id) {
+      return {
+        ...c,
+        label: `บรรทัด ${newLineId}`,
+        voiceoverLineId: newLineId,
+        voiceoverScript: ''
+      }
+    }
+    if (keeperNeedsScript && c.id === keeperId) return { ...c, voiceoverScript: carried }
+    return c
+  })
 }
 
 export function cutIndexInLine(cuts: EditCut[], cut: EditCut): number {
@@ -460,6 +598,123 @@ export function splitCutAt(
   // copy on both halves would offer the same backups twice in ปรับช็อต.
   const second: EditCut = { ...cut, id: newId, in: atSrcSec, voiceoverScript: '', meta: undefined }
   return [...cuts.slice(0, idx), first, second, ...cuts.slice(idx + 1)]
+}
+
+/** เพิ่มฉาก (N) — the list with a new scene [start, end) of `source`. It goes
+ * right after `afterCutId` when given — the edited view's scene under the
+ * playhead, since there the list's order IS the timeline and source time says
+ * nothing about where the user is (bug hunt #31). Otherwise it goes at the
+ * end, or with `atPlayhead` in front of the first cut of the same file that
+ * starts at or after `start` (after that file's last cut when none does) —
+ * the source view, where lanes are laid out by source time. A dub scene opens
+ * a new voiceover line with an empty script, and never inside another line's
+ * run of angles (see insertIndexOutsideLineRuns). */
+export function withNewScene(
+  prev: EditCut[],
+  opts: {
+    id: string
+    source: string
+    start: number
+    end: number
+    isDub: boolean
+    atPlayhead: boolean
+    afterCutId?: string
+  }
+): EditCut[] {
+  const { id, source, start, end, isDub, atPlayhead, afterCutId } = opts
+  const newLineId = isDub ? nextVoiceoverLineId(prev) : undefined
+  const created: EditCut = {
+    id,
+    source,
+    in: start,
+    out: end,
+    label: isDub ? `บรรทัด ${newLineId}` : 'ฉากใหม่',
+    voiceoverLineId: newLineId,
+    voiceoverScript: isDub ? '' : undefined
+  }
+  let insertIdx = prev.length
+  const afterIdx = afterCutId ? prev.findIndex((c) => c.id === afterCutId) : -1
+  if (afterIdx >= 0) {
+    insertIdx = afterIdx + 1
+  } else if (atPlayhead) {
+    let placed = false
+    for (let i = 0; i < prev.length; i += 1) {
+      if (prev[i].source === source && prev[i].in >= start - 0.01) {
+        insertIdx = i
+        placed = true
+        break
+      }
+    }
+    if (!placed) {
+      for (let i = prev.length - 1; i >= 0; i -= 1) {
+        if (prev[i].source === source) {
+          insertIdx = i + 1
+          break
+        }
+      }
+    }
+  }
+  if (isDub) insertIdx = insertIndexOutsideLineRuns(prev, insertIdx)
+  return [...prev.slice(0, insertIdx), created, ...prev.slice(insertIdx)]
+}
+
+/** เพิ่มมุม (M) — the list with another angle for voiceover line `lineId`,
+ * right after the line's last cut (at the end when the line has none). An
+ * angle shares its line's script, which lives on the line's first cut, so its
+ * own is empty. */
+export function withNewAngle(
+  prev: EditCut[],
+  opts: { id: string; source: string; lineId: number; start: number; end: number }
+): EditCut[] {
+  const { id, source, lineId, start, end } = opts
+  const angleNum = cutsInLine(prev, lineId).length + 1
+  const created: EditCut = {
+    id,
+    source,
+    in: start,
+    out: end,
+    label: `บรรทัด ${lineId} · มุม ${angleNum}`,
+    voiceoverLineId: lineId,
+    voiceoverScript: ''
+  }
+  let insertIdx = prev.length
+  for (let i = prev.length - 1; i >= 0; i -= 1) {
+    if (cutLineId(prev[i]) === lineId) {
+      insertIdx = i + 1
+      break
+    }
+  }
+  return [...prev.slice(0, insertIdx), created, ...prev.slice(insertIdx)]
+}
+
+/** ทำซ้ำ — the list with a copy of cut `cutId` right after it, under `newId`.
+ * In a dub project the copy is a new voiceover line carrying the original's
+ * script, so it goes after the original's LAST angle rather than between two
+ * of them (see insertIndexOutsideLineRuns). Null when `cutId` is no longer in the list, so the caller records no
+ * undo step for an edit that did nothing. */
+export function withDuplicate(
+  prev: EditCut[],
+  cutId: string,
+  newId: string,
+  isDub: boolean
+): EditCut[] | null {
+  const idx = prev.findIndex((c) => c.id === cutId)
+  if (idx < 0) return null
+  const src = prev[idx]
+  const newLineId = isDub ? nextVoiceoverLineId(prev) : undefined
+  const copy: EditCut = {
+    ...src,
+    id: newId,
+    label: isDub ? `บรรทัด ${newLineId}` : src.label,
+    voiceoverLineId: newLineId ?? src.voiceoverLineId,
+    voiceoverScript: isDub ? (src.voiceoverScript ?? '') : src.voiceoverScript,
+    // The AI's per-shot metadata (alternates, swappedFrom, …) stays with the
+    // original, as in splitCutAt: a copy made ปรับช็อต ask the same question
+    // twice and could put the same backup shot into the clip twice.
+    meta: undefined
+  }
+  const at = isDub ? lineRunEnd(prev, idx) : idx + 1
+  return [...prev.slice(0, at), copy, ...prev.slice(at)]
 }
 
 /** Removed-span summary for talking_head's "ตัดออกแล้ว N ช่วง · kept จาก total". */
@@ -534,6 +789,12 @@ export function captionChipSpans(cuts: EditCut[], lines: CaptionLine[]): Caption
 /**
  * Chip spans for caption lines already timed on the OUTPUT clock.
  *
+ * A chip covers the WHOLE line, across every scene it overlaps, and its drag
+ * range is those scenes together. talking_head groups words three at a time
+ * regardless of cuts, so its lines straddle scene boundaries routinely; the
+ * chip used to stop at the first scene's end, and touching its right edge cut
+ * the real line down to that scene.
+ *
  * dub_first captions are derived from the voiceover script laid out along the
  * finished cut (`dubCaptionLines`), so their times ARE output times — the
  * source-time version above would compare them against each cut's source
@@ -551,20 +812,15 @@ export function captionChipSpansFromOutput(
   const segs = computeEditedSegments(cuts)
   const out: CaptionChipSpan[] = []
   for (const line of lines) {
-    for (const seg of segs) {
-      const s = Math.max(line.start, seg.editedIn)
-      const e = Math.min(line.end, seg.editedOut)
-      if (e - s < 0.05) continue
-      out.push({
-        id: line.id,
-        text: line.text,
-        outStart: s,
-        durationSec: e - s,
-        cutIn: seg.editedIn,
-        cutOut: seg.editedOut
-      })
-      break // first containing scene wins — one chip per line
-    }
+    const covered = segs.filter(
+      (seg) => Math.min(line.end, seg.editedOut) - Math.max(line.start, seg.editedIn) >= 0.05
+    )
+    if (covered.length === 0) continue
+    const cutIn = covered[0].editedIn
+    const cutOut = covered[covered.length - 1].editedOut
+    const s = Math.max(line.start, cutIn)
+    const e = Math.min(line.end, cutOut)
+    out.push({ id: line.id, text: line.text, outStart: s, durationSec: e - s, cutIn, cutOut })
   }
   return out.sort((a, b) => a.outStart - b.outStart)
 }
@@ -591,6 +847,28 @@ export function dragCaptionEdge(
   }
   const end = clamp(line.end + deltaSec, line.start + MIN_CAPTION_SEC, span.cutOut)
   return { start: line.start, end }
+}
+
+/**
+ * Pull a dragged caption edge onto the nearest scene boundary within `tol`.
+ *
+ * The snap must not undo the MIN_CAPTION_SEC clamp: a dub line starts ON a
+ * scene boundary, so dragging its right edge to the minimum put the end
+ * within reach of the line's own start boundary, the snap landed it there,
+ * and the zero-length line vanished from the lane and the render. A snap that
+ * would leave the line shorter than the minimum is not taken.
+ */
+export function snapCaptionEdge(
+  patch: { start: number; end: number },
+  edge: TrimEdge,
+  markers: number[],
+  tol: number
+): { start: number; end: number } {
+  const snapped =
+    edge === 'right'
+      ? { ...patch, end: snapToMarkers(patch.end, markers, tol) }
+      : { ...patch, start: snapToMarkers(patch.start, markers, tol) }
+  return snapped.end - snapped.start >= MIN_CAPTION_SEC - 1e-9 ? snapped : patch
 }
 
 // ---- drag binding (window-level, shared by every trim/move handle) ---------

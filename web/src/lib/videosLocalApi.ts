@@ -68,7 +68,16 @@ export interface DubEditScript {
 
 export interface DubTimeline {
   mode: string
-  timeline: { type: string; source: string; in: number; out: number; label: string }[]
+  timeline: {
+    type: string
+    source: string
+    in: number
+    out: number
+    label: string
+    /** dub cuts saved by the timeline editor keep their voiceover line. */
+    voiceoverLineId?: number | null
+    voiceoverScript?: string | null
+  }[]
   [key: string]: unknown
 }
 
@@ -186,6 +195,15 @@ export async function analyzeVideo(
 
 export function getJob(session: ApiSession, jobId: string): Promise<JobStatus> {
   return request(session, `/jobs/${jobId}`)
+}
+
+/** The server's own record of a project — its status and the job running it,
+ * if any. Only these two fields of `GET /videos/{uid}` are read here. */
+export function getRemoteStatus(
+  session: ApiSession,
+  remoteUid: string
+): Promise<{ status: string; job_id: string | null }> {
+  return request(session, `/videos/${remoteUid}`)
 }
 
 /** Poll a job until it finishes; onTick receives every snapshot. */

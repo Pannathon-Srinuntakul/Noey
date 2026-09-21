@@ -60,8 +60,13 @@ def test_reject_span_gates_at_span_level_ahead_of_the_frame_rules():
         block = re.search(r"<reject_span>(.*?)</reject_span>", system, re.S).group(1)
         # The exact failure it exists to catch: the creator walking up to the
         # camera reads as a close-up because the product fills the frame.
-        assert "moves toward or away from the camera" in block
+        assert "walks up to the camera to reach it, stop it, or reposition it" in block
         assert "is someone walking up to the camera — not a close-up" in block
+        # But moving to PRESENT the product is content: "moves toward or away
+        # from the camera" dropped a shoe try-on and a swing toward the lens.
+        assert "moves toward or away from the camera" not in block
+        assert "Movement alone is not production." in block
+        assert "swinging it toward the lens is a presentation" in block
         assert "Drop the ENTIRE span, however good a single frame inside it looks." in block
         # And why a frame-level rule cannot catch it.
         assert "most likely to survive the frame-level rules" in block

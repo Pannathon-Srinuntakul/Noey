@@ -7,6 +7,8 @@ import {
   scriptTotalSec,
   segmentAlternates,
   segmentSwappedFrom,
+  segmentWindow,
+  swapCandidates,
   swapRegimeFor,
   swapSegment,
   windowFitsLocked,
@@ -216,7 +218,8 @@ describe('retimeTimelineForSwap', () => {
         { type: 'cut', source: 'clip0', in: 20, out: 23, label: 'conclusion' }
       ]
     }
-    const out = retimeTimelineForSwap(oldSegs, patched.segments, timeline)
+    const { timeline: out, missed } = retimeTimelineForSwap(oldSegs, patched.segments, timeline)
+    expect(missed).toEqual([])
     const c0 = out.timeline[0]
     expect(c0.out - c0.in).toBeCloseTo(2.4)
     expect(c0.in).toBeGreaterThanOrEqual(30)
@@ -224,14 +227,91 @@ describe('retimeTimelineForSwap', () => {
     expect(out.timeline[1]).toEqual(timeline.timeline[1])
   })
 
-  it('leaves a cut alone when the index mapping fails the containment check', () => {
+  it('leaves an unrelated cut alone and reports the swap it could not place', () => {
     const oldSegs = [seg(10, 12.6)]
     const newSegs = [seg(30, 32.6, { swappedFrom: { sourceIn: 10, sourceOut: 12.6 } })]
     const timeline: DubTimeline = {
       mode: 'dub_first',
       timeline: [{ type: 'cut', source: 'clip0', in: 90, out: 92, label: 'opening' }]
     }
-    const out = retimeTimelineForSwap(oldSegs, newSegs, timeline)
+    const { timeline: out, missed } = retimeTimelineForSwap(oldSegs, newSegs, timeline)
     expect(out.timeline[0]).toEqual(timeline.timeline[0])
+    // Reported, so the caller refuses instead of rendering the old shot as done.
+    expect(missed).toEqual([0])
+  })
+
+  it('follows a cut the planner nudged outside the segment window', () => {
+    // Music attached: the planner moves boundaries toward beats. The old
+    // containment check skipped this cut and the final kept the old shot.
+    const oldSegs = [seg(5, 7.5)]
+    const { script: patched } = applySwapsToScript(
+      { segments: oldSegs.map((s) => ({ ...s })) },
+      [{ segIndex: 0, window: toWindow(alt(20, 23)) }],
+      'locked'
+    )
+    const timeline: DubTimeline = {
+      mode: 'dub_first',
+      timeline: [{ type: 'cut', source: 'clip0', in: 4.8, out: 7.5, label: 'a' }]
+    }
+    const { timeline: out, missed } = retimeTimelineForSwap(oldSegs, patched.segments, timeline)
+    expect(missed).toEqual([])
+    const c = out.timeline[0]
+    expect(c.out - c.in).toBeCloseTo(2.7)
+    const after = segmentWindow(patched.segments[0])
+    expect(c.in).toBeCloseTo(after.sourceIn - 0.2)
+  })
+
+  it('matches by footage, not index, after the post-voiceover editor reordered and split', () => {
+    const oldSegs = [seg(10, 12), seg(20, 23)]
+    const { script: patched } = applySwapsToScript(
+      { segments: oldSegs.map((s) => ({ ...s })) },
+      [{ segIndex: 1, window: toWindow(alt(40, 44)) }],
+      'locked'
+    )
+    const timeline: DubTimeline = {
+      mode: 'dub_first',
+      timeline: [
+        { type: 'cut', source: 'clip0', in: 20, out: 21.5, label: 'b1' },
+        { type: 'cut', source: 'clip0', in: 21.5, out: 23, label: 'b2' },
+        { type: 'cut', source: 'clip0', in: 10, out: 12, label: 'a' }
+      ]
+    }
+    const { timeline: out, missed } = retimeTimelineForSwap(oldSegs, patched.segments, timeline)
+    expect(missed).toEqual([])
+    const start = segmentWindow(patched.segments[1]).sourceIn
+    expect(out.timeline[0]).toMatchObject({ in: start, out: start + 1.5 })
+    expect(out.timeline[1].in).toBeCloseTo(start + 1.5)
+    expect(out.timeline[2]).toEqual(timeline.timeline[2])
+  })
+})
+
+describe('swapCandidates', () => {
+  it('offers the backups before any swap', () => {
+    const s = seg(10, 12.6, { alternates: [alt(30, 33), alt(40, 43)] })
+    const c = swapCandidates(s)
+    expect(c.map((x) => [x.window.sourceIn, x.original])).toEqual([
+      [30, false],
+      [40, false]
+    ])
+  })
+
+  it("offers the AI's original back after a swap, never the shot in use", () => {
+    const s = seg(10, 12.6, { alternates: [alt(30, 33), alt(40, 43)] })
+    const swapped = swapSegment(s, toWindow(alt(30, 33)), 'free')!
+    const c = swapCandidates(swapped)
+    expect(c.map((x) => [x.window.sourceIn, x.original])).toEqual([
+      [10, true],
+      [40, false]
+    ])
+  })
+
+  it('keeps the first original across a second swap, and clears it on the way back', () => {
+    const s = seg(10, 12.6, { alternates: [alt(30, 33), alt(40, 43)] })
+    const once = swapSegment(s, toWindow(alt(30, 33)), 'free')!
+    const twice = swapSegment(once, toWindow(alt(40, 43)), 'free')!
+    expect(segmentSwappedFrom(twice)).toMatchObject({ sourceIn: 10, sourceOut: 12.6 })
+    const back = swapSegment(twice, segmentSwappedFrom(twice)!, 'free')!
+    expect(back.swappedFrom).toBeUndefined()
+    expect(back).toMatchObject({ sourceIn: 10, sourceOut: 12.6 })
   })
 })

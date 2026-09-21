@@ -11,6 +11,8 @@ from packages.core.logging import configure_logging, get_logger
 from packages.core.settings import _ENV_FILES, assert_production_secrets, get_settings
 from services.api.routers import (
     auth,
+    billing,
+    contact,
     effect_styles,
     jobs,
     releases,
@@ -91,7 +93,9 @@ def create_app() -> FastAPI:
         # player has no idea what it received and refuses to load the file at
         # all (measured 2026-09-08 — a clean 206 whose Content-Range was
         # invisible, and a video that would not start).
-        expose_headers=["Content-Range", "Content-Length", "Accept-Ranges"],
+        # Retry-After rides on every 429 from the rate limiter
+        # (services/api/ratelimit.py); without it here a browser cannot read it.
+        expose_headers=["Content-Range", "Content-Length", "Accept-Ranges", "Retry-After"],
     )
 
     @app.get("/health", tags=["meta"])
@@ -100,6 +104,8 @@ def create_app() -> FastAPI:
 
     for r in (
         auth,
+        billing,
+        contact,
         effect_styles,
         jobs,
         releases,

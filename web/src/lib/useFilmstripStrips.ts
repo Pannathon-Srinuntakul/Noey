@@ -89,19 +89,26 @@ export function useFilmstripStrips(
     let cancelled = false
     const aborter = new AbortController()
 
-    const toStrip = (r: Required<SidecarStripRow>): FilmstripStrip => ({
-      count: r.count,
-      tileSec: r.tileSec,
-      tileWidth: r.tileWidth,
-      tileHeight: r.tileHeight,
-      // Tile names are `t_%05d.jpg` from 1 — the engine deliberately does
-      // not ship the list, which would be hundreds of redundant strings.
-      urlFor: (i: number) =>
-        window.noey.media.urlFor(
-          localUid,
-          `filmstrip/${r.id}/t_${String(i + 1).padStart(5, '0')}.jpg`
-        )
-    })
+    const toStrip = (r: Required<SidecarStripRow>): FilmstripStrip => {
+      // A lane asks for every visible tile's URL on every paint, and building
+      // one splits, encodes and joins the path. A tile's URL never changes for
+      // the life of the strip, so each is built once, the first time it is
+      // asked for.
+      const urls = new Array<string | undefined>(r.count)
+      return {
+        count: r.count,
+        tileSec: r.tileSec,
+        tileWidth: r.tileWidth,
+        tileHeight: r.tileHeight,
+        // Tile names are `t_%05d.jpg` from 1 — the engine deliberately does
+        // not ship the list, which would be hundreds of redundant strings.
+        urlFor: (i: number) =>
+          (urls[i] ??= window.noey.media.urlFor(
+            localUid,
+            `filmstrip/${r.id}/t_${String(i + 1).padStart(5, '0')}.jpg`
+          ))
+      }
+    }
 
     const merge = (row: Required<SidecarStripRow>): void => {
       if (cancelled) return

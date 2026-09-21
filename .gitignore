@@ -22,11 +22,28 @@ htmlcov/
 *.cover
 .hypothesis/
 
-# ── Node (frontend/) ──────────────────────────────────────────────────────────
+# ── Node (web/, noey-frontend/) ───────────────────────────────────────────────
 node_modules/
 frontend/dist/
 frontend/.vite/
+.vite/
 *.tsbuildinfo
+.eslintcache
+coverage/
+
+# Next.js (noey-frontend/) — build output, generated types, deploy link, certs
+.next/
+noey-frontend/out/
+next-env.d.ts
+.vercel/
+*.pem
+
+# ── Temporary repro tests left by bug-hunt runs ───────────────────────────────
+web/src/__bughunt_tmp__/
+backend/tests/_bughunt_tmp_*/
+
+# ── Claude Code: personal, per-machine settings (shared settings stay tracked) ─
+.claude/settings.local.json
 
 # ── Runtime / generated data ──────────────────────────────────────────────────
 backend/data/

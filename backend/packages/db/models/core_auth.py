@@ -11,9 +11,11 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     ForeignKey,
+    Integer,
     String,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -21,7 +23,9 @@ from sqlalchemy.orm import Mapped, mapped_column
 from packages.db.base import Base
 
 CORE_SCHEMA = "core"
-PLAN_VALUES = ("free", "starter", "pro", "enterprise")
+# lite/starter/pro/studio are the self-service paid tiers (packages/billing/
+# catalog.py maps each to its Stripe price); `enterprise` is admin-only.
+PLAN_VALUES = ("free", "lite", "starter", "pro", "studio", "enterprise")
 
 
 class Tenant(Base):
@@ -45,6 +49,19 @@ class User(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     email: Mapped[str] = mapped_column(String(255), unique=True)
     password_hash: Mapped[str] = mapped_column(String(255))
+    # What the person wants to be called. NULL = never set (the UI falls back
+    # to the email). Set at self-service registration or via PATCH /auth/me.
+    display_name: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    # When the person proved they own `email` (verification link, password
+    # reset, or a confirmed email change). NULL = not verified yet. Accounts
+    # that existed before verification shipped were backfilled as verified.
+    email_verified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # Every JWT carries this as its `tv` claim; bumping it (password change or
+    # reset) invalidates every token issued before. Tokens without `tv` count
+    # as 0, which is why the column starts at 0.
+    token_version: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
     # Subscription plan — limits monthly token usage (see packages/llm/usage.py)

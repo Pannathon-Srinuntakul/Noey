@@ -103,7 +103,11 @@ def test_dub_edit_system_video_default_splice_keeps_editing_style_rules() -> Non
     # Variety is visual, not temporal — the same-span preference now lives in
     # <continuity> and is bounded by <distinct_shots>.
     assert "Distance in TIME never makes two cuts different" in spliced
-    assert "0.5–1.5s each" in spliced
+    # Pace is capped by cut LENGTH, not cut count: "2–3 quick cuts" per line let
+    # long lines stretch every cut to ~3s on a shoe review (2026-09-21).
+    assert "2–3 quick cuts" not in spliced
+    assert "0.8–2s each, as many as the line's length needs" in spliced
+    assert "no cut runs past about 2s" in spliced
 
 
 def test_build_dub_edit_context_text_video() -> None:

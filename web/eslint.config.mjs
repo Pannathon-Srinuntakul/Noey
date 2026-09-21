@@ -39,9 +39,13 @@ export default defineConfig(
     }
   },
   {
-    // Ported from frontend/src/hud/VideoTimelineEditor.tsx — keep the source
-    // close to the original (frontend lint conventions) for future syncs.
-    files: ['src/components/TimelineEditor.tsx'],
+    // The timeline editor and the hooks split out of it keep the effect
+    // dependency lists, the render-time ref reads, the state set from effects
+    // and the unannotated return types they were written with. The lists
+    // exhaustive-deps asks for are not a lint fix here: adding them would
+    // change WHEN the playback loop, the preview loader and the draft debounce
+    // run, which is behaviour.
+    files: ['src/components/TimelineEditor.tsx', 'src/components/timeline/hooks/*.ts'],
     rules: {
       '@typescript-eslint/explicit-function-return-type': 'off',
       'react-hooks/exhaustive-deps': 'off',

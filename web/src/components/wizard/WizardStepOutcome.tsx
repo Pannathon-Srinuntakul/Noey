@@ -1,12 +1,7 @@
 import { useState } from 'react'
 import { Check, ChevronDown, Clapperboard, Layers, Mic, Music2, Scissors, X } from 'lucide-react'
 import { cn } from '../../lib/cn'
-import {
-  DUB_DURATION_AUTO,
-  DUB_DURATION_FIXED,
-  DUB_SCRIPT_STYLES,
-  dubTargetDurationSec
-} from '../../lib/dubBrief'
+import { DUB_DURATION_AUTO, DUB_DURATION_FIXED, dubTargetDurationSec } from '../../lib/dubBrief'
 import type { StyleSummary } from '../../lib/stylesApi'
 import {
   UI_MODE_LABEL,
@@ -31,14 +26,19 @@ const MODE_CARDS: { value: UiMode; icon: typeof Mic; blurb: string; badge?: stri
   {
     value: 'silence',
     icon: Mic,
-    blurb: 'คลิปพูดหน้ากล้อง ตัดช่วงเงียบและเทคซ้ำออก คงเสียงเดิม'
+    // Says only what the pipeline does: it cuts pauses. A filler goes only when
+    // the cleaned transcript leaves a long enough gap around it, and a sentence
+    // said twice is not detected — so no "เทคซ้ำ" or "คำติดขัด" claim.
+    blurb: 'คลิปพูดหน้ากล้อง ตัดช่วงเงียบออก คงเสียงเดิม ได้ซับจากเสียงพูด'
   },
   {
     value: 'highlight',
     // Clapperboard, not scissors — Scissors already means "trim the music" on
     // this same screen, and one glyph cannot mean two things at once.
     icon: Clapperboard,
-    blurb: 'เลือกฉากเด่นจากหลายคลิป แล้วตั้งค่าด้านล่างว่าจะพากย์หรือไม่ และจะใส่เพลงไหม'
+    // Owner, 2026-09-21: say up front that this mode is for selling — its
+    // prompt writes a sales script and picks product shots.
+    blurb: 'คลิปขายของสำหรับปักตะกร้า AI เลือกช็อตโชว์สินค้าเด่นจากหลายคลิป พร้อมสคริปต์ขาย เลือกได้ว่าจะพากย์หรือใส่เพลง'
   },
   {
     value: 'longform',
@@ -243,32 +243,9 @@ export function WizardStepOutcome({
               )}
             </Row>
 
-            {/* Both of these answer "where does the script come from", so they
-                take the same slot: the styles when AI writes it, the script
-                itself when the user does. Voiceover "none" has no answer and
-                no row. */}
-            {state.voiceover === 'ai' ? (
-              <Row label="สไตล์สคริปต์" hint="เลือกได้หลายข้อ">
-                <div className="flex flex-wrap items-center gap-[22px]">
-                  {DUB_SCRIPT_STYLES.map(({ value, label }) => (
-                    <Checkbox
-                      key={value}
-                      id={`script-style-${value}`}
-                      label={label}
-                      checked={state.scriptStyles.includes(value)}
-                      onChange={() =>
-                        patch({
-                          scriptStyles: state.scriptStyles.includes(value)
-                            ? state.scriptStyles.filter((s) => s !== value)
-                            : [...state.scriptStyles, value]
-                        })
-                      }
-                    />
-                  ))}
-                </div>
-              </Row>
-            ) : null}
-
+            {/* The script itself, when the user writes it. AI-written scripts
+                have no row: the script-style picker was removed (2026-09-21)
+                because no prompt rule read it. */}
             {state.voiceover === 'own' ? (
               <Row label="สคริปต์พากย์" hint="บรรทัดละประโยค" align="top">
                 <Textarea

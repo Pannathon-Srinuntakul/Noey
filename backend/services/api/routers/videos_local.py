@@ -140,6 +140,34 @@ class ProxyManifestEntry(BaseModel):
 class PlanDubIn(BaseModel):
     voDurationSec: float = Field(gt=0)
     clipDurations: list[float] = Field(min_length=1)
+    # Where the attached music sits on the output timeline, so beat times
+    # (measured on the whole file) can be moved to output time. Optional with
+    # "untrimmed track at 0" defaults — clients that do not send them keep the
+    # old behaviour. Same names the client's mix-music call uses.
+    musicOffsetSec: float = Field(0.0, ge=0)
+    musicTrimInSec: float = Field(0.0, ge=0)
+    musicTrimOutSec: float | None = Field(None, gt=0)
+
+
+def _music_window_kwargs(
+    offset_sec: float, trim_in_sec: float, trim_out_sec: float | None
+) -> dict[str, float]:
+    """Job kwargs placing the music on the output timeline (music_beats_on_output).
+
+    Empty for the default window, so the enqueued job keeps its old kwargs and
+    a worker still running the previous code never sees an argument it does
+    not accept.
+    """
+    if trim_out_sec is not None and trim_out_sec <= trim_in_sec:
+        raise HTTPException(422, "ช่วงตัดเพลงไม่ถูกต้อง — จุดจบต้องอยู่หลังจุดเริ่ม")
+    kwargs: dict[str, float] = {}
+    if offset_sec:
+        kwargs["music_offset_sec"] = offset_sec
+    if trim_in_sec:
+        kwargs["music_trim_in_sec"] = trim_in_sec
+    if trim_out_sec is not None:
+        kwargs["music_trim_out_sec"] = trim_out_sec
+    return kwargs
 
 
 class ReeditManifestIn(BaseModel):
@@ -213,10 +241,14 @@ async def analyze_frames(
     session: AsyncSession = Depends(db_session),
     files: list[UploadFile] = File(...),
     manifest: str = Form(...),
+    music_offset_sec: float = Form(0.0, ge=0),
+    music_trim_in_sec: float = Form(0.0, ge=0),
+    music_trim_out_sec: float | None = Form(None, gt=0),
 ) -> AnalyzeFramesOut:
     proj = await _get_local_project(session, uid, auth.user_id)
     if proj.mode not in ("dub_first", "highlight"):
         raise HTTPException(400, "analyze-frames ใช้ได้เฉพาะโหมด dub_first / highlight")
+    music_window = _music_window_kwargs(music_offset_sec, music_trim_in_sec, music_trim_out_sec)
     if proj.status not in RESTARTABLE_STATUSES:
         raise HTTPException(400, f"โปรเจกต์นี้ยังทำงานอยู่ (สถานะ {proj.status}) — กดหยุดงานก่อนถ้าจะเริ่มใหม่")
 
@@ -270,7 +302,10 @@ async def analyze_frames(
     proj.job_id = job_id
     await session.commit()
 
-    await _enqueue(job_id, "analyze_dub_local", project_uid=uid, tenant_slug=auth.tenant_slug)
+    await _enqueue(
+        job_id, "analyze_dub_local",
+        project_uid=uid, tenant_slug=auth.tenant_slug, **music_window,
+    )
     return AnalyzeFramesOut(job_id=job_id)
 
 
@@ -285,6 +320,9 @@ async def analyze_video(
     brief: str = Form(""),
     engine: str = Form(""),
     precision: str = Form(""),
+    music_offset_sec: float = Form(0.0, ge=0),
+    music_trim_in_sec: float = Form(0.0, ge=0),
+    music_trim_out_sec: float | None = Form(None, gt=0),
 ) -> AnalyzeFramesOut:
     """dub_first: receive per-clip proxy MP4s (Gemini native-video path).
 
@@ -301,10 +339,17 @@ async def analyze_video(
     through the project row (create-time is the only other place it is set), so
     a re-analyze with no way to update it would silently drop the comments.
     Empty means "keep what is stored" — never blank an existing brief.
+
+    ``music_offset_sec`` / ``music_trim_in_sec`` / ``music_trim_out_sec`` —
+    OPTIONAL placement of the attached music on the output timeline, so the
+    stored beat times (file time) reach the prompt as output time. Same
+    contract on analyze-frames and reedit-dub-scenes; defaults = untrimmed
+    track at 0.
     """
     proj = await _get_local_project(session, uid, auth.user_id)
     if proj.mode not in ("dub_first", "highlight"):
         raise HTTPException(400, "analyze-video ใช้ได้เฉพาะโหมด dub_first / highlight")
+    music_window = _music_window_kwargs(music_offset_sec, music_trim_in_sec, music_trim_out_sec)
     if proj.status not in RESTARTABLE_STATUSES:
         raise HTTPException(400, f"โปรเจกต์นี้ยังทำงานอยู่ (สถานะ {proj.status}) — กดหยุดงานก่อนถ้าจะเริ่มใหม่")
 
@@ -426,6 +471,7 @@ async def analyze_video(
         project_uid=uid,
         tenant_slug=auth.tenant_slug,
         style_uid=chosen_style_uid,
+        **music_window,
     )
     return AnalyzeFramesOut(job_id=job_id)
 
@@ -440,6 +486,8 @@ async def plan_dub(
     proj = await _get_local_project(session, uid, auth.user_id)
     if not proj.edit_script_path:
         raise HTTPException(400, "ยังไม่มี edit script — ต้อง analyze ก่อน")
+    # Validation only — the values go to plan_dub_timeline_cuts directly.
+    _music_window_kwargs(body.musicOffsetSec, body.musicTrimInSec, body.musicTrimOutSec)
 
     root = data_root()
     try:
@@ -455,7 +503,13 @@ async def plan_dub(
     )
     try:
         render_cuts = await plan_dub_timeline_cuts(
-            edit_script, body.voDurationSec, body.clipDurations, music_beats=proj.music_beats
+            edit_script,
+            body.voDurationSec,
+            body.clipDurations,
+            music_beats=proj.music_beats,
+            music_offset_sec=body.musicOffsetSec,
+            music_trim_in_sec=body.musicTrimInSec,
+            music_trim_out_sec=body.musicTrimOutSec,
         )
     except ValueError as exc:
         # Through the SAME funnel the Exception arm below uses. `str(exc)`
@@ -1252,6 +1306,9 @@ async def reedit_dub_scenes(
     proxies: list[UploadFile] = File(default_factory=list),
     proxy_manifest: str = Form(""),
     style_uid: str = Form(""),
+    music_offset_sec: float = Form(0.0, ge=0),
+    music_trim_in_sec: float = Form(0.0, ge=0),
+    music_trim_out_sec: float | None = Form(None, gt=0),
 ) -> AnalyzeFramesOut:
     """dub_first: AI-assisted re-edit of the current edit script.
 
@@ -1273,6 +1330,7 @@ async def reedit_dub_scenes(
     proj = await _get_local_project(session, uid, auth.user_id)
     if proj.mode not in ("dub_first", "highlight"):
         raise HTTPException(400, "reedit-dub-scenes ใช้ได้เฉพาะโหมด dub_first / highlight")
+    music_window = _music_window_kwargs(music_offset_sec, music_trim_in_sec, music_trim_out_sec)
     if proj.status not in RESTARTABLE_STATUSES:
         raise HTTPException(400, f"โปรเจกต์นี้ยังทำงานอยู่ (สถานะ {proj.status}) — กดหยุดงานก่อนถ้าจะเริ่มใหม่")
     if not proj.edit_script_path:
@@ -1378,6 +1436,7 @@ async def reedit_dub_scenes(
         project_uid=uid,
         tenant_slug=auth.tenant_slug,
         style_uid=chosen_style_uid,
+        **music_window,
     )
     return AnalyzeFramesOut(job_id=job_id)
 

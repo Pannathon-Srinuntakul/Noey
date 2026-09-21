@@ -199,25 +199,53 @@ export async function removeFile(uid: string, rel: string): Promise<void> {
 }
 
 /**
- * Copy a picked audio file into `music/`, then clear the rest of that folder.
+ * Copy a picked audio file into `music/` under a name no other file there has.
  *
- * Copy-then-clean, in that order, exactly like the desktop version: cleaning
- * first would lose the track if the copy failed. Returns the PROJECT-RELATIVE
- * path, which is what the UI persists.
+ * It used to clear the rest of the folder, and overwrite a file of the same
+ * name. The editor's history still points at the track it replaced, so undoing
+ * "เปลี่ยนเพลง" restored a path to a deleted (or overwritten) file: no
+ * waveform, no sound, and a render that failed on the read. Replaced tracks
+ * now stay until `pruneMusic` runs, once nothing can undo back to them.
+ * Returns the PROJECT-RELATIVE path, which is what the UI persists.
  */
 export async function importMusic(uid: string, src: string): Promise<string> {
   const staged = await stageIntoStore(src, uid)
   const file = await readFile(staged)
   if (!file) throw new Error('อ่านไฟล์เพลงไม่ได้')
-  const base = file.name
-  const rel = `music/${base}`
+  const rel = await freeMusicPath(uid, file.name)
   await writeFileAtomic(projectFilePath(uid, rel), file)
-  for (const entry of await listDir(projectFilePath(uid, 'music'))) {
-    if (entry.kind === 'file' && entry.name !== base) {
-      await deleteFile(projectFilePath(uid, `music/${entry.name}`))
-    }
-  }
   return rel
+}
+
+/** `music/<name>`, or `music/<stem>-2.<ext>` (-3, …) when that is taken. */
+async function freeMusicPath(uid: string, name: string): Promise<string> {
+  const dot = name.lastIndexOf('.')
+  const stem = dot > 0 ? name.slice(0, dot) : name
+  const ext = dot > 0 ? name.slice(dot) : ''
+  let rel = `music/${name}`
+  for (let n = 2; await exists(projectFilePath(uid, rel)); n++) rel = `music/${stem}-${n}${ext}`
+  return rel
+}
+
+/**
+ * Delete every file in `music/` except `keep` (the attached track, and any a
+ * kept undo history can still restore). Called once nothing else can point at
+ * a replaced track — the editor closing, or an import that attaches a fresh
+ * copy. Returns how many files went, so the caller knows whether the server
+ * copy needs a sync.
+ */
+export async function pruneMusic(
+  uid: string,
+  keep: string | readonly string[] | undefined
+): Promise<number> {
+  const kept = new Set(typeof keep === 'string' ? [keep] : (keep ?? []))
+  let removed = 0
+  for (const entry of await listDir(projectFilePath(uid, 'music'))) {
+    if (entry.kind !== 'file' || kept.has(`music/${entry.name}`)) continue
+    await deleteFile(projectFilePath(uid, `music/${entry.name}`))
+    removed++
+  }
+  return removed
 }
 
 // ── stash / restore (the R12 undo mechanism) ─────────────────────────────────
@@ -304,6 +332,19 @@ export interface Artifact {
 }
 
 /**
+ * Files in a per-render directory (`clips/`, `highlights/`). The local store
+ * wins whenever it has any: a render rewrites the whole directory here, while
+ * the cached server manifest can still list files an earlier, longer cut left
+ * behind — a re-cut to 17 scenes exported as "18 ไฟล์" (live report
+ * 2026-09-21). `engine/bundle.ts` follows the same rule for the zip. Only a
+ * project whose renders all ran in another browser falls back to the server.
+ */
+async function renderDirEntries(uid: string, dir: string): ReturnType<typeof listProjectDir> {
+  const local = (await listDir(projectFilePath(uid, dir))).filter((e) => e.kind === 'file')
+  return local.length > 0 ? local : listProjectDir(uid, dir)
+}
+
+/**
  * What this project has that is worth exporting.
  *
  * `ExportVideoModal` calls this (on desktop it comes from the LAN module) and
@@ -332,7 +373,7 @@ export async function artifacts(uid: string): Promise<Artifact[]> {
   }
 
   // Highlights first — that mode has no single final video.
-  for (const e of await listProjectDir(uid, 'highlights')) {
+  for (const e of await renderDirEntries(uid, 'highlights')) {
     if (e.kind === 'file' && e.name.endsWith('.mp4')) {
       await add(`highlights/${e.name}`, `ไฮไลต์ ${e.name.replace('.mp4', '')}`, 'final')
     }
@@ -342,7 +383,7 @@ export async function artifacts(uid: string): Promise<Artifact[]> {
     if (out.some((a) => a.id === name)) break
   }
   await add('captions/subtitles.srt', 'ไฟล์คำบรรยาย', 'subs')
-  for (const e of await listProjectDir(uid, 'clips')) {
+  for (const e of await renderDirEntries(uid, 'clips')) {
     if (e.kind === 'file' && e.name.endsWith('.mp4')) {
       await add(`clips/${e.name}`, `ฉาก ${e.name.replace(/\D/g, '')}`, 'scene')
     }

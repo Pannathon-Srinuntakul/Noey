@@ -52,8 +52,11 @@ async def main() -> None:
         )).scalar_one_or_none()
 
         if existing_user is None:
+            # Verified by construction (the operator chose the address), like
+            # every account the 01d8a4238d07 backfill grandfathered. On a fresh
+            # database that backfill runs BEFORE this seed and so misses it.
             res = await conn.execute(
-                text("INSERT INTO core.users (email, password_hash, is_active, is_admin) VALUES (:email, :hash, true, true) RETURNING id"),
+                text("INSERT INTO core.users (email, password_hash, is_active, is_admin, email_verified_at) VALUES (:email, :hash, true, true, now()) RETURNING id"),
                 {"email": ADMIN_EMAIL, "hash": hash_password(ADMIN_PASSWORD)},
             )
             user_id: int = res.scalar_one()

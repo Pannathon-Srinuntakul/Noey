@@ -15,6 +15,7 @@ from services.api.routers.videos_local import (
     LocalClipMeta,
     LocalProjectIn,
     PlanDubIn,
+    _music_window_kwargs,
 )
 
 
@@ -61,6 +62,36 @@ def test_plan_dub_in_validation() -> None:
         PlanDubIn(voDurationSec=30.0, clipDurations=[])
     ok = PlanDubIn(voDurationSec=30.0, clipDurations=[10.0, 20.0])
     assert ok.voDurationSec == 30.0
+    # Music window is optional: current clients send none and get "untrimmed at 0".
+    assert (ok.musicOffsetSec, ok.musicTrimInSec, ok.musicTrimOutSec) == (0.0, 0.0, None)
+    with pytest.raises(ValidationError):
+        PlanDubIn(voDurationSec=30.0, clipDurations=[10.0], musicTrimInSec=-1)
+
+
+def test_music_window_kwargs_only_carries_non_defaults() -> None:
+    from fastapi import HTTPException
+
+    # Default window -> no kwargs, so a worker on older code never sees them.
+    assert _music_window_kwargs(0.0, 0.0, None) == {}
+    assert _music_window_kwargs(1.5, 3.0, 20.0) == {
+        "music_offset_sec": 1.5, "music_trim_in_sec": 3.0, "music_trim_out_sec": 20.0,
+    }
+    with pytest.raises(HTTPException):
+        _music_window_kwargs(0.0, 5.0, 5.0)
+
+
+def test_local_dub_tasks_accept_music_window() -> None:
+    import inspect
+
+    from services.worker.tasks import (
+        analyze_dub_local,
+        analyze_dub_video_local,
+        reedit_dub_scenes_local,
+    )
+
+    for task in (analyze_dub_local, analyze_dub_video_local, reedit_dub_scenes_local):
+        params = inspect.signature(task).parameters
+        assert {"music_offset_sec", "music_trim_in_sec", "music_trim_out_sec"} <= set(params)
 
 
 def test_local_statuses_exclude_pending_and_cancelled() -> None:

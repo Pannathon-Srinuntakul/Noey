@@ -22,6 +22,7 @@ from packages.core.logging import get_logger
 from packages.core.settings import get_settings
 from packages.llm.config import model_params
 from packages.llm.usage import (
+    EmailNotVerified,
     UsageLimitExceeded,
     check_limit,
     extract_stream_usage_from_chunks,
@@ -141,7 +142,9 @@ async def acompletion(
     if ctx is not None:
         try:
             await check_limit(ctx)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
+            if isinstance(exc, EmailNotVerified):
+                raise HTTPException(status_code=403, detail=str(exc)) from exc
             if isinstance(exc, UsageLimitExceeded):
                 raise HTTPException(
                     status_code=429,
@@ -383,7 +386,9 @@ async def acompletion_stream_thinking(
     if ctx is not None:
         try:
             await check_limit(ctx)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
+            if isinstance(exc, EmailNotVerified):
+                raise HTTPException(status_code=403, detail=str(exc)) from exc
             if isinstance(exc, UsageLimitExceeded):
                 raise HTTPException(
                     status_code=429,

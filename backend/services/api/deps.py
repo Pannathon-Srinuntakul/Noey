@@ -4,14 +4,17 @@ from collections.abc import AsyncIterator
 from typing import Annotated
 
 import jwt
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from packages.auth.tokens import decode
+from packages.auth.tokens import decode, token_version_matches
 from packages.db.models.core_auth import Membership, Tenant, User
 from packages.db.session import get_sessionmaker, bind_tenant_search_path
+from packages.email.client import email_config_problem, get_mailer
+from packages.email.message import Mailer
+from services.api.ai_gate import enforce_ai_gate
 
 
 # ── core (auth) session ───────────────────────────────────────────────────────
@@ -78,6 +81,7 @@ class AuthUser:
 
 
 async def current_user(
+    request: Request,
     creds: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
     session: Annotated[AsyncSession, Depends(core_session)],
 ) -> AuthUser:
@@ -99,6 +103,10 @@ async def current_user(
     ).scalar_one_or_none()
     if user is None:
         raise _401
+    # Revoked by a password change/reset since this token was issued
+    # (a token from before revocation shipped has no `tv`: version 0).
+    if not token_version_matches(payload, user.token_version):
+        raise _401
 
     tenant = (
         await session.execute(select(Tenant).where(Tenant.id == tenant_id))
@@ -118,8 +126,33 @@ async def current_user(
     if mem is None:
         raise _401
 
+    # Unverified accounts may not START paid AI work — the central list is in
+    # services/api/ai_gate.py; every other route passes straight through.
+    enforce_ai_gate(request, user)
+
     return AuthUser(user=user, tenant=tenant)
 
 
 # Convenient type alias for router parameters
 CurrentUser = Annotated[AuthUser, Depends(current_user)]
+
+
+# ── email ─────────────────────────────────────────────────────────────────────
+
+def optional_mailer() -> Mailer | None:
+    """The mailer, or None while email is not configured. Overridden in tests."""
+    return get_mailer()
+
+
+def mailer(found: Annotated[Mailer | None, Depends(optional_mailer)]) -> Mailer:
+    """The mailer, or 503 naming what is missing."""
+    if found is None:
+        raise HTTPException(
+            status_code=503,
+            detail=email_config_problem() or "email is not configured on this server",
+        )
+    return found
+
+
+OptionalMailerDep = Annotated[Mailer | None, Depends(optional_mailer)]
+MailerDep = Annotated[Mailer, Depends(mailer)]

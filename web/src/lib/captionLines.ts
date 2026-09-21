@@ -1,8 +1,9 @@
 /** Client-side caption-line grouping — mirrors the default `words_per_line`
  * grouping in backend/packages/video/caption.py so a project opened for the
  * first time in the editor gets a sensible initial line breakdown, without
- * needing a round-trip to the server. Once the user edits/saves, the edited
- * `captionLines` persist and this grouping is never re-applied. */
+ * needing a round-trip to the server. The grouping is re-applied to the
+ * current cut on every render; only lines the user edited are stored, and
+ * they are laid over it (captionEdits.ts). */
 
 export interface CaptionWord {
   word: string
@@ -10,11 +11,31 @@ export interface CaptionWord {
   end: number
 }
 
+/** A stretch of source footage a caption line sits on: `in`/`out` are
+ * clip-local seconds of `source`, like a cut's. */
+export interface CaptionSourcePiece {
+  source: string
+  in: number
+  out: number
+}
+
 export interface CaptionLine {
   id: string
   text: string
+  /** Output-clock seconds. */
   start: number
   end: number
+  /** The user changed this line in the editor. Only such lines are stored —
+   * every other line is derived from the cut as it is at render time, so it
+   * can never go stale against a trim, a delete or a retyped script (see
+   * captionEdits.ts). */
+  edited?: boolean
+  /** An edited line the user removed: never shown or burned, it only keeps
+   * the derived line under it from coming back. */
+  deleted?: boolean
+  /** Where an edited line sits in the SOURCE footage, piece by piece in output
+   * order — what lets it follow its scene when cuts move. */
+  anchor?: CaptionSourcePiece[]
 }
 
 /** Thai script block (U+0E00–U+0E7F) — matches `_THAI_CHAR_RE` in caption.py. */

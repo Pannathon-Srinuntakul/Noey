@@ -919,6 +919,7 @@ from packages.video.dub_ai import (  # noqa: E402  (prompt + LLM cores shared wi
     generate_dub_edit_script,
     generate_dub_edit_script_video,
     generate_dub_reedit_script_video,
+    music_beats_on_output,
     plan_dub_timeline_cuts,
     select_video_edit_prompts,
 )
@@ -1272,13 +1273,28 @@ async def plan_dub_timeline(ctx: dict[str, Any], *, job_id: str, project_uid: st
 # ── task: analyze_dub_local ──────────────────────────────────────────────────
 
 
-async def analyze_dub_local(ctx: dict[str, Any], *, job_id: str, project_uid: str, tenant_slug: str) -> dict:
+async def analyze_dub_local(
+    ctx: dict[str, Any],
+    *,
+    job_id: str,
+    project_uid: str,
+    tenant_slug: str,
+    music_offset_sec: float = 0.0,
+    music_trim_in_sec: float = 0.0,
+    music_trim_out_sec: float | None = None,
+) -> dict:
     """Local-render (desktop) variant of analyze_dub_first.
 
     The desktop app already extracted frames locally and uploaded the JPEGs +
     frames_manifest.json via POST /videos/{uid}/analyze-frames — no video files
     exist on the server. This task only runs the Vision call and stores
     edit_script.json; the desktop app then renders silently on the user's machine.
+
+    ``music_*`` (optional, same on analyze_dub_video_local and
+    reedit_dub_scenes_local) place the attached music on the output timeline so
+    the stored file-time beats reach the prompt as output time — see
+    music_beats_on_output. The API only sends them when they differ from the
+    default untrimmed-at-0 window.
     """
     log.info("task_start", task="analyze_dub_local", project_uid=project_uid)
     await _video_progress(job_id, 20, "analyze", "กำลังวิเคราะห์ frames…")
@@ -1325,7 +1341,12 @@ async def analyze_dub_local(ctx: dict[str, Any], *, job_id: str, project_uid: st
             user_script=proj.user_script or "",
             target_duration_sec=getattr(proj, "target_duration_sec", None),
             project_uid=project_uid,
-            music_beats=proj.music_beats,
+            music_beats=music_beats_on_output(
+                proj.music_beats,
+                offset_sec=music_offset_sec,
+                trim_in_sec=music_trim_in_sec,
+                trim_out_sec=music_trim_out_sec,
+            ),
             on_thinking=_push_thinking,
         )
 
@@ -1477,6 +1498,9 @@ async def analyze_dub_video_local(
     project_uid: str,
     tenant_slug: str,
     style_uid: str = "",
+    music_offset_sec: float = 0.0,
+    music_trim_in_sec: float = 0.0,
+    music_trim_out_sec: float | None = None,
 ) -> dict:
     """Local-render (desktop) dub_first variant using Gemini native video.
 
@@ -1578,7 +1602,12 @@ async def analyze_dub_video_local(
             user_script=proj.user_script or "",
             target_duration_sec=getattr(proj, "target_duration_sec", None),
             project_uid=project_uid,
-            music_beats=proj.music_beats,
+            music_beats=music_beats_on_output(
+                proj.music_beats,
+                offset_sec=music_offset_sec,
+                trim_in_sec=music_trim_in_sec,
+                trim_out_sec=music_trim_out_sec,
+            ),
             system=edit_system,
             style_prompt=style_prompt,
             default_cut_style_prose=edit_default_prose,
@@ -1900,6 +1929,9 @@ async def reedit_dub_scenes_local(
     project_uid: str,
     tenant_slug: str,
     style_uid: str = "",
+    music_offset_sec: float = 0.0,
+    music_trim_in_sec: float = 0.0,
+    music_trim_out_sec: float | None = None,
 ) -> dict:
     """AI-assisted re-edit of an existing dub_first edit script (desktop only).
 
@@ -1995,7 +2027,12 @@ async def reedit_dub_scenes_local(
             selected_line_ids=selected_line_ids,
             instruction=instruction,
             project_uid=project_uid,
-            music_beats=proj.music_beats,
+            music_beats=music_beats_on_output(
+                proj.music_beats,
+                offset_sec=music_offset_sec,
+                trim_in_sec=music_trim_in_sec,
+                trim_out_sec=music_trim_out_sec,
+            ),
             target_duration_sec=getattr(proj, "target_duration_sec", None),
             style_prompt=style_prompt,
             on_thinking=_push_thinking,

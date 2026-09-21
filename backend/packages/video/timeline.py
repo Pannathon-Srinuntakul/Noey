@@ -232,6 +232,47 @@ def localize_cuts(
     return out
 
 
+def clamp_per_clip_cuts(
+    cuts: list[dict[str, Any]],
+    clip_durations: list[float],
+) -> list[dict[str, Any]]:
+    """Normalise cuts whose in/out are ALREADY local to their own `source` clip.
+
+    The dub timeline planner copies each segment's sourceClip + per-clip
+    sourceIn/sourceOut, so its output must not go through localize_cuts: with
+    two or more clips that reads in/out as combined-timeline time and ignores
+    `source`, turning {clip1, 5-8} into {clip0, 5-8} and splitting a cut near
+    clip0's length across the seam. Here the source is kept and in/out are only
+    clamped to that clip's duration.
+
+    A single-clip project has no ambiguity, so a missing or unknown source is
+    pinned to clip0 (what localize_cuts always did). With several clips there
+    is no safe guess — such a cut is dropped rather than rendered from the
+    wrong footage.
+    """
+    durations = {f"clip{i}": max(0.0, float(d)) for i, d in enumerate(clip_durations)}
+    out: list[dict[str, Any]] = []
+    for c in cuts:
+        source = str(c.get("source") or "")
+        if source not in durations:
+            if len(durations) != 1:
+                continue
+            source = "clip0"
+        duration = durations[source]
+        cut_in = max(0.0, float(c["in"]))
+        cut_out = min(float(c["out"]), duration)
+        if cut_out <= cut_in:
+            continue
+        out.append({
+            "type": "cut",
+            "source": source,
+            "in": round(cut_in, 3),
+            "out": round(cut_out, 3),
+            "label": c.get("label", "speech"),
+        })
+    return out
+
+
 def _repair_segment_words(seg: dict[str, Any]) -> list[tuple[float, float]]:
     """Fix zero-duration words and extend ends toward the next word / segment boundary."""
     seg_start, seg_end = float(seg["start"]), float(seg["end"])
@@ -1182,6 +1223,9 @@ def clamp_dub_segments_to_clip_durations(
                 "dub_segment_clamped", order=order, source_clip=clip_id,
                 source_out_original=round(float(seg["sourceOut"]), 2), clip_duration_sec=dur,
             )
+            # normalize_dub_edit_script keeps any stored durationSec, and the
+            # silent-clock captions and VO line windows are placed from it.
+            seg["durationSec"] = round(src_out - src_in, 2)
         seg["sourceIn"] = round(src_in, 2)
         seg["sourceOut"] = round(src_out, 2)
         mft = seg.get("matchedFrameTime")
@@ -1198,6 +1242,104 @@ def clamp_dub_segments_to_clip_durations(
         )
     edit_script["segments"] = kept
     return edit_script
+
+
+# Raw selfie takes end with the creator walking up to stop the recording. The
+# prompts say so (<reject_span>, <verify>), yet on a 332s shoe take (2026-09-21)
+# the last cut still ran 0.2-0.6s into that walk in 5 of 11 runs — under one
+# sampled frame at the model's ~5fps, a margin no prompt wording moves. Only
+# long takes are guarded: a clip under a minute has usually been trimmed already.
+DUB_TAIL_GUARD_SEC = 2.2
+DUB_TAIL_GUARD_MIN_CLIP_SEC = 60.0
+DUB_TAIL_GUARD_MIN_CUT_SEC = 0.8
+
+
+def pull_back_clip_tails(
+    edit_script: dict[str, Any],
+    clip_durations: dict[str, float],
+) -> dict[str, Any]:
+    """Keep every cut out of the last DUB_TAIL_GUARD_SEC of a long clip.
+
+    A cut ending inside that zone slides earlier with its length kept, as long
+    as it still starts after the previous cut taken from the same clip ends
+    (cuts play forward in time). When it cannot slide, its end is trimmed
+    instead; a cut that would drop below DUB_TAIL_GUARD_MIN_CUT_SEC is left as
+    it was. Alternates get the same guard — a free-regime shot swap adopts an
+    alternate's window whole — and are re-sanitized afterwards. Runs after
+    clamp_dub_segments_to_clip_durations, so every timestamp is already inside
+    its clip.
+    """
+    from packages.core.logging import get_logger
+
+    log = get_logger(__name__)
+    prev_out: dict[str, float] = {}
+    for seg in edit_script.get("segments") or []:
+        if not isinstance(seg, dict):
+            continue
+        _pull_back_alternate_tails(seg, clip_durations)
+        clip_id = str(seg.get("sourceClip") or "")
+        try:
+            src_in = float(seg["sourceIn"])
+            src_out = float(seg["sourceOut"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        dur = clip_durations.get(clip_id)
+        if dur is not None and dur >= DUB_TAIL_GUARD_MIN_CLIP_SEC:
+            limit = dur - DUB_TAIL_GUARD_SEC
+            overrun = src_out - limit
+            new_in, new_out = src_in, src_out
+            if overrun > 0 and src_in - overrun >= prev_out.get(clip_id, 0.0):
+                new_in, new_out = src_in - overrun, limit
+            elif overrun > 0 and limit - src_in >= DUB_TAIL_GUARD_MIN_CUT_SEC:
+                new_out = limit
+            if (new_in, new_out) != (src_in, src_out):
+                log.info(
+                    "dub_segment_tail_guard", order=seg.get("order"), source_clip=clip_id,
+                    source_in=round(src_in, 2), source_out=round(src_out, 2),
+                    new_in=round(new_in, 2), new_out=round(new_out, 2), clip_duration_sec=dur,
+                )
+                seg["sourceIn"], seg["sourceOut"] = round(new_in, 2), round(new_out, 2)
+                # A stored durationSec wins in normalize_dub_edit_script.
+                seg["durationSec"] = round(new_out - new_in, 2)
+                src_in, src_out = new_in, new_out
+                mft = seg.get("matchedFrameTime")
+                if isinstance(mft, int | float):
+                    seg["matchedFrameTime"] = round(min(max(float(mft), src_in), src_out), 2)
+        prev_out[clip_id] = max(prev_out.get(clip_id, 0.0), src_out)
+        # The main window may have moved: re-check the alternates' overlap rule.
+        sanitize_segment_alternates(seg, clip_durations)
+    return edit_script
+
+
+def _pull_back_alternate_tails(seg: dict[str, Any], clip_durations: dict[str, float]) -> None:
+    """Slide each alternate that ends inside a long clip's guarded tail earlier,
+    keeping its length; drop one that cannot keep DUB_TAIL_GUARD_MIN_CUT_SEC."""
+    alts = seg.get("alternates")
+    if not isinstance(alts, list):
+        return
+    kept: list[Any] = []
+    for alt in alts:
+        if not isinstance(alt, dict):
+            continue
+        dur = clip_durations.get(str(alt.get("sourceClip") or ""))
+        try:
+            a_in, a_out = float(alt["sourceIn"]), float(alt["sourceOut"])
+        except (KeyError, TypeError, ValueError):
+            kept.append(alt)  # malformed: sanitize_segment_alternates decides
+            continue
+        if dur is None or dur < DUB_TAIL_GUARD_MIN_CLIP_SEC or a_out <= dur - DUB_TAIL_GUARD_SEC:
+            kept.append(alt)
+            continue
+        limit = dur - DUB_TAIL_GUARD_SEC
+        new_in = max(0.0, a_in - (a_out - limit))
+        if limit - new_in < DUB_TAIL_GUARD_MIN_CUT_SEC:
+            continue
+        alt["sourceIn"], alt["sourceOut"] = round(new_in, 2), round(limit, 2)
+        mft = alt.get("matchedFrameTime")
+        if isinstance(mft, int | float):
+            alt["matchedFrameTime"] = round(min(max(float(mft), new_in), limit), 2)
+        kept.append(alt)
+    seg["alternates"] = kept
 
 
 def normalize_dub_edit_script(
