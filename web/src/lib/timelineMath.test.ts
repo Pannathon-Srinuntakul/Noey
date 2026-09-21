@@ -455,3 +455,22 @@ describe('snapTrimToBeat', () => {
     expect(out.in).toBeCloseTo(0.1, 6)
   })
 })
+
+describe('splitCutAt keeps AI shot metadata on the first half only', () => {
+  it('does not offer the same alternates twice', async () => {
+    const { splitCutAt } = await import('./timelineMath')
+    const cuts: EditCut[] = [
+      {
+        id: 'cut0',
+        source: 'clip0',
+        in: 0,
+        out: 4,
+        label: '1',
+        meta: { alternates: [{ note: 'x' }] }
+      }
+    ]
+    const next = splitCutAt(cuts, 'cut0', 2, 'new1')
+    expect(next?.[0].meta).toEqual({ alternates: [{ note: 'x' }] })
+    expect(next?.[1].meta).toBeUndefined()
+  })
+})

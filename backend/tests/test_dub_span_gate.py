@@ -40,7 +40,7 @@ def test_method_states_the_order_with_the_decision_step():
     for system in VIDEO_SYSTEMS:
         method = re.search(r"<method>(.*?)</method>", system, re.S).group(1)
         assert "Finish each step before starting the next." in method
-        for step in ("1. WATCH", "2. SPLIT", "3. DECIDE", "4. PICK", "5. "):
+        for step in ("1. WATCH", "2. SPLIT", "3. DECIDE", "4. COLLAPSE", "5. PICK", "6. "):
             assert step in method
         # Step 3 is the one that was missing entirely.
         assert "whether to use it at all" in method
@@ -69,10 +69,10 @@ def test_reject_span_gates_at_span_level_ahead_of_the_frame_rules():
 
 def test_script_no_longer_competes_to_be_the_main_procedure():
     script = re.search(r"<script>(.*?)</script>", dub_ai.DUB_EDIT_SYSTEM_VIDEO, re.S).group(1)
-    assert script.strip().startswith("This is step 5 of <method>")
+    assert script.strip().startswith("This is step 6 of <method>")
     assert "never footage to fit a line you already wrote" in script
-    # The narrative shape itself is unchanged.
-    assert "hook → product intro → features/demo → full look → CTA" in script
+    # The narrative shape; "result" replaced the fashion-only "full look".
+    assert "hook → product intro → features/demo → result → CTA" in script
 
 
 def test_verify_checks_the_span_decision():

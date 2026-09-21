@@ -29,8 +29,13 @@ type ButtonCore = {
    * reasoning Chip already uses. The reason is still required; only its
    * placement changes, so nothing can ship a disabled control with no
    * explanation.
+   *
+   * `below` is for **full-width buttons**. Beside a `w-full` button the reason
+   * has no width left: a Thai sentence wrapped one glyph per line into a column
+   * hundreds of pixels tall, and the button sat centred in it — the big empty
+   * gaps around ปรับช็อต on the project page (live report 2026-09-21).
    */
-  reasonAs?: 'text' | 'tooltip'
+  reasonAs?: 'text' | 'tooltip' | 'below'
   /**
    * Row height. `md` (40px/15px) is the app default; `sm` (36px/14px) is the
    * size R6's stacked card actions are drawn at. A size lives here rather than
@@ -75,9 +80,10 @@ export function Button({
   ...rest
 }: ButtonProps): React.JSX.Element {
   const isDisabled = disabled === true || loading
+  const reasonBelow = disabled === true && !!disabledReason && reasonAs === 'below'
 
   const button = (
-    <span className="inline-flex items-center gap-2">
+    <span className={reasonBelow ? 'flex flex-col gap-1' : 'inline-flex items-center gap-2'}>
       <button
         type="button"
         disabled={isDisabled}
@@ -95,8 +101,8 @@ export function Button({
         {loading ? <Loader2 size={16} className="animate-spin" /> : icon}
         {!iconOnly && children}
       </button>
-      {disabled === true && disabledReason && reasonAs === 'text' ? (
-        <span className="text-xs text-muted">{disabledReason}</span>
+      {disabled === true && disabledReason && (reasonAs === 'text' || reasonAs === 'below') ? (
+        <span className={cn('text-xs text-muted', reasonBelow && 'px-1')}>{disabledReason}</span>
       ) : null}
     </span>
   )

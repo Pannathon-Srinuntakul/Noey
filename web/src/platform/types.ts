@@ -85,6 +85,16 @@ export interface LocalProject {
    * Absent on projects finished before this was recorded, or resumed without a
    * timed run — the detail page then simply omits "ใช้เวลาทำ". */
   lastRunSeconds?: number
+  /** The editor wrote a draft (edit script / timeline) that no render has
+   * used yet — the clip on screen is still the one from before those edits.
+   * Set by a draft save, cleared by any run that reaches a finished step. The
+   * editor used to say this with a "not saved" dialog on the way out, which
+   * contradicted the draft it had just written (live report 2026-09-21). */
+  needsRender?: boolean
+  /** Fingerprint of the cuts + caption lines the last finished render used
+   * (useProjectPipeline `renderSig`), so a draft undone back to exactly that
+   * state is not reported as unrendered. */
+  renderedSig?: string
   remote?: { uid: string; jobId?: string }
   voiceoverPath?: string
   /** Recorded per-line takes, keyed by `voiceoverLineId`. The assembled

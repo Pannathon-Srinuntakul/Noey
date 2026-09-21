@@ -6,7 +6,7 @@
 import type { ApiSession } from './videosLocalApi'
 import { apiFetch } from './httpClient'
 import { ApiError, connectErrorMessage, refresh } from './api'
-import { apiErrorDetail } from './apiError'
+import { responseErrorDetail } from './apiError'
 import type { EffectsDoc } from './effects'
 
 async function request<T>(
@@ -48,15 +48,7 @@ async function request<T>(
     return request<T>(session, path, init, true)
   }
 
-  if (!res.ok) {
-    let detail = `HTTP ${res.status}`
-    try {
-      detail = apiErrorDetail(res.status, res.json())
-    } catch {
-      /* non-JSON body */
-    }
-    throw new ApiError(res.status, detail)
-  }
+  if (!res.ok) throw new ApiError(res.status, responseErrorDetail(res))
   if (res.status === 204) return undefined as T
   return res.json() as T
 }

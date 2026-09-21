@@ -69,9 +69,17 @@ describe('the back-fill for projects that predate the sync', () => {
     // mount, not once per session identity — see jobs.tsx).
     const jobs = readFileSync(resolve(__dirname, 'jobs.tsx'), 'utf8')
     expect(jobs).toContain('backfillUnsyncedProjects')
-    expect(jobs.indexOf('restoreMissingProjects(sessionRef.current)')).toBeLessThan(
+    expect(jobs.indexOf('restoreMissingProjects(sessionRef.current, listSoon)')).toBeLessThan(
       jobs.indexOf('backfillUnsyncedProjects(sessionRef.current)')
     )
+  })
+
+  it('lists each restored project as it lands, not all of them at the end', () => {
+    // A fresh browser showed the empty welcome page for the whole restore and
+    // people refreshed to see their work (production, 2026-09-21).
+    expect(SOURCE).toContain('onRestored?.()')
+    const jobs = readFileSync(resolve(__dirname, 'jobs.tsx'), 'utf8')
+    expect(jobs).toContain('loading: loading || (restoring && projects.length === 0)')
   })
 
   it('always reloads after the restore, even a superseded one', () => {
@@ -79,7 +87,7 @@ describe('the back-fill for projects that predate the sync', () => {
     // mid-way leaves projects on disk that its replacement counts as 0 — the
     // reload must not be gated on the count ("ต้อง refresh 1 ที", 2026-09-09).
     const jobs = readFileSync(resolve(__dirname, 'jobs.tsx'), 'utf8')
-    const idx = jobs.indexOf('await restoreMissingProjects(sessionRef.current)')
+    const idx = jobs.indexOf('await restoreMissingProjects(sessionRef.current, listSoon)')
     expect(idx).toBeGreaterThan(-1)
     expect(jobs.slice(idx, idx + 200)).toContain('finally')
   })

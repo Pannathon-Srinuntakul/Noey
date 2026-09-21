@@ -1086,7 +1086,10 @@ async def put_local_timeline(
     timeline_path.write_text(json.dumps(body, ensure_ascii=False, indent=2), encoding="utf-8")
     proj.timeline_path = str(timeline_path.relative_to(root))
     await session.commit()
-    await push_project_files(uid)
+    # Only the file that changed. `push_project_files` re-uploads the whole
+    # project (20 files, ~1 min measured 2026-09-21), and the editor's draft
+    # autosave lands here on every edit.
+    await push_output_file(uid, "timeline.json", timeline_path)
     return {"uid": uid, "cuts": len(cuts)}
 
 
@@ -1131,7 +1134,10 @@ async def put_local_edit_script(
     )
     proj.edit_script_path = str(edit_script_path.relative_to(root))
     await session.commit()
-    await push_project_files(uid)
+    # Only the file that changed — see put_local_timeline. Re-uploading the
+    # whole project made every draft save take about a minute, which the web
+    # client's 60s request timeout turned into "HTTP 0" (live 2026-09-21).
+    await push_output_file(uid, "edit_script.json", edit_script_path)
     return {"uid": uid, "segments": len(edit_script["segments"])}
 
 

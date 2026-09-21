@@ -259,8 +259,8 @@ def test_no_vo_system_drops_script_but_keeps_shared_sections() -> None:
     assert '"voiceoverScript"' not in s
     assert '"mode": "highlight"' in s
     # shared, tuned sections must survive the substitution untouched
-    for tag in ("<coverage>", "<shot_types>", "<reject_safety>", "<reject_prep>",
-                "<music_sync>", "<anchor>", "<visual_description>"):
+    for tag in ("<coverage>", "<shot_quality>", "<distinct_shots>", "<reject_safety>",
+                "<reject_prep>", "<music_sync>", "<anchor>", "<visual_description>"):
         assert tag in s, f"{tag} missing from no-VO variant"
     # The <editing_style> SECTION is no longer baked into the raw const — it
     # arrives via the __CUT_STYLE_BLOCK__ splice (apply_cut_style) on every

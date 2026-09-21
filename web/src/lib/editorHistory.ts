@@ -80,3 +80,45 @@ export function sameSnapshot(a: EditorSnapshot, b: EditorSnapshot): boolean {
     sameMusic(a.music, b.music)
   )
 }
+
+/** `sameSnapshot` minus the cut ids — a reopened editor numbers its cuts
+ * afresh (`cut0`, `cut1`, …), so the same edit comes back under new ids. */
+export function sameSnapshotIgnoringIds(a: EditorSnapshot, b: EditorSnapshot): boolean {
+  if (a.cuts.length !== b.cuts.length) return false
+  const renumbered = a.cuts.map((c, i) => ({ ...c, id: b.cuts[i].id }))
+  return sameSnapshot({ ...a, cuts: renumbered }, b)
+}
+
+/**
+ * Undo/redo history per project, kept for the browser session.
+ *
+ * The stacks used to live in the editor's refs, so leaving the editor and
+ * coming back threw them away while the draft — the edits themselves — came
+ * back ("กลับมาแล้ว มันยังไม่สามารถ undo ได้", live report 2026-09-21). The
+ * editor stores its history here when it closes and takes it back when it
+ * reopens on exactly the state the history ended at. Anything else — a render
+ * of a different script, a shot swap, an AI re-edit, another device — changed
+ * the ground under it, and replaying it would undo work the user never saw.
+ */
+export interface KeptHistory {
+  undo: EditorSnapshot[]
+  redo: EditorSnapshot[]
+  /** The state the history ended at — the only state it may resume from. */
+  at: EditorSnapshot
+  edits: number
+}
+
+const keptHistory = new Map<string, KeptHistory>()
+
+export function keepHistory(uid: string, history: KeptHistory): void {
+  if (history.undo.length === 0 && history.redo.length === 0) keptHistory.delete(uid)
+  else keptHistory.set(uid, history)
+}
+
+/** The history to resume, or null — and a stale entry is dropped either way. */
+export function takeHistory(uid: string, loaded: EditorSnapshot): KeptHistory | null {
+  const kept = keptHistory.get(uid)
+  keptHistory.delete(uid)
+  if (!kept || !sameSnapshotIgnoringIds(kept.at, loaded)) return null
+  return kept
+}

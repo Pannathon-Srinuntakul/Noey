@@ -101,3 +101,42 @@ describe('snapshot equality', () => {
     ).toBe(false)
   })
 })
+
+describe('history kept across leaving the editor', () => {
+  const cut = (id: string, inSec: number): EditorSnapshot['cuts'][number] => ({
+    id,
+    source: 'clip0',
+    in: inSec,
+    out: inSec + 2,
+    label: '1'
+  })
+  const snap = (cuts: EditorSnapshot['cuts']): EditorSnapshot => ({
+    cuts,
+    captionLines: null,
+    captionStyle: null,
+    music: null
+  })
+
+  it('resumes when the editor reopens on the state it was left in, under fresh cut ids', async () => {
+    const { keepHistory, takeHistory } = await import('./editorHistory')
+    const before = snap([cut('cut0', 1)])
+    const at = snap([cut('new3', 4)])
+    keepHistory('p1', { undo: [before], redo: [], at, edits: 1 })
+    const resumed = takeHistory('p1', snap([cut('cut0', 4)]))
+    expect(resumed?.undo).toEqual([before])
+    expect(resumed?.at.cuts[0].id).toBe('new3')
+    // Taken once: a second open does not replay it again.
+    expect(takeHistory('p1', snap([cut('cut0', 4)]))).toBeNull()
+  })
+
+  it('is dropped when something else changed the project meanwhile', async () => {
+    const { keepHistory, takeHistory } = await import('./editorHistory')
+    keepHistory('p2', {
+      undo: [snap([cut('cut0', 1)])],
+      redo: [],
+      at: snap([cut('cut0', 4)]),
+      edits: 1
+    })
+    expect(takeHistory('p2', snap([cut('cut0', 9)]))).toBeNull()
+  })
+})

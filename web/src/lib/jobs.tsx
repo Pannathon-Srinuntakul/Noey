@@ -122,6 +122,10 @@ export function JobsProvider({
 }): React.JSX.Element {
   const [projects, setProjects] = useState<LocalProject[]>([])
   const [loading, setLoading] = useState(true)
+  // The first restore from the server is still running. While it is and the
+  // list is empty, the page must not say "no projects yet" — on a fresh
+  // browser that welcome screen was the answer for the whole restore.
+  const [restoring, setRestoring] = useState(false)
   /** Pipelines live in state (not a ref) so consumers re-render when a host
    * republishes. Each publish replaces one entry wholesale. */
   const [pipelines, setPipelines] = useState<ReadonlyMap<string, ProjectPipeline>>(new Map())
@@ -170,9 +174,21 @@ export function JobsProvider({
     let cancelled = false
     void (async () => {
       const { restoreMissingProjects, backfillUnsyncedProjects } = await import('./projectSync')
+      setRestoring(true)
+      // Show each project as it lands instead of all of them at the end —
+      // throttled so a burst of four does not re-list four times.
+      let listTimer = 0
+      const listSoon = (): void => {
+        if (listTimer) return
+        listTimer = window.setTimeout(() => {
+          listTimer = 0
+          reload()
+        }, 400)
+      }
       try {
-        await restoreMissingProjects(sessionRef.current)
+        await restoreMissingProjects(sessionRef.current, listSoon)
       } finally {
+        setRestoring(false)
         // ALWAYS re-read the store, even when this run was superseded or threw
         // half-way. The restore writes each project.json BEFORE it counts it,
         // and its count covers only what THIS run wrote — a run cancelled
@@ -204,7 +220,9 @@ export function JobsProvider({
   // when the tab comes back to the foreground, at most once a minute. This is
   // what makes the list live across machines instead of only at page load.
   useEffect(() => {
-    let last = 0
+    // Starts "just synced": the mount restore above is already running, and a
+    // first focus event at 0 started a second full restore beside it.
+    let last = Date.now()
     const resync = (): void => {
       if (document.visibilityState !== 'visible') return
       if (Date.now() - last < 60_000) return
@@ -301,8 +319,17 @@ export function JobsProvider({
   )
 
   const api = useMemo<JobsApi>(
-    () => ({ session, projects, loading, jobFor, runningJobs, reload, addProject, removeProject }),
-    [session, projects, loading, jobFor, runningJobs, reload, addProject, removeProject]
+    () => ({
+      session,
+      projects,
+      loading: loading || (restoring && projects.length === 0),
+      jobFor,
+      runningJobs,
+      reload,
+      addProject,
+      removeProject
+    }),
+    [session, projects, loading, restoring, jobFor, runningJobs, reload, addProject, removeProject]
   )
 
   return (

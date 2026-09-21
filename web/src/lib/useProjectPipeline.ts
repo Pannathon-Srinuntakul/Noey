@@ -81,6 +81,27 @@ import { transcodeOnServer } from './serverTranscode'
  * used around local Electron IPC calls that should always be fast, so a
  * wedged main process shows up as a clear timeout instead of a silent
  * permanent hang with nothing to point at in the logs. */
+/**
+ * What a render is made of — the cuts (edit-script segments or timeline cuts)
+ * and the caption lines — as a comparable string. Stored on each finished
+ * render (`renderedSig`) and compared by every draft save, so "edited but not
+ * rendered" is a fact about the content rather than about whether an edit
+ * happened (an edit undone back to the rendered state is not unrendered).
+ */
+export function renderSig(p: {
+  editScript?: Record<string, unknown>
+  timeline?: Record<string, unknown>
+  captionLines?: unknown
+}): string {
+  const segs = ((p.editScript?.segments as Record<string, unknown>[] | undefined) ?? []).map(
+    (s) => [s.sourceClip, s.sourceIn, s.sourceOut, s.voiceoverLineId]
+  )
+  const tl = p.timeline as
+    { timeline?: Record<string, unknown>[]; captionLines?: unknown } | undefined
+  const cuts = (tl?.timeline ?? []).map((c) => [c.source, c.in, c.out])
+  return JSON.stringify([segs, cuts, p.captionLines ?? null, tl?.captionLines ?? null])
+}
+
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)
@@ -355,7 +376,20 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
   }
 
   const patchProject = async (patch: Partial<LocalProject>): Promise<LocalProject> => {
-    const updated = await window.noey.projects.update(project.uid, patch)
+    // A run that reaches a finished step has rendered the current script, so
+    // no edit is left waiting for a render — and what it rendered becomes the
+    // state a later draft is compared against. One place, not every call site.
+    const finished = patch.step === 'done' || patch.step === 'waiting_vo'
+    const updated = await window.noey.projects.update(
+      project.uid,
+      finished && patch.needsRender === undefined
+        ? {
+            ...patch,
+            needsRender: false,
+            renderedSig: renderSig({ ...projectRef.current, ...patch })
+          }
+        : patch
+    )
     if (!disposedRef.current) setProject(updated)
     // The mirror ref is synced by an effect too, but effects only run after
     // React commits — a long-running stage that patches and then reads
@@ -789,6 +823,31 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
   }
 
   /**
+   * Tell the server a run reached its terminal status, without letting that
+   * request fail a render that already finished on this machine.
+   *
+   * It used to be awaited right after the render. It is the first API call
+   * after minutes of local work, so a dropped connection, a sleeping tab or a
+   * server busy with an upload surfaced as "HTTP 0" — and on the shot-swap
+   * path it failed the whole run although the new clip was already on disk
+   * (live report 2026-09-21: "เจอ http 0 ต้อง refresh ถึงคลิปจะกลับขึ้นมา").
+   * The local step is what the UI reads; the server copy only serves other
+   * devices, so it is retried in the background instead.
+   */
+  const reportLocalStatus = (remoteUid: string, status: 'waiting_vo' | 'done'): void => {
+    const attempt = (n: number): void => {
+      patchLocalStatus(session, remoteUid, status).catch((exc: unknown) => {
+        void window.noey.log.write(
+          'useProjectPipeline',
+          `patchLocalStatus ${status} uid=${remoteUid} failed (try ${n}): ${String(exc)}`
+        )
+        if (n < 5) window.setTimeout(() => attempt(n + 1), 2000 * 2 ** (n - 1))
+      })
+    }
+    attempt(1)
+  }
+
+  /**
    * Copy this project's files to the server so it can be opened elsewhere.
    *
    * Best effort, always: a project whose files did not reach the server still
@@ -1025,7 +1084,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     if (mode === 'highlight') {
       // No voiceover step at all — the silent cut IS the final output,
       // mirrors talking_head's runRenderTimeline going straight to done.
-      await patchLocalStatus(session, remoteUid, 'done')
+      reportLocalStatus(remoteUid, 'done')
       await patchProject({
         step: 'done',
         clipDurationsSec,
@@ -1048,7 +1107,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
       // they probe for the preview, and probing under the OLD key caches a
       // placeholder-era answer for the new render.
       setMediaKey((k) => k + 1)
-      await patchLocalStatus(session, remoteUid, 'waiting_vo')
+      reportLocalStatus(remoteUid, 'waiting_vo')
       await patchProject({
         step: 'waiting_vo',
         clipDurationsSec,
@@ -1192,7 +1251,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
       }
 
       setMediaKey((k) => k + 1)
-      await patchLocalStatus(session, remoteUid, 'done')
+      reportLocalStatus(remoteUid, 'done')
       await patchProject({ step: 'done', lastRunSeconds: runSeconds() })
       syncToServer('final-render')
       setProgressMsg('')
@@ -1329,7 +1388,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
       unsub()
     }
     setMediaKey((k) => k + 1)
-    await patchLocalStatus(session, remoteUid, 'done')
+    reportLocalStatus(remoteUid, 'done')
     await patchProject({ step: 'done', lastRunSeconds: runSeconds() })
     syncToServer('highlights')
     setProgressMsg('')
@@ -1353,7 +1412,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
       unsub()
     }
     setMediaKey((k) => k + 1)
-    await patchLocalStatus(session, remoteUid, 'done')
+    reportLocalStatus(remoteUid, 'done')
     await patchProject({ step: 'done', lastRunSeconds: runSeconds() })
     dropServerFxBake()
     syncToServer('timeline')
@@ -1862,6 +1921,13 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
         `applyShotSwap uid=${project.uid} swaps=${swapLog.length}`
       )
       try {
+        // Busy from the first moment. Stashing the old render and saving the
+        // script can take a while (the stash copies every file on web), and
+        // until the step moved the page still looked idle — the button even
+        // stayed pressable, and a second press was silently dropped by the
+        // pipeline lock above.
+        setProgressMsg('กำลังเตรียมทำคลิปใหม่…')
+        await patchProject({ step: 'silent_rendering' })
         const current = live()
         const remoteUid = current.remote?.uid
         if (!remoteUid) throw new Error('ไม่พบ remote project')
@@ -1944,12 +2010,24 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     if (!remoteUid) return
     if (target === 'edit_script') {
       const es = editScriptFromCuts(cuts)
-      applyEditScript(es)
-      // Pre-VO caption edits have nowhere else to live: there is no planned
-      // timeline yet, so they go on the project and the next silent render
-      // burns exactly them.
-      if (captionLines) await patchProject({ captionLines })
-      await putLocalEditScript(session, remoteUid, es)
+      const draft = { ...live(), editScript: es as unknown as Record<string, unknown> }
+      if (captionLines) draft.captionLines = captionLines
+      // ONE local write, awaited: the script, the caption lines (pre-VO caption
+      // edits have nowhere else to live: there is no planned timeline yet, so
+      // they go on the project and the next silent render burns exactly them)
+      // and the unrendered flag — unrendered meaning different from what the
+      // last render used, so an edit undone back to it does not count.
+      setEditScript(es)
+      await patchProject({
+        editScript: draft.editScript,
+        ...(captionLines ? { captionLines } : {}),
+        ...(isBusy(projectRef.current.step as ProjectStep)
+          ? {}
+          : { needsRender: renderSig(draft) !== live().renderedSig })
+      })
+      // The draft is safe from here on. The server copy only serves other
+      // devices, so it is not waited for — see pushDraftToServer.
+      pushDraftToServer(() => putLocalEditScript(session, remoteUid, es))
       return
     }
     const base = (live().timeline ?? {}) as DubTimeline
@@ -1969,13 +2047,36 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
       // rather than re-hydrating a mis-timed edit.
       ...(captionLines ? { captionLines, captionLinesBase: 'output' as const } : {})
     }
-    await putLocalTimeline(session, remoteUid, timeline).catch(() => undefined)
     // A draft is only ever a fallback for work not yet rendered, so it must
-    // never win over a render that started after it: pressing Save while a
-    // debounced draft was mid-flight let the draft's post-round-trip write land
-    // last and put the pre-render timeline back on the project.
+    // never win over a render that started after it. It used to be written
+    // AFTER the server round trip, and pressing Save while a debounced draft
+    // was mid-flight let the draft land last and put the pre-render timeline
+    // back on the project. Written locally first, the check below is all the
+    // guard that needs.
     if (isBusy(projectRef.current.step as ProjectStep)) return
-    await patchProject({ timeline })
+    await patchProject({
+      timeline: timeline as unknown as Record<string, unknown>,
+      needsRender:
+        renderSig({ ...live(), timeline: timeline as unknown as Record<string, unknown> }) !==
+        live().renderedSig
+    })
+    pushDraftToServer(() => putLocalTimeline(session, remoteUid, timeline))
+  }
+
+  /**
+   * Send a saved draft to the server in the background, in order.
+   *
+   * The draft save used to wait on this round trip. On a slow server — one
+   * uploading to S3 before it answers — the editor's way out and the
+   * browser's "leave site?" guard were both held for as long as it took,
+   * though the draft was already safe on this device (live report
+   * 2026-09-21). Chained, so an older draft can never land after a newer one.
+   */
+  const draftPushChainRef = useRef<Promise<unknown>>(Promise.resolve())
+  const pushDraftToServer = (put: () => Promise<unknown>): void => {
+    draftPushChainRef.current = draftPushChainRef.current.then(put).catch((exc: unknown) => {
+      void window.noey.log.write('useProjectPipeline', `draft push failed: ${String(exc)}`)
+    })
   }
 
   const saveEditedCutsInner = async (
@@ -2063,7 +2164,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
       } finally {
         unsub()
       }
-      await patchLocalStatus(session, remoteUid, 'done')
+      reportLocalStatus(remoteUid, 'done')
       // Re-cut clips → the stored per-clip durations describe the old render.
       await patchProject({
         step: 'done',

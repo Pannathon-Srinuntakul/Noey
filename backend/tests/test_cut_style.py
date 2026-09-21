@@ -294,7 +294,7 @@ async def test_distill_requires_reference_or_description(monkeypatch: pytest.Mon
 def test_apply_cut_style_default_splices_default_prose() -> None:
     out = dub_ai.apply_cut_style(dub_ai.DUB_EDIT_SYSTEM_VIDEO)
     assert dub_ai.DEFAULT_CUT_STYLE_PROSE in out
-    assert "Aim for multi-angle on ≥60% of lines" in out
+    assert "Aim for multi-angle on most of these lines" in out
     assert "<editing_style>" in out and "</editing_style>" in out
     assert "__CUT_STYLE_BLOCK__" not in out
     assert "SAVED CUT STYLE" not in out

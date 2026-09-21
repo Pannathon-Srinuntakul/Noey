@@ -456,7 +456,9 @@ export function splitCutAt(
   const cut = cuts[idx]
   if (atSrcSec < cut.in + MIN_CUT_SEC || atSrcSec > cut.out - MIN_CUT_SEC) return null
   const first: EditCut = { ...cut, out: atSrcSec }
-  const second: EditCut = { ...cut, id: newId, in: atSrcSec, voiceoverScript: '' }
+  // The AI's per-shot metadata (alternates, …) stays with the first half: a
+  // copy on both halves would offer the same backups twice in ปรับช็อต.
+  const second: EditCut = { ...cut, id: newId, in: atSrcSec, voiceoverScript: '', meta: undefined }
   return [...cuts.slice(0, idx), first, second, ...cuts.slice(idx + 1)]
 }
 
@@ -615,8 +617,14 @@ export function bindTrimDrag(opts: {
   const startX = opts.e.clientX
   const { startIn, startOut, minIn = 0, maxOut, edge, pxPerSec, onChange, onDragEnd } = opts
 
-  function onMove(ev: PointerEvent): void {
-    const deltaSec = (ev.clientX - startX) / pxPerSec
+  // One update per frame, not per pointer event. Every update re-renders the
+  // whole editor, and a trackpad or a 120Hz display delivers several moves per
+  // frame — the drag lagged behind the pointer (live report 2026-09-21).
+  let lastX = startX
+  let frame = 0
+  function apply(): void {
+    frame = 0
+    const deltaSec = (lastX - startX) / pxPerSec
     if (edge === 'left') {
       onChange({ in: clamp(startIn + deltaSec, minIn, startOut - MIN_CUT_SEC) })
     } else {
@@ -624,7 +632,17 @@ export function bindTrimDrag(opts: {
     }
   }
 
+  function onMove(ev: PointerEvent): void {
+    lastX = ev.clientX
+    if (!frame) frame = window.requestAnimationFrame(apply)
+  }
+
   function onUp(): void {
+    // Land the last position before the edit is committed to history.
+    if (frame) {
+      window.cancelAnimationFrame(frame)
+      apply()
+    }
     onDragEnd()
     window.removeEventListener('pointermove', onMove)
     window.removeEventListener('pointerup', onUp)

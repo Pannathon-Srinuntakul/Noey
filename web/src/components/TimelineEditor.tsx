@@ -55,7 +55,7 @@ import {
   Volume2,
   VolumeX
 } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   editorApi,
   initialCaptionLines,
@@ -120,9 +120,11 @@ import { Tabs } from './ui/Tabs'
 import { useFxJobs } from '../lib/fxJobs'
 import { useUnsavedGuard } from '../lib/unsavedGuard'
 import {
+  keepHistory,
   sameCaptionStyle,
   sameMusic,
   sameSnapshot,
+  takeHistory,
   type EditorSnapshot
 } from '../lib/editorHistory'
 import { paintSeekProgress } from '../lib/seekProgress'
@@ -636,6 +638,9 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
   const viewportRef = useRef<HTMLDivElement>(null)
   // Playhead line + transport widgets, all painted imperatively per frame.
   const playheadRef = useRef<HTMLDivElement>(null)
+  /** The playhead's visible rule, drawn on its own layer ABOVE the scene
+   * blocks and trim handles — see the playhead markup. */
+  const playheadLineRef = useRef<HTMLDivElement>(null)
   const seekbarRef = useRef<HTMLInputElement>(null)
   const timeLabelRef = useRef<HTMLSpanElement>(null)
   const isScrubbingRef = useRef(false)
@@ -688,6 +693,14 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
   const [, setHistoryTick] = useState(0)
   const [editCount, setEditCount] = useState(0)
   const [draftSavedAt, setDraftSavedAt] = useState<string | null>(null)
+  // History outlives the editor for the browser session (lib/editorHistory
+  // keepHistory/takeHistory). Stored on unmount — but only once the editor
+  // actually loaded, or a failed open would store an empty state as "current".
+  const historyLoadedRef = useRef(false)
+  const editCountRef = useRef(0)
+  useEffect(() => {
+    editCountRef.current = editCount
+  }, [editCount])
   // Mirrors for the fields a snapshot has to read from event handlers and from
   // inside setCuts updaters (captionLinesRef is declared with the overlay refs).
   const captionStyleRef = useRef<CaptionStyle | null>(null)
@@ -850,13 +863,29 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
       .then(async (t) => {
         if (cancelled) return
         setTimeline(t)
-        setCuts(normalizeDubCuts(t.cuts))
-        setCaptionLines(initialCaptionLines() ?? null)
-        setCaptionStyle(initialCaptionStyle() ?? null)
-        setMusic(initialMusic() ?? null)
+        const loaded: EditorSnapshot = {
+          cuts: normalizeDubCuts(t.cuts),
+          captionLines: initialCaptionLines() ?? null,
+          captionStyle: initialCaptionStyle() ?? null,
+          music: initialMusic() ?? null
+        }
+        // Resume this session's undo history when the editor reopens on the
+        // very state it was left in. The history's cut ids win: the content
+        // is identical, and the stacks refer to cuts by those ids.
+        const resumed = takeHistory(uid, loaded)
+        const startCuts = resumed ? resumed.at.cuts : loaded.cuts
+        undoStack.current = resumed?.undo ?? []
+        redoStack.current = resumed?.redo ?? []
+        setEditCount(resumed?.edits ?? 0)
+        setHistoryTick((n) => n + 1)
+        historyLoadedRef.current = true
+        setCuts(startCuts)
+        setCaptionLines(loaded.captionLines)
+        setCaptionStyle(loaded.captionStyle)
+        setMusic(loaded.music)
         setEditorPhase('preparing')
         if (cancelled) return
-        const firstCut = t.cuts[0]
+        const firstCut = startCuts[0]
         if (firstCut) {
           setSelectedId(firstCut.id)
           editedActiveCutIdRef.current = firstCut.id
@@ -883,6 +912,20 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
     return () => {
       cancelled = true
     }
+  }, [uid])
+
+  // Hand this session's history back on the way out (see takeHistory above).
+  useEffect(() => {
+    return () => {
+      if (!historyLoadedRef.current) return
+      keepHistory(uid, {
+        undo: undoStack.current,
+        redo: redoStack.current,
+        at: snapshotNow(),
+        edits: editCountRef.current
+      })
+    }
+    // snapshotNow reads refs only, so the first render's copy is current here.
   }, [uid])
 
   useEffect(() => {
@@ -973,7 +1016,12 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
   /** Width of the drawable timeline content (excludes the sticky label column). */
   function getContentWidthPx(): number {
     const axis = viewMode === 'edited' ? computeEditedDuration(cuts) : getSourceAxisDurationSec()
-    return Math.max(axis * pxPerSec, MIN_LANE_PX) + TAIL_PX
+    // Room to scroll past the end, like any editor. A left-edge trim keeps the
+    // handle under the pointer by scrolling (trimCut); with only a short tail
+    // the scroll ran out near the end — the voiceover lane can already reach
+    // past the last scene — and the handle drifted off the pointer.
+    const tail = Math.max(TAIL_PX, Math.round((viewportRef.current?.clientWidth ?? 0) / 2))
+    return Math.max(axis * pxPerSec, MIN_LANE_PX) + tail
   }
 
   function currentEditedCut(): WorkingCut | null {
@@ -1122,6 +1170,9 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
     if (playheadRef.current) {
       playheadRef.current.style.transform = `translateX(${HEADER_COL_PX + t * px}px)`
     }
+    if (playheadLineRef.current) {
+      playheadLineRef.current.style.transform = `translateX(${HEADER_COL_PX + t * px}px)`
+    }
     if (seekbarRef.current && !isScrubbingSeekbarRef.current) {
       seekbarRef.current.value = String(t)
       // The value is written straight to the DOM, so the played-portion fill
@@ -1247,20 +1298,37 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
     return clamp(contentX / pxPerSecRef.current, 0, getActiveDurationSec())
   }
 
+  // The CURRENT render's scrub function. The drag's listeners live across
+  // renders; calling the pointerdown render's copy kept reading the
+  // previewSource it saw then, so scrubbing across a change of source file
+  // reloaded the preview on every move and seeked the wrong file.
+  const applyScrubTimeRef = useRef(applyScrubTime)
+  applyScrubTimeRef.current = applyScrubTime
+
   /** Ruler / playhead-grip drag: scrub while moving, commit + resume on release. */
   function onRulerPointerDown(e: React.PointerEvent) {
     if (e.button !== 0) return
     e.preventDefault()
     pauseForScrub()
     applyScrubTime(timeAtClientX(e.clientX), true)
+    // One seek per frame: every move used to seek the video, set state and
+    // read layout, which is most of why scrubbing felt sticky.
+    let lastX = e.clientX
+    let frame = 0
     const onMove = (ev: PointerEvent) => {
-      applyScrubTime(timeAtClientX(ev.clientX), true)
+      lastX = ev.clientX
+      if (frame) return
+      frame = window.requestAnimationFrame(() => {
+        frame = 0
+        applyScrubTimeRef.current(timeAtClientX(lastX), true)
+      })
     }
     const onUp = (ev: PointerEvent) => {
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
       window.removeEventListener('pointercancel', onUp)
-      applyScrubTime(timeAtClientX(ev.clientX), true)
+      if (frame) window.cancelAnimationFrame(frame)
+      applyScrubTimeRef.current(timeAtClientX(ev.clientX), true)
       resumeAfterScrub()
     }
     window.addEventListener('pointermove', onMove)
@@ -1794,6 +1862,55 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
     setCuts((prev) => prev.map((c) => (c.id === id ? { ...c, ...patch } : c)))
   }
 
+  /**
+   * A trim drag on the edited lane: apply the new edge, keep the preview on
+   * the frame at that edge, and — for the LEFT edge — keep the edge under the
+   * pointer.
+   *
+   * Blocks sit in a row that starts at 0, so a block's left edge is fixed by
+   * the cuts before it: lowering `in` grows the block to the RIGHT and slides
+   * its thumbnails along — dragging the left handle backwards looked like the
+   * shot moving forward (live report 2026-09-21). Scrolling the lane by the
+   * same amount the block grew moves everything before the block left instead,
+   * so the handle follows the pointer and the block's right edge and every cut
+   * after it stay put — the way CapCut trims a clip's head.
+   */
+  const pendingScrollShiftPxRef = useRef(0)
+  function trimCut(cut: WorkingCut, edge: TrimEdge, patch: Partial<WorkingCut>, prevIn: number) {
+    updateCut(cut.id, patch)
+    if (edge === 'left' && patch.in !== undefined) {
+      pendingScrollShiftPxRef.current += (prevIn - patch.in) * pxPerSec
+    }
+    // The playing range follows the new edges, or playback maps the playhead
+    // through a stale `in` and skips the footage just revealed.
+    if (editedActiveCutIdRef.current === cut.id) {
+      playRangeRef.current = {
+        in: patch.in ?? playRangeRef.current?.in ?? cut.in,
+        out: patch.out ?? playRangeRef.current?.out ?? cut.out
+      }
+    }
+    const v = activeVideo()
+    if (v && previewSource === cut.source) {
+      // A hair inside the out-point so the frame shown is one that stays.
+      v.currentTime =
+        edge === 'left' ? (patch.in ?? cut.in) : Math.max((patch.out ?? cut.out) - 0.04, 0)
+    }
+  }
+  useLayoutEffect(() => {
+    const shift = pendingScrollShiftPxRef.current
+    if (shift === 0) return
+    pendingScrollShiftPxRef.current = 0
+    const el = viewportRef.current
+    if (el) el.scrollLeft += shift
+  }, [cuts])
+
+  // Each block's start on the edited clock, computed once per cut change
+  // instead of once PER BLOCK per render (it was O(n²) on every drag frame).
+  const editedInById = useMemo(
+    () => new Map(computeEditedSegments(cuts).map((s) => [s.cut.id, s.editedIn])),
+    [cuts]
+  )
+
   function deleteCut(id: string) {
     setCuts((prev) => {
       pushUndoSnapshot(prev)
@@ -2026,7 +2143,10 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
           out: c.out,
           label: c.label,
           voiceoverLineId: isDub ? (c.voiceoverLineId ?? (cutLineId(c) || null)) : undefined,
-          voiceoverScript: isDub ? (c.voiceoverScript ?? '') : undefined
+          voiceoverScript: isDub ? (c.voiceoverScript ?? '') : undefined,
+          // The segment fields this editor does not model (alternates, …) —
+          // dropping them here emptied ปรับช็อต on every save (EditCut.meta).
+          ...(c.meta ? { meta: c.meta } : {})
         }) as EditCut
     )
   }
@@ -2035,6 +2155,9 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
    * way out runs from an event handler and must see the newest values. */
   const draftDirtyRef = useRef(false)
   const draftSavingRef = useRef<Promise<void> | null>(null)
+  /** Mirrors "a draft is not on disk yet" for the one warning that still makes
+   * sense: closing the whole tab/app mid-write. */
+  const [draftPending, setDraftPending] = useState(false)
 
   /**
    * Write the draft NOW (used by the debounce and by the way out).
@@ -2069,6 +2192,7 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
       })
       .finally(() => {
         draftSavingRef.current = null
+        setDraftPending(draftDirtyRef.current)
       })
     draftSavingRef.current = run
     return run
@@ -2084,28 +2208,37 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
     }
     if (saving || editorPhase !== 'ready' || cuts.length === 0 || editCount === 0) return
     draftDirtyRef.current = true
-    const t = setTimeout(() => void saveDraftNow(), 2000)
+    setDraftPending(true)
+    // Short: the draft is written on this device first (the server copy
+    // follows in the background), so it is cheap — and until it lands, a
+    // reload still has to ask. 2s left that prompt up for too long.
+    const t = setTimeout(() => void saveDraftNow(), 800)
     return () => clearTimeout(t)
   }, [cuts, captionLines, saving, editorPhase, isDub, editCount])
 
   /**
-   * What is at stake if the user walks out now, or null when nothing is.
-   *
-   * Not "unsaved" in the usual sense — the draft is written continuously, so
-   * nothing is LOST. What is pending is the render: the finished clip on disk
-   * is still the one from before these edits, and that is the surprise worth a
-   * dialog (live report 2026-08-13).
+   * Only one thing can still be lost: a draft write that has not finished when
+   * the whole tab or app closes. Leaving the editor loses nothing — the draft
+   * is written continuously and the editor reopens on it — so leaving no
+   * longer asks. It used to warn "ยังไม่ได้บันทึก" on every exit after an edit,
+   * while the edits it warned about were already saved (live report
+   * 2026-09-21). "Not rendered yet" is now said on the project page instead
+   * (LocalProject.needsRender), where the old clip actually plays.
    */
-  const unrenderedReason =
-    editorPhase === 'ready' && editCount > 0 && !saving
-      ? `แก้ไว้ ${editCount} อย่างแล้วแต่ยังไม่ได้กด "บันทึกและเรนเดอร์" — ระบบเก็บร่างไว้ให้ กลับมาแก้ต่อได้ แต่คลิปที่ได้จะยังเป็นของเดิมจนกว่าจะเรนเดอร์ใหม่`
-      : null
-  const { confirmLeave } = useUnsavedGuard(unrenderedReason, saveDraftNow)
+  const pendingDraftReason =
+    draftPending && !saving ? 'การแก้ไขล่าสุดยังบันทึกไม่เสร็จ — ถ้าปิดตอนนี้อาจหาย' : null
+  useUnsavedGuard(pendingDraftReason, saveDraftNow)
 
-  /** The one way out of the editor — flushes the draft, then asks. */
-  async function requestClose(): Promise<void> {
-    await saveDraftNow()
-    if (await confirmLeave()) onClose()
+  /**
+   * The one way out of the editor. Leaves at once and lets the draft finish
+   * behind it: the pipeline that writes it outlives this screen. It used to
+   * await that write first — over the network, with no busy state — so on a
+   * slow server the back button did nothing for up to a minute ("แก้ไขแล้ว
+   * มันกดกลับไปหน้าโปรเจกต์ไม่ได้", live report 2026-09-21).
+   */
+  function requestClose(): void {
+    void saveDraftNow()
+    onClose()
   }
 
   async function handleSave() {
@@ -2118,17 +2251,7 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
     setError(null)
     setErrorRetry(null)
     try {
-      const payload: EditCut[] = cuts.map(
-        (c) =>
-          ({
-            source: c.source,
-            in: c.in,
-            out: c.out,
-            label: c.label,
-            voiceoverLineId: isDub ? (c.voiceoverLineId ?? (cutLineId(c) || null)) : undefined,
-            voiceoverScript: isDub ? (c.voiceoverScript ?? '') : undefined
-          }) as EditCut
-      )
+      const payload: EditCut[] = cutPayload(cuts)
       await editorApi.saveEditTimeline(uid, payload, captionLines ?? undefined)
       onSaved()
       onClose()
@@ -3318,12 +3441,12 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
                                     pxPerSec={pxPerSec}
                                     onSelect={() => void selectCut(c)}
                                     onChange={(patch) => updateCut(c.id, patch)}
+                                    onTrim={(edge, patch, prevIn) =>
+                                      trimCut(c, edge, patch, prevIn)
+                                    }
                                     onDragStart={beginCutBlockEdit}
                                     onDragEnd={commitCutBlockEdit}
-                                    startOffsetSec={
-                                      computeEditedSegments(cuts).find((s) => s.cut.id === c.id)
-                                        ?.editedIn ?? 0
-                                    }
+                                    startOffsetSec={editedInById.get(c.id) ?? 0}
                                     beatsSec={effectiveMusic?.beats ?? null}
                                     snapEnabled={snapToBeatEnabled}
                                     musicOffsetSec={effectiveMusic?.offsetSec ?? 0}
@@ -3617,6 +3740,22 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
                       title="ลากเพื่อเลื่อนหัวเล่น"
                       className="pointer-events-auto absolute top-0 h-3 w-[18px] -translate-x-1/2 cursor-ew-resize rounded-[2px_2px_4px_4px] bg-ink"
                     />
+                  </div>
+                  {/* The rule again, on a layer above everything in the lanes
+                      but below the sticky track labels. The grab strip above
+                      stays UNDER the trim handles on purpose — selecting a
+                      scene parks the playhead on its edge, and a strip on top
+                      would steal the handle — but its visible line used to
+                      vanish under the handles, a dragged block and the gold
+                      edges at every cut (live report 2026-09-21). This copy
+                      takes no input, so it can sit on top. */}
+                  <div
+                    ref={playheadLineRef}
+                    aria-hidden
+                    className="pointer-events-none absolute top-0 bottom-0 left-0 z-[35] will-change-transform"
+                  >
+                    <span className="absolute inset-y-0 left-0 w-0.5 -translate-x-1/2 bg-ink" />
+                    <span className="absolute top-0 left-0 h-3 w-[18px] -translate-x-1/2 rounded-[2px_2px_4px_4px] bg-ink" />
                   </div>
                 </div>
               </div>
@@ -3976,6 +4115,7 @@ function EditedCutBlock({
   pxPerSec,
   onSelect,
   onChange,
+  onTrim,
   onDragStart,
   onDragEnd,
   startOffsetSec = 0,
@@ -3993,6 +4133,9 @@ function EditedCutBlock({
   pxPerSec: number
   onSelect: () => void
   onChange: (patch: Partial<WorkingCut>) => void
+  /** A trim-handle drag step: the edge, the (snapped) patch, and the in-point
+   * before this step — the parent keeps the left edge under the pointer. */
+  onTrim?: (edge: TrimEdge, patch: Partial<WorkingCut>, prevIn: number) => void
   onDragStart: () => void
   onDragEnd: () => void
   /** This cut's start position on the output/edited timeline — trimming this
@@ -4031,22 +4174,25 @@ function EditedCutBlock({
 
   function onTrimDown(e: React.PointerEvent, edge: TrimEdge) {
     onSelect()
+    // The in-point as of the previous drag step — `cut` is frozen at drag start.
+    let lastIn = cut.in
     // Only this cut's END lands on a new output-timeline position when trimmed
     // (its start is fixed by prior cuts' cumulative duration) — snap whichever
     // edge is being dragged so the resulting duration puts that end on-beat.
     const snappingOnChange = (patch: Partial<WorkingCut>): void => {
-      onChange(
-        snapTrimToBeat({
-          patch,
-          cut,
-          startOffsetSec,
-          maxOut,
-          beatsSec,
-          snapEnabled,
-          musicOffsetSec,
-          musicTrimInSec
-        })
-      )
+      const snapped = snapTrimToBeat({
+        patch,
+        cut,
+        startOffsetSec,
+        maxOut,
+        beatsSec,
+        snapEnabled,
+        musicOffsetSec,
+        musicTrimInSec
+      })
+      if (onTrim) onTrim(edge, snapped, lastIn)
+      else onChange(snapped)
+      if (snapped.in !== undefined) lastIn = snapped.in
     }
     bindTrimDrag({
       e,

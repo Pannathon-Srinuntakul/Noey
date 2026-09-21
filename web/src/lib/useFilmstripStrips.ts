@@ -87,6 +87,7 @@ export function useFilmstripStrips(
   useEffect(() => {
     if (!localUid || clips.length === 0) return
     let cancelled = false
+    const aborter = new AbortController()
 
     const toStrip = (r: Required<SidecarStripRow>): FilmstripStrip => ({
       count: r.count,
@@ -133,7 +134,10 @@ export function useFilmstripStrips(
         }, projectDir)
         const res = await window.noey.sidecar.filmstrip.run({
           projectDir,
-          clips: clips.map((c) => ({ id: c.id, file: c.file }))
+          clips: clips.map((c) => ({ id: c.id, file: c.file })),
+          // Stop with the editor: a filmstrip left running holds the project's
+          // job lock, and the next render queued behind it.
+          signal: aborter.signal
         })
         if (cancelled) return
 
@@ -156,6 +160,7 @@ export function useFilmstripStrips(
 
     return () => {
       cancelled = true
+      aborter.abort()
       unsub?.()
     }
   }, [localUid, clipsKey])

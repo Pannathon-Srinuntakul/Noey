@@ -247,7 +247,7 @@ async def _push_project_files(project_uid: str, tenant_slug: str = "default") ->
         try:
             row = (
                 await ts.execute(
-                    select(VideoProject.id).where(VideoProject.uid == project_uid)
+                    select(VideoProject.uid).where(VideoProject.uid == project_uid)
                 )
             ).scalar_one_or_none()
         finally:

@@ -8,6 +8,9 @@ export interface EditCutIn {
   label?: string
   voiceoverLineId?: number | null
   voiceoverScript?: string | null
+  /** Segment fields the editor carries untouched (alternates, matchedFrameTime,
+   * visualDescription, …) — written back underneath the fields below. */
+  meta?: Record<string, unknown>
 }
 
 export interface DubSegment {
@@ -25,7 +28,9 @@ function round2(x: number): number {
   return Math.round(x * 100) / 100
 }
 
-export function dubSegmentsFromEditCuts(cuts: EditCutIn[]): DubSegment[] {
+export function dubSegmentsFromEditCuts(
+  cuts: EditCutIn[]
+): (DubSegment & Record<string, unknown>)[] {
   return cuts.map((c, i) => {
     let lineId: number
     if (c.voiceoverLineId !== null && c.voiceoverLineId !== undefined) {
@@ -39,6 +44,7 @@ export function dubSegmentsFromEditCuts(cuts: EditCutIn[]): DubSegment[] {
     const srcIn = Number(c.in)
     const srcOut = Number(c.out)
     return {
+      ...(c.meta ?? {}),
       order: i + 1,
       sourceClip: String(c.source || 'clip0'),
       sourceIn: srcIn,

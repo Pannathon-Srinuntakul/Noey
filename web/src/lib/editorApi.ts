@@ -33,6 +33,13 @@ export interface EditCut {
   label: string
   voiceoverLineId?: number | null
   voiceoverScript?: string | null
+  /** Every other field the edit-script segment carried — `alternates`,
+   * `matchedFrameTime`, `visualDescription`, `swappedFrom`, … The editor never
+   * reads or changes them; it carries them so a save writes them back. Saving
+   * used to rebuild each segment from the fields above only, and since
+   * autosave runs 2s after any edit, simply opening the editor wiped every
+   * shot's alternates — ปรับช็อต went empty (live report 2026-09-21). */
+  meta?: Record<string, unknown>
 }
 
 export interface EditTimeline {
@@ -151,15 +158,40 @@ export function editTimelineFromContext(c: EditorContext): EditTimeline {
  * AI re-edit results, which return the same segment shape. */
 export function editCutsFromDubSegments(segments: Record<string, unknown>[]): EditCut[] {
   const segs = [...segments].sort((a, b) => Number(a.order ?? 0) - Number(b.order ?? 0))
-  return segs.map((s, i) => ({
-    id: `cut${i}`,
-    source: String(s.sourceClip ?? 'clip0'),
-    in: Number(s.sourceIn ?? 0),
-    out: Number(s.sourceOut ?? 0),
-    label: String(s.voiceoverLineId ?? i + 1),
-    voiceoverLineId: s.voiceoverLineId != null ? Number(s.voiceoverLineId) : null,
-    voiceoverScript: (s.voiceoverScript as string | undefined) ?? null
-  }))
+  return segs.map((s, i) => {
+    const cut: EditCut = {
+      id: `cut${i}`,
+      source: String(s.sourceClip ?? 'clip0'),
+      in: Number(s.sourceIn ?? 0),
+      out: Number(s.sourceOut ?? 0),
+      label: String(s.voiceoverLineId ?? i + 1),
+      voiceoverLineId: s.voiceoverLineId != null ? Number(s.voiceoverLineId) : null,
+      voiceoverScript: (s.voiceoverScript as string | undefined) ?? null
+    }
+    const meta = segmentMeta(s)
+    if (meta) cut.meta = meta
+    return cut
+  })
+}
+
+/** The segment fields the editor itself models — everything else is `meta`. */
+const EDITOR_SEGMENT_KEYS = new Set([
+  'order',
+  'sourceClip',
+  'sourceIn',
+  'sourceOut',
+  'durationSec',
+  'voiceoverLineId',
+  'voiceoverScript',
+  'cutStyle'
+])
+
+function segmentMeta(s: Record<string, unknown>): Record<string, unknown> | undefined {
+  const meta: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(s)) {
+    if (!EDITOR_SEGMENT_KEYS.has(k)) meta[k] = v
+  }
+  return Object.keys(meta).length > 0 ? meta : undefined
 }
 
 /** Manual cuts → edit_script JSON (shared shape with the server). */

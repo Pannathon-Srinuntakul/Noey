@@ -22,6 +22,7 @@ import { Film, X } from 'lucide-react'
 import type { LocalClip } from '@renderer/platform/types'
 import { cn } from '../../lib/cn'
 import { useConfirm } from '../../lib/confirm'
+import { useRouter } from '../../lib/router'
 import type { ProjectPipeline } from '../../lib/useProjectPipeline'
 import type { DubEditScript } from '../../lib/videosLocalApi'
 import {
@@ -279,6 +280,7 @@ export function ShotSwapReview({
   onClose: () => void
 }): React.JSX.Element | null {
   const confirm = useConfirm()
+  const { navigate } = useRouter()
   const project = job.project
   const script = useMemo<DubEditScript>(
     () =>
@@ -426,6 +428,11 @@ export function ShotSwapReview({
     })
     onClose()
     void job.applyShotSwap(pending.script, log)
+    // Straight to the progress screen, the way every other run is shown. The
+    // project page has no progress view of its own, so after pressing
+    // ทำคลิปใหม่ nothing visibly happened and the user went home and pressed
+    // it again to find out whether it was running (live report 2026-09-21).
+    navigate({ name: 'progress', uid: project.uid })
   }
 
   // Keyboard: appended to the panel-level listener the modal owns, so nothing

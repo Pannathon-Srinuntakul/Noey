@@ -3,7 +3,7 @@
 
 import { isTokenExpired } from './jwt'
 import { apiFetch } from './httpClient'
-import { apiErrorDetail } from './apiError'
+import { responseErrorDetail } from './apiError'
 
 export interface TokenPair {
   access_token: string
@@ -61,15 +61,7 @@ async function request<T>(baseUrl: string, path: string, init?: ApiFetchInit): P
     void window.noey.log.write('api', `fetch failed ${baseUrl}${path}: ${String(err)}`)
     throw new ApiError(0, connectErrorMessage(err))
   }
-  if (!res.ok) {
-    let detail = `HTTP ${res.status}`
-    try {
-      detail = apiErrorDetail(res.status, res.json())
-    } catch {
-      /* non-JSON error body */
-    }
-    throw new ApiError(res.status, detail)
-  }
+  if (!res.ok) throw new ApiError(res.status, responseErrorDetail(res))
   if (res.status === 204) return undefined as T
   return res.json() as T
 }

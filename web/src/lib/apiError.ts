@@ -55,3 +55,23 @@ export function apiErrorDetail(status: number, body: unknown): string {
 
   return `HTTP ${status}`
 }
+
+/**
+ * `apiErrorDetail` for a failed response whose body may not be JSON.
+ *
+ * Callers used to write `detail = 'HTTP ' + status; detail = apiErrorDetail(status,
+ * res.json())` inside a try. On web a transport failure arrives as status 0
+ * with the raw exception text ("Failed to fetch") as its body, so `res.json()`
+ * threw BEFORE `apiErrorDetail` could reach its status-0 branch — and the user
+ * was shown a bare "HTTP 0" at the end of a render (live report 2026-09-21).
+ * Parse first, never let a bad body skip the status mapping.
+ */
+export function responseErrorDetail(res: { status: number; json: () => unknown }): string {
+  let body: unknown = null
+  try {
+    body = res.json()
+  } catch {
+    /* non-JSON body — the status alone decides */
+  }
+  return apiErrorDetail(res.status, body)
+}

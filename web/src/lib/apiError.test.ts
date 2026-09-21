@@ -31,3 +31,27 @@ describe('apiErrorDetail', () => {
     expect(apiErrorDetail(502, { message: 'upstream timed out' })).toBe('upstream timed out')
   })
 })
+
+describe('responseErrorDetail', () => {
+  it('maps a transport failure (status 0, non-JSON body) to the Thai message, never "HTTP 0"', async () => {
+    const { responseErrorDetail } = await import('./apiError')
+    const res = {
+      status: 0,
+      json: () => JSON.parse('Failed to fetch') as unknown
+    }
+    expect(responseErrorDetail(res)).toBe('เชื่อมต่อ server ไม่ได้ ลองใหม่อีกครั้ง')
+  })
+
+  it('still reads a JSON detail', async () => {
+    const { responseErrorDetail } = await import('./apiError')
+    expect(responseErrorDetail({ status: 404, json: () => ({ detail: 'ไม่พบโปรเจกต์' }) })).toBe(
+      'ไม่พบโปรเจกต์'
+    )
+  })
+
+  it('falls back to HTTP <status> for a non-JSON server error', async () => {
+    const { responseErrorDetail } = await import('./apiError')
+    const res = { status: 502, json: () => JSON.parse('<html>Bad gateway</html>') as unknown }
+    expect(responseErrorDetail(res)).toBe('HTTP 502')
+  })
+})

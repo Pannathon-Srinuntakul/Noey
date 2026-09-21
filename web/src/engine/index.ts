@@ -72,13 +72,22 @@ function jobCommand(command: string): JobCommandApi {
     run: async (job: unknown): Promise<SidecarEvent> => {
       const spec = (job ?? {}) as Record<string, unknown>
       const projectDir = typeof spec.projectDir === 'string' ? spec.projectDir : undefined
+      // A caller may hand in its OWN signal to cancel just this job — the
+      // editor's filmstrip, when the editor closes. `cancel(projectDir)` stops
+      // whatever job the project is running, which could be a render. Without
+      // this the filmstrip kept the project lock after the editor closed, and
+      // a render started right after (ทำคลิปใหม่) queued behind it.
+      const callerSignal = spec.signal instanceof AbortSignal ? spec.signal : undefined
 
       return withProjectLock(projectDir, async () => {
         const runner = runners.get(command)
         if (!runner) {
           throw new Error(`ยังไม่รองรับคำสั่ง "${command}" บนเว็บ`)
         }
+        // Cancelled while still queued: never start it.
+        if (callerSignal?.aborted) throw new DOMException('ยกเลิกแล้ว', 'AbortError')
         const controller = new AbortController()
+        callerSignal?.addEventListener('abort', () => controller.abort(), { once: true })
         if (projectDir) aborters.set(projectDir, controller)
 
         // A heartbeat in the persisted log, at most one line per few seconds.

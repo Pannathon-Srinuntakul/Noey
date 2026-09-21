@@ -84,3 +84,61 @@ describe('editTimelineFromContext', () => {
     expect(et.cuts).toEqual([{ id: 'cut0', source: 'clip0', in: 1, out: 2, label: 'opening' }])
   })
 })
+
+describe('segment fields the editor does not model survive a save', () => {
+  // Live report 2026-09-21: opening the editor autosaved within 2s, the save
+  // rebuilt every segment from the editor's own fields, and ปรับช็อต went empty.
+  const segments = [
+    {
+      order: 1,
+      voiceoverLineId: 1,
+      sourceClip: 'clip0',
+      sourceIn: 5,
+      sourceOut: 8,
+      durationSec: 3,
+      matchedFrameTime: 5.2,
+      visualDescription: 'ถือสินค้าใกล้กล้อง',
+      cutStyle: 'zoom_in',
+      voiceoverScript: 'วันนี้มารีวิว',
+      alternates: [
+        {
+          sourceClip: 'clip0',
+          sourceIn: 31,
+          sourceOut: 34,
+          matchedFrameTime: 31.2,
+          note: 'ชิดกว่า'
+        }
+      ]
+    }
+  ]
+
+  it('round-trips alternates, matchedFrameTime and visualDescription', async () => {
+    const { editCutsFromDubSegments } = await import('./editorApi')
+    const cuts = editCutsFromDubSegments(segments)
+    expect(cuts[0].meta).toEqual({
+      matchedFrameTime: 5.2,
+      visualDescription: 'ถือสินค้าใกล้กล้อง',
+      alternates: segments[0].alternates
+    })
+    const saved = editScriptFromCuts(cuts.map(({ id: _id, ...rest }) => rest)).segments[0]
+    expect(saved.alternates).toEqual(segments[0].alternates)
+    expect(saved.matchedFrameTime).toBe(5.2)
+    expect(saved.visualDescription).toBe('ถือสินค้าใกล้กล้อง')
+  })
+
+  it('lets the edited fields win over the carried ones', () => {
+    const [seg] = dubSegmentsFromEditCuts([
+      {
+        source: 'clip0',
+        in: 6,
+        out: 9,
+        voiceoverLineId: 2,
+        meta: { sourceIn: 5, durationSec: 3, alternates: [] }
+      }
+    ])
+    expect(seg.sourceIn).toBe(6)
+    expect(seg.durationSec).toBe(3)
+    expect(seg.voiceoverLineId).toBe(2)
+    expect(seg.alternates).toEqual([])
+  })
+})

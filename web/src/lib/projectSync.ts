@@ -320,50 +320,92 @@ interface RemoteProject {
  * Returns how many were restored. Failure is silent by design: this runs at
  * startup, and a server that cannot be reached must not stop someone editing
  * the projects already on their machine.
+ *
+ * `onRestored` fires after EACH project lands, so the list can grow as they
+ * arrive. It used to be one update at the very end: a fresh browser showed the
+ * empty "welcome" page for the whole run — two requests per project, one after
+ * another, many of them waiting on S3 — and people refreshed to see their work
+ * (live report 2026-09-21, production).
  */
-export async function restoreMissingProjects(session: ApiSession): Promise<number> {
-  // Paged: the server caps a single response, and reading only the first page
-  // silently hid every older project from a fresh browser -- which reads as
-  // data loss to the person looking for their work.
-  const remote: RemoteProject[] = []
-  try {
-    const pageSize = 200
-    for (let offset = 0; offset < 5000; offset += pageSize) {
-      const res = await authedFetch(session, `/videos?limit=${pageSize}&offset=${offset}`)
-      if (!res.ok) break
-      const page = (await res.json()) as RemoteProject[]
-      remote.push(...page)
-      if (page.length < pageSize) break
-    }
-  } catch {
-    return 0
-  }
+export async function restoreMissingProjects(
+  session: ApiSession,
+  onRestored?: () => void
+): Promise<number> {
+  const remote = await listRemoteProjects(session)
   if (remote.length === 0) return 0
 
   const localUids = new Set(await listProjectUids())
+  // Projects this browser already has, by their SERVER uid: no need to fetch
+  // their project.json again just to learn they are here (every focus of the
+  // tab used to re-download all of them).
+  const knownRemote = new Set(
+    (await window.noey.projects.list().catch(() => []))
+      .map((p) => p.remote?.uid)
+      .filter((u): u is string => !!u)
+  )
+  const todo = remote.filter((row) => row.origin === 'local' && !knownRemote.has(row.uid))
   let restored = 0
 
-  for (const row of remote) {
-    if (row.origin !== 'local') continue
+  const restoreOne = async (row: RemoteProject): Promise<void> => {
     try {
       const blob = await pullProjectFile(session, row.uid, 'project.json')
-      if (!blob) continue
+      if (!blob) return
       const text = await blob.text()
       const parsed = JSON.parse(text) as { uid?: string }
       // The record keeps its ORIGINAL local uid: every stored path is built
       // from it, so a new one would orphan the media it points at.
-      if (!parsed.uid || localUids.has(parsed.uid)) continue
+      if (!parsed.uid || localUids.has(parsed.uid)) return
+      localUids.add(parsed.uid)
+      // The manifest first, the project.json second: a project is listed the
+      // moment its project.json exists, and listed without its manifest every
+      // engine listing reports it as empty.
+      await serverManifest(session, row.uid, parsed.uid).catch(() => [])
       await writeFileAtomic(
         projectFilePath(parsed.uid, 'project.json'),
         new TextEncoder().encode(text)
       )
-      // And what else the server holds for it. One small request, and without
-      // it every listing in the engine reports the restored project as empty.
-      await serverManifest(session, row.uid, parsed.uid).catch(() => [])
       restored += 1
+      onRestored?.()
     } catch {
       // One project that cannot be restored must not stop the rest.
     }
   }
+
+  // A few at a time instead of strictly one after another.
+  const CONCURRENCY = 4
+  let next = 0
+  await Promise.all(
+    Array.from({ length: Math.min(CONCURRENCY, todo.length) }, async () => {
+      while (next < todo.length) await restoreOne(todo[next++])
+    })
+  )
   return restored
+}
+
+/** The account's projects on the server, paged, with a short retry: a single
+ * failed listing used to return 0 silently, and nothing asked again until the
+ * tab regained focus a minute later. */
+async function listRemoteProjects(session: ApiSession): Promise<RemoteProject[]> {
+  const delaysMs = [0, 1500, 4000]
+  for (const delay of delaysMs) {
+    if (delay) await new Promise((r) => window.setTimeout(r, delay))
+    try {
+      // Paged: the server caps a single response, and reading only the first
+      // page silently hid every older project from a fresh browser -- which
+      // reads as data loss to the person looking for their work.
+      const remote: RemoteProject[] = []
+      const pageSize = 200
+      for (let offset = 0; offset < 5000; offset += pageSize) {
+        const res = await authedFetch(session, `/videos?limit=${pageSize}&offset=${offset}`)
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        const page = (await res.json()) as RemoteProject[]
+        remote.push(...page)
+        if (page.length < pageSize) break
+      }
+      return remote
+    } catch {
+      // try again after the next delay
+    }
+  }
+  return []
 }

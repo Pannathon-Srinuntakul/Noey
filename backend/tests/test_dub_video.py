@@ -74,9 +74,11 @@ def test_dub_edit_system_video_matches_claude_rules() -> None:
     assert "sourceOut can never exceed the clip's duration" in s
     # Quality over duration — never fabricate timestamps to run longer.
     assert "Never invent a timestamp beyond a clip's real duration" in s
-    # 1fps precision rule — brief/transitional poses (e.g. a quick back-view
-    # turn) are unreliable to timestamp exactly; prefer held moments.
-    assert "you sample the video at 1 frame/second" in s
+    # Precision rule — brief/transitional poses (e.g. a quick turn) are
+    # unreliable to timestamp exactly; prefer held moments. The sampling rate
+    # varies by precision tier (1 or 5 fps), so the prompt states the
+    # consequence without a rate that would be wrong half the time.
+    assert "You see the video as sampled frames, not continuous motion" in s
     assert "Prefer moments that are HELD for at least ~1 second" in s
 
 
@@ -90,18 +92,18 @@ def test_dub_edit_system_video_default_splice_keeps_editing_style_rules() -> Non
     # The extracted default prose is spliced verbatim.
     assert dub_ai.DEFAULT_CUT_STYLE_PROSE in spliced
     # Load-bearing style sentences (previously asserted on the raw const).
-    assert "Aim for multi-angle on ≥60% of lines" in spliced
-    assert "each line must look VISUALLY DIFFERENT from the one before" in spliced
-    # v2 prose: variety is visual, not temporal — same-span pulls preferred.
-    assert "prefer pulling them from the same span or adjacent ones" in spliced
-    assert "continuity outranks variety" in spliced
-    assert "each cut 0.5–1.5s" in spliced
-    # Multi-angle reinforcement (video-specific, addresses observed under-use).
-    assert "you MUST split it into multi-angle cuts" in spliced
-    # NO_VO variant paces per <editing_style> instead of per dialogue line.
-    no_vo = dub_ai.apply_cut_style(dub_ai.DUB_EDIT_SYSTEM_VIDEO_NO_VO)
-    assert "Pace cuts per the <editing_style> section" in no_vo
-    assert dub_ai.DEFAULT_CUT_STYLE_PROSE in no_vo
+    # Multi-angle stays the default (owner, 2026-09-21), but its cuts come from
+    # different moments: the old "≥60%" / "MUST split" wording split one hold
+    # into identical neighbours.
+    assert "≥60%" not in spliced
+    assert "MUST split" not in spliced
+    assert "Aim for multi-angle on most of these lines" in spliced
+    assert "Never build a multi-angle line from neighbouring seconds of one hold" in spliced
+    assert "Each line must look VISUALLY DIFFERENT from the line before it." in spliced
+    # Variety is visual, not temporal — the same-span preference now lives in
+    # <continuity> and is bounded by <distinct_shots>.
+    assert "Distance in TIME never makes two cuts different" in spliced
+    assert "0.5–1.5s each" in spliced
 
 
 def test_build_dub_edit_context_text_video() -> None:

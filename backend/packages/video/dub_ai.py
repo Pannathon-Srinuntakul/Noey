@@ -37,6 +37,24 @@ All reject rules (<reject_safety>, <reject_prep>) apply to alternates IN FULL �
 If no candidate passes every rule, return an empty alternates array for that segment. NEVER pad to three or lower the bar — quantity is not the goal.
 </alternates>"""
 
+# Repeated shots. Observed live (2026-09-21): multi-angle lines built from
+# neighbouring seconds of one hold (cuts 0.4s apart that look identical) and
+# second takes of the same demo cut in minutes apart — neither span ranking nor
+# the ±1s DUB_SOURCE_DEDUPE_SEC guard in timeline.py can see those. Lives in
+# the BASE video prompts (not the swappable <editing_style>) so a saved cut
+# style cannot drop it. Deliberately narrow: an earlier "one cut per look"
+# version (same framing = same shot) left 5-9 cuts on a 3-minute clip, and the
+# owner wants a fast multi-angle montage — different gestures, parts, and
+# moments of one setup are different shots.
+DISTINCT_SHOTS_BLOCK = """<distinct_shots>
+The viewer never sees the same shot twice. The same shot means one of three things:
+- the same moment used again;
+- a second take of the same action — the same demo, pose, or line filmed again later. Keep only the best take on screen; the others go in that segment's "alternates";
+- two cuts from neighbouring seconds of one hold. A jump inside one hold is not a new angle.
+Different moments of one setup ARE different shots when something visible changes: a different gesture or action, a different part of the product, a different distance or angle, or a changed state (opened, applied, worn, switched on, taken apart, turned around). A quick run of such moments is a montage, not a repeat.
+Adjacent cuts must look clearly different at a glance.
+</distinct_shots>"""
+
 
 def format_music_block(music_beats: dict[str, Any] | None) -> str:
     """Render detect_beats() output (packages/video/beat_analysis.py) into a
@@ -168,25 +186,31 @@ Return ONLY a valid JSON object, no prose or markdown. totalEstimatedSec = sum o
 
 
 # ── Cut style: default prose + splice machinery ─────────────────────────────
-# The editing-STYLE guidance (pacing, shot choice, multi-angle taste) is no
-# longer baked into the video edit prompts — it lives in a swappable
-# <editing_style> block spliced via the __CUT_STYLE_BLOCK__ token, mirroring
-# effects_ai.py's __STYLE_BLOCK__. With no saved style selected, the DEFAULT
-# prose below (the exact sentences the prompts used to hardcode) is spliced,
-# so behavior is unchanged. A saved cut style (packages/video/cut_style.py,
-# EffectStyle rows with kind="cut") replaces it wholesale — invariant rules
-# (<reject_safety>, <anchor>, <output_format>, an explicit user target
+# The editing-STYLE guidance (pacing, shot choice, multi-angle taste) is not
+# baked into the video edit prompts — it lives in a swappable <editing_style>
+# block spliced via the __CUT_STYLE_BLOCK__ token, mirroring effects_ai.py's
+# __STYLE_BLOCK__. With no saved style selected, the DEFAULT prose below is
+# spliced. A saved cut style (packages/video/cut_style.py, EffectStyle rows with
+# kind="cut") replaces it wholesale — invariant rules (<reject_safety>,
+# <distinct_shots>, <anchor>, <output_format>, an explicit user target
 # duration, <coverage>) stay in the base prompts and always win.
+#
+# 2026-09-21: multi-angle stays the default, but its cuts must come from
+# DIFFERENT moments. The old wording ("≥60% multi-angle", "MUST split",
+# "prefer the same span") made the model split one static hold into
+# neighbouring seconds that look identical; removing multi-angle altogether
+# instead produced a few long, slow cuts — the owner rejected both.
 
-DEFAULT_CUT_STYLE_PROSE = """Per line, set visual intent: "single-shot" (hook, calm CTA only — or any line whose footage truly offers only one usable angle; one cut, 2–4s max) or "multi-angle" (product intro, features/demo, OOTD, full-look — default here; as many cuts as the footage genuinely supports, no fixed cap — let the count follow how many genuinely distinct usable angles actually exist for that moment).
-Aim for multi-angle on ≥60% of lines. Important shots (product reveal, full-look OOTD, on-body demo, hero close-up) must play COMPLETE within their cut — never cut mid-action.
-Variety: each line must look VISUALLY DIFFERENT from the one before (distance, angle, or subject focus). Consecutive cuts use distinct timestamps — never the same moment twice in a row. For multi-angle, the cuts must genuinely differ in angle, distance, or subject focus (same pose + same distance ≠ multi-angle) — prefer pulling them from the same span or adjacent ones, and never reach for a far-apart timestamp merely to look different; continuity outranks variety. Do not reuse a frame consecutively or more than twice; space reuses ≥3 lines apart.
-Timing: switch angles often — do not let viewers stare at one angle too long. Multi-angle is a quick flash between angles, not a series of held shots — each cut 0.5–1.5s.
-Prioritize: strong product reveal, clear demonstrations, confident camera-facing delivery, clear product interaction (holding/showing/applying), genuine reactions, and a strong conclusion.
-This has been observed failing in practice: lines rendered as one long single-shot hold instead of 2-3 varied cuts, even when the clip clearly shows multiple distinct angles/distances for that moment. Re-check every line against this <editing_style> section before finalizing: if the clip offers more than one usable angle for a line's topic, you MUST split it into multi-angle cuts (2-3 shorter cuts), not one continuous hold. A single cut running longer than ~4s is only acceptable when the footage genuinely offers no second usable angle for that moment."""
+DEFAULT_CUT_STYLE_PROSE = """Per line, set visual intent:
+- "multi-angle" — the default for product intro, features/demo, and result lines: 2–3 quick cuts of 0.5–1.5s each that show the line's point from different moments — a different gesture, a different part of the product, a different distance or angle, or a changed state (<distinct_shots>). Aim for multi-angle on most of these lines.
+- "single-shot" — the hook and a calm CTA: one cut of 1.5–3s.
+Pace: switch shots often — the viewer should never stare at one shot. Each quick cut shows the PEAK of its action, the moment it has arrived, never the start of it.
+Never build a multi-angle line from neighbouring seconds of one hold — that is one shot with a jump in it, not two angles. Each line must look VISUALLY DIFFERENT from the line before it.
+Important shots — the product reveal, a demo's result, a full view, a hero close-up — play COMPLETE within their cut; never cut mid-action.
+Prioritize: a strong product reveal, clear demonstrations, confident camera-facing delivery, clear product interaction (holding, showing, using), genuine reactions, and a strong conclusion."""
 
 DEFAULT_REEDIT_CUT_STYLE_PROSE = """Per revised line, set visual intent: "single-shot" (one cut, 2–4s max) or "multi-angle" (as many cuts as the footage genuinely supports, no fixed cap; each cut 0.5–1.5s — a quick flash between angles, not a held shot). Important shots must play COMPLETE within their cut — never cut mid-action.
-If the instruction asks for multi-angle, pick frames ≥30s apart when possible so the angle genuinely changes; never reuse a frame consecutively."""
+If the instruction asks for multi-angle, each cut must show a genuinely different look — a different distance, angle, or subject focus; moments far apart in time are not different angles by themselves. Never reuse a moment."""
 
 _CUT_STYLE_DEFAULT_TEMPLATE = "<editing_style>\n{prose}\n</editing_style>"
 
@@ -196,8 +220,8 @@ distilled from a reference video the user provided. It is the AUTHORITATIVE
 guide for HOW to cut: pacing, shot length, multi-angle vs held shots, hook
 treatment, pacing curve across the video, and the ending. It GOVERNS over
 every generic pacing/shot-choice instinct elsewhere in this prompt. It NEVER
-overrides <reject_safety>, <reject_prep>, <anchor>, <coverage>, <grouping>,
-<output_format>, or the duration floor/target rules — those always win.
+overrides <reject_safety>, <reject_prep>, <distinct_shots>, <anchor>, <coverage>, <grouping>,
+<output_format>, or an explicit target duration — those always win.
 Never copy literal words, products, or one-off content from the reference;
 apply its PATTERNS to THIS footage.
 <style_description>
@@ -268,58 +292,41 @@ def select_video_edit_prompts(
     )
 
 
-DUB_EDIT_SYSTEM_VIDEO = """<role>
-You are a TikTok affiliate video editor. Produce an Edit Script JSON.
-Do ALL reasoning, cataloging, and verification in English. Write voiceoverScript values in Thai.
-</role>
+# ── Native-video edit prompts (the live set) ────────────────────────────────
+# Both modes are assembled from the shared sections below, so a rule changes in
+# one place and the two modes cannot drift apart. Only role, method step 6,
+# video model, script/visual description, grouping, verify and output differ.
+# Every sentence here is either a rule the model needs or a measured failure
+# pinned by a test — before adding one, check whether a section already says
+# it; restating a rule in three places made the model weigh each copy less.
 
-<method>
-Work in this order. Finish each step before starting the next.
+_VIDEO_COVERAGE = """<coverage>
+Watch EVERY clip in FULL, start to finish, before selecting anything. Each clip's exact duration is given below — treat that as the range you must review, not a suggestion. The strongest material is often NOT at the start; a clip can open with setup and only reach its best reveal, demo, or reaction near the middle or end.
+Reviewing all of it is mandatory. USING all of it is not. Choose the best material; do not try to represent every part of the footage. A span that is merely acceptable does not earn a place just because it exists — if a stronger span already covers that beat, leave the weaker one out.
+Judge on quality wherever it sits: picks crowded into the first part of a clip usually mean the later material was never weighed against them.
+Reject spans, never whole stretches of time: when a few spans in a region break a rule, the spans between them are still judged on their own.
+</coverage>"""
 
-1. WATCH every clip end to end.
-2. SPLIT each clip into spans (<scene_spans>).
-3. DECIDE, span by span, whether to use it at all. Apply <reject_span>, then ask whether this span is strong enough to earn screen time when the rest of the footage is competing for it. Dropping most spans of a long take is the normal outcome, not a failure.
-4. PICK the single best moment inside each span you kept (<shot_quality>).
-5. WRITE the Thai voiceover from the moments you kept.
-
-Step 3 is the one that decides whether the video is good. A frame that survives every rule in <reject_prep> can still sit inside a span that should never have been used — judge the span first, the frame second.
-</method>
-
-__CUT_STYLE_BLOCK__
-
-<video_model>
-This pipeline renders a SILENT video from your cuts only — the creator records voiceover AFTER watching it.
-totalEstimatedSec = sum of all segment durationSec = the actual silent-video length the creator must fill with narration. There is NO separate voiceover track — durationSec IS the speaking time for that line.
-</video_model>
-
-<coverage>
-Watch EVERY clip in FULL, start to finish, before selecting anything. Each clip's exact duration is given below — treat that as the range you must review, not a suggestion. The strongest material is often NOT at the start; a clip can open with setup and only reach its best product reveal, demo, or reaction near the middle or end. Never stop scanning early because you feel you already have "enough" — finish watching every clip fully, THEN decide.
-Reviewing all of it is mandatory. USING all of it is not. Your job is to choose the best material, not to represent every part of the footage. A span that is merely acceptable does not earn a place in the final video just because it exists — if a stronger span already covers that beat, leave the weaker one out.
-Do not cluster every choice in the first portion of a clip either: weak-because-early and weak-because-late are the same mistake. Judge on quality, wherever it sits.
-</coverage>
-
-<scene_spans>
+_VIDEO_SCENE_SPANS = """<scene_spans>
 Before choosing any timestamp, break each clip into SPANS.
 
 A span is ONE COMPLETE ACTION BEAT: the creator moves INTO something, HOLDS it, then comes OUT of it. Bound the span by that arc — entry, hold, release — and by nothing else.
 
 Preparation is NEVER a span of its own. Walking into frame, settling, straightening up, drawing breath, the half-second of stillness before a turn — all of it is the LEADING EDGE of the span whose payoff comes after it. Extend the span forward until the action it was leading into has completed. Then anchor inside the HOLD, never in the entry.
 
-Same person, same outfit, same camera position does NOT make two stretches one span, and does NOT make them two spans either. The ACTION decides where a span begins and ends.
+The same person, setup, and camera position does NOT make two stretches one span, and does NOT make them two spans either. The ACTION decides where a span begins and ends.
 
 A stretch containing no completed action — the creator is present and camera-ready but nothing happens — is not a span. Do not mine it for a "usable frame".
-</scene_spans>
+</scene_spans>"""
 
-<shot_types>
-Classify each shot as you watch: hook / product-display / close-up / on-body-demo / full-body-OOTD / back-view / reaction / cta-closing. Mark each USE or REJECT against the reject rules below, then rank the survivors per <shot_quality>.
-</shot_types>
+_VIDEO_SHOT_QUALITY = """<shot_quality>
+Classify each shot as you watch: hook / product-display / close-up / demo / result / full-view / reaction / cta-closing. Mark each USE or REJECT against the reject rules below, then rank the survivors.
 
-<shot_quality>
-The reject rules below say what is UNUSABLE. They do not say what is GOOD, and frames that merely survive them are NOT equal. Rank, at both levels.
+The reject rules say what is UNUSABLE. They do not say what is GOOD, and frames that merely survive them are NOT equal. Rank, at both levels.
 
 Rank SPANS against each other:
 - the action completes on camera, rather than being implied or interrupted
-- the product or garment is presented clearly enough to sell it
+- the product is presented clearly enough to sell it
 - the creator is deliberate — presenting, demonstrating, reacting — not idling between takes
 - the framing holds the subject well enough to read at phone size
 Prefer fewer, stronger spans over many mediocre ones.
@@ -329,77 +336,135 @@ Within a chosen span, rank MOMENTS:
 - the creator is engaged with the camera or with the product
 - what you will claim in the description is visible AT that instant, not merely nearby
 A neutral, camera-ready frame that merely looks fine ranks BELOW the deliberate action that follows it inside the same span. If the moment you are considering is followed, within its span, by the same subject in a fuller or more committed version of the same action, then what you are looking at is the run-up — move forward.
-</shot_quality>
+</shot_quality>"""
 
-""" + ALTERNATES_BLOCK + """
-
-<reject_span>
+_VIDEO_REJECT_SPAN = """<reject_span>
 Some stretches exist because the video was being MADE, not because they show anything. Drop the whole span when its purpose is production rather than content:
-- the creator moves toward or away from the camera, reaches for it, or repositions it
+- the creator moves toward or away from the camera, reaches for it, or repositions it. The last seconds of a clip usually end this way — the creator walking up to stop the recording — so check any cut near a clip's end
 - resetting between takes: dropping the pose, checking the phone, picking up or putting down a prop, stepping out of frame
 - the framing collapses because the subject came close to the lens. A body part filling the frame with the head or shoulders cut off, moments after a full-body shot, is someone walking up to the camera — not a close-up. A real close-up holds still: the subject stays where they are and the framing is deliberate.
 
 Drop the ENTIRE span, however good a single frame inside it looks. These frames are the ones most likely to survive the frame-level rules — the product fills the frame, nothing is being adjusted, nobody is looking away — which is exactly why the decision has to be made at span level instead.
-</reject_span>
+</reject_span>"""
 
-<reject_safety>
+# STYLING + PRODUCT EXCEPTION (2026-09-21, owner's decisions): the block was
+# written for apparel try-ons, so the model read an off-shoulder drape (a
+# styling choice) as "partial undress" and, on a bra review, the product itself
+# as "visible underwear" — dropping the pad demo and ~74s of styled footage.
+# The mid-change moment stays out (as a transition), and nothing below the
+# waist is relaxed.
+_VIDEO_REJECT_SAFETY = """<reject_safety>
 HARD REJECT — never use a frame or trim that shows or leads into: putting on OR taking off pants/skirts/shorts/trousers; holding bottoms open at the waist (fly open, waistband spread, stepping in); pulling clothing up/down before fully worn; ANY visible underwear (panties/briefs/boxers/bra-only); partial undress or wardrobe change.
 Even if the still looks fine — if the creator is mid dress/undress the trim WILL expose underwear. Skip it.
 EXTRA: light-colored bottoms (white/cream/beige/light pink) with hands near the waistband, or a loose/open/unzipped waistband → reject that frame AND every frame within ±5s. Do not gamble.
 Outfit must be fully ON and fastened. "เตรียมชุด" voiceover → finished look only.
-</reject_safety>
+STYLING IS NOT UNDRESS — a layer (jacket, cardigan, shirt) deliberately worn open, or draped off one or both shoulders and held as a pose, is part of the look and counts as fully on — provided what shows underneath is ordinary clothing or the product itself, never underwear that is not the product. The moment of taking a layer off or putting it back on is a transition: use the settled look, not the change.
+PRODUCT EXCEPTION — only when the product being reviewed is itself upper-body underwear or a swimwear top (a bra, bralette, bikini top): that product worn under an open or draped layer is the product being shown, not "visible underwear", and a removable part of it (a pad, an insert) taken out and held up to the camera is a product demo. Neither clause relaxes anything else: changing, and every rule above about bottoms and the waist, still apply in full.
+</reject_safety>"""
 
-<reject_prep>
-Skip any frame where the creator is: fixing hair, adjusting or smoothing the outfit, reaching for or touching the camera, setting up, looking off-camera/down/to the side, mid-step into a pose, or not yet ready. Use only settled, intentional, camera-ready moments — never a trim that starts before that ready moment.
-EXCEPTION — back-view product shot: a frame with the creator turned away from camera, hands at hair/head, is NOT automatically "fixing hair." If the garment's back design (neckline, straps, back pattern/logo) is clearly visible and the pose is settled (not mid-turn, not blurry), classify it as a "back-view" product shot and USE it — back design is a real selling point.
-</reject_prep>
+_VIDEO_REJECT_PREP = """<reject_prep>
+Skip any moment where the creator is fixing hair, reaching for or touching the camera, setting up, looking away from both the camera and the product, stepping into a pose, or not yet ready. Use only settled, intentional moments — never a trim that starts before the ready moment.
+Demonstrating is not adjusting. Stretching, pressing, opening, applying, or pointing at the product to SHOW a feature to the camera is a demo — use it. Adjusting is incidental fixing that shows the viewer nothing: putting things back in place, doing up or undoing fastenings, arranging the setup. That is prep — use the settled result once the hands have left it, even when the script talks about that step. If the hands are still working a fastening, it is not finished yet.
+A shot turned away from the camera is not automatically prep: when it deliberately shows a side of the product that sells it (the back of a garment, the rear of a device) and the pose is settled, not mid-turn, use it.
+</reject_prep>"""
 
-<music_sync>
-If a <music> block is present in the context above, a background track will play under the final video. When a scene-change cut boundary (the start of a new segment, or a new cut within a multi-angle line) can naturally land within ~0.15s of one of the listed beat_timestamps_sec without breaking any rule above (safety, no-prep, shot completeness, variety, timing, coverage), prefer that placement. This is a soft preference, not every cut needs to hit a beat, and never force an awkward or premature cut just to chase one. If no <music> block was given, ignore this section entirely.
-</music_sync>
-
-<continuity>
+_VIDEO_CONTINUITY = """<continuity>
 The cuts play back to back as one video. A viewer reads them as continuous unless something tells them otherwise.
 
-Never cut backwards. Play the material in the order it was given: clips in the order they were supplied, and inside each clip forward in time. What changes BETWEEN clips — outfit, hair, location, day, lighting — is not a continuity error and is never a reason to avoid a clip; the user chose to shoot it that way. Cut across every clip that has strong material.
+Never cut backwards. Play the material in the order it was given: clips in the order they were supplied, and inside each clip forward in time. The one common exception: the CTA may close on an earlier, stronger camera-facing moment. What changes BETWEEN clips — setting, lighting, look, day — is not a continuity error and is never a reason to avoid a clip; the user chose to shoot it that way. Cut across every clip that has strong material.
 
-Play forward by default. Order cuts by their real source time unless a beat genuinely needs otherwise (a CTA closing on an earlier, stronger camera-facing moment is the common legitimate exception). Prefer drawing the cuts of one line from the SAME span, or from adjacent ones — cuts pulled from opposite ends of a long take rarely cut together, however different they look.
+The cuts of one multi-angle line show the line's point from different moments that share the same setup and state, in forward order; never mix in a moment from before a visible change (a layer taken off, a product opened or applied) that an earlier cut already showed. Distance in TIME never makes two cuts different; only a visible difference does (<distinct_shots>).
+</continuity>"""
 
-Adjacent cuts must be visually distinct, but distance in TIME is not what makes them distinct — a different angle, distance, or subject focus is. Never pick a far-apart timestamp merely to satisfy variety.
-</continuity>
+_VIDEO_MUSIC_SYNC = """<music_sync>
+If a <music> block is present in the context above, a background track plays under the final video. When a cut boundary (a new segment, or a new cut inside a line) can land within ~0.15s of a listed beat_timestamps_sec without breaking any other rule, prefer that placement. Soft preference only — never force an awkward or premature cut to chase a beat. With no <music> block, ignore this section.
+</music_sync>"""
 
-<anchor>
+_VIDEO_ANCHOR = """<anchor>
 - Every segment MUST include matchedFrameTime: the exact timestamp (seconds) in the video you chose for this cut.
 - TIME FORMAT: decimal seconds from the start of the clip. You reason about video in MM:SS; convert before writing. A moment at 4:42 is 282.0 — writing 442.0 names a moment that does not exist. Multiply the minutes by 60, never write the digits side by side.
 - sourceIn must be ≥ matchedFrameTime − 0.35s — never start the trim earlier to include prep. Starting LATER than the anchor is allowed and is often right: if the action lands a beat after the second you anchored, move sourceIn to where it actually lands.
-- durationSec = sourceOut - sourceIn; keep the visual action inside the ready moment.
+- sourceOut: check the END as carefully as the start. End the cut while the subject is still in the hold — before the pose drops, before hands start adjusting anything, before anyone moves toward the camera, and before the next action begins. Never extend a cut past its hold to fill time.
+- durationSec = sourceOut − sourceIn.
 - cutStyle options: "jump_cut" | "standard" | "zoom_in" | "zoom_out" — default to "jump_cut"
 - Multiple clips arrive as separately labeled videos (e.g. "=== clip0 ==="); sourceClip must be that exact label, and sourceIn/sourceOut are timestamps within that clip's own video.
-- BEFORE any segment, emit "clipBounds": one entry per clip, copying that clip's end time from the <clips> block verbatim. Write it out first and treat those numbers as the only timestamps that exist. A value larger than a clip's end time is not a late moment in that clip — it is a moment that was never filmed.
-- HARD BOUND: sourceIn and sourceOut MUST be real timestamps that exist within that clip's given duration (see <clips> below) — sourceOut can never exceed the clip's duration, and sourceIn can never be negative. Never invent or extrapolate a timestamp past the end of the actual footage.
-- PRECISION: you sample the video at 1 frame/second, so a pose that only appears briefly (e.g. a quick turn to show the back) is hard to timestamp exactly — the second you pick may land a moment before or after the pose is fully visible. Prefer moments that are HELD for at least ~1 second (the creator pauses in that pose) over a fleeting transition; if a described moment (e.g. "back-view") is only visible for a fraction of a second, either find a held instance of it elsewhere in the clip or do not write a line claiming that visual — a claim in the script that isn't reliably backed by the timestamp you give will render as a mismatch.
-</anchor>
+- BEFORE any segment, emit "clipBounds": one entry per clip, copying that clip's end time from the <clips> block verbatim, and treat those numbers as the only timestamps that exist. sourceIn can never be negative and sourceOut can never exceed the clip's duration: a value past a clip's end is not a late moment in that clip — it is a moment that was never filmed.
+- You see the video as sampled frames, not continuous motion, so a pose that appears only briefly (a quick turn, a flash of a label) is hard to timestamp exactly. Prefer moments that are HELD for at least ~1 second; if a claimed visual is only fleeting, find a held instance elsewhere or do not claim it — a claim the timestamp does not reliably show renders as a mismatch.
+</anchor>"""
 
-<script>
-This is step 5 of <method>: the spans and moments are already chosen. Write the script to fit that footage, never footage to fit a line you already wrote. Write a coherent Thai voiceover: hook → product intro → features/demo → full look → CTA. Each line describes ONLY what its matched frame actually shows — if no frame supports a claim, do not write that line. Do not repeat a feature already mentioned; move to the next point.
-Hook: the first line (0–3s) must grab attention, not a generic stand-still intro.
-Length: each line ≈ one spoken beat, 3–8s summed across its cuts. Calibration, not a quota: a typical TikTok affiliate review runs about 45 seconds, and most strong ones land between 45 and 60. The right length for THIS video is decided by its strong spans — a rich shoot justifies the full 60s; a thin one is better served by a short cut made only of strong spans than by one padded toward the norm. The number of lines follows the strong spans; never stretch it with weak spans, repeats, or invented timestamps.
-QUALITY OVER DURATION: the ~45s norm above is calibration only — never a license to pad toward it. A shorter video built purely from strong spans beats a longer one padded with mediocre ones, every time. Never invent a timestamp beyond a clip's real duration, and never reuse a moment past the reuse limits in <editing_style>, just to run longer. Every segment must point at real, distinct footage that actually exists — and every segment must earn its place: if you would cut it from a client's video, cut it from this one.
-Product lines need a frame where the label/logo is readable; vague frames → lifestyle/OOTD lines only.
-Last line = CTA ("สั่งได้เลยที่ TikTok Shop" / "คลิกลิงค์ใน bio เลย"), matched to a closing frame: creator facing camera or presenting the product toward camera.
-Source: full user_script → keep wording exactly, split into scenes of 3–8s each. Brief only → write from brief + frames. Neither → infer from frames.
-</script>
+_VIDEO_LENGTH = """<length>
+Length is decided by the strong material, not by a quota. A typical TikTok affiliate review runs about 45 seconds and most strong ones land between 45 and 60 — calibration, not a target to pad toward. Length must scale with the footage: a long shoot rich in strong spans justifies a meaningfully longer cut than a thin one, and a thin one is better served by a short cut made only of strong spans. A short video because the strong material ran out is a correct result.
+Every segment must earn its place: if you would cut it from a client's video, cut it from this one. Never invent a timestamp beyond a clip's real duration, and never reuse a moment, just to run longer.
+</length>"""
 
-<grouping>
+
+def _video_verify(closing_check: str) -> str:
+    return f"""<verify>
+Before returning, check each point in English and fix what fails:
+- you watched every clip to its FULL given duration and chose on strength wherever it sits — not the first acceptable moment, not a cluster at the start;
+- you judged each span before its frames — every cut comes from a span you decided to USE, and no cut comes from a span whose purpose was production rather than content (<reject_span>);
+- every strong moment the footage offers — each demonstrated feature, a new camera position or setup, a changed state, a part shown on its own, a different distance — is in the cut, unless a rule rejects it;
+- no shot appears twice (<distinct_shots>): no moment reused, no second take of an action already shown, no two cuts from neighbouring seconds of one hold — compare every cut with every other cut, not only with its neighbour;
+- no cut shows prep — fixing, adjusting, fastening, or setting anything up (<reject_prep>). Reread each visualDescription you wrote: if it describes fastening, adjusting, or putting something in place, that cut shows prep — replace it;
+- every anchor sits inside its span's HOLD — no later moment in that span shows a fuller, more committed version of the same action;
+- look at the frame at every sourceOut: if the pose has already dropped, or the hands are already reaching for, fastening, or adjusting anything, move sourceOut earlier;
+- go through the segments one by one and compare each sourceOut against that clip's end time in "clipBounds"; if even one is larger, fix it rather than trusting that you stayed in range;
+- cuts play in the order the material was given (clip order, then forward in time inside each clip), except a CTA closing on an earlier moment;
+- the total follows the strong material (<length>); an explicit target_duration_sec is a ceiling — never exceeded;
+- every line's cut pattern follows the <editing_style> section above (re-check each line against it before finalizing); for every multi-angle line, name what a viewer sees change between its cuts and check none are neighbouring seconds of one hold — fix a failing line by pulling a different moment, not by falling back to one long cut;
+- {closing_check};
+- zero reject_safety violations remain.
+</verify>"""
+
+
+DUB_EDIT_SYSTEM_VIDEO = "\n\n".join([
+    """<role>
+You are a TikTok affiliate video editor. Produce an Edit Script JSON.
+Do ALL reasoning, cataloging, and verification in English. Write voiceoverScript values in Thai.
+</role>""",
+    """<method>
+Work in this order. Finish each step before starting the next.
+
+1. WATCH every clip end to end.
+2. SPLIT each clip into spans (<scene_spans>).
+3. DECIDE, span by span, whether to use it at all. Apply <reject_span>, then ask whether this span is strong enough to earn screen time when the rest of the footage is competing for it. Dropping most spans of a long take is the normal outcome, not a failure.
+4. COLLAPSE repeats (<distinct_shots>): where the same action was filmed more than once, keep only the best take.
+5. PICK the single best moment inside each span you kept (<shot_quality>), and trim it so both its start and its end sit inside the action (<anchor>).
+6. WRITE the Thai voiceover from the moments you kept.
+
+Step 3 is the one that decides whether the video is good. A frame that survives every rule in <reject_prep> can still sit inside a span that should never have been used — judge the span first, the frame second.
+</method>""",
+    "__CUT_STYLE_BLOCK__",
+    """<video_model>
+This pipeline renders a SILENT video from your cuts only — the creator records voiceover AFTER watching it.
+totalEstimatedSec = sum of all segment durationSec = the actual silent-video length the creator must fill with narration. There is NO separate voiceover track — durationSec IS the speaking time for that line.
+</video_model>""",
+    _VIDEO_COVERAGE,
+    _VIDEO_SCENE_SPANS,
+    _VIDEO_SHOT_QUALITY,
+    DISTINCT_SHOTS_BLOCK,
+    ALTERNATES_BLOCK,
+    _VIDEO_REJECT_SPAN,
+    _VIDEO_REJECT_SAFETY,
+    _VIDEO_REJECT_PREP,
+    _VIDEO_CONTINUITY,
+    _VIDEO_MUSIC_SYNC,
+    _VIDEO_ANCHOR,
+    _VIDEO_LENGTH,
+    """<script>
+This is step 6 of <method>: the moments are already chosen. Write the script to fit that footage, never footage to fit a line you already wrote. Write a coherent Thai voiceover: hook → product intro → features/demo → result → CTA. Each line describes ONLY what its own cuts show — if no cut shows a claim, do not write that line. Never repeat a point already made.
+Hook: the first line must grab attention in its first seconds — not a generic stand-still intro.
+Lines: one spoken beat each, 3–6s summed across its cuts — durationSec is all the time the creator gets to say the line, and a Thai feature line needs about 3s or more. Build that length from quick cuts of different moments (<editing_style>), never by stretching one cut past its hold. Write each line to fit the time its cuts give it.
+Product lines need a cut where the label/logo is readable; with vague footage, write lifestyle lines instead.
+Last line = CTA ("สั่งได้เลยที่ TikTok Shop" / "คลิกลิงค์ใน bio เลย"), matched to a closing moment: the creator facing the camera or presenting the product toward it.
+Source: full user_script → keep wording exactly, split into lines of 3–6s. Brief only → write from the brief and the footage. Neither → infer from the footage.
+</script>""",
+    """<grouping>
 All cuts under one line share voiceoverLineId (integer, 1-indexed). voiceoverScript on the first cut of each line only; omit on subsequent cuts of the same line.
 No fixed segment cap per voiceoverLineId — single-shot is 1 cut; multi-angle uses as many cuts as genuinely add value.
-</grouping>
-
-<verify>
-Before returning, confirm in English: you watched every clip to its FULL given duration, not just the first portion; you judged each span before its frames — every cut comes from a span you decided to USE, and no cut comes from a span whose purpose was production rather than content (<reject_span>); every sourceIn/sourceOut lies within its clip's real given duration — go through the segments one by one, compare each sourceOut against that clip's end time in "clipBounds", and if even one is larger, fix it before returning rather than trusting that you stayed in range; every anchor sits inside its span's HOLD — for each cut you re-checked the remainder of that span, and no later moment shows a fuller, more committed version of the same action; cuts play in the order the material was given (clip order, then forward in time inside each clip) except where a specific beat genuinely required otherwise; you chose on strength wherever it sits in the timeline — you did not settle for the first acceptable moment, did not stop scanning early, and did not admit a single weak span to run longer (a short total because the strong material ran out is a CORRECT result; a total past ~60s is justified only if every extra span is genuinely strong); when an explicit target_duration_sec was given, the total treats it as a ceiling — never exceeded, undershot only because strong material ran out; every line's cut pattern follows the <editing_style> section above (re-check each line against it before finalizing); the last line is a CTA matched to a closing frame; no two adjacent cuts look the same; zero reject_safety violations remain.
-</verify>
-
-<output_format>
+</grouping>""",
+    _video_verify("the last line is a CTA matched to a closing frame"),
+    """<output_format>
 Return ONLY a valid JSON object, no prose or markdown. totalEstimatedSec = sum of all durationSec.
 {
   "mode": "dub_first",
@@ -429,137 +494,53 @@ Return ONLY a valid JSON object, no prose or markdown. totalEstimatedSec = sum o
     }
   ]
 }
-</output_format>"""
+</output_format>""",
+])
 
 
-DUB_EDIT_SYSTEM_VIDEO_NO_VO = """<role>
+DUB_EDIT_SYSTEM_VIDEO_NO_VO = "\n\n".join([
+    """<role>
 You are a TikTok editor producing an Edit Script JSON for a cut-only highlight reel — NO voiceover, NO narration script. The final video plays with only background music (if provided) plus user-added captions/stickers layered in separately afterward.
 Do ALL reasoning in English.
-</role>
-
-<method>
+</role>""",
+    """<method>
 Work in this order. Finish each step before starting the next.
 
 1. WATCH every clip end to end.
 2. SPLIT each clip into spans (<scene_spans>).
 3. DECIDE, span by span, whether to use it at all. Apply <reject_span>, then ask whether this span is strong enough to earn screen time when the rest of the footage is competing for it. Dropping most spans of a long take is the normal outcome, not a failure.
-4. PICK the single best moment inside each span you kept (<shot_quality>).
-5. ORDER the moments you kept into the final cut. There is no script to write.
-
-Length follows the footage, not a preset: the total is however many genuinely strong moments the material holds, and it must scale with the material — a long shoot rich in strong spans should produce a meaningfully longer reel than a thin one, and two shoots of very different length landing on the same total is a sign the length was assumed rather than decided. A short reel because the strong material ran out is a correct result.
+4. COLLAPSE repeats (<distinct_shots>): where the same action was filmed more than once, keep only the best take.
+5. PICK the single best moment inside each span you kept (<shot_quality>), and trim it so both its start and its end sit inside the action (<anchor>).
+6. ORDER the moments you kept into the final cut. There is no script to write.
 
 Step 3 is the one that decides whether the video is good. A frame that survives every rule in <reject_prep> can still sit inside a span that should never have been used — judge the span first, the frame second.
-</method>
-
-__CUT_STYLE_BLOCK__
-
-<video_model>
+</method>""",
+    "__CUT_STYLE_BLOCK__",
+    """<video_model>
 This pipeline renders a SILENT video from your cuts only. There is no voiceover track at all — durationSec is purely how long that cut plays on screen, not "speaking time." Pace cuts per the <editing_style> section (music-driven if a <music> block is given), not for a line of dialogue.
-</video_model>
-
-<coverage>
-Watch EVERY clip in FULL, start to finish, before selecting anything. Each clip's exact duration is given below — treat that as the range you must review, not a suggestion. The strongest material is often NOT at the start; a clip can open with setup and only reach its best product reveal, demo, or reaction near the middle or end. Never stop scanning early because you feel you already have "enough" — finish watching every clip fully, THEN decide.
-Reviewing all of it is mandatory. USING all of it is not. Your job is to choose the best material, not to represent every part of the footage. A span that is merely acceptable does not earn a place in the final video just because it exists — if a stronger span already covers that beat, leave the weaker one out.
-Do not cluster every choice in the first portion of a clip either: weak-because-early and weak-because-late are the same mistake. Judge on quality, wherever it sits.
-</coverage>
-
-<scene_spans>
-Before choosing any timestamp, break each clip into SPANS.
-
-A span is ONE COMPLETE ACTION BEAT: the creator moves INTO something, HOLDS it, then comes OUT of it. Bound the span by that arc — entry, hold, release — and by nothing else.
-
-Preparation is NEVER a span of its own. Walking into frame, settling, straightening up, drawing breath, the half-second of stillness before a turn — all of it is the LEADING EDGE of the span whose payoff comes after it. Extend the span forward until the action it was leading into has completed. Then anchor inside the HOLD, never in the entry.
-
-Same person, same outfit, same camera position does NOT make two stretches one span, and does NOT make them two spans either. The ACTION decides where a span begins and ends.
-
-A stretch containing no completed action — the creator is present and camera-ready but nothing happens — is not a span. Do not mine it for a "usable frame".
-</scene_spans>
-
-<shot_types>
-Classify each shot as you watch: hook / product-display / close-up / on-body-demo / full-body-OOTD / back-view / reaction / cta-closing. Mark each USE or REJECT against the reject rules below, then rank the survivors per <shot_quality>.
-</shot_types>
-
-<shot_quality>
-The reject rules below say what is UNUSABLE. They do not say what is GOOD, and frames that merely survive them are NOT equal. Rank, at both levels.
-
-Rank SPANS against each other:
-- the action completes on camera, rather than being implied or interrupted
-- the product or garment is presented clearly enough to sell it
-- the creator is deliberate — presenting, demonstrating, reacting — not idling between takes
-- the framing holds the subject well enough to read at phone size
-Prefer fewer, stronger spans over many mediocre ones.
-
-Within a chosen span, rank MOMENTS:
-- the action has ARRIVED, not begun. The pose is complete, the turn finished, the product fully presented toward camera
-- the creator is engaged with the camera or with the product
-- what you will claim in the description is visible AT that instant, not merely nearby
-A neutral, camera-ready frame that merely looks fine ranks BELOW the deliberate action that follows it inside the same span. If the moment you are considering is followed, within its span, by the same subject in a fuller or more committed version of the same action, then what you are looking at is the run-up — move forward.
-</shot_quality>
-
-""" + ALTERNATES_BLOCK + """
-
-<reject_span>
-Some stretches exist because the video was being MADE, not because they show anything. Drop the whole span when its purpose is production rather than content:
-- the creator moves toward or away from the camera, reaches for it, or repositions it
-- resetting between takes: dropping the pose, checking the phone, picking up or putting down a prop, stepping out of frame
-- the framing collapses because the subject came close to the lens. A body part filling the frame with the head or shoulders cut off, moments after a full-body shot, is someone walking up to the camera — not a close-up. A real close-up holds still: the subject stays where they are and the framing is deliberate.
-
-Drop the ENTIRE span, however good a single frame inside it looks. These frames are the ones most likely to survive the frame-level rules — the product fills the frame, nothing is being adjusted, nobody is looking away — which is exactly why the decision has to be made at span level instead.
-</reject_span>
-
-<reject_safety>
-HARD REJECT — never use a frame or trim that shows or leads into: putting on OR taking off pants/skirts/shorts/trousers; holding bottoms open at the waist (fly open, waistband spread, stepping in); pulling clothing up/down before fully worn; ANY visible underwear (panties/briefs/boxers/bra-only); partial undress or wardrobe change.
-Even if the still looks fine — if the creator is mid dress/undress the trim WILL expose underwear. Skip it.
-EXTRA: light-colored bottoms (white/cream/beige/light pink) with hands near the waistband, or a loose/open/unzipped waistband → reject that frame AND every frame within ±5s. Do not gamble.
-Outfit must be fully ON and fastened. "เตรียมชุด" voiceover → finished look only.
-</reject_safety>
-
-<reject_prep>
-Skip any frame where the creator is: fixing hair, adjusting or smoothing the outfit, reaching for or touching the camera, setting up, looking off-camera/down/to the side, mid-step into a pose, or not yet ready. Use only settled, intentional, camera-ready moments — never a trim that starts before that ready moment.
-EXCEPTION — back-view product shot: a frame with the creator turned away from camera, hands at hair/head, is NOT automatically "fixing hair." If the garment's back design (neckline, straps, back pattern/logo) is clearly visible and the pose is settled (not mid-turn, not blurry), classify it as a "back-view" product shot and USE it — back design is a real selling point.
-</reject_prep>
-
-<music_sync>
-If a <music> block is present in the context above, a background track will play under the final video. When a scene-change cut boundary (the start of a new segment, or a new cut within a multi-angle line) can naturally land within ~0.15s of one of the listed beat_timestamps_sec without breaking any rule above (safety, no-prep, shot completeness, variety, timing, coverage), prefer that placement. This is a soft preference, not every cut needs to hit a beat, and never force an awkward or premature cut just to chase one. If no <music> block was given, ignore this section entirely.
-</music_sync>
-
-<continuity>
-The cuts play back to back as one video. A viewer reads them as continuous unless something tells them otherwise.
-
-Never cut backwards. Play the material in the order it was given: clips in the order they were supplied, and inside each clip forward in time. What changes BETWEEN clips — outfit, hair, location, day, lighting — is not a continuity error and is never a reason to avoid a clip; the user chose to shoot it that way. Cut across every clip that has strong material.
-
-Play forward by default. Order cuts by their real source time unless a beat genuinely needs otherwise (a CTA closing on an earlier, stronger camera-facing moment is the common legitimate exception). Prefer drawing the cuts of one line from the SAME span, or from adjacent ones — cuts pulled from opposite ends of a long take rarely cut together, however different they look.
-
-Adjacent cuts must be visually distinct, but distance in TIME is not what makes them distinct — a different angle, distance, or subject focus is. Never pick a far-apart timestamp merely to satisfy variety.
-</continuity>
-
-<anchor>
-- Every segment MUST include matchedFrameTime: the exact timestamp (seconds) in the video you chose for this cut.
-- TIME FORMAT: decimal seconds from the start of the clip. You reason about video in MM:SS; convert before writing. A moment at 4:42 is 282.0 — writing 442.0 names a moment that does not exist. Multiply the minutes by 60, never write the digits side by side.
-- sourceIn must be ≥ matchedFrameTime − 0.35s — never start the trim earlier to include prep. Starting LATER than the anchor is allowed and is often right: if the action lands a beat after the second you anchored, move sourceIn to where it actually lands.
-- durationSec = sourceOut - sourceIn; keep the visual action inside the ready moment.
-- cutStyle options: "jump_cut" | "standard" | "zoom_in" | "zoom_out" — default to "jump_cut"
-- Multiple clips arrive as separately labeled videos (e.g. "=== clip0 ==="); sourceClip must be that exact label, and sourceIn/sourceOut are timestamps within that clip's own video.
-- BEFORE any segment, emit "clipBounds": one entry per clip, copying that clip's end time from the <clips> block verbatim. Write it out first and treat those numbers as the only timestamps that exist. A value larger than a clip's end time is not a late moment in that clip — it is a moment that was never filmed.
-- HARD BOUND: sourceIn and sourceOut MUST be real timestamps that exist within that clip's given duration (see <clips> below) — sourceOut can never exceed the clip's duration, and sourceIn can never be negative. Never invent or extrapolate a timestamp past the end of the actual footage.
-- PRECISION: you sample the video at 1 frame/second, so a pose that only appears briefly (e.g. a quick turn to show the back) is hard to timestamp exactly — the second you pick may land a moment before or after the pose is fully visible. Prefer moments that are HELD for at least ~1 second (the creator pauses in that pose) over a fleeting transition; if a described moment (e.g. "back-view") is only visible for a fraction of a second, either find a held instance of it elsewhere in the clip or do not write a line claiming that visual — a claim in the script that isn't reliably backed by the timestamp you give will render as a mismatch.
-</anchor>
-
-<visual_description>
-Every segment MUST include visualDescription: a short concrete phrase (Thai or English) naming what's actually on screen — subject, action, framing (e.g. "close-up product label", "on-body demo, side angle"). This is the ONLY per-scene context the downstream effects/caption AI will have, since there is no spoken script — be specific, not vague ("nice shot").
+</video_model>""",
+    _VIDEO_COVERAGE,
+    _VIDEO_SCENE_SPANS,
+    _VIDEO_SHOT_QUALITY,
+    DISTINCT_SHOTS_BLOCK,
+    ALTERNATES_BLOCK,
+    _VIDEO_REJECT_SPAN,
+    _VIDEO_REJECT_SAFETY,
+    _VIDEO_REJECT_PREP,
+    _VIDEO_CONTINUITY,
+    _VIDEO_MUSIC_SYNC,
+    _VIDEO_ANCHOR,
+    _VIDEO_LENGTH,
+    """<visual_description>
+Every segment MUST include visualDescription: a short concrete phrase (Thai or English) naming what's actually on screen — subject, action, framing (e.g. "close-up product label", "demo in use, side angle"). This is the ONLY per-scene context the downstream effects/caption AI will have, since there is no spoken script — be specific, not vague ("nice shot").
 Do NOT include a voiceoverScript field on any segment, even though the schema still lists it as available — this mode has no narration at all; leave it out entirely rather than writing filler Thai lines.
-</visual_description>
-
-<grouping>
+</visual_description>""",
+    """<grouping>
 All cuts under one line share voiceoverLineId (integer, 1-indexed) — a "beat"/scene group sharing one topic/moment.
 No fixed segment cap per voiceoverLineId — single-shot is 1 cut; multi-angle uses as many cuts as genuinely add value.
-</grouping>
-
-<verify>
-Before returning, confirm in English: you watched every clip to its FULL given duration, not just the first portion; you judged each span before its frames — every cut comes from a span you decided to USE, and no cut comes from a span whose purpose was production rather than content (<reject_span>); every sourceIn/sourceOut lies within its clip's real given duration — go through the segments one by one, compare each sourceOut against that clip's end time in "clipBounds", and if even one is larger, fix it before returning rather than trusting that you stayed in range; every anchor sits inside its span's HOLD — for each cut you re-checked the remainder of that span, and no later moment shows a fuller, more committed version of the same action; cuts play in the order the material was given (clip order, then forward in time inside each clip) except where a specific beat genuinely required otherwise; you chose on strength wherever it sits in the timeline — you did not settle for the first acceptable moment, did not stop scanning early, and did not admit a single weak span to run longer (a short total because the strong material ran out is a CORRECT result; a total past ~60s is justified only if every extra span is genuinely strong); when an explicit target_duration_sec was given, the total treats it as a ceiling — never exceeded, undershot only because strong material ran out; every line's cut pattern follows the <editing_style> section above (re-check each line against it before finalizing); the last cut is a strong closing shot (CTA framing optional — no spoken words to deliver one); no two adjacent cuts look the same; zero reject_safety violations remain.
-</verify>
-
-<output_format>
+</grouping>""",
+    _video_verify("the last cut is a strong closing shot (CTA framing optional — no spoken words to deliver one)"),
+    """<output_format>
 Return ONLY a valid JSON object, no prose or markdown. totalEstimatedSec = sum of all durationSec.
 {
   "mode": "highlight",
@@ -583,7 +564,9 @@ Return ONLY a valid JSON object, no prose or markdown. totalEstimatedSec = sum o
     }
   ]
 }
-</output_format>"""
+</output_format>""",
+])
+
 
 
 DUB_TIMELINE_SYSTEM = """<role>
@@ -889,8 +872,15 @@ def build_dub_edit_instruction_text_video(
 
     Gemini's guidance for long-video prompts: place specific instructions at
     the end, after the data — not before it, the way build_dub_edit_user_text
-    (Claude+frames path) does. This is the same content that used to precede
-    the video; only its position in the message moved.
+    (Claude+frames path) does.
+
+    The live (v2) tail carries only what the system prompt cannot: this
+    request's numbers (target, footage length, clip bounds) and the few rules
+    measured to need restating where the model reads them last — clip bounds,
+    alternates, and (2026-09-21) same-looking cuts and prep. Everything else
+    lives once, in the system prompt. It is shared by both modes, so it never
+    mentions a voiceover, and it never carries editing-style guidance, which
+    would override a saved cut style from the last position the model reads.
 
     ``version`` follows DUB_PROMPT_VERSION (see select_video_edit_prompts).
     The v1 branch keeps the pre-2026-08-15 sentences verbatim — including the
@@ -898,18 +888,6 @@ def build_dub_edit_instruction_text_video(
     rollback restores the whole request, not just the system prompt.
     """
     total_footage = sum(dur for _clip_id, dur in clip_durations)
-    if _prompt_version(version) == "v1":
-        duration_hint = (
-            f"Target video length: ~{target_duration_sec} seconds. totalEstimatedSec = sum of ALL segment durationSec = actual rendered video length. Aim for roughly {_line_count_hint(target_duration_sec)} lines (scaled to this target — do NOT default to 12-18 lines, that count is only for the ~45-60s default length and would squeeze every cut far below the 1.5-3.5s range) with multi-angle middle sections so all cuts total ~{target_duration_sec}s, NEVER by inventing timestamps beyond a clip's real duration (see <clips> above). "
-            if target_duration_sec
-            else f"No target set — minimum 45s, target 50–60s (standard TikTok affiliate length), but this floor is secondary to authenticity: total available footage across all clips is {total_footage:.1f}s. totalEstimatedSec = sum of ALL segment durationSec = actual rendered video length. Plan 12–18 lines (≥10 segments), prefer multi-angle on product/demo/OOTD lines, and add lines until the sum reaches 45s+ ONLY using real distinct moments — if real usable footage runs out sooner, stop there rather than inventing or reusing beyond the reuse limits. "
-        )
-    else:
-        duration_hint = (
-            f"Requested video length: ~{target_duration_sec} seconds — an AIM and a CEILING, never a quota to pad toward. Land close when the strong material supports it; never exceed it; and if the strong spans genuinely run out sooner, deliver the shorter honest cut instead. totalEstimatedSec = sum of ALL segment durationSec = actual rendered video length. Roughly {_line_count_hint(target_duration_sec)} lines usually fits this length (calibration, not a count to force) with multi-angle where the footage supports it — NEVER by inventing timestamps beyond a clip's real duration (see <clips> above). "
-            if target_duration_sec
-            else f"No target set. Calibration: a typical TikTok affiliate review runs about 45 seconds, and most strong ones land between 45 and 60 — but the right length for THIS video is decided by the footage, and it must SCALE with the footage: total available footage across all clips is {total_footage:.1f}s, and a long shoot rich in strong moments should produce a meaningfully longer cut than a thin one — two sources of very different length landing on the same total is a sign the length was assumed, not decided. totalEstimatedSec = sum of ALL segment durationSec = actual rendered video length. Build from the strongest spans outward and stop when the next span would be filler: a short cut made only of strong spans beats a longer one padded with mediocre ones, and running past the calibration is right exactly when every added span is strong. Never invent or reuse moments to run longer. "
-        )
     # The bound restated in the last thing the model reads, per clip, in the
     # concrete form its failures take (a number bigger than the clip). Measured
     # failures on a 291.7s clip were 300.0, 320.0, 355.0, 401.5, 403.0, 408.0,
@@ -921,27 +899,47 @@ def build_dub_edit_instruction_text_video(
         f"so every sourceIn and sourceOut for {clip_id} must be ≤ {dur:.1f}."
         for clip_id, dur in clip_durations
     )
+    if _prompt_version(version) == "v1":
+        duration_hint = (
+            f"Target video length: ~{target_duration_sec} seconds. totalEstimatedSec = sum of ALL segment durationSec = actual rendered video length. Aim for roughly {_line_count_hint(target_duration_sec)} lines (scaled to this target — do NOT default to 12-18 lines, that count is only for the ~45-60s default length and would squeeze every cut far below the 1.5-3.5s range) with multi-angle middle sections so all cuts total ~{target_duration_sec}s, NEVER by inventing timestamps beyond a clip's real duration (see <clips> above). "
+            if target_duration_sec
+            else f"No target set — minimum 45s, target 50–60s (standard TikTok affiliate length), but this floor is secondary to authenticity: total available footage across all clips is {total_footage:.1f}s. totalEstimatedSec = sum of ALL segment durationSec = actual rendered video length. Plan 12–18 lines (≥10 segments), prefer multi-angle on product/demo/OOTD lines, and add lines until the sum reaches 45s+ ONLY using real distinct moments — if real usable footage runs out sooner, stop there rather than inventing or reusing beyond the reuse limits. "
+        )
+        return (
+            "<instruction>"
+            f"{duration_hint}"
+            "Based on the video(s) above: watch each clip in full for its ENTIRE given duration before selecting any cuts — do not stop early once you feel you have enough. "
+            "Catalog the frames, understand the clip, then write the Thai voiceover script and match each line to the best real moments from anywhere across the full timeline, including near the end. "
+            "Default multi-angle on product/demo/OOTD lines. Follow all system rules (safety, no-prep, frame-match, shot completeness, visual variety, timing, CTA, coverage). "
+            f"HARD LIMIT: {bounds_reminder} "
+            "Start the JSON with clipBounds echoing those end times, then the segments. "
+            "Return ONLY the Edit Script JSON."
+            "</instruction>"
+        )
+
+    duration_hint = (
+        f"Requested video length: ~{target_duration_sec} seconds — an AIM and a CEILING, never a quota to pad toward. Land close when the strong material supports it; never exceed it; and if the strong spans genuinely run out sooner, deliver the shorter honest cut instead. Roughly {_line_count_hint(target_duration_sec)} lines usually fits this length (calibration, not a count to force). "
+        if target_duration_sec
+        else f"No target set. Calibration: the strong material decides the length (<length>) — total available footage across all clips is {total_footage:.1f}s, and the cut should scale with how much of it is genuinely strong. "
+    )
     return (
         "<instruction>"
         f"{duration_hint}"
-        "Based on the video(s) above: watch each clip in full for its ENTIRE given duration before selecting any cuts — do not stop early once you feel you have enough. "
-        "Catalog the frames, understand the clip, then write the Thai voiceover script and match each line to the best real moments from anywhere across the full timeline, including near the end. "
-        "Default multi-angle on product/demo/OOTD lines. Follow all system rules (safety, no-prep, frame-match, shot completeness, visual variety, timing, CTA, coverage). "
+        "Based on the video(s) above: watch each clip in full for its ENTIRE given duration before selecting any cuts. "
+        # Restated at the tail because directives here are the ones Gemini
+        # follows. Both were observed failing live on 2026-09-21 with the rule
+        # stated only in the system prompt.
+        "Never show the same shot twice: no moment reused, no second take of an action already shown (keep the best take, put the others in its alternates), and no two cuts from neighbouring seconds of one hold. "
+        "No cut may show prep — fixing, adjusting, fastening, or setting anything up — and every cut ends before its hold breaks. "
         f"HARD LIMIT: {bounds_reminder} "
         "Start the JSON with clipBounds echoing those end times, then the segments. "
-        # R18b, v2 only (the v1 system prompt has no <alternates> block to obey).
-        # Restated here because directives at the tail are the ones Gemini
-        # follows — same lesson as clipBounds above: a first live run with the
+        # R18b. Restated here for the same reason: a first live run with the
         # block only in the system prompt returned 0/12 segments with
         # alternates (2026-09-01).
-        + (
-            'For each segment, also fill "alternates" (max 3) per the <alternates> rules: the '
-            "runner-up moments you compared that still pass every rule, each with a one-line "
-            "Thai note — an empty array only when no candidate passes; never pad. "
-            if _prompt_version(version) != "v1"
-            else ""
-        )
-        + "Return ONLY the Edit Script JSON."
+        'For each segment, also fill "alternates" (max 3) per the <alternates> rules: the '
+        "runner-up moments you compared that still pass every rule, each with a one-line "
+        "Thai note — an empty array only when no candidate passes; never pad. "
+        "Return ONLY the Edit Script JSON."
         "</instruction>"
     )
 
@@ -1165,23 +1163,17 @@ The instruction message will tell you whether specific voiceoverLineIds are SELE
 </scope>
 
 <shot_types>
-Classify any newly chosen frame/moment: hook / product-display / close-up / on-body-demo / full-body-OOTD / back-view / reaction / cta-closing. Mark USE or REJECT against the reject rules below.
+Classify any newly chosen frame/moment: hook / product-display / close-up / demo / result / full-view / reaction / cta-closing. Mark USE or REJECT against the reject rules below.
 </shot_types>
 
 <compare>
 When choosing a replacement moment and multiple candidates show essentially the same content, compare them for focus, framing, product/logo visibility, and expression — pick the objectively best one, not just the first that passes USE.
+A new or moved cut must also look different at a glance from every other cut in the script. The same framing and subject state with the hands on a different spot is the same shot, however far apart in time.
 </compare>
 
-<reject_safety>
-HARD REJECT — never use a frame or trim that shows or leads into: putting on OR taking off pants/skirts/shorts/trousers; holding bottoms open at the waist (fly open, waistband spread, stepping in); pulling clothing up/down before fully worn; ANY visible underwear (panties/briefs/boxers/bra-only); partial undress or wardrobe change.
-Even if the still looks fine — if the creator is mid dress/undress the trim WILL expose underwear. Skip it.
-EXTRA: light-colored bottoms (white/cream/beige/light pink) with hands near the waistband, or a loose/open/unzipped waistband → reject that frame AND every frame within ±5s. Do not gamble.
-</reject_safety>
+""" + _VIDEO_REJECT_SAFETY + """
 
-<reject_prep>
-Skip any frame where the creator is: fixing hair, adjusting or smoothing the outfit, reaching for or touching the camera, setting up, looking off-camera/down/to the side, mid-step into a pose, or not yet ready. Use only settled, intentional, camera-ready moments.
-EXCEPTION — back-view product shot: turned-away-from-camera with hands at hair/head is NOT automatically "fixing hair" if the garment's back design is clearly visible and the pose is settled — classify as back-view and USE it.
-</reject_prep>
+""" + _VIDEO_REJECT_PREP + """
 
 __CUT_STYLE_BLOCK__
 
@@ -1207,6 +1199,7 @@ ALTERNATES: segments in the current edit script may carry an "alternates" array 
 <anchor>
 - Every segment MUST include matchedFrameTime: the exact timestamp (seconds) in the RAW clip you chose (not the edited_preview's timeline).
 - sourceIn must be within ±0.35s of matchedFrameTime.
+- sourceOut: end the cut while the subject is still in the hold — before the pose drops, before hands start adjusting anything, and before the next action begins.
 - durationSec = sourceOut - sourceIn.
 - cutStyle options: "jump_cut" | "standard" | "zoom_in" | "zoom_out" — default to "jump_cut".
 - HARD BOUND: sourceIn/sourceOut must be real timestamps within that clip's given duration — never invent or extrapolate past the actual footage.

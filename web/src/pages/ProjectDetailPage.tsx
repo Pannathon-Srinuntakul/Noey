@@ -44,7 +44,7 @@ function ActionButton({
   onClick,
   children
 }: {
-  /** Non-null disables the button and shows this beside it. */
+  /** Non-null disables the button and shows this under it. */
   reason: string | null
   icon: React.ReactNode
   onClick: () => void
@@ -53,7 +53,14 @@ function ActionButton({
   const shared = 'h-12 w-full justify-start'
   if (reason) {
     return (
-      <Button variant="secondary" className={shared} icon={icon} disabled disabledReason={reason}>
+      <Button
+        variant="secondary"
+        className={shared}
+        icon={icon}
+        disabled
+        disabledReason={reason}
+        reasonAs="below"
+      >
         {children}
       </Button>
     )
@@ -420,6 +427,15 @@ export default function ProjectDetailPage({ uid }: { uid: string }): React.JSX.E
             ) : showKept ? (
               <p className="mt-1.5 text-[13px] tabular-nums text-muted">
                 AI คัดไว้ {fmtClock(keptSec)} จากต้นฉบับ {fmtClock(sourceSec)}
+              </p>
+            ) : null}
+            {/* The editor autosaves every change, so leaving it no longer
+                warns; what is still true is that this clip predates those
+                changes. Said here, where that clip plays. */}
+            {job.project.needsRender && ready && !running ? (
+              <p className="mt-1.5 text-[13px] text-accent">
+                แก้ไขวิดีโอไว้แล้ว แต่ยังไม่ได้ทำคลิปใหม่ — คลิปที่เห็นยังเป็นเวอร์ชันก่อนแก้ กด
+                แก้ไขวิดีโอ แล้วกด บันทึกและเรนเดอร์
               </p>
             ) : null}
             {/* What the run actually did, and the way into its reasoning —
