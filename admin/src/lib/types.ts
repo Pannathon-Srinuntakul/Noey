@@ -352,3 +352,22 @@ export interface Reconciliation {
   warn_pct: number;
   vendors: VendorReconciliation[];
 }
+
+/** GET /admin/vendor-quota — today's AI requests against the vendor's daily cap. */
+export interface VendorQuotaFamily {
+  family: string;
+  used: number;
+  limit: number;
+  /** null when the family has no cap configured. */
+  percent: number | null;
+  alerting: boolean;
+}
+
+export interface VendorQuota {
+  /** The vendor's day, not ours — it resets on `timezone`, not at local midnight. */
+  day: string;
+  timezone: string;
+  redis_reachable: boolean;
+  alert_ratio: number;
+  families: VendorQuotaFamily[];
+}

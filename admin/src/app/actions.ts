@@ -20,7 +20,7 @@ import {
 } from "@/lib/billing";
 import type {
   BillingConfigView, BreakerSettings, CircuitBreaker, CostConfig, DashboardData, FxView, LimitFacts, PlanPrices,
-  Reconciliation, UserDetail, Vendor, WalletSummary, WindowKey,
+  Reconciliation, UserDetail, Vendor, VendorQuota, WalletSummary, WindowKey,
 } from "@/lib/types";
 
 export type ActionResult<T> = { ok: true; data: T } | { ok: false; error: string; signedOut?: boolean };
@@ -293,6 +293,10 @@ export async function saveBillingConfigAction(referenceThb: number, sellThb: num
 
 export async function getCircuitBreakerAction(): Promise<ActionResult<CircuitBreaker>> {
   return authed<CircuitBreaker>("/admin/circuit-breaker");
+}
+
+export async function getVendorQuotaAction(): Promise<ActionResult<VendorQuota>> {
+  return authed<VendorQuota>("/admin/vendor-quota");
 }
 
 export async function saveCircuitBreakerAction(b: BreakerSettings): Promise<ActionResult<CircuitBreaker>> {

@@ -6,6 +6,7 @@ import { modelPrice, patchStepAt, priceAt, sttPrice, tokenCost, type Ctx, type S
 import { TASK_USE_LABEL, taskForFeature } from "@/lib/plans";
 import type { CostConfig, DashboardData, FxView, ModelPrice, TokenRow } from "@/lib/types";
 import { BreakerCard } from "./BreakerCard";
+import { VendorQuotaCard } from "./VendorQuotaCard";
 import { FxCard } from "./FxCard";
 import { ReconciliationCard } from "./ReconciliationCard";
 import { LOSS, NumberInput, OK, Seg, type ConfirmSpec } from "./ui";
@@ -202,6 +203,8 @@ export function CostsTab({
         <FxCard cfg={cfg} edit={edit} handle={handle} onChange={onFxChange} />
 
         <BreakerCard initial={data.circuit_breaker} handle={handle} ask={ask} done={done} />
+
+        <VendorQuotaCard />
 
         <section className="card" aria-labelledby="fixed-title">
           <div style={{ display: "flex", alignItems: "baseline", gap: 12, marginBottom: 14 }}>
