@@ -230,7 +230,10 @@ def _frame_sizes(path: Path) -> set[str]:
          "-show_entries", "frame=width,height", "-of", "csv=p=0", str(path)],
         check=True, capture_output=True, text=True,
     ).stdout
-    return {line.strip() for line in out.splitlines() if line.strip()}
+    # Some ffprobe builds end each CSV row with a trailing comma (an empty
+    # column for an entry they do not fill). Strip it, or the same file reports
+    # "240,426" on one machine and "240,426," on another.
+    return {line.strip().rstrip(",") for line in out.splitlines() if line.strip()}
 
 
 def test_geometries_match_spots_a_mixed_source_cut(portrait_clip: Path, landscape_clip: Path) -> None:

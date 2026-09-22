@@ -16,6 +16,7 @@ import asyncio
 import json
 import pathlib
 import shutil
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import select, text
@@ -139,8 +140,47 @@ async def _tenant_session(tenant_slug: str) -> AsyncSession:
     return session
 
 
+_TERMINAL_STATUSES = ("done", "error", "cancelled")
+
+
+async def _lifeline_core_session() -> AsyncSession:
+    """Core-schema session on the pool-free engine (packages/db/session.py)."""
+    from packages.db.session import get_lifeline_sessionmaker
+
+    session = get_lifeline_sessionmaker()()
+    await session.execute(text("SET search_path TO core, public"))
+    return session
+
+
 async def _update_job(job_id: str, status: str, progress: int = 0, result: dict | None = None, error: str | None = None) -> None:
-    session = await _core_session()
+    try:
+        await _write_job(job_id, status, progress, result, error)
+    except Exception as exc:  # noqa: BLE001
+        # A TERMINAL status must land even when the pool is exhausted — that is
+        # exactly when jobs fail, and a row left `running` is a spinner the user
+        # watches forever (load test 2026-09-22). Progress updates may be lost;
+        # the final word may not.
+        if status not in _TERMINAL_STATUSES:
+            raise
+        log.warning("job_status_pool_failed", job_id=job_id, status=status, error=str(exc)[:200])
+        session = await _lifeline_core_session()
+        try:
+            await _write_job(job_id, status, progress, result, error, session=session)
+        finally:
+            await session.close()
+
+
+async def _write_job(
+    job_id: str,
+    status: str,
+    progress: int = 0,
+    result: dict | None = None,
+    error: str | None = None,
+    *,
+    session: AsyncSession | None = None,
+) -> None:
+    owned = session is None
+    session = session or await _core_session()
     try:
         job = (await session.execute(select(Job).where(Job.id == job_id))).scalar_one_or_none()
         if job:
@@ -159,9 +199,34 @@ async def _update_job(job_id: str, status: str, progress: int = 0, result: dict 
                 job.result = result
             if error is not None:
                 job.error = error[:512]
+            # Read everything the cache needs BEFORE committing: a commit
+            # expires the instance, and touching an attribute afterwards would
+            # re-SELECT the row — in a context that has no greenlet, so it does
+            # not merely cost a query, it raises.
+            snapshot = {
+                "tenant_id": int(job.tenant_id),
+                "job_type": str(job.type),
+                "status": str(job.status),
+                "progress": int(job.progress),
+                "result": job.result,
+                "error": job.error,
+            }
             await session.commit()
+            # Mirror into Redis so polling clients do not each take a database
+            # connection (packages/db/job_cache.py). `updated_at` is stamped
+            # here rather than read back from the row: the column's value is
+            # this same moment, and reading it would cost the extra SELECT the
+            # snapshot above exists to avoid.
+            from packages.db import job_cache
+
+            await job_cache.put(
+                job_id,
+                updated_at=datetime.now(timezone.utc).isoformat(),
+                **snapshot,
+            )
     finally:
-        await session.close()
+        if owned:
+            await session.close()
 
 
 # ── video helpers ─────────────────────────────────────────────────────────────

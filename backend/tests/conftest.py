@@ -48,6 +48,16 @@ def _billing_stores_in_memory(monkeypatch):
     monkeypatch.setattr(vendor_limits, "_client", no_redis)
     monkeypatch.setattr(guard, "_alerted_days", set())
     guard.invalidate_cache()
+
+    # The job-status cache is Redis too. It swallows its own errors, so a test
+    # would still pass — but it would first spend the connect timeout on every
+    # poll. Fail it instantly instead; a test that wants the cache patches this.
+    from packages.db import job_cache
+
+    def no_job_redis():  # noqa: ANN202
+        raise ConnectionError("tests do not reach Redis")
+
+    monkeypatch.setattr(job_cache, "_redis", no_job_redis)
     yield
     guard.invalidate_cache()
 

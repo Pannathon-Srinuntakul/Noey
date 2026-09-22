@@ -41,6 +41,41 @@ def _alembic_upgrade() -> None:
     log.info("alembic_upgrade_done")
 
 
+#: Any constant, as long as nothing else in the database picks the same one.
+#: `pg_advisory_lock` keys are a single global namespace per database.
+_STARTUP_LOCK_KEY = 8_713_204_119_470_003
+
+
+@asynccontextmanager
+async def _startup_lock() -> AsyncGenerator[None, None]:
+    """Hold a database-wide lock for the duration of migrate + seed.
+
+    The API runs with several uvicorn workers (API_WORKERS) and Railway may run
+    several replicas, so this block starts in N processes at once. Without a
+    lock they would run `alembic upgrade head` and the seed concurrently against
+    one database: duplicate DDL, a racing `alembic_version` update, and inserts
+    that each think they are first. A session-level advisory lock serialises
+    them — the first process migrates, the rest wait and then find nothing to do.
+
+    Taken on its own connection (NullPool), so waiting here never occupies a
+    connection the request pool needs.
+    """
+    from sqlalchemy import text
+
+    from packages.db.session import get_lifeline_engine
+
+    engine = get_lifeline_engine()
+    conn = await engine.connect()
+    try:
+        await conn.execute(text("SELECT pg_advisory_lock(:k)"), {"k": _STARTUP_LOCK_KEY})
+        yield
+    finally:
+        try:
+            await conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": _STARTUP_LOCK_KEY})
+        finally:
+            await conn.close()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Schema + seed, at STARTUP rather than at import.
@@ -53,10 +88,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """
     from scripts.migrate_to_multitenant import main as _seed
 
-    _alembic_upgrade()
-    log.info("seed_start")
-    await _seed()
-    log.info("seed_done")
+    async with _startup_lock():
+        _alembic_upgrade()
+        log.info("seed_start")
+        await _seed()
+        log.info("seed_done")
     yield
 
 

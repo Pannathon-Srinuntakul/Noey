@@ -8,6 +8,23 @@ from packages.llm.config import (
 )
 
 
+
+def _ignore_env_files(monkeypatch, *names: str) -> None:
+    """Read the named settings from code defaults only.
+
+    Two separate routes carry a developer's `.env` into a test that asserts a
+    DEFAULT: Settings reads the files itself, and importing litellm runs
+    `load_dotenv()`, which copies every key into `os.environ` — where it
+    outranks the file anyway. Close both, or the test reports whatever the
+    machine happens to be configured for.
+    """
+    from packages.core.settings import Settings
+
+    monkeypatch.setitem(Settings.model_config, "env_file", None)
+    for name in names:
+        monkeypatch.delenv(name, raising=False)
+
+
 def test_model_supports_effort_claude_46():
     assert model_supports_effort("anthropic/claude-sonnet-4-6")
     assert model_supports_effort("anthropic/claude-opus-4-6")
@@ -70,6 +87,9 @@ def test_gemini_vision_effort_settings_are_env_tunable(monkeypatch):
     """
     from packages.core.settings import get_settings
 
+    # These two assert the CODE default, and a developer's own .env sets both —
+    # so without ignoring the .env files the test measures the machine.
+    _ignore_env_files(monkeypatch, "DUB_VISION_EFFORT", "EFFECTS_VISION_EFFORT")
     get_settings.cache_clear()
     s = get_settings()
     assert s.dub_vision_effort == "medium"      # the hardcoded value it replaced
@@ -96,6 +116,7 @@ def test_llm_vision_effort_does_not_reach_the_gemini_paths(monkeypatch):
     """
     from packages.core.settings import get_settings
 
+    _ignore_env_files(monkeypatch, "DUB_VISION_EFFORT", "LLM_VISION_EFFORT")
     get_settings.cache_clear()
     monkeypatch.setenv("LLM_VISION_EFFORT", "high")
     monkeypatch.setenv("LLM_VISION_MODEL", "anthropic/claude-sonnet-4-6")

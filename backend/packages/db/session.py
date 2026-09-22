@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator
 from functools import lru_cache
 
 from sqlalchemy import event, text
+from sqlalchemy.pool import NullPool
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -21,10 +22,40 @@ def get_engine() -> AsyncEngine:
     return create_async_engine(
         settings.database_url,
         pool_pre_ping=True,
+        # Sized from settings, never SQLAlchemy's 5+10 default — see
+        # docs/load-test-2026-09-22.md: 15 connections per process was the
+        # ceiling the whole stack hit first, at 4% CPU.
+        pool_size=settings.db_pool_size,
+        max_overflow=settings.db_max_overflow,
+        pool_timeout=settings.db_pool_timeout_sec,
+        pool_recycle=settings.db_pool_recycle_sec,
         # Dynamic DDL (ALTER TABLE) invalidates asyncpg prepared statement cache.
         # Disable caching so schema changes take effect immediately without a 500.
         connect_args={"prepared_statement_cache_size": 0},
     )
+
+
+@lru_cache
+def get_lifeline_engine() -> AsyncEngine:
+    """A tiny, pool-free engine for writes that must not queue behind the pool.
+
+    A worker task that dies *because* the pool is exhausted still has to record
+    that failure — and its error handler used the same exhausted pool, so the
+    job row stayed `running` forever and the user watched a spinner that would
+    never stop (load test 2026-09-22: 28% of jobs at 50 users). This engine
+    opens its own connection, uses it, and closes it.
+    """
+    settings = get_settings()
+    return create_async_engine(
+        settings.database_url,
+        poolclass=NullPool,
+        connect_args={"prepared_statement_cache_size": 0},
+    )
+
+
+@lru_cache
+def get_lifeline_sessionmaker() -> async_sessionmaker[AsyncSession]:
+    return async_sessionmaker(get_lifeline_engine(), expire_on_commit=False)
 
 
 @lru_cache

@@ -486,6 +486,20 @@ class Settings(BaseSettings):
             origins.append("null")
         return origins
 
+    # --- Database connection pool (packages/db/session.py) ---
+    #: SQLAlchemy's defaults are pool_size=5 + max_overflow=10 — 15 per process.
+    #: The 2026-09-22 load test hit that ceiling at 50 concurrent users: worker
+    #: jobs died with QueuePool timeouts, the API answered in exactly 30 s (the
+    #: default pool_timeout) and 28% of AI jobs never reached a terminal status,
+    #: while every machine sat under 15% CPU. Sized explicitly ever since.
+    db_pool_size: int = 30
+    db_max_overflow: int = 20
+    #: Fail fast instead of pretending to work: an overloaded pool should raise
+    #: in seconds, not after half a minute of the client waiting.
+    db_pool_timeout_sec: int = 10
+    #: Recycle connections before a proxy or Postgres drops them.
+    db_pool_recycle_sec: int = 1_800
+
     @property
     def database_url(self) -> str:
         return (
