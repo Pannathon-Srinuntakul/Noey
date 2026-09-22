@@ -341,10 +341,17 @@ class Settings(BaseSettings):
     #: process, so a burst of iPhone HEVC uploads cannot starve the AI jobs
     #: sharing the container or run it out of memory.
     worker_transcode_concurrency: int = 2
+    #: Read from the project's AI Studio rate-limit page on 2026-09-23 (Tier 1,
+    #: "Default Gemini Project"): Flash 1,000 RPM / 2M TPM / 10,000 requests a
+    #: DAY, Pro 25 RPM / 2M TPM / 250 a day. The daily caps are the real
+    #: ceiling for the product (a cut uses ~4-5 Flash calls) and are NOT
+    #: enforced here yet — see docs/load-test-2026-09-22.md.
     gemini_rpm_flash: int = 1_000
-    gemini_tpm_flash: int = 1_000_000
-    gemini_rpm_pro: int = 150
-    gemini_tpm_pro: int = 1_000_000
+    gemini_tpm_flash: int = 2_000_000
+    #: 25, not 150: Pro's Tier 1 request limit is tiny, and a guard set above
+    #: the real quota just turns into 429s from the vendor.
+    gemini_rpm_pro: int = 25
+    gemini_tpm_pro: int = 2_000_000
     elevenlabs_max_concurrency: int = 5
     #: How long a call may wait for a vendor slot before failing (retryable).
     vendor_wait_max_sec: int = 300

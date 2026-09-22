@@ -3,6 +3,7 @@ import { Breadcrumb } from "@/components/Breadcrumb";
 import { CheckoutCanceledNotice } from "@/components/CheckoutCanceledNotice";
 import { FaqList } from "@/components/FaqList";
 import { JsonLd } from "@/components/JsonLd";
+import { PlanComparisonTable } from "@/components/PlanComparisonTable";
 import { PriceCards } from "@/components/PriceCards";
 import { PRICING_FAQ } from "@/lib/faq";
 import { formatThaiDate } from "@/lib/format";
@@ -15,10 +16,8 @@ import {
   webPageNode,
 } from "@/lib/jsonld";
 import {
-  COMPARISON_ROWS,
   PAID_TIERS,
   PLAN_COPY,
-  TIERS,
   displayPrice,
   formatBaht,
   lowestPaidPrice,
@@ -151,46 +150,12 @@ export default async function PricingPage() {
         <h2 id="compare-title" className="subsection-title compare-title">
           ตารางเทียบแพลน
         </h2>
-        <div className="table-scroll" role="region" aria-labelledby="compare-title" tabIndex={0}>
-          <table className="table">
-            <caption className="sr-only">เทียบราคาและความสามารถของแพลนฟรี Lite Starter Pro Studio Agency และ Max</caption>
-            <thead>
-              <tr>
-                <th scope="col">ความสามารถ</th>
-                {TIERS.map((tier) => (
-                  <th key={tier} scope="col" className="c">
-                    {PLAN_COPY[tier].name}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <th scope="row">ราคา (บาท / เดือน)</th>
-                {TIERS.map((tier) => (
-                  <td key={tier} className="c num">
-                    {displayPrice(table, tier) ?? "—"}
-                  </td>
-                ))}
-              </tr>
-              {COMPARISON_ROWS.map((row) => (
-                <tr key={row.label}>
-                  <th scope="row">{row.label}</th>
-                  {row.values.map((value, index) => (
-                    <td key={TIERS[index]} className={row.numeric ? "c num" : "c"}>
-                      {value}
-                    </td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <PlanComparisonTable table={table} labelledBy="compare-title" />
       </section>
 
       <section style={{ marginTop: 56, maxWidth: 760 }} aria-labelledby="pricing-faq-title">
         <h2 id="pricing-faq-title" className="subsection-title" style={{ marginBottom: 18 }}>
-          คำถามเรื่องราคา
+          คำถามเรื่องราคา (FAQ)
         </h2>
         <FaqList items={PRICING_FAQ} compact />
       </section>

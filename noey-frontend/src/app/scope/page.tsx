@@ -1,14 +1,17 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Breadcrumb } from "@/components/Breadcrumb";
+import { FaqList } from "@/components/FaqList";
+import { SCOPE_FAQ } from "@/lib/faq";
+import { formatThaiDate } from "@/lib/format";
 import { FitLists } from "@/components/FitLists";
 import { JsonLd } from "@/components/JsonLd";
-import { SOFTWARE_ID, breadcrumbNode, jsonLdGraph, webPageNode } from "@/lib/jsonld";
+import { SOFTWARE_ID, breadcrumbNode, faqPageNode, jsonLdGraph, webPageNode } from "@/lib/jsonld";
 import { SCOPE_FITS, SCOPE_MISFITS, SCOPE_STEPS, SCOPE_SUMMARY, SCOPE_YOUR_WORK } from "@/lib/scope";
-import { pageMetadata } from "@/lib/seo";
+import { markdownTwinPath, pageMetadata, withMarkdownTwin } from "@/lib/seo";
 import { PAGES } from "@/lib/site";
 
-export const metadata: Metadata = pageMetadata("scope");
+export const metadata: Metadata = withMarkdownTwin(pageMetadata("scope"), markdownTwinPath("scope"));
 
 const TRAIL = [
   { name: PAGES.home.label, path: PAGES.home.path },
@@ -24,6 +27,7 @@ export default function ScopePage() {
   const jsonLd = jsonLdGraph(
     webPageNode({ path: page.path, name: page.title, description: page.description, dateModified: page.updated, about: SOFTWARE_ID }),
     breadcrumbNode(TRAIL),
+    faqPageNode(SCOPE_FAQ, page.path),
   );
 
   return (
@@ -36,12 +40,19 @@ export default function ScopePage() {
         ฟังฟุตเทจทั้งกอง หาว่าช่วงไหนพูดได้ดี ตัดช่วงที่ไม่เอาออก แล้วพิมพ์ซับตามที่พูด สามอย่างนี้ระบบทำให้เสร็จก่อนคุณจะเปิดไทม์ไลน์ครั้งแรก
         ที่เหลือคือการเกลา ซึ่งยังเป็นงานของคุณ
       </p>
+      <p className="updated">
+        อัปเดตล่าสุด <time dateTime={page.updated}>{formatThaiDate(page.updated)}</time>
+      </p>
       <div className="scope__rule" aria-hidden="true" />
 
       <section className="scope__section scope__section--first" aria-labelledby="scope-steps-title">
         <h2 id="scope-steps-title" className="scope__h2">
           ระบบทำให้ถึงไหน
         </h2>
+        <p className="scope__intro">
+          ระบบทำให้สามขั้น คือถอดเสียงฟุตเทจทุกไฟล์เป็นข้อความพร้อมเวลา คัดช่วงที่ใช้ได้แล้วเรียงเป็นร่างแรก และใส่ซับไทยตามที่พูด
+          จบสามขั้นนี้คือสิ่งที่ส่งให้คุณ ไม่ใช่คลิปที่พร้อมลงทันทีทุกครั้ง
+        </p>
         <ol className="scope-steps">
           {SCOPE_STEPS.map((step, index) => (
             <li key={step.title} className="scope-steps__item">
@@ -78,6 +89,10 @@ export default function ScopePage() {
         <h2 id="scope-fit-title" className="scope__h2">
           เหมาะกับงานแบบไหน
         </h2>
+        <p className="scope__intro">
+          เหมาะที่สุดกับคลิปสั้นที่โครงเรื่องไม่ซับซ้อนและเนื้อหาเดินด้วยคำพูด เช่น คลิปรีวิว คลิปพูดหน้ากล้อง และคลิปยาวที่อยากตัดเป็นคลิปสั้น
+          ยังไม่เหมาะกับงานที่ต้องแทรกภาพประกอบตามบท ตัดซ้อนหลายชั้น หรือใช้กราฟิกและโมชันเยอะ
+        </p>
         <FitLists fits={SCOPE_FITS} misfits={SCOPE_MISFITS} fitTitle="เหมาะ" misfitTitle="ยังไม่เหมาะ" headingLevel="h3" />
       </section>
 
@@ -102,6 +117,36 @@ export default function ScopePage() {
             ))}
           </ul>
         </div>
+      </section>
+
+      <section className="scope__section" aria-labelledby="scope-faq-title">
+        <h2 id="scope-faq-title" className="scope__h2" style={{ marginBottom: 14 }}>
+          คำถามที่พบบ่อยเรื่องขอบเขต (FAQ)
+        </h2>
+        <FaqList items={SCOPE_FAQ} compact />
+      </section>
+
+      <section className="scope__section" aria-labelledby="scope-guides-title">
+        <h2 id="scope-guides-title" className="scope__h2">
+          อ่านวิธีทำทีละงาน
+        </h2>
+        <ul className="guide__list guide__related" style={{ marginLeft: 0 }}>
+          <li>
+            <Link href={PAGES.guideCut.path}>ตัดคลิป TikTok ด้วย AI ยังไง</Link> — ขั้นตอนตั้งแต่ลากไฟล์จนดาวน์โหลด
+          </li>
+          <li>
+            <Link href={PAGES.guideSubtitles.path}>ใส่ซับไทยอัตโนมัติในคลิป</Link> — ซับมาจากไหน และแก้คำที่ถอดผิดยังไง
+          </li>
+          <li>
+            <Link href={PAGES.guideReview.path}>ตัดคลิปรีวิวสินค้าให้เร็วขึ้น</Link> — ถ่ายยังไงให้ระบบคัดช็อตได้ดี
+          </li>
+          <li>
+            <Link href={PAGES.guideLongform.path}>ตัดคลิปยาวเป็นคลิปสั้นหลายตัว</Link> — โหมดไฮไลต์และเพดานความยาวต่อแพลน
+          </li>
+          <li>
+            <Link href={PAGES.guideHelp.path}>หน้าช่วยเหลือ</Link> — โหมด ไฟล์ที่รองรับ โควตา และการแก้ปัญหา
+          </li>
+        </ul>
       </section>
 
       <div className="bottom-cta">

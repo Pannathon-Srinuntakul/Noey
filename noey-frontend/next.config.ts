@@ -69,11 +69,14 @@ const nextConfig: NextConfig = {
   async headers() {
     return [
       { source: "/:path*", headers: securityHeaders },
-      {
-        // Point agents from the HTML pricing page to its Markdown twin.
-        source: "/pricing",
-        headers: [{ key: "Link", value: '</pricing.md>; rel="alternate"; type="text/markdown"' }],
-      },
+      // Point agents from each HTML page to its Markdown twin. Keep in step
+      // with the `.md` route folders and `withMarkdownTwin` in lib/seo.ts.
+      ...["/pricing", "/scope", "/guide/ai-cut-tiktok", "/guide/thai-subtitles", "/guide/product-review", "/guide/long-to-shorts", "/guide/choose-ai-editor", "/guide/help"].map(
+        (path) => ({
+          source: path,
+          headers: [{ key: "Link", value: `<${path}.md>; rel="alternate"; type="text/markdown"` }],
+        }),
+      ),
       // Emailed one-time-token pages: never leak the token in a Referer header.
       // (Listed after the site-wide rule so this value wins.)
       { source: "/reset-password", headers: [{ key: "Referrer-Policy", value: "no-referrer" }] },

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { NAV_LINKS, PAGES } from "@/lib/site";
+import { GUIDE_KEYS, NAV_LINKS, PAGES } from "@/lib/site";
 
 const ACCOUNT_LINKS = [
   { href: PAGES.login.path, label: PAGES.login.label },
@@ -25,6 +25,16 @@ export function SiteFooter() {
             {NAV_LINKS.map((link) => (
               <Link key={link.href} href={link.href}>
                 {link.label}
+              </Link>
+            ))}
+          </nav>
+          <nav className="site-footer__col" aria-labelledby="footer-guide">
+            <p className="site-footer__heading" id="footer-guide">
+              คู่มือ
+            </p>
+            {GUIDE_KEYS.map((key) => (
+              <Link key={PAGES[key].path} href={PAGES[key].path}>
+                {PAGES[key].label}
               </Link>
             ))}
           </nav>

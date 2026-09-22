@@ -61,7 +61,31 @@ export type PageKey =
   | "signup"
   | "login"
   | "terms"
-  | "privacy";
+  | "privacy"
+  | GuideKey;
+
+/**
+ * Answer-first article pages plus the help/docs page, all under /guide. They
+ * are registered here like any other page, so the sitemap, metadata, the feed
+ * and the SEO tests pick them up without a second list.
+ */
+export type GuideKey =
+  | "guide"
+  | "guideCut"
+  | "guideSubtitles"
+  | "guideReview"
+  | "guideLongform"
+  | "guideChoose"
+  | "guideHelp";
+
+export const GUIDE_KEYS: readonly GuideKey[] = [
+  "guideCut",
+  "guideSubtitles",
+  "guideReview",
+  "guideLongform",
+  "guideChoose",
+  "guideHelp",
+];
 
 export interface PageEntry {
   path: string;
@@ -73,6 +97,8 @@ export interface PageEntry {
   label: string;
   /** ISO date (YYYY-MM-DD) the page content last changed. */
   updated: string;
+  /** ISO date the page was first published. Defaults to `updated`. */
+  published?: string;
   /** Search engines may index the page and it belongs in the sitemap. */
   indexable: boolean;
 }
@@ -93,7 +119,7 @@ export const PAGES: Record<PageKey, PageEntry> = {
     description:
       "Noey Studio ตัดคลิปสั้นด้วย AI ในเบราว์เซอร์ ถอดเสียงไทย เลือกช่วงไฮไลต์ เขียนสคริปต์พากย์ ใส่ซับไทยอัตโนมัติ แก้ต่อได้ทุกช็อต เริ่มใช้ฟรี",
     label: "หน้าแรก",
-    updated: "2026-09-22",
+    updated: "2026-09-23", published: "2026-09-21",
     indexable: true,
   },
   scope: {
@@ -102,7 +128,7 @@ export const PAGES: Record<PageKey, PageEntry> = {
     description:
       "Noey Studio ถอดเสียง คัดช็อต เรียงลำดับ และใส่ซับไทยเป็นร่างแรกให้ คุณเกลาจังหวะต่อในไทม์ไลน์ ดูว่างานแบบไหนเหมาะ และอะไรที่ระบบยังทำไม่ได้",
     label: "ทำอะไรได้บ้าง",
-    updated: "2026-09-22",
+    updated: "2026-09-23", published: "2026-09-21",
     indexable: true,
   },
   pricing: {
@@ -113,7 +139,7 @@ export const PAGES: Record<PageKey, PageEntry> = {
     description:
       "เทียบราคาทุกแพลนของ Noey Studio แพลนฟรี 0 บาท และแพลนรายเดือน Lite ถึง Max ดูปริมาณการใช้งาน ความยาวฟุตเทจ และพื้นที่เก็บงาน",
     label: "ราคา",
-    updated: "2026-09-22",
+    updated: "2026-09-23", published: "2026-09-21",
     indexable: true,
   },
   about: {
@@ -122,7 +148,7 @@ export const PAGES: Record<PageKey, PageEntry> = {
     description:
       "Noey Studio เริ่มจากครีเอเตอร์ที่ลงคลิปรีวิวสินค้าทุกวันและอยากลดเวลาตัดคลิป อ่านแนวคิดของเครื่องมือ และส่งข้อความถึงทีมงานได้จากหน้านี้",
     label: "เกี่ยวกับเรา",
-    updated: "2026-09-22",
+    updated: "2026-09-23", published: "2026-09-21",
     indexable: true,
   },
   signup: {
@@ -161,12 +187,88 @@ export const PAGES: Record<PageKey, PageEntry> = {
     updated: "2026-09-22",
     indexable: !LEGAL_PAGES_ARE_DRAFTS,
   },
+  guide: {
+    path: "/guide",
+    title: "คู่มือใช้งานและคำตอบที่ถามบ่อย | Noey Studio",
+    description:
+      "รวมคู่มือการตัดคลิปสั้นด้วย AI ของ Noey Studio ตัดคลิป TikTok ใส่ซับไทย ตัดคลิปรีวิวสินค้า ตัดคลิปยาวเป็นคลิปสั้น พร้อมหน้าช่วยเหลือเรื่องโหมด ไฟล์ และโควตา",
+    label: "คู่มือใช้งาน",
+    updated: "2026-09-23",
+    published: "2026-09-23",
+    indexable: true,
+  },
+  guideCut: {
+    path: "/guide/ai-cut-tiktok",
+    title: "ตัดคลิป TikTok ด้วย AI ยังไง | Noey Studio",
+    description:
+      "วิธีตัดคลิป TikTok ด้วย AI ตั้งแต่ลากไฟล์เข้าเบราว์เซอร์ เลือกโหมด รอระบบถอดเสียงและคัดช็อต จนถึงการเกลาไทม์ไลน์และดาวน์โหลดไฟล์แนวตั้ง 1080×1920",
+    label: "ตัดคลิป TikTok ด้วย AI",
+    updated: "2026-09-23",
+    published: "2026-09-23",
+    indexable: true,
+  },
+  guideSubtitles: {
+    path: "/guide/thai-subtitles",
+    title: "ใส่ซับไทยอัตโนมัติในคลิปยังไง | Noey Studio",
+    description:
+      "วิธีใส่ซับไทยอัตโนมัติในคลิปสั้น ระบบถอดเสียงพูดเป็นข้อความแล้ววางซับตามจังหวะที่พูดจริง ปรับฟอนต์ ขนาด ตำแหน่ง และแก้คำที่ถอดผิดได้ก่อนเรนเดอร์",
+    label: "ใส่ซับไทยอัตโนมัติ",
+    updated: "2026-09-23",
+    published: "2026-09-23",
+    indexable: true,
+  },
+  guideReview: {
+    path: "/guide/product-review",
+    title: "ตัดคลิปรีวิวสินค้าให้เร็วขึ้น | Noey Studio",
+    description:
+      "วิธีลดเวลาตัดคลิปรีวิวสินค้าสำหรับปักตะกร้า ถ่ายยังไงให้ AI คัดช็อตได้ดี ใช้โหมดไหน เขียนสคริปต์พากย์จากภาพ และเกลาไทม์ไลน์ให้จบเร็วขึ้นในรอบเดียว",
+    label: "ตัดคลิปรีวิวสินค้า",
+    updated: "2026-09-23",
+    published: "2026-09-23",
+    indexable: true,
+  },
+  guideLongform: {
+    path: "/guide/long-to-shorts",
+    title: "ตัดคลิปยาวเป็นคลิปสั้นหลายตัว | Noey Studio",
+    description:
+      "วิธีตัดคลิปยาว เช่น ไลฟ์หรือคลิปพูดยาว ให้กลายเป็นคลิปสั้นหลายตัว ระบบฟังเนื้อหาแล้วเลือกช่วงที่จบในตัวเอง พร้อมข้อจำกัดเรื่องความยาวฟุตเทจต่อแพลน",
+    label: "ตัดคลิปยาวเป็นคลิปสั้น",
+    updated: "2026-09-23",
+    published: "2026-09-23",
+    indexable: true,
+  },
+  guideChoose: {
+    path: "/guide/choose-ai-editor",
+    title: "เลือกเครื่องมือ AI ตัดต่อวิดีโอไทย | Noey Studio",
+    description:
+      "เกณฑ์เลือกเครื่องมือ AI ตัดต่อวิดีโอภาษาไทย ดูความแม่นของการถอดเสียงไทย การแก้ทับในไทม์ไลน์ ฟอร์แมตไฟล์ที่รับ ผลลัพธ์ที่ได้ และวิธีคิดค่าบริการ",
+    label: "เลือกเครื่องมือ AI ตัดต่อ",
+    updated: "2026-09-23",
+    published: "2026-09-23",
+    indexable: true,
+  },
+  guideHelp: {
+    path: "/guide/help",
+    title: "หน้าช่วยเหลือ โหมด ไฟล์ โควตา | Noey Studio",
+    description:
+      "เอกสารช่วยเหลือ Noey Studio อธิบายโหมดการตัดทั้งสามแบบ ไฟล์ที่รองรับ ขีดจำกัดของแต่ละแพลน สิ่งที่ AI ทำได้และทำไม่ได้ และวิธีแก้ปัญหาที่เจอบ่อย",
+    label: "ช่วยเหลือ",
+    updated: "2026-09-23",
+    published: "2026-09-23",
+    indexable: true,
+  },
 };
 
-/** Primary navigation — the design's four header links, in order. */
+/** Primary navigation — the design's header links, plus the guide section. */
 export const NAV_LINKS: ReadonlyArray<{ href: string; label: string }> = [
   { href: PAGES.home.path, label: PAGES.home.label },
   { href: PAGES.scope.path, label: PAGES.scope.label },
   { href: PAGES.pricing.path, label: PAGES.pricing.label },
+  { href: PAGES.guide.path, label: PAGES.guide.label },
   { href: PAGES.about.path, label: PAGES.about.label },
 ];
+
+/** First-published date, falling back to the content date. */
+export function publishedDate(key: PageKey): string {
+  return PAGES[key].published ?? PAGES[key].updated;
+}

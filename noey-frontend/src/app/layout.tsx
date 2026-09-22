@@ -48,6 +48,10 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
       <head>
         <script dangerouslySetInnerHTML={{ __html: PREPAINT_SCRIPT }} />
         <meta httpEquiv="content-language" content="th" />
+        {/* Feed discovery. Written here rather than through `alternates` in
+            metadata: a page that sets its own canonical replaces the layout's
+            whole `alternates` object, which would drop this link. */}
+        <link rel="alternate" type="application/atom+xml" title={`${SITE_NAME} — อัปเดตเนื้อหา`} href="/feed.xml" />
       </head>
       <body>
         <a className="skip-link" href="#main">

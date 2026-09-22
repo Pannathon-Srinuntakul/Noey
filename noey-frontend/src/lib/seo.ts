@@ -1,5 +1,17 @@
 import type { Metadata } from "next";
-import { LOCALE, PAGES, SITE_NAME, absoluteUrl, type PageKey } from "./site";
+import { LOCALE, PAGES, SITE_NAME, absoluteUrl, publishedDate, type PageKey } from "./site";
+
+/**
+ * Pages are written and maintained by the team, not by a named individual —
+ * so attribution names the team. Emitted as <meta name="author">, which is
+ * what answer engines read for attribution.
+ */
+export const CONTENT_AUTHOR = `ทีมงาน ${SITE_NAME}`;
+
+/** Guide/help pages are articles; everything else is a marketing page. */
+function isArticle(key: PageKey): boolean {
+  return PAGES[key].path === "/guide" || PAGES[key].path.startsWith("/guide/");
+}
 
 export interface MetadataOverrides {
   title?: string;
@@ -45,12 +57,22 @@ export function pageMetadata(key: PageKey, overrides: MetadataOverrides = {}): M
   const description = overrides.description ?? page.description;
   const url = absoluteUrl(page.path);
   const images = PAGES_WITH_OWN_OG_IMAGE.has(key) ? {} : { images: [DEFAULT_SHARE_IMAGE] };
+  const published = publishedDate(key);
+  // Dates come from the ONE registry entry, so the visible "อัปเดตล่าสุด"
+  // line, the sitemap, JSON-LD and these tags can never disagree. The `date`
+  // and `last-modified` names are the pair generic crawlers read; guide pages
+  // additionally carry the og article:* properties.
+  const article = isArticle(key)
+    ? ({ type: "article", publishedTime: published, modifiedTime: page.updated, authors: [CONTENT_AUTHOR] } as const)
+    : ({ type: "website" } as const);
   return {
     title: { absolute: title },
     description,
+    authors: [{ name: CONTENT_AUTHOR }],
     alternates: { canonical: url },
+    other: { date: published, "last-modified": page.updated },
     openGraph: {
-      type: "website",
+      ...article,
       siteName: SITE_NAME,
       locale: LOCALE,
       url,
@@ -66,6 +88,20 @@ export function pageMetadata(key: PageKey, overrides: MetadataOverrides = {}): M
     },
     robots: page.indexable ? INDEXABLE_ROBOTS : { index: false, follow: true },
   };
+}
+
+/**
+ * Point agents at a page's Markdown twin (`/scope` -> `/scope.md`). Kept as a
+ * helper so the metadata and the `Link: rel="alternate"` response header in
+ * next.config.ts stay in step.
+ */
+export function withMarkdownTwin(metadata: Metadata, markdownPath: string): Metadata {
+  return { ...metadata, alternates: { ...metadata.alternates, types: { "text/markdown": markdownPath } } };
+}
+
+/** `/guide/help` -> `/guide/help.md`. */
+export function markdownTwinPath(key: PageKey): string {
+  return `${PAGES[key].path}.md`;
 }
 
 /**

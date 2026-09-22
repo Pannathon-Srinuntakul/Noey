@@ -5,7 +5,9 @@
  * show. No AI vendor is named anywhere in this output (unit-tested).
  */
 import { PRICING_FAQ } from "./faq";
+import { ANSWERED_QUESTIONS, GUIDE_DOCS, GUIDE_ORDER, type GuideDoc } from "./guide";
 import { SOFTWARE_DESCRIPTION } from "./jsonld";
+import { SCOPE_FITS, SCOPE_MISFITS, SCOPE_STEPS, SCOPE_SUMMARY, SCOPE_YOUR_WORK } from "./scope";
 import {
   COMPARISON_ROWS,
   PAID_TIERS,
@@ -16,7 +18,19 @@ import {
   multiplierLabel,
   type PriceTable,
 } from "./plans";
-import { PAGES, SITE_NAME, absoluteUrl } from "./site";
+import { PAGES, SITE_NAME, absoluteUrl, publishedDate, type PageKey } from "./site";
+
+/** Header every Markdown twin carries: what it is, where the HTML lives, when it changed. */
+function markdownHeader(key: PageKey, title: string): string[] {
+  return [
+    `# ${title}`,
+    "",
+    `- หน้าเว็บ: ${absoluteUrl(PAGES[key].path)}`,
+    `- เผยแพร่: ${publishedDate(key)} · อัปเดตล่าสุด: ${PAGES[key].updated}`,
+    `- ผู้เขียน: ทีมงาน ${SITE_NAME}`,
+    "",
+  ];
+}
 
 function priceLine(table: PriceTable, tier: (typeof TIERS)[number]): string {
   const price = displayPrice(table, tier);
@@ -74,6 +88,78 @@ export function buildPricingMarkdown(table: PriceTable, updatedIso: string): str
   return `${lines.join("\n").trimEnd()}\n`;
 }
 
+/**
+ * Markdown twin of a guide page: the same answer, the same sections, the same
+ * FAQ, in the order the page shows them. Built from `GUIDE_DOCS`, so the two
+ * cannot drift.
+ */
+export function buildGuideMarkdown(doc: GuideDoc): string {
+  const lines = markdownHeader(doc.key, doc.h1);
+  lines.push(`> ${doc.answer}`);
+  lines.push("");
+  for (const section of doc.sections) {
+    lines.push(`## ${section.title}`);
+    lines.push("");
+    for (const paragraph of section.paragraphs) {
+      lines.push(paragraph);
+      lines.push("");
+    }
+    for (const bullet of section.bullets ?? []) lines.push(`- ${bullet}`);
+    if (section.bullets?.length) lines.push("");
+  }
+  lines.push("## คำถามที่พบบ่อย");
+  lines.push("");
+  for (const item of doc.faq) {
+    lines.push(`### ${item.question}`);
+    lines.push("");
+    lines.push(item.answer);
+    lines.push("");
+  }
+  lines.push("## อ่านต่อ");
+  lines.push("");
+  for (const item of doc.related) lines.push(`- [${item.label}](${absoluteUrl(item.path)}): ${item.note}`);
+  return `${lines.join("\n").trimEnd()}\n`;
+}
+
+/** Markdown twin of /scope, from the same arrays the page renders. */
+export function buildScopeMarkdown(): string {
+  const lines = markdownHeader("scope", "ระบบคัดช็อตให้ แล้วคุณเกลาต่อ");
+  lines.push(
+    "> Noey Studio ทำขั้นตอนที่ซ้ำและกินเวลาที่สุดของคลิปสั้น คือฟังฟุตเทจทั้งกอง หาช่วงที่พูดได้ดี ตัดช่วงที่ไม่เอาออก และใส่ซับไทยตามที่พูด สามอย่างนี้เสร็จก่อนคุณเปิดไทม์ไลน์ครั้งแรก ส่วนการเกลาจังหวะและลำดับการเล่ายังเป็นงานของคุณ",
+  );
+  lines.push("");
+
+  lines.push("## ระบบทำให้ถึงไหน");
+  lines.push("");
+  for (const step of SCOPE_STEPS) lines.push(`- **${step.title}** — ${step.body}`);
+  lines.push("");
+
+  lines.push("## สิ่งที่คุณยังต้องทำเอง");
+  lines.push("");
+  for (const column of SCOPE_YOUR_WORK) {
+    for (const item of column) lines.push(`- **${item.title}** — ${item.body}`);
+  }
+  lines.push("");
+
+  lines.push("## เหมาะกับงานแบบไหน");
+  lines.push("");
+  for (const fit of SCOPE_FITS) lines.push(`- เหมาะ: ${fit}`);
+  for (const misfit of SCOPE_MISFITS) lines.push(`- ยังไม่เหมาะ: ${misfit}`);
+  lines.push("");
+
+  lines.push("## สรุปสั้น");
+  lines.push("");
+  for (const row of SCOPE_SUMMARY) lines.push(`- ${row.label}: ${row.text}`);
+  lines.push("");
+
+  lines.push("## อ่านต่อ");
+  lines.push("");
+  lines.push(`- [คู่มือใช้งาน](${absoluteUrl(PAGES.guide.path)}): คำตอบของคำถามที่ถามบ่อยทีละหน้า`);
+  lines.push(`- [ช่วยเหลือ](${absoluteUrl(PAGES.guideHelp.path)}): โหมด ไฟล์ที่รองรับ โควตา และการแก้ปัญหา`);
+  lines.push(`- [ราคา](${absoluteUrl(PAGES.pricing.path)}): เทียบทุกแพลนและเพดานของแต่ละแพลน`);
+  return `${lines.join("\n").trimEnd()}\n`;
+}
+
 export function buildLlmsTxt(table: PriceTable): string {
   const prices = TIERS.map((tier) => `${PLAN_COPY[tier].name} ${priceLine(table, tier)}`).join(" · ");
   const lines = [
@@ -101,12 +187,41 @@ export function buildLlmsTxt(table: PriceTable): string {
     `- [ราคาและตารางเทียบแพลน](${absoluteUrl(PAGES.pricing.path)}): แพลนฟรีและแพลนรายเดือนทั้งหมด พร้อมคำถามเรื่องราคา`,
     `- [ราคาแบบ Markdown](${absoluteUrl("/pricing.md")}): ข้อมูลราคาเดียวกันในรูปแบบที่อ่านด้วยเครื่องได้ง่าย`,
     "",
+    "## คำถามที่ระบบตอบได้",
+    "",
+    ...ANSWERED_QUESTIONS.map((item) => `- [${item.question}](${absoluteUrl(item.path)})`),
+    "",
+    "## คู่มือใช้งาน",
+    "",
+    `- [คู่มือทั้งหมด](${absoluteUrl(PAGES.guide.path)}): สารบัญของทุกหน้าคู่มือ พร้อมคำตอบย่อของแต่ละหน้า`,
+    ...GUIDE_ORDER.map(
+      (key) =>
+        `- [${GUIDE_DOCS[key].h1}](${absoluteUrl(PAGES[key].path)}): ${PAGES[key].description} · Markdown: ${absoluteUrl(`${PAGES[key].path}.md`)}`,
+    ),
+    "",
+    "## ข้อจำกัดที่ประกาศไว้",
+    "",
+    "- ระบบทำร่างแรกให้ ไม่ได้ตัดจบแทน จังหวะและลำดับการเล่ายังต้องเกลาเองในไทม์ไลน์",
+    "- ไม่มีชั้นกราฟิก สติกเกอร์ ข้อความเคลื่อนไหว หรือเอฟเฟกต์ภาพ",
+    "- ไม่แทรกภาพประกอบตามบท ไม่ตัดซ้อนหลายชั้น และไม่คุมจังหวะระดับเฟรมแทนผู้ใช้",
+    "- ใช้บนคอมพิวเตอร์ผ่าน Chrome หรือ Edge เวอร์ชันใหม่ ยังไม่แนะนำให้ใช้บนมือถือ",
+    "- ความยาวฟุตเทจรวมต่อโปรเจกต์: ฟรี 5 นาที · Lite 10 นาที · Starter 20 นาที · Pro ขึ้นไปสูงสุด 2 ชั่วโมง",
+    "- การแปลงไฟล์อัตโนมัติเมื่อเบราว์เซอร์เปิดไฟล์ไม่ได้ มีตั้งแต่แพลน Starter ขึ้นไป เพลงประกอบมีตั้งแต่แพลน Lite ขึ้นไป",
+    "- งาน AI ที่ทำพร้อมกันได้: ฟรีถึง Starter 1 งาน · Pro 2 · Studio 3 · Agency 4 · Max 5",
+    "- โควตาแสดงเป็นเปอร์เซ็นต์ของรอบ ไม่ใช่ตัวเลขหน่วยภายใน การแก้ไทม์ไลน์และการเรนเดอร์ซ้ำไม่กินโควตา",
+    "- ไม่มีตัวเลขความเร็วหรือความแม่นที่วัดแล้วประกาศไว้ ณ ตอนนี้ หน้าเว็บจึงไม่อ้างตัวเลขเหล่านั้น",
+    "",
     "## หน้าหลัก",
     "",
     `- [หน้าแรก](${absoluteUrl(PAGES.home.path)}): ภาพรวมเครื่องมือ วิธีใช้งาน และคำถามที่พบบ่อย`,
-    `- [ทำอะไรได้บ้าง](${absoluteUrl(PAGES.scope.path)}): ขอบเขตของระบบ — ถอดเสียง คัดช็อต เรียงลำดับ ใส่ซับไทยเป็นร่างแรก แล้วคุณเกลาต่อ งานแบบไหนเหมาะและไม่เหมาะ`,
+    `- [ทำอะไรได้บ้าง](${absoluteUrl(PAGES.scope.path)}): ขอบเขตของระบบ — ถอดเสียง คัดช็อต เรียงลำดับ ใส่ซับไทยเป็นร่างแรก แล้วคุณเกลาต่อ งานแบบไหนเหมาะและไม่เหมาะ · Markdown: ${absoluteUrl("/scope.md")}`,
     `- [เกี่ยวกับเรา](${absoluteUrl(PAGES.about.path)}): ที่มาของเครื่องมือ และช่องทางติดต่อทีมงาน`,
     `- [สมัครใช้งานฟรี](${absoluteUrl(PAGES.signup.path)}): สมัครแล้วเริ่มที่แพลนฟรีได้ทันที ไม่ต้องผูกบัตร`,
+    "",
+    "## ติดตามการอัปเดต",
+    "",
+    `- [ฟีด Atom](${absoluteUrl("/feed.xml")}): ทุกหน้าที่เผยแพร่ เรียงตามวันที่อัปเดตล่าสุด`,
+    `- [Sitemap](${absoluteUrl("/sitemap.xml")}): รายการหน้าทั้งหมดพร้อมวันที่แก้ไขล่าสุด`,
   ];
   return `${lines.join("\n")}\n`;
 }

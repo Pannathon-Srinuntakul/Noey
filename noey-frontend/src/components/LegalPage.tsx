@@ -56,6 +56,23 @@ export function LegalPage({ pageKey, title, doc }: { pageKey: LegalKey; title: s
             ))}
           </section>
         ))}
+        <section className="legal__section" aria-labelledby={`${pageKey}-related`}>
+          <h2 id={`${pageKey}-related`}>หน้าที่เกี่ยวข้อง</h2>
+          <ul className="guide__list guide__related">
+            <li>
+              <Link href={other.path}>{other.label}</Link> — เอกสารอีกฉบับที่ใช้ร่วมกับหน้านี้
+            </li>
+            <li>
+              <Link href={PAGES.guideHelp.path}>{PAGES.guideHelp.label}</Link> — โหมดการตัด ไฟล์ที่รองรับ โควตา และการแก้ปัญหา
+            </li>
+            <li>
+              <Link href={PAGES.pricing.path}>{PAGES.pricing.label}</Link> — ราคา ขีดจำกัดของแต่ละแพลน และการยกเลิก
+            </li>
+            <li>
+              <Link href={PAGES.scope.path}>{PAGES.scope.label}</Link> — ขอบเขตของระบบ สิ่งที่ทำได้และทำไม่ได้
+            </li>
+          </ul>
+        </section>
         <div className="legal__foot">
           <Link href={other.path}>{otherLabel}</Link>
           <Link href="/">กลับหน้าแรก</Link>

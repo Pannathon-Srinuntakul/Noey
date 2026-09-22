@@ -1812,3 +1812,41 @@ html[data-auth="in"] .auth-out {
   font-size: 13px;
   color: var(--color-neutral-700);
 }
+
+/* ── Guide pages ──────────────────────────────────────────────────────────── */
+
+.guide__answer {
+  font-size: 17px;
+}
+
+.guide__list {
+  margin: 0 0 10px 36px;
+  padding-left: 18px;
+  font-size: 15px;
+  line-height: 1.9;
+  color: var(--color-neutral-800);
+}
+
+.guide__list li {
+  margin-bottom: 6px;
+}
+
+.guide__related {
+  list-style: none;
+  padding-left: 0;
+}
+
+.guide__meta {
+  font-size: 13px;
+  color: var(--color-neutral-600);
+}
+
+.guide .legal__section h2 a {
+  color: inherit;
+}
+
+@media (max-width: 480px) {
+  .guide__list {
+    margin-left: 0;
+  }
+}

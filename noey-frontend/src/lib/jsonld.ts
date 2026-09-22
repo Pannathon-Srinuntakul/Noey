@@ -160,6 +160,83 @@ export function webPageNode(input: WebPageInput): JsonLdNode {
   return node;
 }
 
+export interface ArticleInput {
+  path: string;
+  headline: string;
+  description: string;
+  datePublished: string;
+  dateModified: string;
+  /** The page's opening answer paragraph — the passage worth quoting. */
+  abstract?: string;
+  /** Author name; the team, never an invented person. */
+  author: string;
+}
+
+/**
+ * A guide page. `author` is the team (schema requires a Person or
+ * Organization; we describe the team as an Organization rather than inventing
+ * a byline). No `image` is claimed: the pages are text.
+ */
+export function articleNode(input: ArticleInput): JsonLdNode {
+  const url = absoluteUrl(input.path);
+  const node: JsonLdNode = {
+    "@type": "Article",
+    "@id": `${url}#article`,
+    mainEntityOfPage: { "@id": `${url}#webpage` },
+    headline: input.headline,
+    description: input.description,
+    inLanguage: LANG,
+    datePublished: input.datePublished,
+    dateModified: input.dateModified,
+    author: { "@type": "Organization", name: input.author, url: absoluteUrl("/") },
+    publisher: { "@id": ORGANIZATION_ID },
+    isPartOf: { "@id": WEBSITE_ID },
+    about: { "@id": SOFTWARE_ID },
+  };
+  if (input.abstract) node.abstract = input.abstract;
+  return node;
+}
+
+export interface HowToStep {
+  name: string;
+  text: string;
+}
+
+/**
+ * The visible three-step flow. Only steps the page actually shows may be
+ * listed, and no time estimate is given: we have not measured one.
+ */
+export function howToNode(input: { path: string; name: string; description: string; steps: readonly HowToStep[] }): JsonLdNode {
+  return {
+    "@type": "HowTo",
+    "@id": `${absoluteUrl(input.path)}#howto`,
+    name: input.name,
+    description: input.description,
+    inLanguage: LANG,
+    step: input.steps.map((step, index) => ({
+      "@type": "HowToStep",
+      position: index + 1,
+      name: step.name,
+      text: step.text,
+    })),
+  };
+}
+
+/** The guide index, as an ordered list of the pages it links to. */
+export function itemListNode(input: { path: string; name: string; items: readonly { name: string; path: string }[] }): JsonLdNode {
+  return {
+    "@type": "ItemList",
+    "@id": `${absoluteUrl(input.path)}#list`,
+    name: input.name,
+    itemListElement: input.items.map((item, index) => ({
+      "@type": "ListItem",
+      position: index + 1,
+      name: item.name,
+      url: absoluteUrl(item.path),
+    })),
+  };
+}
+
 export function jsonLdGraph(...nodes: JsonLdNode[]): JsonLdNode {
   return { "@context": "https://schema.org", "@graph": nodes };
 }

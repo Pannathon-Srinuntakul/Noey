@@ -13,10 +13,14 @@ that removed system and are historical only.
 
 ## Hard Rules (non-negotiable)
 
-1. **NEVER touch git.** Do not run any `git` command — no `init`, `add`, `commit`,
-   `branch`, `push`, `status`, nothing. Do not create `.git`, `.gitignore`, or any
-   git config. This repo is intentionally not under version control. If version
-   control is ever wanted, the user will set it up themselves.
+1. **Git: personal account only.** This repo pushes to `git@github-personal:Pannathon-Srinuntakul/Noey.git`
+   — the owner's PERSONAL GitHub (SSH key `~/.ssh/github_personal`, committer
+   `pabeam27@gmail.com`). Claude may `add`, `commit`, `push` and read history here
+   (owner, 2026-09-23, replacing the earlier "never touch git" rule). Never touch any
+   other remote, never use a work/organisation account or credential, never force-push,
+   never rewrite pushed history, and never commit secrets (`.env`, keys, tokens).
+   `main` auto-deploys to Railway, so a push IS a production deploy: run the tests
+   first, then watch the deployment.
 2. **Account safety first.** The owner's affiliate account is the income source.
    Scraping breaches TikTok ToS and risks a ban. Every scraping change must respect
    the enforced cadence floor, stealth, and human-like pacing (see the `scraper` skill).

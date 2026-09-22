@@ -6,10 +6,12 @@ import { FitLists } from "@/components/FitLists";
 import { MediaSlot } from "@/components/MediaSlot";
 import { PriceCards } from "@/components/PriceCards";
 import { HOME_FAQ } from "@/lib/faq";
+import { formatThaiDate } from "@/lib/format";
 import { HOME_FITS, HOME_MISFITS } from "@/lib/scope";
 import {
   SOFTWARE_ID,
   faqPageNode,
+  howToNode,
   jsonLdGraph,
   organizationNode,
   softwareApplicationNode,
@@ -83,6 +85,14 @@ export default async function HomePage() {
     softwareApplicationNode(table),
     webPageNode({ path: home.path, name: home.title, description: home.description, dateModified: home.updated, about: SOFTWARE_ID }),
     faqPageNode(HOME_FAQ, home.path),
+    // The three visible steps below, nothing invented: no time estimate is
+    // claimed because none has been measured.
+    howToNode({
+      path: home.path,
+      name: "วิธีตัดคลิปสั้นด้วย AI ใน Noey Studio",
+      description: "สามขั้นตอนจากฟุตเทจดิบจนได้ไฟล์วิดีโอแนวตั้ง 1080×1920 พร้อมลง TikTok, Reels หรือ Shorts",
+      steps: STEPS.map((step) => ({ name: step.title, text: step.body })),
+    }),
   );
 
   return (
@@ -107,6 +117,9 @@ export default async function HomePage() {
         </div>
         <p className="fine">มีแพลนฟรีให้ใช้ต่อเนื่อง · ไม่ต้องผูกบัตร · ใช้บนคอมผ่าน Chrome หรือ Edge</p>
         <p className="fine hero__honest">ระบบทำร่างแรกให้ ไม่ได้ตัดจบแทนคุณ งานที่เหลือยังแก้เองในไทม์ไลน์</p>
+        <p className="updated">
+          อัปเดตล่าสุด <time dateTime={home.updated}>{formatThaiDate(home.updated)}</time>
+        </p>
       </section>
 
       <section className="usp" aria-labelledby="usp-title">
@@ -155,6 +168,10 @@ export default async function HomePage() {
             <h2 id="features-title" className="section-title">
               สามอย่างที่ทำให้งานเสร็จเร็วขึ้นจริง
             </h2>
+            <p className="pricing-intro">
+              ความสามารถหลักมีสามอย่าง คือตัดคลิปอัตโนมัติจากสิ่งที่พูดจริง เขียนสคริปต์พากย์ภาษาไทยพร้อมให้อัดเสียงในเบราว์เซอร์
+              และใส่ซับไทยตามเสียงพูด ทั้งสามอย่างทำงานในเบราว์เซอร์โดยไม่ต้องติดตั้งโปรแกรม
+            </p>
           </div>
           <div className="features__grid">
             {FEATURES.map((feature, index) => (
@@ -185,6 +202,10 @@ export default async function HomePage() {
             <h2 id="how-title" className="section-title">
               สามขั้นตอน จบในหน้าเดียว
             </h2>
+            <p className="pricing-intro">
+              ขั้นตอนใช้งานมีสามขั้น คือลากฟุตเทจเข้ามา เลือกโหมดและความยาวที่ต้องการ แล้วดูผล เกลาในไทม์ไลน์ และดาวน์โหลดไฟล์
+              วิดีโอแนวตั้ง 1080×1920 การแก้และเรนเดอร์ซ้ำทำได้ไม่จำกัดครั้งโดยไม่กินโควตา
+            </p>
           </div>
           <ol className="steps">
             {STEPS.map((step, index) => (
@@ -241,9 +262,12 @@ export default async function HomePage() {
       <section className="section" aria-labelledby="faq-title">
         <div className="container-narrow section-pad">
           <h2 id="faq-title" className="section-title" style={{ marginBottom: 36 }}>
-            คำถามที่พบบ่อย
+            คำถามที่พบบ่อย (FAQ)
           </h2>
           <FaqList items={HOME_FAQ} />
+          <p className="scope-teaser__more">
+            <Link href={PAGES.guide.path}>อ่านคู่มือใช้งานแบบละเอียด ทั้งการตัดคลิป ซับไทย และหน้าช่วยเหลือ</Link>
+          </p>
         </div>
       </section>
 
