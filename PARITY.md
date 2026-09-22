@@ -50,7 +50,7 @@ limits" at the bottom, which is a reference, not a to-do list.
 | Token billing — wizard pre-flight estimate ("ใช้ประมาณ 18% ของโควตารายสัปดาห์" as soon as every clip has a length), block BEFORE upload with the "โควตารอบนี้หมดแล้ว" dialog (`components/QuotaDialog.tsx`), "ใช้ยอดเงินคงเหลือ" consent carried to the start call on `LocalProject.allowWallet` (`lib/usageEstimate.ts`, `lib/useUsageEstimate.ts`, `components/wizard/UsageEstimate.tsx`, `WizardPage` / `WizardStepFiles`) | web | desktop | 2026-09-22 client phase of docs/token-billing-design.md. This machine's desktop tree has no wizard (`WizardPage.tsx`, `components/wizard/*`, `wizardState.ts`, `components/ui/*`). The desktop pipeline already honours `allowWallet` and the server refuses over-limit starts, so the desktop gap is the preview + pre-upload block, not enforcement. Port the four files by name. |
 | Token billing — recut dialog estimate + wallet consent; "ตัดใหม่" disabled when the plan cannot pay (`RecutDialog`, `ProjectGridCard` recut handler) | web | desktop | Same session. Desktop's `RecutDialog.tsx` / `ProjectGridCard.tsx` are not in this partial tree. |
 | Token billing — job progress "รอคิว" state for `step: "waiting_slot"` with the plan's concurrency (`JobProgressPage`, `jobs.tsx` publishing `waitingSlot`) and the limit error card's "ใช้ยอดเงินคงเหลือทำต่อ" (`ProjectGridCard`, `ProjectDetailPage` → `pipeline.continueOnWallet`) | web | desktop (UI half) | Same session. The desktop `useProjectPipeline` HAS `waitingSlot`, `continueOnWallet`, `billingStop` and the typed `pollJob` stop/queue handling; only the screens are missing here (`JobProgressPage.tsx`, `jobs.tsx`, `ProjectGridCard.tsx`, `ProjectDetailPage.tsx`). |
-| Token billing — object-`detail` refusals worded in `lib/apiError.ts` / `lib/authedFetch.ts` `serverMessage`; styles + effects clients (`stylesApi.ts`, `effectsLocalApi.ts`) throw typed refusals via `errorFromResponse` | web | desktop | Same session. Desktop `api.ts` / `videosLocalApi.ts` already build refusals through `errorFromResponse`; `apiError.ts`, `stylesApi.ts`, `effectsLocalApi.ts` are missing from this tree. Neither side sends `allow_wallet` on `plan-effects` / `POST /effect-styles` yet — those features are hidden on web, so the desktop port should add it there. |
+| Token billing — styles + effects clients (`stylesApi.ts`, `effectsLocalApi.ts`) throw typed refusals via `errorFromResponse` | web | desktop | Same session. Desktop `api.ts` / `videosLocalApi.ts` already build refusals through `errorFromResponse`, and `apiError.ts` landed on desktop 2026-09-23; `stylesApi.ts` / `effectsLocalApi.ts` are missing from this tree. Neither side sends `allow_wallet` on `plan-effects` / `POST /effect-styles` yet — those features are hidden on web, so the desktop port should add it there. |
 | Token billing — `noLeaks.test.ts` "the UI never states usage in tokens" guard | web | desktop | Same session; desktop has no `noLeaks.test.ts` in this tree. |
 
 **Matched with different transports (not a gap):** รับวิดีโอจากมือถือ — the
@@ -78,3 +78,23 @@ has app.log — weaker need).
 | รับจากมือถือ / ส่งไปมือถือ, phone remote | web | LAN server lives in the Electron main process. |
 | เปิดโฟลเดอร์โปรเจกต์ | web | No filesystem access; the web shows OPFS usage instead. |
 | Background rendering while the tab is suspended | web | No web API keeps a page working once the browser suspends it — not a Worker, not a PWA, not a service worker. |
+
+
+## 2026-09-23 — a gap that was not a gap
+
+Several rows above said a desktop twin was "missing from this partial tree".
+Some of them were not missing: `.gitignore` carried a bare `desktop/` while 40
+desktop files were already tracked, so every NEW desktop file was left out of
+every commit silently. `planLadder.ts`, `usageLimits.ts` and the whole
+`components/settings/` folder were on disk and had never reached a commit. The
+rule is now narrowed to build output, and those files are committed.
+
+`apiError.ts` was a real gap of the worst kind: desktop's `api.ts` imported it
+and the file did not exist, so the renderer could not build at all. Copied
+across with its tests.
+
+Still genuinely absent from this checkout (never committed anywhere, so they
+live on another machine): `main/tasteLog.ts`, `main/lanReceive.ts`,
+`main/prefs.ts`, `main/remoteAccess.ts`, `main/remotePage.ts`,
+`main/remoteApi.ts`, and the renderer screens the rows above name. `npm run
+typecheck` in `desktop/app` fails on the first three until that tree is whole.
