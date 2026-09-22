@@ -33,7 +33,7 @@ export function SiteHeader() {
             บัญชีของฉัน
           </Link>
           <a href={APP_URL} className="btn btn-primary">
-            ไปที่แอป
+            เปิดห้องตัดต่อ
           </a>
         </div>
         <AuthHintSync />

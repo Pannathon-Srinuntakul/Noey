@@ -2,9 +2,11 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { FaqList } from "@/components/FaqList";
 import { JsonLd } from "@/components/JsonLd";
+import { FitLists } from "@/components/FitLists";
 import { MediaSlot } from "@/components/MediaSlot";
 import { PriceCards } from "@/components/PriceCards";
 import { HOME_FAQ } from "@/lib/faq";
+import { HOME_FITS, HOME_MISFITS } from "@/lib/scope";
 import {
   SOFTWARE_ID,
   faqPageNode,
@@ -84,35 +86,25 @@ export default async function HomePage() {
   return (
     <main id="main">
       <section className="container hero" aria-labelledby="hero-title">
-        <div>
-          <p className="eyebrow">สำหรับครีเอเตอร์และแม่ค้าที่ถ่ายคลิปเอง</p>
-          <h1 id="hero-title" className="display-title">
-            ถ่ายเสร็จ ลากคลิปเข้าเว็บ
-            <br />
-            ให้ AI ตัดร่างแรกให้ก่อน
-          </h1>
-          {/* Answer-first block: what the product is and does, in one extractable paragraph. */}
-          <p className="hero__lead">
-            Noey Studio เป็นห้องตัดต่อวิดีโอด้วย AI ที่เปิดในเบราว์เซอร์ ระบบถอดเสียงในคลิปออกมาเป็นข้อความ เลือกช่วงที่พูดได้ดี
-            ต่อกันเป็นคลิปเดียว เขียนสคริปต์พากย์ให้ และใส่ซับไทยให้ จากนั้นคุณดูผล แก้ตรงไหนก็ได้ในไทม์ไลน์
-            แล้วดาวน์โหลดไปลง TikTok ได้เลย
-          </p>
-          <div className="cta-row">
-            <Link href="/signup" className="btn btn-primary btn-lg">
-              เริ่มใช้ฟรี
-            </Link>
-            <Link href="/examples" className="btn btn-secondary btn-lg">
-              ดูตัวอย่างงาน
-            </Link>
-          </div>
-          <p className="fine">มีแพลนฟรีให้ใช้ต่อเนื่อง · ไม่ต้องผูกบัตร · ใช้บนคอมผ่าน Chrome หรือ Edge</p>
+        <p className="eyebrow">สำหรับครีเอเตอร์และแม่ค้าที่ถ่ายคลิปเอง</p>
+        <h1 id="hero-title" className="display-title hero__title">
+          ถ่ายเสร็จ ลากคลิปเข้าเว็บ
+          <br />
+          ให้ AI ตัดร่างแรกให้ก่อน
+        </h1>
+        <div className="hero__rule" aria-hidden="true" />
+        {/* Answer-first block: what the product is and does, in one extractable paragraph. */}
+        <p className="hero__lead">
+          Noey Studio เป็นห้องตัดต่อที่เปิดในเบราว์เซอร์ ระบบถอดเสียงในคลิปออกมาเป็นข้อความ เลือกช่วงที่พูดได้ดี ต่อกันเป็นคลิปเดียว
+          เขียนสคริปต์พากย์ให้ และใส่ซับไทยให้ จากนั้นคุณดูผล แก้ตรงไหนก็ได้ในไทม์ไลน์ แล้วดาวน์โหลดไปลง
+        </p>
+        <div className="cta-row">
+          <Link href="/signup" className="btn btn-primary btn-lg">
+            เริ่มใช้ฟรี
+          </Link>
         </div>
-        <figure className="hero__figure">
-          <div className="hero__media">
-            <MediaSlot media={MEDIA.heroClip} priority />
-          </div>
-          <figcaption>ตัวอย่างคลิปที่ตัดจากฟุตเทจดิบหลายไฟล์</figcaption>
-        </figure>
+        <p className="fine">มีแพลนฟรีให้ใช้ต่อเนื่อง · ไม่ต้องผูกบัตร · ใช้บนคอมผ่าน Chrome หรือ Edge</p>
+        <p className="fine hero__honest">ระบบทำร่างแรกให้ ไม่ได้ตัดจบแทนคุณ งานที่เหลือยังแก้เองในไทม์ไลน์</p>
       </section>
 
       <section className="usp" aria-labelledby="usp-title">
@@ -209,29 +201,20 @@ export default async function HomePage() {
         </div>
       </section>
 
-      <section className="section" aria-labelledby="work-title">
+      <section className="section" aria-labelledby="scope-title">
         <div className="container section-pad">
-          <div className="split-head">
-            <div>
-              <p className="eyebrow">ตัวอย่างงาน</p>
-              <h2 id="work-title" className="section-title">
-                คลิปที่ออกมาจากระบบนี้
-              </h2>
-            </div>
-            <Link href="/examples" className="btn btn-secondary">
-              ดูตัวอย่างงานทั้งหมด
-            </Link>
-          </div>
-          <div className="work">
-            <figure className="work__figure">
-              <MediaSlot media={MEDIA.homeWork} />
-              <figcaption>รีวิวสินค้า · โหมดพากย์ใหม่</figcaption>
-            </figure>
-            <p className="work__text">
-              คลิปนี้ถ่ายมาแบบไม่พูดอะไรเลย ระบบดูภาพที่มี เขียนสคริปต์พากย์ให้เป็นประโยคสั้น ๆ แล้วเจ้าของงานอัดเสียงตามทีหลังในเบราว์เซอร์
-              ระบบเรียงภาพให้ตรงกับเสียงที่อัด และใส่ซับไทยตามสคริปต์
-            </p>
-          </div>
+          <p className="eyebrow">ขอบเขตของระบบ</p>
+          <h2 id="scope-title" className="section-title scope-teaser__title">
+            ระบบคัดช็อตให้ ไม่ได้ตัดจบแทนคุณ
+          </h2>
+          <p className="scope-teaser__lead">
+            สิ่งที่ได้กลับมาคือร่างแรก — ช็อตที่คัดมาแล้ว เรียงลำดับไว้ พร้อมซับไทย จากนั้นยังต้องเข้าไปเกลาจังหวะและลำดับเองในไทม์ไลน์เกือบทุกครั้ง
+            ส่วนที่ประหยัดคือเวลานั่งไล่ฟุตเทจทีละช่วงและพิมพ์ซับเอง ไม่ใช่การตัดต่อทั้งกระบวนการ
+          </p>
+          <FitLists fits={HOME_FITS} misfits={HOME_MISFITS} fitTitle="เหมาะกับงานแบบนี้" misfitTitle="ยังทำให้ไม่ได้" headingLevel="h3" />
+          <p className="scope-teaser__more">
+            <Link href={PAGES.scope.path}>อ่านขอบเขตแบบละเอียด ทำอะไรได้ ทำอะไรไม่ได้</Link>
+          </p>
         </div>
       </section>
 
@@ -245,9 +228,9 @@ export default async function HomePage() {
             ทุกแพลนได้ไทม์ไลน์ ซับไทย และการเรนเดอร์แบบไม่จำกัดครั้ง ที่ต่างกันคือปริมาณงาน AI ต่อรอบ ความยาวคลิปต่อโปรเจกต์ และพื้นที่เก็บงาน
           </p>
           <PriceCards table={table} variant="home" />
-          <p style={{ margin: "24px 0 0" }}>
+          <p style={{ margin: "26px 0 0" }}>
             <Link href="/pricing" style={{ fontSize: 15 }}>
-              ดูตารางเทียบทุกแพลน
+              ดูทั้ง 7 แพลน รวม Lite, Agency และ Max
             </Link>
           </p>
         </div>

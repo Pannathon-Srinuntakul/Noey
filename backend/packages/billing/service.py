@@ -687,14 +687,37 @@ async def _fetch_plan_list(client: stripe.StripeClient) -> PlanList | None:
     )
 
 
-async def list_plans(client: stripe.StripeClient | None, cache_key: str = "") -> PlanList:
+def mock_plans(overrides: dict[str, int] | None = None) -> PlanList:
+    """The catalog's mock amounts, with any admin-set price in place of its tier's.
+
+    Only used while Stripe is not configured — with Stripe, an admin price edit
+    creates a real Stripe Price instead (packages/admin/pricing.py).
+    """
+    if not overrides:
+        return MOCK_PLANS
+    return PlanList(
+        source="mock",
+        plans=tuple(
+            PlanPrice(p.tier, p.lookup_key, int(overrides.get(p.tier, p.mock_unit_amount)))
+            for p in catalog.PAID_PLANS
+        ),
+    )
+
+
+async def list_plans(
+    client: stripe.StripeClient | None,
+    cache_key: str = "",
+    overrides: dict[str, int] | None = None,
+) -> PlanList:
     """The paid plans with amounts: live from Stripe (cached ~10 min) or the mock catalog.
 
     Falls back to the last good Stripe answer, else the mock, when Stripe is
     unreachable — a public pricing page should not break because of it.
+    ``overrides`` (tier → satang, set in the admin dashboard) replace mock
+    amounts only; Stripe amounts are never overridden locally.
     """
     if client is None:
-        return MOCK_PLANS
+        return mock_plans(overrides)
     cached = _plans_cache.get(cache_key)
     if cached is not None and cached[0] > time.monotonic():
         return cached[1]

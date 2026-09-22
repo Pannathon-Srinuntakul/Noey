@@ -4,6 +4,7 @@ import { cn } from '../../lib/cn'
 import { useRouter } from '../../lib/router'
 import { navGroupFor, type Route } from '../../lib/routes'
 import { useNavSection } from '../../lib/navSection'
+import { canUseStyles } from '../../lib/platformFeatures'
 
 interface NavItem {
   key: 'projects' | 'library' | 'settings'
@@ -14,7 +15,9 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { key: 'projects', label: 'โปรเจกต์', icon: FolderOpen, route: { name: 'projects' } },
-  { key: 'library', label: 'สไตล์', icon: Shapes, route: { name: 'library' } },
+  ...(canUseStyles
+    ? [{ key: 'library', label: 'สไตล์', icon: Shapes, route: { name: 'library' } } as NavItem]
+    : []),
   { key: 'settings', label: 'ตั้งค่า', icon: Settings, route: { name: 'settings' } }
 ]
 
@@ -67,7 +70,7 @@ export function NavRail({
     >
       <div className="flex items-center gap-2.5 px-2">
         <BrandMark size={20} className="text-accent" />
-        <span className="whitespace-nowrap font-display text-[19px] text-ink">Noey Video Edit</span>
+        <span className="whitespace-nowrap font-display text-[19px] text-ink">Noey Studio</span>
       </div>
 
       <div className="flex flex-col gap-0.5">

@@ -55,7 +55,7 @@ export function absoluteUrl(path: string): string {
 
 export type PageKey =
   | "home"
-  | "examples"
+  | "scope"
   | "pricing"
   | "about"
   | "signup"
@@ -84,7 +84,7 @@ export interface PageEntry {
  * or AI engine as if it were binding is worse than no page at all. Flip to
  * `false` once a lawyer-reviewed version replaces the draft text.
  */
-export const LEGAL_PAGES_ARE_DRAFTS = true;
+export const LEGAL_PAGES_ARE_DRAFTS = false;
 
 export const PAGES: Record<PageKey, PageEntry> = {
   home: {
@@ -93,16 +93,16 @@ export const PAGES: Record<PageKey, PageEntry> = {
     description:
       "Noey Studio ตัดคลิปสั้นด้วย AI ในเบราว์เซอร์ ถอดเสียงไทย เลือกช่วงไฮไลต์ เขียนสคริปต์พากย์ ใส่ซับไทยอัตโนมัติ แก้ต่อได้ทุกช็อต เริ่มใช้ฟรี",
     label: "หน้าแรก",
-    updated: "2026-09-21",
+    updated: "2026-09-22",
     indexable: true,
   },
-  examples: {
-    path: "/examples",
-    title: "ตัวอย่างคลิปรีวิวสินค้าที่ตัดด้วย AI | Noey Studio",
+  scope: {
+    path: "/scope",
+    title: "AI ตัดคลิปได้แค่ไหน ทำอะไรได้บ้าง | Noey Studio",
     description:
-      "ดูตัวอย่างคลิปรีวิวสินค้าที่ตัดด้วย Noey Studio โหมดพากย์ใหม่ AI เขียนสคริปต์พากย์ไทยจากภาพ อัดเสียงในเบราว์เซอร์ แล้วใส่ซับไทยให้อัตโนมัติ",
-    label: "ตัวอย่างงาน",
-    updated: "2026-09-21",
+      "Noey Studio ถอดเสียง คัดช็อต เรียงลำดับ และใส่ซับไทยเป็นร่างแรกให้ คุณเกลาจังหวะต่อในไทม์ไลน์ ดูว่างานแบบไหนเหมาะ และอะไรที่ระบบยังทำไม่ได้",
+    label: "ทำอะไรได้บ้าง",
+    updated: "2026-09-22",
     indexable: true,
   },
   pricing: {
@@ -111,9 +111,9 @@ export const PAGES: Record<PageKey, PageEntry> = {
     // The pricing page builds its description from live prices; this is the
     // price-free fallback used when prices are unknown.
     description:
-      "เทียบราคาทุกแพลนของ Noey Studio แพลนฟรี 0 บาท และแพลนรายเดือน Lite, Starter, Pro, Studio ดูโควตางาน AI ความยาวฟุตเทจ และพื้นที่เก็บงาน",
+      "เทียบราคาทุกแพลนของ Noey Studio แพลนฟรี 0 บาท และแพลนรายเดือน Lite ถึง Max ดูปริมาณการใช้งาน ความยาวฟุตเทจ และพื้นที่เก็บงาน",
     label: "ราคา",
-    updated: "2026-09-21",
+    updated: "2026-09-22",
     indexable: true,
   },
   about: {
@@ -122,7 +122,7 @@ export const PAGES: Record<PageKey, PageEntry> = {
     description:
       "Noey Studio เริ่มจากครีเอเตอร์ที่ลงคลิปรีวิวสินค้าทุกวันและอยากลดเวลาตัดคลิป อ่านแนวคิดของเครื่องมือ และส่งข้อความถึงทีมงานได้จากหน้านี้",
     label: "เกี่ยวกับเรา",
-    updated: "2026-09-21",
+    updated: "2026-09-22",
     indexable: true,
   },
   signup: {
@@ -131,34 +131,34 @@ export const PAGES: Record<PageKey, PageEntry> = {
     description:
       "สมัครบัญชี Noey Studio แล้วเริ่มตัดคลิปด้วย AI ที่แพลนฟรีได้ทันที ไม่ต้องผูกบัตร ได้ทุกโหมดรวมโหมดพากย์ใหม่ อยากได้โควตาเพิ่มค่อยอัปเกรดทีหลัง",
     label: "สมัครใช้งาน",
-    updated: "2026-09-21",
+    updated: "2026-09-22",
     indexable: true,
   },
   login: {
     path: "/login",
     title: "เข้าสู่ระบบ | Noey Studio",
     description:
-      "เข้าสู่ระบบบัญชี Noey Studio เพื่อจัดการแพลนและการชำระเงิน ดูโควตาที่ใช้ไป และเปิดแอปตัดต่อด้วยบัญชีเดียวกัน",
+      "เข้าสู่ระบบบัญชี Noey Studio เพื่อจัดการแพลนและการชำระเงิน ดูโควตาที่ใช้ไป และเปิดห้องตัดต่อด้วยบัญชีเดียวกัน",
     label: "เข้าสู่ระบบ",
     updated: "2026-09-21",
     indexable: false,
   },
   terms: {
     path: "/terms",
-    title: "เงื่อนไขการใช้งาน (ฉบับร่าง) | Noey Studio",
+    title: "เงื่อนไขการใช้งาน | Noey Studio",
     description:
-      "ฉบับร่างเงื่อนไขการใช้งาน Noey Studio ครอบคลุมบัญชีผู้ใช้ แพลนและการชำระเงิน การยกเลิก การใช้งานที่ยอมรับได้ และสิทธิ์ในผลงาน",
+      "เงื่อนไขการใช้งาน Noey Studio บัญชีผู้ใช้ สิทธิในไฟล์และผลงาน ความรับผิดชอบต่อเนื้อหา โควตา ค่าบริการและการยกเลิก และการเก็บข้อมูลงาน",
     label: "เงื่อนไขการใช้งาน",
-    updated: "2026-09-21",
+    updated: "2026-09-22",
     indexable: !LEGAL_PAGES_ARE_DRAFTS,
   },
   privacy: {
     path: "/privacy",
-    title: "นโยบายความเป็นส่วนตัว (ฉบับร่าง) | Noey Studio",
+    title: "นโยบายความเป็นส่วนตัว | Noey Studio",
     description:
-      "ฉบับร่างนโยบายความเป็นส่วนตัวของ Noey Studio ข้อมูลที่เก็บ เหตุผลที่เก็บ ระยะเวลาเก็บ และสิทธิ์ของเจ้าของข้อมูลตามกฎหมาย PDPA",
+      "นโยบายความเป็นส่วนตัวของ Noey Studio ข้อมูลที่เก็บ วัตถุประสงค์ ฐานทางกฎหมาย การเปิดเผย ระยะเวลาเก็บ คุกกี้ และสิทธิของคุณตามกฎหมาย PDPA",
     label: "ความเป็นส่วนตัว",
-    updated: "2026-09-21",
+    updated: "2026-09-22",
     indexable: !LEGAL_PAGES_ARE_DRAFTS,
   },
 };
@@ -166,7 +166,7 @@ export const PAGES: Record<PageKey, PageEntry> = {
 /** Primary navigation — the design's four header links, in order. */
 export const NAV_LINKS: ReadonlyArray<{ href: string; label: string }> = [
   { href: PAGES.home.path, label: PAGES.home.label },
-  { href: PAGES.examples.path, label: PAGES.examples.label },
+  { href: PAGES.scope.path, label: PAGES.scope.label },
   { href: PAGES.pricing.path, label: PAGES.pricing.label },
   { href: PAGES.about.path, label: PAGES.about.label },
 ];

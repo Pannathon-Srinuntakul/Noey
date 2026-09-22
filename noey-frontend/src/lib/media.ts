@@ -1,5 +1,6 @@
 /**
- * The six media slots from the design's <image-slot> placeholders.
+ * The media slots from the design's <image-slot> placeholders (Website v2:
+ * the three step screenshots; the hero clip and sample-work slots are gone).
  *
  * OWNER: supply each file (put it in /public/media/ or on an allowed CDN),
  * then set `src` + `alt` (and `poster` for video) here. Nothing else changes:
@@ -22,12 +23,6 @@ export interface MediaEntry {
 }
 
 export const MEDIA = {
-  heroClip: {
-    ratio: "9 / 16",
-    kind: "video",
-    placeholderLabel: "คลิปตัวอย่างแนวตั้ง 9:16",
-    brief: "Hero: a finished vertical 9:16 clip cut from several raw files (MP4/WebM + poster JPG).",
-  },
   stepImport: {
     ratio: "4 / 3",
     kind: "image",
@@ -45,17 +40,5 @@ export const MEDIA = {
     kind: "image",
     placeholderLabel: "ภาพหน้าจอ: หน้าพรีวิวและไทม์ไลน์",
     brief: "Step 3 screenshot (4:3): preview + timeline editor.",
-  },
-  homeWork: {
-    ratio: "9 / 16",
-    kind: "video",
-    placeholderLabel: "ภาพปกคลิปตัวอย่าง",
-    brief: "Home 'work' teaser: product-review clip made in voiceover mode (9:16 video or cover image).",
-  },
-  examplesWork: {
-    ratio: "9 / 16",
-    kind: "video",
-    placeholderLabel: "ภาพปกคลิปตัวอย่าง",
-    brief: "Examples page: the same product-review clip (8 raw files, voiceover mode) — or update the copy to match the real clip.",
   },
 } satisfies Record<string, MediaEntry>;

@@ -9,6 +9,14 @@ scrape runs, products/creators/market) was removed 2026-09-09 along with the
 legacy frontend that was its only consumer.
 """
 
+from packages.db.models.admin import (
+    AdminAuditEvent,
+    AdminDevice,
+    AdminLoginChallenge,
+    AdminSession,
+    AdminSetting,
+    PlanPriceOverride,
+)
 from packages.db.models.auth_token import AuthToken
 from packages.db.models.billing import BillingAccount, StripeEvent
 from packages.db.models.core_auth import Job, Membership, Tenant, User
@@ -18,12 +26,18 @@ from packages.db.models.stt_usage import SttUsageLog
 from packages.db.models.video_project import VideoProject
 
 __all__ = [
+    "AdminAuditEvent",
+    "AdminDevice",
+    "AdminLoginChallenge",
+    "AdminSession",
+    "AdminSetting",
     "AuthToken",
     "BillingAccount",
     "EffectStyle",
     "Job",
     "LlmUsageLog",
     "Membership",
+    "PlanPriceOverride",
     "StripeEvent",
     "SttUsageLog",
     "Tenant",

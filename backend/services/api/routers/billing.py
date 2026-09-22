@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.billing import service, webhooks
 from packages.billing.client import billing_config_problem, billing_enabled, get_stripe_client
+from packages.billing.overrides import load_price_overrides
 from packages.billing.service import BillingError, BillingState
 from packages.core.logging import get_logger
 from packages.core.settings import get_settings
@@ -117,12 +118,14 @@ def _refusal(exc: BillingError) -> HTTPException:
 # ── endpoints ─────────────────────────────────────────────────────────────────
 
 @router.get("/plans", response_model=PlansOut)
-async def list_plans(client: OptionalStripeDep) -> PlansOut:
+async def list_plans(client: OptionalStripeDep, session: CoreSession) -> PlansOut:
     """The paid plans. Amounts come live from Stripe by lookup key (cached ~10
-    min) when billing is configured, else from the mock catalog."""
+    min) when billing is configured, else from the mock catalog — with any
+    price an admin set in the dashboard (core.plan_price_overrides)."""
     key = (get_settings().stripe_secret_key or "").strip() if client is not None else ""
     cache_key = hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
-    plans = await service.list_plans(client, cache_key=cache_key)
+    overrides = await load_price_overrides(session) if client is None else None
+    plans = await service.list_plans(client, cache_key=cache_key, overrides=overrides)
     return PlansOut(
         source="stripe" if plans.source == "stripe" else "mock",
         currency="thb",

@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from packages.core.logging import configure_logging, get_logger
 from packages.core.settings import _ENV_FILES, assert_production_secrets, get_settings
 from services.api.routers import (
+    admin,
     auth,
     billing,
     contact,
@@ -103,6 +104,7 @@ def create_app() -> FastAPI:
         return {"status": "ok"}
 
     for r in (
+        admin,
         auth,
         billing,
         contact,

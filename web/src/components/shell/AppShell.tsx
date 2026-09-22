@@ -36,7 +36,7 @@ function useTitleBarLabel(): string {
     case 'detail':
       return name || 'โปรเจกต์'
     default:
-      return 'Noey Video Edit'
+      return 'Noey Studio'
   }
 }
 

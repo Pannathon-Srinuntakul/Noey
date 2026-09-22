@@ -8,10 +8,11 @@
  * render prices from the same `PriceTable`, so they cannot disagree.
  */
 
-export const TIERS = ["free", "lite", "starter", "pro", "studio"] as const;
+/** Every plan, cheapest first — the order of the comparison table. */
+export const TIERS = ["free", "lite", "starter", "pro", "studio", "agency", "max"] as const;
 export type Tier = (typeof TIERS)[number];
 
-export const PAID_TIERS = ["lite", "starter", "pro", "studio"] as const;
+export const PAID_TIERS = ["lite", "starter", "pro", "studio", "agency", "max"] as const;
 export type PaidTier = (typeof PAID_TIERS)[number];
 
 export function isPaidTier(value: unknown): value is PaidTier {
@@ -22,17 +23,30 @@ export function isTier(value: unknown): value is Tier {
   return typeof value === "string" && (TIERS as readonly string[]).includes(value);
 }
 
+/**
+ * The four plans shown as full cards (home strip and the top of /pricing).
+ * Seven cards in one row is a wall; the others sit in a second, smaller row
+ * (`EXTRA_TIERS`) and in the comparison table, which always lists all seven.
+ */
+export const MAIN_TIERS = ["free", "starter", "pro", "studio"] as const satisfies readonly Tier[];
+export const EXTRA_TIERS = ["lite", "agency", "max"] as const satisfies readonly Tier[];
+
 /** The backend's naming convention for Stripe price lookup keys. */
 export function defaultLookupKey(tier: PaidTier): string {
   return `noey_${tier}_monthly`;
 }
 
-/** Design default props (THB / month) — used ONLY when the backend is unreachable at build time. */
+/**
+ * Owner-approved ladder (THB / month, 2026-09-22) — used ONLY when the backend
+ * is unreachable at build time. The backend catalog is the source of truth.
+ */
 export const FALLBACK_PRICES_THB: Record<PaidTier, number> = {
-  lite: 190,
-  starter: 290,
-  pro: 930,
-  studio: 1890,
+  lite: 199,
+  starter: 399,
+  pro: 990,
+  studio: 1990,
+  agency: 3990,
+  max: 6990,
 };
 
 export interface PaidPrice {
@@ -147,6 +161,36 @@ export interface PlanCopy {
   /** Button label on /pricing. */
   pricingCta: string;
   recommended?: boolean;
+  /**
+   * Usage relative to Lite (1x). Sold as a multiplier, never as a token
+   * count — the user only ever sees percentages of their limits. null = free.
+   */
+  usageMultiplier: number | null;
+  /** Which limit windows apply, by their English UI names. */
+  limits: readonly UsageLimit[];
+  /** AI jobs that may run at the same time; more queue. */
+  concurrentJobs: number;
+  /** Rough 5-minute-clip guide, always shown as approximate. */
+  clipsApprox: string;
+}
+
+export type UsageLimit = "Monthly limit" | "Weekly limit" | "5-hour limit";
+
+/** Shown next to every clip estimate: the guide depends on footage and mode. */
+export const APPROX_NOTE = "โดยประมาณ ขึ้นกับความยาวและโหมด";
+
+/** "5x" badge text, or null for the free plan. */
+export function multiplierLabel(tier: Tier): string | null {
+  const m = PLAN_COPY[tier].usageMultiplier;
+  return m === null ? null : `${m}x`;
+}
+
+/** The sentence under the badge. */
+export function multiplierCaption(tier: Tier): string {
+  const m = PLAN_COPY[tier].usageMultiplier;
+  if (m === null) return "สำหรับทดลองใช้";
+  if (m === 1) return "ปริมาณการใช้งานพื้นฐาน";
+  return `ปริมาณการใช้งาน ${m} เท่าของ Lite`;
 }
 
 export const PLAN_COPY: Record<Tier, PlanCopy> = {
@@ -156,7 +200,7 @@ export const PLAN_COPY: Record<Tier, PlanCopy> = {
     homeBlurb: "ลองระบบและตัดคลิปสั้นเป็นครั้งคราว",
     pricingBlurb: "ใช้ได้ต่อเนื่อง ไม่หมดอายุ",
     features: [
-      "งาน AI ประมาณ 1 คลิปต่อรอบ 5 ชั่วโมง",
+      "Monthly limit · ประมาณ 1–2 งานต่อเดือน จากฟุตเทจดิบ 5 นาที",
       "ฟุตเทจรวม 5 นาทีต่อโปรเจกต์",
       "ครบทุกโหมด รวมโหมดพากย์ใหม่",
       "เก็บได้ 3 โปรเจกต์ · 1 GB",
@@ -164,71 +208,133 @@ export const PLAN_COPY: Record<Tier, PlanCopy> = {
     accountFeatures: ["ฟุตเทจรวม 5 นาทีต่อโปรเจกต์", "เก็บได้ 3 โปรเจกต์ · 1 GB", "ครบทุกโหมด รวมโหมดพากย์ใหม่"],
     dialogSummary: "",
     pricingCta: "เริ่มใช้ฟรี",
+    usageMultiplier: null,
+    limits: ["Monthly limit"],
+    concurrentJobs: 1,
+    clipsApprox: "1–2 งาน/เดือน",
   },
   lite: {
     tier: "lite",
     name: "Lite",
-    homeBlurb: "ลงคลิปสัปดาห์ละไม่กี่ตัว เพิ่มเพลงประกอบ",
-    pricingBlurb: "ลงคลิปสัปดาห์ละไม่กี่ตัว",
+    homeBlurb: "เริ่มแบบประหยัด ลงคลิปสัปดาห์ละไม่กี่ตัว",
+    pricingBlurb: "เริ่มแบบประหยัด ลงคลิปสัปดาห์ละไม่กี่ตัว",
     features: [
-      "งาน AI ประมาณ 2 คลิปต่อรอบ 5 ชั่วโมง",
+      "Weekly limit · ประมาณ 3 งานต่อสัปดาห์ จากฟุตเทจดิบ 5 นาที",
       "ฟุตเทจรวม 10 นาทีต่อโปรเจกต์",
       "เพิ่มเพลงประกอบได้",
       "เก็บได้ 10 โปรเจกต์ · 3 GB",
     ],
     accountFeatures: ["ฟุตเทจรวม 10 นาทีต่อโปรเจกต์", "เพิ่มเพลงประกอบได้", "เก็บได้ 10 โปรเจกต์ · 3 GB"],
-    dialogSummary: "ฟุตเทจ 10 นาทีต่อโปรเจกต์ · 10 โปรเจกต์ · 3 GB",
+    dialogSummary: "ใช้งาน 1x · ฟุตเทจ 10 นาทีต่อโปรเจกต์ · 3 GB",
     pricingCta: "เลือกแพลนนี้",
+    usageMultiplier: 1,
+    limits: ["Weekly limit"],
+    concurrentJobs: 1,
+    clipsApprox: "~3 งาน/สัปดาห์",
   },
   starter: {
     tier: "starter",
     name: "Starter",
-    homeBlurb: "ลงคลิปสม่ำเสมอ ได้โหมดพากย์ใหม่ครบ",
+    homeBlurb: "สำหรับคนที่ลงคลิปหลายตัวต่อสัปดาห์",
     pricingBlurb: "สำหรับคนที่ลงคลิปหลายตัวต่อสัปดาห์",
     features: [
-      "งาน AI ประมาณ 3 คลิปต่อรอบ 5 ชั่วโมง",
+      "Weekly limit · ประมาณ 6 งานต่อสัปดาห์ จากฟุตเทจดิบ 5 นาที",
       "ฟุตเทจรวม 20 นาทีต่อโปรเจกต์",
       "ฟุตเทจยาวขึ้น พร้อมเพลงประกอบ",
       "เก็บได้ 20 โปรเจกต์ · 5 GB",
     ],
     accountFeatures: ["ฟุตเทจรวม 20 นาทีต่อโปรเจกต์", "ฟุตเทจยาวขึ้น พร้อมเพลงประกอบ", "เก็บได้ 20 โปรเจกต์ · 5 GB"],
-    dialogSummary: "ฟุตเทจ 20 นาทีต่อโปรเจกต์ · 20 โปรเจกต์ · 5 GB",
+    dialogSummary: "ใช้งาน 2x · ฟุตเทจ 20 นาทีต่อโปรเจกต์ · 5 GB",
     pricingCta: "เลือกแพลนนี้",
+    usageMultiplier: 2,
+    limits: ["Weekly limit"],
+    concurrentJobs: 1,
+    clipsApprox: "~6 งาน/สัปดาห์",
   },
   pro: {
     tier: "pro",
     name: "Pro",
-    homeBlurb: "ทำคลิปทุกวันหรือรับงานลูกค้าหลายเจ้า",
+    homeBlurb: "ทำคลิปทุกวัน หรือรับงานให้ลูกค้าหลายเจ้า",
     pricingBlurb: "ทำคลิปทุกวัน หรือรับงานให้ลูกค้าหลายเจ้า",
     features: [
-      "งาน AI ประมาณ 8 คลิปต่อรอบ 5 ชั่วโมง",
+      "Weekly limit · ประมาณ 15 งานต่อสัปดาห์ จากฟุตเทจดิบ 5 นาที",
+      "5-hour limit · ประมาณ 6 งานต่อรอบ 5 ชั่วโมง",
+      "ทำงาน AI พร้อมกันได้ 2 งาน",
       "ฟุตเทจรวมสูงสุด 2 ชั่วโมงต่อโปรเจกต์",
-      "คิวประมวลผลก่อนแพลนอื่น",
-      "เก็บโปรเจกต์ไม่จำกัดจำนวน · 10 GB",
+      "คิวประมวลผลก่อนแพลนอื่น · จำนวนโปรเจกต์ไม่จำกัด ภายใน 10 GB",
     ],
     accountFeatures: [
       "ฟุตเทจรวมสูงสุด 2 ชั่วโมงต่อโปรเจกต์",
       "คิวประมวลผลก่อนแพลนอื่น",
       "เก็บโปรเจกต์ไม่จำกัดจำนวน · 10 GB",
     ],
-    dialogSummary: "ฟุตเทจสูงสุด 2 ชั่วโมง · โปรเจกต์ไม่จำกัด · 10 GB",
-    pricingCta: "อัปเกรดเป็น Pro",
+    dialogSummary: "ใช้งาน 5x · ฟุตเทจสูงสุด 2 ชั่วโมง · 10 GB",
+    pricingCta: "เลือกแพลนนี้",
     recommended: true,
+    usageMultiplier: 5,
+    limits: ["Weekly limit", "5-hour limit"],
+    concurrentJobs: 2,
+    clipsApprox: "~15 งาน/สัปดาห์",
   },
   studio: {
     tier: "studio",
     name: "Studio",
-    homeBlurb: "รับงานเป็นทีมหรือผลิตคลิปวันละหลายตัว",
+    homeBlurb: "ผลิตคลิปวันละหลายตัว หรือรับงานเป็นทีม",
     pricingBlurb: "ผลิตคลิปวันละหลายตัว หรือรับงานเป็นทีม",
     features: [
-      "งาน AI ประมาณ 20 คลิปต่อรอบ 5 ชั่วโมง",
+      "Weekly limit · ประมาณ 30 งานต่อสัปดาห์ จากฟุตเทจดิบ 5 นาที",
+      "5-hour limit · ประมาณ 12 งานต่อรอบ 5 ชั่วโมง",
+      "ทำงาน AI พร้อมกันได้ 3 งาน",
       "ฟุตเทจรวมสูงสุด 2 ชั่วโมงต่อโปรเจกต์",
-      "คิวประมวลผลลำดับแรกสุด",
-      "เก็บโปรเจกต์ไม่จำกัด · 30 GB",
+      "คิวประมวลผลลำดับแรก · จำนวนโปรเจกต์ไม่จำกัด ภายใน 30 GB",
     ],
-    accountFeatures: ["ฟุตเทจรวมสูงสุด 2 ชั่วโมงต่อโปรเจกต์", "คิวประมวลผลลำดับแรกสุด", "เก็บโปรเจกต์ไม่จำกัด · 30 GB"],
-    dialogSummary: "โควตาสูงสุด · คิวแรกสุด · 30 GB",
+    accountFeatures: ["ฟุตเทจรวมสูงสุด 2 ชั่วโมงต่อโปรเจกต์", "คิวประมวลผลลำดับแรก", "เก็บโปรเจกต์ไม่จำกัด · 30 GB"],
+    dialogSummary: "ใช้งาน 10x · ทำงานพร้อมกัน 3 งาน · 30 GB",
     pricingCta: "เลือกแพลนนี้",
+    usageMultiplier: 10,
+    limits: ["Weekly limit", "5-hour limit"],
+    concurrentJobs: 3,
+    clipsApprox: "~30 งาน/สัปดาห์",
+  },
+  agency: {
+    tier: "agency",
+    name: "Agency",
+    homeBlurb: "ดูแลหลายแบรนด์พร้อมกัน",
+    pricingBlurb: "สำหรับเอเจนซีที่ดูแลคอนเทนต์หลายแบรนด์",
+    features: [
+      "Weekly limit · ประมาณ 60 งานต่อสัปดาห์ จากฟุตเทจดิบ 5 นาที",
+      "5-hour limit · ประมาณ 24 งานต่อรอบ 5 ชั่วโมง",
+      "ทำงาน AI พร้อมกันได้ 4 งาน",
+      "ฟุตเทจรวมสูงสุด 2 ชั่วโมงต่อโปรเจกต์",
+      "คิวประมวลผลลำดับแรก · จำนวนโปรเจกต์ไม่จำกัด ภายใน 60 GB",
+    ],
+    accountFeatures: ["ทำงาน AI พร้อมกันได้ 4 งาน", "คิวประมวลผลลำดับแรก", "เก็บโปรเจกต์ไม่จำกัด · 60 GB"],
+    dialogSummary: "ใช้งาน 20x · ทำงานพร้อมกัน 4 งาน · 60 GB",
+    pricingCta: "เลือกแพลนนี้",
+    usageMultiplier: 20,
+    limits: ["Weekly limit", "5-hour limit"],
+    concurrentJobs: 4,
+    clipsApprox: "~60 งาน/สัปดาห์",
+  },
+  max: {
+    tier: "max",
+    name: "Max",
+    homeBlurb: "ทีมผลิตคอนเทนต์เต็มเวลา ใช้งานต่อเนื่องได้ทั้งวัน",
+    pricingBlurb: "สำหรับทีมผลิตคอนเทนต์เต็มเวลา ใช้งานต่อเนื่องได้ทั้งวัน",
+    features: [
+      "Weekly limit · ประมาณ 100 งานขึ้นไปต่อสัปดาห์ จากฟุตเทจดิบ 5 นาที",
+      "5-hour limit · ประมาณ 40 งานต่อรอบ 5 ชั่วโมง",
+      "ทำงาน AI พร้อมกันได้ 5 งาน",
+      "ฟุตเทจรวมสูงสุด 2 ชั่วโมงต่อโปรเจกต์",
+      "คิวประมวลผลลำดับแรก · จำนวนโปรเจกต์ไม่จำกัด ภายใน 100 GB",
+    ],
+    accountFeatures: ["ทำงาน AI พร้อมกันได้ 5 งาน", "คิวประมวลผลลำดับแรก", "เก็บโปรเจกต์ไม่จำกัด · 100 GB"],
+    dialogSummary: "ใช้งาน 35x · ทำงานพร้อมกัน 5 งาน · 100 GB",
+    pricingCta: "เลือกแพลนนี้",
+    usageMultiplier: 35,
+    limits: ["Weekly limit", "5-hour limit"],
+    concurrentJobs: 5,
+    clipsApprox: "100+ งาน/สัปดาห์",
   },
 };
 
@@ -243,20 +349,45 @@ export function planDisplayName(plan: string | null | undefined): string {
   return plan.charAt(0).toUpperCase() + plan.slice(1);
 }
 
-/** Comparison table rows — designer's copy. Order follows TIERS. */
-export const COMPARISON_ROWS: ReadonlyArray<{ label: string; values: readonly [string, string, string, string, string]; numeric?: boolean }> = [
-  { label: "งาน AI ต่อรอบ 5 ชั่วโมง (โดยประมาณ)", values: ["1 คลิป", "2 คลิป", "3 คลิป", "8 คลิป", "20 คลิป"], numeric: true },
-  { label: "เพดานรวมต่อสัปดาห์ (โดยประมาณ)", values: ["5 คลิป", "15 คลิป", "30 คลิป", "120 คลิป", "350 คลิป"], numeric: true },
-  { label: "ฟุตเทจรวมต่อโปรเจกต์", values: ["5 นาที", "10 นาที", "20 นาที", "2 ชั่วโมง", "2 ชั่วโมง"], numeric: true },
-  { label: "โหมดเก็บทุกฉาก และโหมดไฮไลต์", values: ["มี", "มี", "มี", "มี", "มี"] },
-  { label: "โหมดพากย์ใหม่ พร้อมสคริปต์ AI", values: ["มี", "มี", "มี", "มี", "มี"] },
-  { label: "ซับไทยอัตโนมัติ", values: ["มี", "มี", "มี", "มี", "มี"] },
-  { label: "เพลงประกอบ", values: ["—", "มี", "มี", "มี", "มี"] },
-  { label: "ไทม์ไลน์แก้มือ สลับช็อต และเรนเดอร์ซ้ำ", values: ["ไม่จำกัด", "ไม่จำกัด", "ไม่จำกัด", "ไม่จำกัด", "ไม่จำกัด"] },
-  { label: "แปลงไฟล์อัตโนมัติเมื่อเบราว์เซอร์เปิดไม่ได้", values: ["—", "—", "มี", "มี", "มี"] },
-  { label: "เก็บโปรเจกต์บนบัญชี เปิดต่อจากเครื่องอื่น", values: ["3 โปรเจกต์", "10 โปรเจกต์", "20 โปรเจกต์", "ไม่จำกัด", "ไม่จำกัด"], numeric: true },
-  { label: "พื้นที่เก็บงานบนบัญชี", values: ["1 GB", "3 GB", "5 GB", "10 GB", "30 GB"], numeric: true },
-  { label: "ลำดับคิวประมวลผล", values: ["ปกติ", "ปกติ", "ปกติ", "ก่อน", "แรกสุด"] },
+/** "Weekly + 5-hour" — the table's short form of a plan's limit windows. */
+export function limitsShort(limits: readonly UsageLimit[]): string {
+  if (limits.length === 1) return limits[0];
+  return limits.map((limit) => limit.replace(" limit", "")).join(" + ");
+}
+
+/** Comparison table rows. Order follows TIERS (7 values each). */
+type Row7 = readonly [string, string, string, string, string, string, string];
+
+export const COMPARISON_ROWS: ReadonlyArray<{ label: string; values: Row7; numeric?: boolean }> = [
+  {
+    label: "ปริมาณการใช้งาน (เทียบกับ Lite)",
+    values: TIERS.map((tier) => multiplierLabel(tier) ?? "ทดลองใช้") as unknown as Row7,
+    numeric: true,
+  },
+  {
+    label: "ขีดจำกัดการใช้งาน",
+    values: TIERS.map((tier) => limitsShort(PLAN_COPY[tier].limits)) as unknown as Row7,
+  },
+  {
+    label: `จำนวนงาน เมื่อฟุตเทจดิบยาว 5 นาที (${APPROX_NOTE})`,
+    values: TIERS.map((tier) => PLAN_COPY[tier].clipsApprox) as unknown as Row7,
+    numeric: true,
+  },
+  {
+    label: "งาน AI ที่ทำพร้อมกันได้",
+    values: TIERS.map((tier) => `${PLAN_COPY[tier].concurrentJobs} งาน`) as unknown as Row7,
+    numeric: true,
+  },
+  { label: "ฟุตเทจรวมต่อโปรเจกต์", values: ["5 นาที", "10 นาที", "20 นาที", "2 ชั่วโมง", "2 ชั่วโมง", "2 ชั่วโมง", "2 ชั่วโมง"], numeric: true },
+  { label: "โหมดเก็บทุกฉาก และโหมดไฮไลต์", values: ["มี", "มี", "มี", "มี", "มี", "มี", "มี"] },
+  { label: "โหมดพากย์ใหม่ พร้อมสคริปต์ AI", values: ["มี", "มี", "มี", "มี", "มี", "มี", "มี"] },
+  { label: "ซับไทยอัตโนมัติ", values: ["มี", "มี", "มี", "มี", "มี", "มี", "มี"] },
+  { label: "เพลงประกอบ", values: ["—", "มี", "มี", "มี", "มี", "มี", "มี"] },
+  { label: "ไทม์ไลน์แก้มือ สลับช็อต และเรนเดอร์ซ้ำ", values: ["ไม่จำกัด", "ไม่จำกัด", "ไม่จำกัด", "ไม่จำกัด", "ไม่จำกัด", "ไม่จำกัด", "ไม่จำกัด"] },
+  { label: "แปลงไฟล์อัตโนมัติเมื่อเบราว์เซอร์เปิดไม่ได้", values: ["—", "—", "มี", "มี", "มี", "มี", "มี"] },
+  { label: "จำนวนโปรเจกต์ที่เก็บบนบัญชี (ภายในพื้นที่ที่ได้)", values: ["3 โปรเจกต์", "10 โปรเจกต์", "20 โปรเจกต์", "ไม่จำกัดจำนวน", "ไม่จำกัดจำนวน", "ไม่จำกัดจำนวน", "ไม่จำกัดจำนวน"], numeric: true },
+  { label: "พื้นที่เก็บงานบนบัญชี", values: ["1 GB", "3 GB", "5 GB", "10 GB", "30 GB", "60 GB", "100 GB"], numeric: true },
+  { label: "ลำดับคิวประมวลผล", values: ["ปกติ", "ปกติ", "ปกติ", "ก่อน", "แรก", "แรก", "แรก"] },
 ];
 
 /** Visible price label for a tier: "0" for free, formatted price, or null when unlisted. */

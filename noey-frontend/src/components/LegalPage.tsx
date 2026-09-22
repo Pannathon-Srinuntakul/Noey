@@ -1,13 +1,37 @@
-import type { ReactNode } from "react";
+import Link from "next/link";
+import { Fragment } from "react";
 import { formatThaiDate } from "@/lib/format";
 import { breadcrumbNode, jsonLdGraph, webPageNode } from "@/lib/jsonld";
-import { LEGAL_PAGES_ARE_DRAFTS, PAGES, type PageKey } from "@/lib/site";
+import type { LegalDoc } from "@/lib/legal";
+import { PAGES, type PageKey } from "@/lib/site";
 import { Breadcrumb } from "./Breadcrumb";
 import { JsonLd } from "./JsonLd";
 
-/** Shared frame for /terms and /privacy, with the unmissable draft banner. */
-export function LegalPage({ pageKey, title, children }: { pageKey: Extract<PageKey, "terms" | "privacy">; title: string; children: ReactNode }) {
+type LegalKey = Extract<PageKey, "terms" | "privacy">;
+
+/** A paragraph with `{about}` rendered as a link to the contact form. */
+function Paragraph({ text }: { text: string }) {
+  const parts = text.split("{about}");
+  return (
+    <p>
+      {parts.map((part, index) => (
+        <Fragment key={index}>
+          {part}
+          {index < parts.length - 1 ? <Link href={`${PAGES.about.path}#contact`}>เกี่ยวกับเรา</Link> : null}
+        </Fragment>
+      ))}
+    </p>
+  );
+}
+
+/**
+ * Shared frame for /terms and /privacy (Website v2): eyebrow, title, intro,
+ * date, numbered sections, then a link to the other document.
+ */
+export function LegalPage({ pageKey, title, doc }: { pageKey: LegalKey; title: string; doc: LegalDoc }) {
   const page = PAGES[pageKey];
+  const other = PAGES[pageKey === "terms" ? "privacy" : "terms"];
+  const otherLabel = pageKey === "terms" ? "อ่านนโยบายความเป็นส่วนตัว" : "อ่านเงื่อนไขการใช้งาน";
   const trail = [
     { name: PAGES.home.label, path: PAGES.home.path },
     { name: page.label, path: page.path },
@@ -16,22 +40,27 @@ export function LegalPage({ pageKey, title, children }: { pageKey: Extract<PageK
     <main id="main" className="container page">
       <article className="legal">
         <Breadcrumb trail={trail} />
-        <h1 className="page-title">{title}</h1>
-        {LEGAL_PAGES_ARE_DRAFTS ? (
-          <div className="notice notice--warn draft-banner" role="note">
-            <p>
-              <strong>ฉบับร่าง — ยังไม่มีผลบังคับใช้</strong>
-            </p>
-            <p>
-              เอกสารนี้เป็นร่างตั้งต้นที่รอเจ้าของบริการและที่ปรึกษากฎหมายตรวจทาน ข้อความในวงเล็บเหลี่ยม [ ] คือส่วนที่ยังต้องเติม
-              เนื้อหาอาจเปลี่ยนก่อนประกาศใช้จริง
-            </p>
-          </div>
-        ) : null}
-        <p className="updated" style={{ marginTop: 0 }}>
-          ปรับปรุงล่าสุด <time dateTime={page.updated}>{formatThaiDate(page.updated)}</time>
+        <p className="eyebrow">เอกสาร</p>
+        <h1 className="page-title legal__title">{title}</h1>
+        <p className="legal__intro">{doc.intro}</p>
+        <p className="legal__updated">
+          อัปเดตล่าสุด <time dateTime={page.updated}>{formatThaiDate(page.updated)}</time>
         </p>
-        {children}
+        {doc.sections.map((section, index) => (
+          <section key={section.title} className="legal__section">
+            <h2>
+              <span className="num legal__n">{String(index + 1).padStart(2, "0")}</span>
+              <span>{section.title}</span>
+            </h2>
+            {section.paragraphs.map((paragraph) => (
+              <Paragraph key={paragraph} text={paragraph} />
+            ))}
+          </section>
+        ))}
+        <div className="legal__foot">
+          <Link href={other.path}>{otherLabel}</Link>
+          <Link href="/">กลับหน้าแรก</Link>
+        </div>
       </article>
       <JsonLd
         data={jsonLdGraph(
@@ -41,9 +70,4 @@ export function LegalPage({ pageKey, title, children }: { pageKey: Extract<PageK
       />
     </main>
   );
-}
-
-/** Marks text the owner still has to fill in. */
-export function Fill({ children }: { children: ReactNode }) {
-  return <span className="placeholder">[{children}]</span>;
 }

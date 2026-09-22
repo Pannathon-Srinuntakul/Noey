@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import { signupAction } from "@/app/actions/auth";
 import type { ActionState } from "@/lib/messages";
 import { PLAN_COPY, isPaidTier } from "@/lib/plans";
@@ -12,6 +12,9 @@ export function SignupForm() {
   const [state, action, pending] = useActionState<ActionState | undefined, FormData>(signupAction, undefined);
 
   const errors = state?.fieldErrors ?? {};
+  // The design gates sign-up on an explicit tick of the terms and privacy
+  // notice; the server action checks the same field.
+  const [agreed, setAgreed] = useState(false);
 
   return (
     <>
@@ -30,6 +33,27 @@ export function SignupForm() {
       </p>
       <form action={action} className="stack">
         <SearchParam name="plan" render={(plan) => <input type="hidden" name="plan" value={isPaidTier(plan) ? plan : ""} />} />
+        <label className="agree">
+          <input
+            type="checkbox"
+            name="agree"
+            value="yes"
+            className="agree__box"
+            checked={agreed}
+            onChange={(event) => setAgreed(event.target.checked)}
+            required
+            aria-describedby={errors.agree ? "s-agree-error" : undefined}
+          />
+          <span className="agree__text">
+            ฉันได้อ่านและยอมรับ <Link href="/terms">เงื่อนไขการใช้งาน</Link> และ <Link href="/privacy">นโยบายความเป็นส่วนตัว</Link>{" "}
+            รวมถึงการเก็บและประมวลผลไฟล์ที่ฉันนำเข้ามาเพื่อให้บริการ
+          </span>
+        </label>
+        {errors.agree ? (
+          <p className="field-error" id="s-agree-error" style={{ marginTop: -8 }}>
+            {errors.agree}
+          </p>
+        ) : null}
         <div className="field">
           <label htmlFor="s-name">ชื่อ</label>
           <input
@@ -96,12 +120,16 @@ export function SignupForm() {
             {state.error}
           </p>
         ) : null}
-        <button type="submit" className="btn btn-primary btn-block btn-lg" disabled={pending} aria-busy={pending || undefined}>
+        <button
+          type="submit"
+          className="btn btn-primary btn-block btn-lg"
+          disabled={pending || !agreed}
+          aria-busy={pending || undefined}
+        >
           {pending ? "กำลังสมัคร…" : "สมัครและเริ่มใช้งาน"}
         </button>
         <p className="legal-line">
-          การสมัครถือว่ายอมรับ <Link href="/terms">เงื่อนไขการใช้งาน</Link> และ{" "}
-          <Link href="/privacy">นโยบายความเป็นส่วนตัว</Link> ยังไม่ต้องกรอกบัตรในขั้นนี้
+          {agreed ? "ยังไม่ต้องกรอกบัตรในขั้นนี้ เริ่มที่แพลนฟรีได้เลย" : "ติ๊กยอมรับเงื่อนไขก่อนจึงจะสมัครได้"}
         </p>
       </form>
     </>

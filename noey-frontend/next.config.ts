@@ -55,7 +55,17 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  // The Docker image runs `.next/standalone/server.js` with only the traced
+  // files, not a full `node_modules` (see Dockerfile).
+  output: "standalone",
   poweredByHeader: false,
+  async redirects() {
+    return [
+      // Website v2 (2026-09-22) replaced the sample-clip page with the honest
+      // scope page. Permanent, so search engines move the old URL's signals.
+      { source: "/examples", destination: "/scope", permanent: true },
+    ];
+  },
   async headers() {
     return [
       { source: "/:path*", headers: securityHeaders },

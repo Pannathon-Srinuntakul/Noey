@@ -93,6 +93,13 @@ function createWindow(): void {
 // registry, the same prefs file, the same LAN port — so a second launch means
 // two writers to one project.json (last write wins, silently) and a LAN server
 // that fails to bind. Launching again focuses the window that already exists.
+// The product was renamed Noey Video Edit → Noey Studio (2026-09-22). Electron
+// derives userData from the packaged productName, so without this pin every
+// installed copy would open an empty folder after updating: no projects, no
+// saved login. Keep the old folder name for good. Set before the
+// single-instance lock, which also lives in userData.
+if (app.isPackaged) app.setPath('userData', join(app.getPath('appData'), 'Noey Video Edit'))
+
 const gotTheLock = app.requestSingleInstanceLock()
 if (!gotTheLock) {
   app.quit()

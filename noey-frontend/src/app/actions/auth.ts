@@ -1,15 +1,12 @@
 "use server";
 
 import { redirect } from "next/navigation";
-import { decidePlanAction, normalizeBillingMe } from "@/lib/billing";
 import { TURNSTILE_FIELD } from "@/lib/contact";
 import { MSG, type ActionState } from "@/lib/messages";
 import { passwordProblem } from "@/lib/password";
-import { isPaidTier, lookupKeyFor } from "@/lib/plans";
-import { isSafeExternalRedirect } from "@/lib/redirect-url";
+import { isPaidTier } from "@/lib/plans";
 import { apiRequest, type MeOut } from "@/lib/server/api";
-import { getPriceTable } from "@/lib/server/prices";
-import { authedApi, clearSession, writeSession } from "@/lib/server/session";
+import { clearSession, writeSession } from "@/lib/server/session";
 import { isTokenPair, sanitizeDisplayName, sanitizeNextPath, type TokenPair } from "@/lib/session";
 
 const EMAIL_PATTERN = /^[^\s@<>"]+@[^\s@<>"]+\.[^\s@<>"]{2,}$/;
@@ -53,7 +50,7 @@ export async function loginAction(_previous: ActionState | undefined, formData: 
 /**
  * Sign-up. On success: cookies, then /account (which shows the "verify your
  * email" banner) — or, when the visitor came from a paid-plan button
- * (/signup?plan=pro), straight on to Checkout for it.
+ * (/signup?plan=pro), to the billing page with that plan's dialog open.
  */
 export async function signupAction(_previous: ActionState | undefined, formData: FormData): Promise<ActionState> {
   const name = sanitizeDisplayName(text(formData, "name"));
@@ -68,6 +65,9 @@ export async function signupAction(_previous: ActionState | undefined, formData:
   if (!EMAIL_PATTERN.test(email)) fieldErrors.email = "กรอกอีเมลให้ถูกต้อง";
   const passwordError = passwordProblem(password);
   if (passwordError) fieldErrors.password = passwordError;
+  // Consent is recorded by the act of registering; refuse without the tick
+  // even if the disabled button was bypassed.
+  if (text(formData, "agree") !== "yes") fieldErrors.agree = "ติ๊กยอมรับเงื่อนไขการใช้งานและนโยบายความเป็นส่วนตัวก่อนสมัคร";
   if (Object.keys(fieldErrors).length > 0) return { fieldErrors, values };
 
   const register = await apiRequest<unknown>("/auth/register", {
@@ -101,26 +101,8 @@ export async function signupAction(_previous: ActionState | undefined, formData:
   await startSession(register.data, name || null);
 
   if (isPaidTier(plan)) {
-    const table = await getPriceTable({ fallbackOnError: true });
-    const lookupKey = lookupKeyFor(table, plan);
-    const billing = await authedApi<unknown>("/billing/me", {}, { mutable: true });
-    const decision = decidePlanAction({
-      tier: plan,
-      lookupKey,
-      signedIn: true,
-      billing: billing.kind === "ok" && billing.result.ok ? normalizeBillingMe(billing.result.data) : null,
-    });
-    if (decision.kind === "checkout") {
-      const checkout = await authedApi<{ url?: unknown }>(
-        "/billing/checkout",
-        { method: "POST", body: { lookup_key: lookupKey } },
-        { mutable: true },
-      );
-      if (checkout.kind === "ok" && checkout.result.ok && isSafeExternalRedirect(checkout.result.data?.url)) {
-        redirect(checkout.result.data.url as string);
-      }
-    }
-    // Account exists either way; the billing page explains what happened and keeps the plan picked.
+    // Not straight to Checkout: the billing page opens the plan dialog with
+    // the plan picked, where the recurring-billing consent is ticked first.
     redirect(`/account/billing?plan=${plan}&from=signup`);
   }
   redirect("/account");

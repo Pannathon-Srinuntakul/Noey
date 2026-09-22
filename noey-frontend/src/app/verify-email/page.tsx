@@ -66,11 +66,11 @@ export default async function VerifyEmailPage({ searchParams }: { searchParams: 
   switch (view.kind) {
     case "verified":
       title = "ยืนยันอีเมลเรียบร้อย";
-      body = <>อีเมล {view.email ? <strong>{view.email}</strong> : null} ยืนยันแล้ว เริ่มใช้งาน AI ในแอปตัดต่อได้เลย</>;
+      body = <>อีเมล {view.email ? <strong>{view.email}</strong> : null} ยืนยันแล้ว เริ่มใช้งาน AI ในห้องตัดต่อได้เลย</>;
       actions = (
         <>
           <a href={APP_URL} className="btn btn-primary btn-lg">
-            ไปที่แอปตัดต่อ
+            เปิดห้องตัดต่อ
           </a>
           {accountLink}
         </>

@@ -72,10 +72,10 @@ export function CheckoutStatus({ initial, appUrl }: { initial: BillingSnapshot |
       <div className="card status-card" role="status">
         <div className="card-kicker">การชำระเงิน</div>
         <h2>อัปเกรดเป็นแพลน {planDisplayName(view.plan)} แล้ว</h2>
-        <p>โควตาใหม่พร้อมใช้ในแอปตัดต่อ ใบเสร็จจะส่งไปที่อีเมลของบัญชีนี้</p>
+        <p>โควตาใหม่พร้อมใช้ในห้องตัดต่อ ใบเสร็จจะส่งไปที่อีเมลของบัญชีนี้</p>
         <div className="button-row">
           <a href={appUrl} className="btn btn-primary btn-lg">
-            ไปที่แอปตัดต่อ
+            เปิดห้องตัดต่อ
           </a>
           <Link href="/account/billing" className="btn btn-secondary btn-lg">
             ดูแพลนและการชำระเงิน

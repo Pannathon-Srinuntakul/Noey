@@ -62,3 +62,12 @@ export const canRecordVoiceover = !isBrowser
  * only the wizard stops offering the mode.
  */
 export const canUseOriginalVoice = !isBrowser
+
+/**
+ * The สไตล์ studio (the `library` route + its nav item) and the wizard's
+ * สไตล์การตัด picker. Hidden on web by owner's call (2026-09-22): styles are
+ * not being opened to users soon. A product decision, not a capability one —
+ * turning it back on is this flag alone. A project that already carries a
+ * cutStyleUid still re-cuts with it; only choosing and managing styles goes.
+ */
+export const canUseStyles = !isBrowser

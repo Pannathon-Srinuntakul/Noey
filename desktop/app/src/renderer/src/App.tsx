@@ -126,7 +126,7 @@ function App(): React.JSX.Element {
 
   return (
     <div className="flex h-full flex-col bg-ground">
-      <TitleBar label="Noey Video Edit" />
+      <TitleBar label="Noey Studio" />
       {/* Must be a flex container: the children below fill and centre
           themselves with `flex-1`, which is inert under a plain block parent
           (the box then collapses to content height and nothing centres). */}

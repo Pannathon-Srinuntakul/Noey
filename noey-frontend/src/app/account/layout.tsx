@@ -26,12 +26,12 @@ export default async function AccountLayout({ children }: { children: React.Reac
         <div>
           <p className="eyebrow">บัญชีของฉัน</p>
           <h1>{name ? `สวัสดี คุณ${name}` : "สวัสดี"}</h1>
-          <p>หน้านี้ใช้จัดการบัญชี แพลน และดูโควตา ส่วนการสร้างโปรเจกต์และตัดต่ออยู่ในแอปตัดต่อ</p>
+          <p>หน้านี้ใช้จัดการบัญชี แพลน และดูโควตา ส่วนการสร้างโปรเจกต์และตัดต่ออยู่ในห้องตัดต่อบนเว็บ</p>
         </div>
         <div className="account-actions">
           <SignOutButton />
           <a href={APP_URL} className="btn btn-primary btn-lg">
-            ไปที่แอปตัดต่อ
+            เปิดห้องตัดต่อ
           </a>
         </div>
       </div>

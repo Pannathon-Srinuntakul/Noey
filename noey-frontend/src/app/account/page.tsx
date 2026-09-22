@@ -23,13 +23,13 @@ export default async function AccountAppPage({ searchParams }: { searchParams: P
           <p>ตั้งรหัสผ่านใหม่เรียบร้อยแล้ว ตอนนี้เข้าสู่ระบบด้วยรหัสผ่านใหม่อยู่</p>
         </div>
       ) : null}
-      <section className="account-grid" aria-label="แอปตัดต่อและสรุปบัญชี">
+      <section className="account-grid" aria-label="ห้องตัดต่อและสรุปบัญชี">
         <div className="card account-card">
-          <div className="card-kicker">แอปตัดต่อ</div>
-          <h2>งานทั้งหมดอยู่ในแอป</h2>
-          <p>โปรเจกต์ การสร้างงานใหม่ ไทม์ไลน์ และการอัดเสียงพากย์ อยู่ในแอปตัดต่อทั้งหมด บัญชีเดียวกันนี้เข้าใช้ได้เลย</p>
+          <div className="card-kicker">ห้องตัดต่อ</div>
+          <h2>งานทั้งหมดอยู่ในเบราว์เซอร์</h2>
+          <p>โปรเจกต์ การสร้างงานใหม่ ไทม์ไลน์ และการอัดเสียงพากย์ อยู่ในห้องตัดต่อบนเว็บทั้งหมด ไม่ต้องติดตั้งโปรแกรม บัญชีเดียวกันนี้เข้าใช้ได้เลย</p>
           <a href={APP_URL} className="btn btn-primary btn-lg" style={{ alignSelf: "flex-start" }}>
-            เปิดแอปตัดต่อ
+            เปิดห้องตัดต่อ
           </a>
         </div>
         <div className="card account-card">

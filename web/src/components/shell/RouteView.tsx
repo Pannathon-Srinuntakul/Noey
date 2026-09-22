@@ -14,7 +14,7 @@ import ProjectsPage from '../../pages/ProjectsPage'
 import SettingsPage from '../../pages/SettingsPage'
 import TimelineRoute from '../../pages/TimelineRoute'
 import VoiceoverPage from '../../pages/VoiceoverPage'
-import { canRecordVoiceover } from '../../lib/platformFeatures'
+import { canRecordVoiceover, canUseStyles } from '../../lib/platformFeatures'
 import WizardPage from '../../pages/WizardPage'
 
 /** Screens the router knows about but later chunks build (PLAN.md 4–10).
@@ -43,6 +43,9 @@ export function RouteView({
     case 'progress':
       return <JobProgressPage uid={route.uid} />
     case 'library':
+      // Hidden on this build (lib/platformFeatures) — a stale link or restored
+      // route lands on the projects list instead.
+      if (!canUseStyles) return <ProjectsPage />
       return <EffectsStudioPage session={session} initialCategory={route.category} />
     case 'settings':
       return <SettingsPage session={session} onLogout={onLogout} />

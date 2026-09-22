@@ -35,6 +35,7 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
     name: PLAN_COPY[tier].name,
     price: displayPrice(table, tier),
     summary: PLAN_COPY[tier].dialogSummary,
+    recommended: !!PLAN_COPY[tier].recommended,
     current: tier === currentTier && !cancelScheduled,
   }));
 

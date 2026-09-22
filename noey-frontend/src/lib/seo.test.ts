@@ -16,7 +16,7 @@ import { buildLlmsTxt, buildPricingMarkdown } from "./machine-readable";
 import { fallbackPriceTable, normalizePlansResponse, PLAN_COPY } from "./plans";
 import { robotsRules } from "./crawl";
 import { PAGES_WITH_OWN_OG_IMAGE, pageMetadata, tokenPageMetadata } from "./seo";
-import { PAGES, type PageKey } from "./site";
+import { LEGAL_PAGES_ARE_DRAFTS, PAGES, type PageKey } from "./site";
 
 const keys = Object.keys(PAGES) as PageKey[];
 
@@ -54,9 +54,11 @@ describe("page registry (titles, descriptions, canonicals)", () => {
     }
   });
 
-  it("marks login and draft legal pages noindex but keeps marketing pages indexable", () => {
+  it("marks login noindex, legal pages follow the draft flag, marketing pages stay indexable", () => {
     expect(pageMetadata("login").robots).toMatchObject({ index: false });
-    expect(pageMetadata("terms").robots).toMatchObject({ index: false });
+    expect(pageMetadata("terms").robots).toMatchObject({ index: !LEGAL_PAGES_ARE_DRAFTS });
+    expect(pageMetadata("privacy").robots).toMatchObject({ index: !LEGAL_PAGES_ARE_DRAFTS });
+    expect(pageMetadata("scope").robots).toMatchObject({ index: true });
     expect(pageMetadata("home").robots).toMatchObject({ index: true });
     expect(pageMetadata("signup").robots).toMatchObject({ index: true });
   });
@@ -136,10 +138,11 @@ describe("machine-readable files", () => {
 
   it("pricing.md lists every plan with the table's prices and the update date", () => {
     const md = buildPricingMarkdown(table, "2026-09-21");
-    for (const name of ["ฟรี", "Lite", "Starter", "Pro", "Studio"]) expect(md).toContain(`## ${name}`);
-    expect(md).toContain("1,890 บาท/เดือน");
+    for (const name of ["ฟรี", "Lite", "Starter", "Pro", "Studio", "Agency", "Max"]) expect(md).toContain(`## ${name}`);
+    expect(md).toContain("6,990 บาท/เดือน");
+    expect(md).toContain("- ปริมาณการใช้งาน: 5x (ปริมาณการใช้งาน 5 เท่าของ Lite)");
     expect(md).toContain("อัปเดตล่าสุด: 2026-09-21");
-    expect(md).toContain("| ราคา (บาท/เดือน) | 0 | 190 | 290 | 930 | 1,890 |");
+    expect(md).toContain("| ราคา (บาท/เดือน) | 0 | 199 | 399 | 990 | 1,990 | 3,990 | 6,990 |");
   });
 
   it("pricing.md follows a changed backend price", () => {

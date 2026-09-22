@@ -27,8 +27,8 @@ export default function NotFound() {
           </Link>
         </li>
         <li>
-          <Link href="/examples" className="btn btn-secondary btn-lg">
-            ดูตัวอย่างงาน
+          <Link href="/scope" className="btn btn-secondary btn-lg">
+            ดูว่าทำอะไรได้บ้าง
           </Link>
         </li>
       </ul>

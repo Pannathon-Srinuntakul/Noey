@@ -19,23 +19,6 @@ export default function LoginPage() {
         </p>
         <LoginForm />
       </div>
-      <aside className="auth-aside" aria-labelledby="login-aside-title">
-        <h2 id="login-aside-title">เข้ามาแล้วทำอะไรได้</h2>
-        <ul>
-          <li>
-            <h3>โปรเจกต์เดิมอยู่ครบ</h3>
-            <p>เปิดงานที่ค้างไว้ต่อได้ทันที รวมถึงเปิดจากคอมเครื่องอื่น</p>
-          </li>
-          <li>
-            <h3>เห็นโควตาในหน้าเดียว</h3>
-            <p>เห็นโควตาที่ใช้ไปในรอบปัจจุบันเป็นเปอร์เซ็นต์ พร้อมสัดส่วนงานแต่ละประเภท</p>
-          </li>
-          <li>
-            <h3>แก้และเรนเดอร์ซ้ำได้ไม่จำกัด</h3>
-            <p>ปรับไทม์ไลน์กี่รอบก็ได้โดยไม่กระทบโควตา</p>
-          </li>
-        </ul>
-      </aside>
       <JsonLd
         data={jsonLdGraph(
           webPageNode({ path: PAGES.login.path, name: PAGES.login.title, description: PAGES.login.description, dateModified: PAGES.login.updated }),

@@ -108,7 +108,7 @@ export default function LoginPage({
       <div className="w-full max-w-[420px]">
         <div className="mb-8 flex items-center gap-2.5">
           <BrandMark size={26} className="text-accent" />
-          <span className="font-display text-[28px] text-ink">Noey Video Edit</span>
+          <span className="font-display text-[28px] text-ink">Noey Studio</span>
         </div>
 
         <form onSubmit={submit} className="rounded-md border border-border-faint bg-surface p-8">

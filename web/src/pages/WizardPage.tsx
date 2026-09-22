@@ -4,6 +4,7 @@ import type { LocalProject } from '@renderer/platform/types'
 import { cn } from '../lib/cn'
 import { useConfirm } from '../lib/confirm'
 import { useJobs } from '../lib/jobs'
+import { canUseStyles } from '../lib/platformFeatures'
 import { usePrefs } from '../lib/prefs'
 import { probeClipDeep } from '../lib/probeClip'
 import { stageAll, stageIntoStore } from '../platform/picked'
@@ -127,6 +128,7 @@ export default function WizardPage({
     // Cut style only. Zoom is NOT chosen at creation any more (2026-08-13): it
     // is placed later in the zoom-effects editor, where the cut already exists
     // and the choice can be judged against real footage.
+    if (!canUseStyles) return
     listStyles(session, 'cut')
       .then((s) => setCutStyles(s.filter((x) => x.status === 'ready')))
       .catch(() => undefined)

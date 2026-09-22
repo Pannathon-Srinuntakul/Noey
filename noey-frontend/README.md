@@ -489,8 +489,16 @@ at the right aspect ratio. To add a file:
 
 ## Deployment notes
 
-- Build with the production `NEXT_PUBLIC_*` values set. Start with
-  `npm run start`, which listens on port 3000. On Railway, point the service's
+- **Docker (preferred):** the `Dockerfile` builds with `output: "standalone"`
+  and runs `node server.js` as the non-root `node` user on `PORT` (default
+  3000). Pass `NEXT_PUBLIC_SITE_URL`, `NEXT_PUBLIC_APP_URL` and
+  `NEXT_PUBLIC_TURNSTILE_SITE_KEY` as **build args** — Next inlines them — and
+  `API_URL`, `CONTACT_EMAIL`, `*_SITE_VERIFICATION` as runtime env. Railway
+  switches to this Dockerfile automatically once it is in the service's root
+  directory (`noey-frontend`). Locally: `docker compose up -d site` from the
+  repo root.
+- Without Docker: build with the production `NEXT_PUBLIC_*` values set and
+  start with `npm run start` (port 3000). On Railway, point the service's
   target port at 3000.
 - Set `NEXT_SERVER_ACTIONS_ENCRYPTION_KEY` when you run more than one instance.
   The ISR cache belongs to each instance, which is fine for prices that are at
@@ -499,10 +507,8 @@ at the right aspect ratio. To add a file:
   described above.
 - On the backend, `SITE_URL` must be this site's origin. The backend builds
   every email link and Stripe return URL from it.
-- The repo-root `.gitignore` covers `node_modules/`, `.env*` and
-  `*.tsbuildinfo`, but **not `.next/`**, which is about 130 MB of build
-  output. Add `noey-frontend/.next/` (and `noey-frontend/next-env.d.ts`, if
-  you want) before anything is committed.
+- The repo-root `.gitignore` covers `node_modules/`, `.env*`, `.next/`,
+  `next-env.d.ts` and `*.tsbuildinfo`.
 
 ## Owner to-dos
 

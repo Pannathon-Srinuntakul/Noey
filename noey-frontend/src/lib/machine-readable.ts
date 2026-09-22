@@ -12,6 +12,8 @@ import {
   PLAN_COPY,
   TIERS,
   displayPrice,
+  multiplierCaption,
+  multiplierLabel,
   type PriceTable,
 } from "./plans";
 import { PAGES, SITE_NAME, absoluteUrl } from "./site";
@@ -29,7 +31,7 @@ export function buildPricingMarkdown(table: PriceTable, updatedIso: string): str
   lines.push(
     `> ${SITE_NAME} มีแพลนฟรี 0 บาท ใช้ได้ต่อเนื่องไม่ต้องผูกบัตร และแพลนรายเดือน ${PAID_TIERS.map(
       (tier) => `${PLAN_COPY[tier].name} ${priceLine(table, tier)}`,
-    ).join(" · ")} ทุกแพลนได้ไทม์ไลน์ ซับไทย และการเรนเดอร์แบบไม่จำกัดครั้ง ที่ต่างกันคือปริมาณงาน AI ต่อรอบ ความยาวคลิปต่อโปรเจกต์ และพื้นที่เก็บงาน`,
+    ).join(" · ")} ทุกแพลนได้ไทม์ไลน์ ซับไทย และการเรนเดอร์แบบไม่จำกัดครั้ง ที่ต่างกันคือปริมาณการใช้งาน AI (บอกเป็นจำนวนเท่าของแพลน Lite ตั้งแต่ 1x ถึง 35x) ความยาวคลิปต่อโปรเจกต์ จำนวนงานที่ทำพร้อมกันได้ และพื้นที่เก็บงาน`,
   );
   lines.push("");
   lines.push(`- หน้าเว็บ: ${absoluteUrl(PAGES.pricing.path)}`);
@@ -44,6 +46,8 @@ export function buildPricingMarkdown(table: PriceTable, updatedIso: string): str
     lines.push("");
     lines.push(`- ราคา: ${priceLine(table, tier)}`);
     lines.push(`- สรุป: ${copy.pricingBlurb}`);
+    lines.push(`- ปริมาณการใช้งาน: ${multiplierLabel(tier) ?? "ทดลองใช้"} (${multiplierCaption(tier)})`);
+    lines.push(`- ขีดจำกัดการใช้งาน: ${copy.limits.join(" + ")} · ทำงาน AI พร้อมกันได้ ${copy.concurrentJobs} งาน`);
     for (const feature of copy.features) lines.push(`- ${feature}`);
     if (copy.recommended) lines.push("- แพลนที่แนะนำ");
     lines.push("");
@@ -100,7 +104,7 @@ export function buildLlmsTxt(table: PriceTable): string {
     "## หน้าหลัก",
     "",
     `- [หน้าแรก](${absoluteUrl(PAGES.home.path)}): ภาพรวมเครื่องมือ วิธีใช้งาน และคำถามที่พบบ่อย`,
-    `- [ตัวอย่างงาน](${absoluteUrl(PAGES.examples.path)}): ตัวอย่างคลิปรีวิวสินค้าที่ทำด้วยโหมดพากย์ใหม่`,
+    `- [ทำอะไรได้บ้าง](${absoluteUrl(PAGES.scope.path)}): ขอบเขตของระบบ — ถอดเสียง คัดช็อต เรียงลำดับ ใส่ซับไทยเป็นร่างแรก แล้วคุณเกลาต่อ งานแบบไหนเหมาะและไม่เหมาะ`,
     `- [เกี่ยวกับเรา](${absoluteUrl(PAGES.about.path)}): ที่มาของเครื่องมือ และช่องทางติดต่อทีมงาน`,
     `- [สมัครใช้งานฟรี](${absoluteUrl(PAGES.signup.path)}): สมัครแล้วเริ่มที่แพลนฟรีได้ทันที ไม่ต้องผูกบัตร`,
   ];

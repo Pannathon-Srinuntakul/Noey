@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useActionState, useState } from "react";
 import {
   cancelPlanAction,
@@ -18,6 +19,8 @@ export interface UpgradeOption {
   price: string | null;
   summary: string;
   current: boolean;
+  /** Shows the "แนะนำ" tag (Pro). */
+  recommended: boolean;
 }
 
 export interface BillingPanelProps {
@@ -79,6 +82,8 @@ export function BillingPanel(props: BillingPanelProps) {
   const [upgradeOpen, setUpgradeOpen] = useState(() => openUpgradeInitially && billingEnabled);
   const [cancelOpen, setCancelOpen] = useState(false);
   const [selected, setSelected] = useState<PaidTier>(initialPlan);
+  // Recurring-billing consent (design: payAgree). Checked again on the server.
+  const [payAgreed, setPayAgreed] = useState(false);
   const [planState, planAction, planPending] = useActionState<ActionState | undefined, FormData>(choosePlanAction, undefined);
   const [cancelState, cancelAction, cancelPending] = useActionState<ActionState | undefined>(async () => {
     const result = await cancelPlanAction();
@@ -89,7 +94,7 @@ export function BillingPanel(props: BillingPanelProps) {
   const [portalState, portalAction, portalPending] = useActionState<ActionState | undefined>(openPortalAction, undefined);
 
   const selectedOption = options.find((option) => option.tier === selected);
-  const canSubmit = billingEnabled && !!selectedOption && !selectedOption.current && selectedOption.price !== null;
+  const canSubmit = billingEnabled && !!selectedOption && !selectedOption.current && selectedOption.price !== null && payAgreed;
   // Before a first subscription there is no Stripe customer: the card is
   // added during Checkout, so "add card" starts the upgrade flow instead.
   const hasCustomer = hasLiveSubscription || !!cardLabel;
@@ -113,7 +118,7 @@ export function BillingPanel(props: BillingPanelProps) {
         ) : null}
         <div className="button-row">
           <button type="button" className="btn btn-primary" style={{ fontSize: 14 }} onClick={() => setUpgradeOpen(true)} disabled={!billingEnabled}>
-            {hasLiveSubscription ? "เปลี่ยนแพลน" : "อัปเกรดแพลน"}
+            {hasLiveSubscription ? "เปลี่ยนแพลน" : "เลือกแพลน"}
           </button>
           {hasLiveSubscription && !cancelScheduled ? (
             <button type="button" className="btn btn-ghost" style={{ fontSize: 14 }} onClick={() => setCancelOpen(true)} disabled={!billingEnabled}>
@@ -183,7 +188,7 @@ export function BillingPanel(props: BillingPanelProps) {
       <Dialog
         open={upgradeOpen}
         onClose={() => setUpgradeOpen(false)}
-        title={hasLiveSubscription ? "เปลี่ยนแพลน" : "อัปเกรดแพลน"}
+        title={hasLiveSubscription ? "เปลี่ยนแพลน" : "เลือกแพลน"}
         description={
           <p style={{ margin: 0 }}>
             {hasLiveSubscription
@@ -210,12 +215,27 @@ export function BillingPanel(props: BillingPanelProps) {
                   <span className="plan-option__name">
                     {option.name} · {option.price === null ? "ยังไม่เปิดขาย" : `${option.price} บาท/เดือน`}
                     {option.current ? " · แพลนปัจจุบัน" : ""}
+                    {option.recommended ? <span className="tag tag-outline plan-option__tag">แนะนำ</span> : null}
                   </span>
                   <span className="plan-option__meta">{option.summary}</span>
                 </span>
               </label>
             ))}
           </fieldset>
+          <label className="agree agree--flush">
+            <input
+              type="checkbox"
+              name="pay_agree"
+              value="yes"
+              className="agree__box"
+              checked={payAgreed}
+              onChange={(event) => setPayAgreed(event.target.checked)}
+            />
+            <span className="agree__text">
+              ฉันเข้าใจว่าระบบจะเรียกเก็บเงินทุกเดือนโดยอัตโนมัติจนกว่าจะยกเลิก และยอมรับ <Link href="/terms">เงื่อนไขการใช้งาน</Link>{" "}
+              เรื่องค่าบริการและการคืนเงิน
+            </span>
+          </label>
           <Message state={planState} />
           <div className="dialog-actions">
             <button type="button" className="btn btn-secondary" onClick={() => setUpgradeOpen(false)}>

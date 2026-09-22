@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const TABS = [
-  { href: "/account", label: "แอปตัดต่อ" },
+  { href: "/account", label: "ห้องตัดต่อ" },
   { href: "/account/quota", label: "โควตาและลิมิต" },
   { href: "/account/billing", label: "แพลนและการชำระเงิน" },
   { href: "/account/profile", label: "ข้อมูลส่วนตัว" },

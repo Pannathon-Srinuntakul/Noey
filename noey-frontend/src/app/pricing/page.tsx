@@ -75,14 +75,17 @@ export default async function PricingPage() {
     <main id="main" className="container page">
       <div className="pricing-head">
         <Breadcrumb trail={TRAIL} />
-        <h1 className="page-title">ห้าแพลน เลือกตามปริมาณงาน</h1>
+        <h1 className="page-title">เลือกตามปริมาณงาน</h1>
         <p className="pricing-lead" style={{ marginBottom: 12 }}>
           {answer(table)}
         </p>
-        <p className="pricing-lead">
+        <p className="pricing-lead" style={{ marginBottom: 12 }}>
           เครื่องมือเหมือนกันทุกแพลน สิ่งที่ต่างคือปริมาณงาน AI ต่อรอบ ความยาวฟุตเทจที่รับต่อโปรเจกต์ และพื้นที่เก็บโปรเจกต์บนบัญชี
-          งานที่กินกำลังมากที่สุดคือการถอดเสียงกับการวางแผนตัด จึงเป็นตัวกำหนดราคา ส่วนการแก้ในไทม์ไลน์และการเรนเดอร์ซ้ำ
-          ไม่จำกัดทุกแพลน
+          งานที่กินกำลังมากที่สุดคือการถอดเสียงกับการวางแผนตัด จึงเป็นตัวกำหนดราคา ส่วนการแก้ในไทม์ไลน์และการเรนเดอร์ซ้ำ ไม่จำกัดทุกแพลน
+        </p>
+        <p className="pricing-lead pricing-lead--muted">
+          ทุกแพลนได้ร่างแรกจากการคัดช็อตเหมือนกัน แล้วยังต้องเกลาต่อเองในไทม์ไลน์ ระบบเหมาะกับคลิปสั้นที่โครงไม่ซับซ้อน
+          ไม่ใช่งานโปรดักชันที่ต้องแทรกภาพหรือตัดซ้อนหลายชั้น
         </p>
         <p className="updated">
           อัปเดตล่าสุด <time dateTime={page.updated}>{formatThaiDate(page.updated)}</time> · ราคาเป็นเงินบาทต่อเดือน
@@ -99,27 +102,38 @@ export default async function PricingPage() {
           </h2>
           <p>
             เราไม่นับเป็นจำนวนคลิป เพราะคลิป 15 วินาทีกับคลิป 3 นาทีใช้กำลังไม่เท่ากัน สิ่งที่นับคือปริมาณงานที่ AI ทำให้
-            ทั้งการถอดเสียงและการวางแผนตัด แสดงเป็นเปอร์เซ็นต์ในหน้าตั้งค่า
+            ทั้งการถอดเสียงและการวางแผนตัด แสดงเป็นเปอร์เซ็นต์ของขีดจำกัดในหน้าตั้งค่า แพลนที่สูงขึ้นได้ปริมาณมากขึ้นตามจำนวนเท่าที่บอกไว้
           </p>
         </div>
         <div className="card" style={{ padding: 28 }}>
           {/* Illustration of the settings screen, not anyone's real usage — labelled as such. */}
           <span className="tag tag-neutral example-tag">ตัวอย่างการแสดงผล</span>
           <div className="meter-row" style={{ marginTop: 4 }}>
-            <span>โควตารอบนี้ (5 ชั่วโมง)</span>
+            <span>5-hour limit</span>
             <span className="num">ใช้ไป 38%</span>
           </div>
           <div className="meter" aria-hidden="true">
             <div className="meter__fill" style={{ width: "38%" }} />
           </div>
+          <div className="meter-row" style={{ marginTop: 14 }}>
+            <span>Weekly limit</span>
+            <span className="num">ใช้ไป 21%</span>
+          </div>
+          <div className="meter" aria-hidden="true">
+            <div className="meter__fill" style={{ width: "21%" }} />
+          </div>
           <ul className="rule-list">
             <li>
-              <span className="num">ทุก 5 ชม.</span>
-              <span>โควตาหลักรีเซ็ตเอง ใช้หมดก่อนก็รอรอบถัดไป หรืออัปเกรดแพลน</span>
+              <span className="num">Weekly limit</span>
+              <span>ทุกแพลนรายเดือน นับ 7 วันจากงานแรกของรอบ ใช้ได้เมื่อไหร่ก็ได้ในสัปดาห์</span>
             </li>
             <li>
-              <span className="num">รายสัปดาห์</span>
-              <span>มีเพดานรวมอีกชั้น เริ่มนับใหม่ทุกวันจันทร์ กันการใช้งานหนักผิดปกติ</span>
+              <span className="num">5-hour limit</span>
+              <span>Pro ขึ้นไป อีกชั้นหนึ่งกันการใช้งานหนักต่อเนื่อง รีเซ็ต 5 ชั่วโมงหลังงานแรกของรอบ</span>
+            </li>
+            <li>
+              <span className="num">Monthly limit</span>
+              <span>แพลนฟรี ได้โควตาก้อนเดียวต่อเดือน</span>
             </li>
             <li>
               <span className="num">ไม่กินโควตา</span>
@@ -127,7 +141,7 @@ export default async function PricingPage() {
             </li>
             <li>
               <span className="num">งานหนัก</span>
-              <span>ฟุตเทจยาวและโหมดพากย์ใหม่กินโควตามากกว่างานปกติ เพราะต้องถอดเสียงและวางแผนมากขึ้น</span>
+              <span>ฟุตเทจยาวและโหมดพากย์ใหม่ใช้ปริมาณมากกว่างานปกติ เพราะต้องถอดเสียงและวางแผนมากขึ้น</span>
             </li>
           </ul>
         </div>
@@ -139,7 +153,7 @@ export default async function PricingPage() {
         </h2>
         <div className="table-scroll" role="region" aria-labelledby="compare-title" tabIndex={0}>
           <table className="table">
-            <caption className="sr-only">เทียบราคาและความสามารถของแพลนฟรี Lite Starter Pro และ Studio</caption>
+            <caption className="sr-only">เทียบราคาและความสามารถของแพลนฟรี Lite Starter Pro Studio Agency และ Max</caption>
             <thead>
               <tr>
                 <th scope="col">ความสามารถ</th>

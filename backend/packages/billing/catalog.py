@@ -4,8 +4,9 @@ Prices are NOT hardcoded anywhere else: the API reads live amounts from Stripe
 by lookup key, and ``mock_unit_amount`` is only what GET /billing/plans shows
 while Stripe is not configured (and what scripts/stripe_seed.py creates).
 
-All amounts are MOCK figures from the owner's pricing design (2026-09-21) —
-not yet costed. Change one here and re-run the seed: it creates a new Price
+Amounts are the owner-approved ladder (2026-09-22): priced from a flat
+฿250 per 1M usage tokens, ~2x steps, sold as usage multipliers of Lite
+(1x/2x/5x/10x/20x/35x). Change one here and re-run the seed: it creates a new Price
 and moves the lookup key to it; existing subscribers keep their old price.
 """
 
@@ -44,10 +45,12 @@ class PaidPlan:
 
 #: Cheapest first — the order is the tier ranking (upgrade = later in the list).
 PAID_PLANS: tuple[PaidPlan, ...] = (
-    PaidPlan("lite", "noey_lite_monthly", 19_000, "noey_lite", "Noey Lite"),
-    PaidPlan("starter", "noey_starter_monthly", 29_000, "noey_starter", "Noey Starter"),
-    PaidPlan("pro", "noey_pro_monthly", 93_000, "noey_pro", "Noey Pro"),
-    PaidPlan("studio", "noey_studio_monthly", 189_000, "noey_studio", "Noey Studio"),
+    PaidPlan("lite", "noey_lite_monthly", 19_900, "noey_lite", "Noey Lite"),
+    PaidPlan("starter", "noey_starter_monthly", 39_900, "noey_starter", "Noey Starter"),
+    PaidPlan("pro", "noey_pro_monthly", 99_000, "noey_pro", "Noey Pro"),
+    PaidPlan("studio", "noey_studio_monthly", 199_000, "noey_studio", "Noey Studio"),
+    PaidPlan("agency", "noey_agency_monthly", 399_000, "noey_agency", "Noey Agency"),
+    PaidPlan("max", "noey_max_monthly", 699_000, "noey_max", "Noey Max"),
 )
 
 _BY_KEY = {p.lookup_key: p for p in PAID_PLANS}
@@ -63,7 +66,7 @@ def plan_for_tier(tier: str | None) -> PaidPlan | None:
 
 
 def tier_rank(tier: str | None) -> int:
-    """1..4 for the paid tiers in price order; 0 for free or anything unknown."""
+    """1..N for the paid tiers in price order; 0 for free or anything unknown."""
     for rank, plan in enumerate(PAID_PLANS, start=1):
         if plan.tier == tier:
             return rank

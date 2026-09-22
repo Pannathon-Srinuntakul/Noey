@@ -17,7 +17,7 @@ export interface MetadataOverrides {
  * image with none. The explicit image must NOT be set on these pages — an
  * `openGraph.images` value in page metadata overrides the segment's file.
  */
-export const PAGES_WITH_OWN_OG_IMAGE: ReadonlySet<PageKey> = new Set<PageKey>(["home", "examples", "pricing", "about", "signup"]);
+export const PAGES_WITH_OWN_OG_IMAGE: ReadonlySet<PageKey> = new Set<PageKey>(["home", "scope", "pricing", "about", "signup"]);
 
 const DEFAULT_SHARE_IMAGE = { url: "/opengraph-image", width: 1200, height: 630, alt: "Noey Studio ตัดคลิป TikTok ด้วย AI ในเบราว์เซอร์" };
 

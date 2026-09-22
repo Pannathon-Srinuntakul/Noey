@@ -443,10 +443,12 @@ async def test_plans_are_mock_without_stripe(monkeypatch):
         "source": "mock",
         "currency": "thb",
         "plans": [
-            {"tier": "lite", "lookup_key": "noey_lite_monthly", "interval": "month", "unit_amount": 19000},
-            {"tier": "starter", "lookup_key": "noey_starter_monthly", "interval": "month", "unit_amount": 29000},
-            {"tier": "pro", "lookup_key": "noey_pro_monthly", "interval": "month", "unit_amount": 93000},
-            {"tier": "studio", "lookup_key": "noey_studio_monthly", "interval": "month", "unit_amount": 189000},
+            {"tier": "lite", "lookup_key": "noey_lite_monthly", "interval": "month", "unit_amount": 19900},
+            {"tier": "starter", "lookup_key": "noey_starter_monthly", "interval": "month", "unit_amount": 39900},
+            {"tier": "pro", "lookup_key": "noey_pro_monthly", "interval": "month", "unit_amount": 99000},
+            {"tier": "studio", "lookup_key": "noey_studio_monthly", "interval": "month", "unit_amount": 199000},
+            {"tier": "agency", "lookup_key": "noey_agency_monthly", "interval": "month", "unit_amount": 399000},
+            {"tier": "max", "lookup_key": "noey_max_monthly", "interval": "month", "unit_amount": 699000},
         ],
     }
 

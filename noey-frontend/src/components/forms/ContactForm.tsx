@@ -127,7 +127,7 @@ export function ContactForm({ contactEmail }: { contactEmail: string }) {
           id="c-msg"
           name="message"
           className="input"
-          placeholder="เล่าคร่าว ๆ ว่าทำคอนเทนต์แนวไหน และติดปัญหาตรงไหน"
+          placeholder="เล่าคร่าว ๆ ว่าติดปัญหาตรงไหน"
           required
           minLength={CONTACT_LIMITS.messageMin}
           maxLength={CONTACT_LIMITS.messageMax}
@@ -155,9 +155,8 @@ export function ContactForm({ contactEmail }: { contactEmail: string }) {
           />
         ) : null}
       </div>
-      <p className="contact-note">
-        หรืออีเมลมาที่ <a href={`mailto:${contactEmail}`}>{contactEmail}</a> เราตอบกลับภายในหนึ่งวันทำการ
-      </p>
+      {/* The address stays in the 503 fallback (OutcomeMessage); the design dropped it from the note. */}
+      <p className="contact-note">เราตอบกลับทางอีเมลที่คุณกรอกไว้ ภายในหนึ่งวันทำการ</p>
     </form>
   );
 }

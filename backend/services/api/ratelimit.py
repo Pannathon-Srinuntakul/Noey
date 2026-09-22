@@ -54,10 +54,23 @@ CONTACT_IP = Limit("contact:ip", 10, _HOUR)
 #: not be able to guess it without limit.
 CHANGE_PASSWORD_ACCOUNT = Limit("change_password:account", 10, _15_MIN)
 
+#: Admin dashboard login (services/api/routers/admin.py). Tighter than the
+#: public login: there are a handful of admins, and each step is guarded twice
+#: (these counters, plus the database-backed lockout in packages/admin/auth.py,
+#: which does not fail open).
+ADMIN_LOGIN_EMAIL = Limit("admin_login:email", 10, _15_MIN)
+ADMIN_LOGIN_IP = Limit("admin_login:ip", 30, _15_MIN)
+ADMIN_OTP_CHALLENGE = Limit("admin_otp:challenge", 10, _15_MIN)
+ADMIN_OTP_IP = Limit("admin_otp:ip", 30, _15_MIN)
+ADMIN_RESEND_CHALLENGE = Limit("admin_resend:challenge", 3, _HOUR)
+ADMIN_RESEND_IP = Limit("admin_resend:ip", 10, _HOUR)
+ADMIN_REFRESH_IP = Limit("admin_refresh:ip", 240, _15_MIN)
+
 ALL_LIMITS: tuple[Limit, ...] = (
     LOGIN_EMAIL_IP, LOGIN_IP, REGISTER_EMAIL, REGISTER_IP, FORGOT_EMAIL, FORGOT_IP,
     RESEND_ACCOUNT, RESEND_IP, CHANGE_EMAIL_ACCOUNT, CHANGE_EMAIL_IP, CONTACT_EMAIL, CONTACT_IP,
-    CHANGE_PASSWORD_ACCOUNT,
+    CHANGE_PASSWORD_ACCOUNT, ADMIN_LOGIN_EMAIL, ADMIN_LOGIN_IP, ADMIN_OTP_CHALLENGE, ADMIN_OTP_IP,
+    ADMIN_RESEND_CHALLENGE, ADMIN_RESEND_IP, ADMIN_REFRESH_IP,
 )
 
 

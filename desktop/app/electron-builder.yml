@@ -1,5 +1,5 @@
 appId: com.noey.videoedit
-productName: Noey Video Edit
+productName: Noey Studio
 directories:
   buildResources: build
 files:
@@ -26,7 +26,7 @@ extraResources:
   - from: resources-staging/ffmpeg
     to: ffmpeg
 win:
-  executableName: Noey Video Edit
+  executableName: Noey Studio
   target:
     - target: nsis
       arch: [x64]

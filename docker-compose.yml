@@ -1,4 +1,4 @@
-# Full stack for Noey Tiktok: postgres + redis + api + worker + scheduler + web.
+# Full stack for Noey Tiktok: postgres + redis + api + worker + web + site + admin.
 services:
   redis:
     image: redis:7-alpine
@@ -101,6 +101,44 @@ services:
       - api
     ports:
       - "5174:80"
+
+  # The Noey Studio marketing + account site (noey-frontend/, Next.js). Its
+  # NEXT_PUBLIC_* values are BUILD arguments (inlined by Next), so changing
+  # them needs `docker compose build site`. API_URL is read at run time and
+  # uses the compose network — the browser never calls the API directly.
+  site:
+    build:
+      context: ./noey-frontend
+      args:
+        NEXT_PUBLIC_SITE_URL: http://localhost:3000
+        NEXT_PUBLIC_APP_URL: http://localhost:5174
+    container_name: noey_site
+    restart: unless-stopped
+    environment:
+      API_URL: http://api:8000
+      PRICES_REVALIDATE_SECRET: ${PRICES_REVALIDATE_SECRET:-}
+    depends_on:
+      - api
+    ports:
+      - "3000:3000"
+
+  # The admin dashboard (admin/, Next.js). Server-side BFF only: it talks to the
+  # API over the compose network and the browser never sees the API's URL.
+  # Set PRICES_REVALIDATE_SECRET (same value on `site`) so a price edit
+  # refreshes the marketing site's pricing pages at once.
+  admin:
+    build: ./admin
+    container_name: noey_admin
+    restart: unless-stopped
+    environment:
+      API_URL: http://api:8000
+      ADMIN_URL: http://localhost:3001
+      SITE_URL: http://site:3000
+      PRICES_REVALIDATE_SECRET: ${PRICES_REVALIDATE_SECRET:-}
+    depends_on:
+      - api
+    ports:
+      - "3001:3001"
 
 volumes:
   noey_pgdata:

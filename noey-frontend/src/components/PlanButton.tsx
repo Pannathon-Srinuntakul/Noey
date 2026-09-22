@@ -1,14 +1,14 @@
 "use client";
 
 import { useActionState } from "react";
-import { choosePlanAction } from "@/app/actions/billing";
+import { startPlanAction } from "@/app/actions/billing";
 import type { ActionState } from "@/lib/messages";
 import type { PaidTier } from "@/lib/plans";
 
 /**
- * A paid-plan button. The Server Action decides where it goes (signup,
- * Checkout, or Stripe's change-plan page), so the same button works for
- * visitors and subscribers on a fully static page.
+ * A paid-plan button. The Server Action decides where it goes (signup, or
+ * the billing page's plan dialog), so the same button works for visitors and
+ * subscribers on a fully static page.
  */
 export function PlanButton({
   tier,
@@ -21,7 +21,7 @@ export function PlanButton({
   primary?: boolean;
   disabled?: boolean;
 }) {
-  const [state, action, pending] = useActionState<ActionState | undefined, FormData>(choosePlanAction, undefined);
+  const [state, action, pending] = useActionState<ActionState | undefined, FormData>(startPlanAction, undefined);
   return (
     <form action={action} className="plan-form">
       <input type="hidden" name="plan" value={tier} />

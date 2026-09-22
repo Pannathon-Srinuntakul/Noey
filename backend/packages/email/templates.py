@@ -197,3 +197,20 @@ def contact_message(*, brand: str, name: str, email: str, message: str) -> Rende
         text_rows=(message,),
         footer="กดตอบกลับอีเมลนี้เพื่อตอบผู้ติดต่อได้โดยตรง",
     ))
+
+
+def admin_login_code(*, brand: str, code: str, ip: str | None) -> RenderedEmail:
+    """The one-time code for the admin dashboard. The code is digits only."""
+    where = f" จาก IP {ip}" if ip else ""
+    code_html = (
+        f'<tr><td style="padding:20px 32px 0 32px;font-family:{FONT};font-size:32px;'
+        f'font-weight:700;letter-spacing:.3em;color:{TEXT};">{escape(code)}</td></tr>'
+    )
+    return _render(brand, f"รหัสเข้าสู่แผงผู้ดูแลระบบ — {brand}", _Body(
+        heading="รหัสเข้าสู่แผงผู้ดูแลระบบ",
+        paragraphs=(f"มีการเข้าสู่ระบบแผงผู้ดูแล {brand} ด้วยบัญชีนี้{where} กรอกรหัสด้านล่างเพื่อยืนยัน",),
+        html_rows=(code_html,),
+        text_rows=(f"รหัส: {code}",),
+        note="รหัสนี้ใช้ได้ครั้งเดียว และหมดอายุใน 10 นาที อย่าบอกรหัสนี้กับใคร",
+        footer="ถ้าคุณไม่ได้เข้าสู่ระบบ ให้เปลี่ยนรหัสผ่านทันที เพราะมีคนรู้รหัสผ่านของคุณ",
+    ))

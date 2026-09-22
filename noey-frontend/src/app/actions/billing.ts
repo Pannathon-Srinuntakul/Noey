@@ -58,12 +58,26 @@ async function runPlanDecision(decision: PlanDecision): Promise<SessionUrl> {
 }
 
 /**
- * Every paid-plan button (home, /pricing, upgrade dialog, post-signup):
- *   logged out -> /signup?plan=<tier>; otherwise checkout or change-plan.
+ * A plan button on the public pages: logged out -> /signup?plan=<tier>;
+ * signed in -> the billing page with that plan's dialog open, where the
+ * recurring-billing consent is given (Website v2). It never starts Checkout.
+ */
+export async function startPlanAction(_previous: ActionState | undefined, formData: FormData): Promise<ActionState> {
+  const tier = formData.get("plan");
+  if (!isPaidTier(tier)) return { error: "เลือกแพลนที่ต้องการก่อน" };
+  const tokens = await readSessionTokens();
+  if (!tokens.access && !tokens.refresh) redirect(`/signup?plan=${tier}`);
+  redirect(`/account/billing?plan=${tier}`);
+}
+
+/**
+ * The plan dialog's submit (account billing page): requires the
+ * recurring-billing consent, then checkout or change-plan.
  */
 export async function choosePlanAction(_previous: ActionState | undefined, formData: FormData): Promise<ActionState> {
   const tier = formData.get("plan");
   if (!isPaidTier(tier)) return { error: "เลือกแพลนที่ต้องการก่อน" };
+  if (formData.get("pay_agree") !== "yes") return { error: "ติ๊กยอมรับการเรียกเก็บเงินรายเดือนก่อนไปหน้าชำระเงิน" };
 
   const tokens = await readSessionTokens();
   if (!tokens.access && !tokens.refresh) redirect(`/signup?plan=${tier}`);

@@ -165,6 +165,24 @@ class Settings(BaseSettings):
     jwt_refresh_ttl: int = 60 * 60 * 24 * 14  # 14 days
     allow_registration: bool = False  # Register endpoint gated off per requirements.
 
+    # --- Admin dashboard sessions (services/api/routers/admin.py) ---
+    #: Admin access JWTs (audience "noey-admin") live this long; the admin app
+    #: refreshes them while the server-side session is alive.
+    admin_access_ttl: int = 60 * 30
+    #: A session unused this long is dead (idle logout).
+    admin_idle_timeout_sec: int = 60 * 30
+    #: Absolute session lifetime, however active the admin is.
+    admin_session_max_sec: int = 60 * 60 * 12
+    #: How long a remembered browser may skip the emailed code (never the password).
+    admin_device_ttl_days: int = 14
+    #: Comma-separated client IPs allowed to use /admin/* at all. Empty = off.
+    #: The IP is resolved with TRUSTED_PROXY_HOPS like every rate limit.
+    admin_ip_allowlist: str = ""
+
+    @property
+    def admin_ip_allowlist_set(self) -> frozenset[str]:
+        return frozenset(p.strip() for p in self.admin_ip_allowlist.split(",") if p.strip())
+
     # --- CORS (frontend origin + desktop Electron) ---
     frontend_url: str = "http://localhost:5173"
     # Comma-separated extra origins (e.g. another web deploy). Electron packaged
@@ -258,6 +276,11 @@ class Settings(BaseSettings):
     plan_starter_monthly_tokens: int = 2_000_000
     plan_pro_monthly_tokens: int = 10_000_000
     plan_studio_monthly_tokens: int = 20_000_000
+    # PLACEHOLDER (2026-09-22): agency/max were added with the 7-plan ladder;
+    # they only continue the ladder in price order. Real limits (weekly +
+    # 5-hour windows in the owner's own token unit) replace this whole block.
+    plan_agency_monthly_tokens: int = 40_000_000
+    plan_max_monthly_tokens: int = 70_000_000
     plan_enterprise_monthly_tokens: int = 0  # 0 = unlimited
 
     def plan_token_limit(self, plan: str) -> int:
@@ -268,6 +291,8 @@ class Settings(BaseSettings):
             "starter":    self.plan_starter_monthly_tokens,
             "pro":        self.plan_pro_monthly_tokens,
             "studio":     self.plan_studio_monthly_tokens,
+            "agency":     self.plan_agency_monthly_tokens,
+            "max":        self.plan_max_monthly_tokens,
             "enterprise": self.plan_enterprise_monthly_tokens,
         }
         return mapping.get(plan, self.plan_free_monthly_tokens)
@@ -285,6 +310,9 @@ class Settings(BaseSettings):
     plan_starter_storage_bytes: int = 10 * 1024**3
     plan_pro_storage_bytes: int = 10 * 1024**3
     plan_studio_storage_bytes: int = 30 * 1024**3
+    # agency/max (2026-09-22): continue the ladder; owner has not set figures.
+    plan_agency_storage_bytes: int = 60 * 1024**3
+    plan_max_storage_bytes: int = 100 * 1024**3
     plan_enterprise_storage_bytes: int = 0  # 0 = unlimited
 
     def plan_storage_limit(self, plan: str) -> int:
@@ -295,6 +323,8 @@ class Settings(BaseSettings):
             "starter":    self.plan_starter_storage_bytes,
             "pro":        self.plan_pro_storage_bytes,
             "studio":     self.plan_studio_storage_bytes,
+            "agency":     self.plan_agency_storage_bytes,
+            "max":        self.plan_max_storage_bytes,
             "enterprise": self.plan_enterprise_storage_bytes,
         }
         return mapping.get(plan, self.plan_free_storage_bytes)

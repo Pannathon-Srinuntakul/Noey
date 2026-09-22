@@ -174,7 +174,7 @@ def test_a_changed_amount_is_kept_unless_repriced(fake, monkeypatch, capsys):
     assert _run(monkeypatch, "--reprice") == 0
     holder = next(p for p in fake.prices.values() if p["lookup_key"] == "noey_lite_monthly")
     assert holder["id"] != lite_id
-    assert holder["unit_amount"] == 19_000
+    assert holder["unit_amount"] == catalog.plan_for_tier("lite").mock_unit_amount
     assert fake.prices[lite_id]["active"] is False  # archived, still billing its subscribers
     (config,) = fake.configs.values()
     lite_entry = next(p for p in config["features"]["subscription_update"]["products"]

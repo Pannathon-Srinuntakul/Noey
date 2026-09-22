@@ -18,7 +18,7 @@ import { Switch } from '../ui/Switch'
 import { Textarea } from '../ui/Input'
 import { Checkbox } from '../ui/Checkbox'
 import { CaptionPanel } from './CaptionPanel'
-import { canSnapToBeat, canUseOriginalVoice } from '../../lib/platformFeatures'
+import { canSnapToBeat, canUseOriginalVoice, canUseStyles } from '../../lib/platformFeatures'
 
 type Patch = (patch: Partial<WizardState>) => void
 
@@ -38,7 +38,8 @@ const MODE_CARDS: { value: UiMode; icon: typeof Mic; blurb: string; badge?: stri
     icon: Clapperboard,
     // Owner, 2026-09-21: say up front that this mode is for selling — its
     // prompt writes a sales script and picks product shots.
-    blurb: 'คลิปขายของสำหรับปักตะกร้า AI เลือกช็อตโชว์สินค้าเด่นจากหลายคลิป พร้อมสคริปต์ขาย เลือกได้ว่าจะพากย์หรือใส่เพลง'
+    blurb:
+      'คลิปขายของสำหรับปักตะกร้า AI เลือกช็อตโชว์สินค้าเด่นจากหลายคลิป พร้อมสคริปต์ขาย เลือกได้ว่าจะพากย์หรือใส่เพลง'
   },
   {
     value: 'longform',
@@ -330,26 +331,28 @@ export function WizardStepOutcome({
             {/* A list, whatever the count. The row used to be chips below a
                 threshold and a dropdown above it, so the screen looked
                 different on every machine. */}
-            <Row label="สไตล์การตัด">
-              <div className="flex items-center gap-3.5">
-                <div className="w-full max-w-[280px]">
-                  <Select
-                    dense
-                    value={state.cutStyleUid ?? ''}
-                    onValueChange={(v) => patch({ cutStyleUid: v })}
-                    options={[
-                      { value: '', label: 'สไตล์เริ่มต้น (ระบบ)' },
-                      ...cutStyles.map((s) => ({ value: s.uid, label: s.name }))
-                    ]}
-                  />
+            {canUseStyles ? (
+              <Row label="สไตล์การตัด">
+                <div className="flex items-center gap-3.5">
+                  <div className="w-full max-w-[280px]">
+                    <Select
+                      dense
+                      value={state.cutStyleUid ?? ''}
+                      onValueChange={(v) => patch({ cutStyleUid: v })}
+                      options={[
+                        { value: '', label: 'สไตล์เริ่มต้น (ระบบ)' },
+                        ...cutStyles.map((s) => ({ value: s.uid, label: s.name }))
+                      ]}
+                    />
+                  </div>
+                  {cutStyles.length > 0 ? (
+                    <span className="text-[13px] text-muted">
+                      มี {cutStyles.length} สไตล์ที่บันทึกไว้
+                    </span>
+                  ) : null}
                 </div>
-                {cutStyles.length > 0 ? (
-                  <span className="text-[13px] text-muted">
-                    มี {cutStyles.length} สไตล์ที่บันทึกไว้
-                  </span>
-                ) : null}
-              </div>
-            </Row>
+              </Row>
+            ) : null}
 
             {/* Two quality dials. Deliberately worded around what the user
                 gets, never how it works — no vendor, no frame rate. */}

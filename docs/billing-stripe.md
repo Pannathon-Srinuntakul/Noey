@@ -59,7 +59,8 @@ Principles:
   module-level `stripe.api_key` is never set. Only `packages/billing` imports
   `stripe`.
 - **One Product per tier** (fixed ids `noey_lite`, `noey_starter`, `noey_pro`,
-  `noey_studio`), one monthly THB Price each, addressed by lookup key.
+  `noey_studio`, `noey_agency`, `noey_max`), one monthly THB Price each,
+  addressed by lookup key.
 
 ### Plan rules (the owner's design)
 
@@ -117,8 +118,8 @@ stored lowercased.
 
 | Item | Where | Status |
 |---|---|---|
-| Prices 190 / 290 / 930 / 1,890 THB per month | `packages/billing/catalog.py` (`mock_unit_amount`, satang) | **Mock** — owner has not costed them |
-| lite / studio daily token limits (1M / 20M) | `packages/core/settings.py`, env `PLAN_LITE_MONTHLY_TOKENS`, `PLAN_STUDIO_MONTHLY_TOKENS` | **Placeholder** |
+| Prices 199 / 399 / 990 / 1,990 / 3,990 / 6,990 THB per month (lite → max) | `packages/billing/catalog.py` (`mock_unit_amount`, satang) | **Owner-approved** 2026-09-22 (flat ฿250 per 1M usage tokens; sold as 1x/2x/5x/10x/20x/35x of Lite) |
+| lite / studio / agency / max daily token limits | `packages/core/settings.py`, env `PLAN_<TIER>_MONTHLY_TOKENS` | **Placeholder** — the weekly / 5-hour windows in the owner's token unit replace them |
 | lite / studio storage (3 GB / 30 GB) | settings, env `PLAN_LITE_STORAGE_BYTES`, `PLAN_STUDIO_STORAGE_BYTES` | Design figures |
 | free / starter / pro storage | settings | **Still 10 GB each** — the design says 1 / 5 / 10 GB; aligning is the owner's call |
 | free / starter / pro / enterprise token limits | settings | Unchanged (note free 10M > starter 2M today) |
@@ -126,6 +127,29 @@ stored lowercased.
 
 `GET /billing/plans` shows Stripe's live amounts once the seed has run; the
 catalog amounts only appear while Stripe is not configured (`source: "mock"`).
+
+### Changing a price from the admin dashboard
+
+The admin app's Pricing tab (`PUT /admin/plan-prices`,
+`packages/admin/pricing.py`) is the owner's way to change a paid tier's price
+without editing `catalog.py`:
+
+- **Stripe configured:** Stripe stays the source of truth. The edit creates a
+  NEW monthly THB Price on the tier's Product carrying the catalog lookup key
+  (`transfer_lookup_key`), archives the old Price (never deletes it — existing
+  subscribers keep renewing at their old amount until they change plan) and
+  re-lists the current price ids in the customer-portal configuration, exactly
+  like `scripts/stripe_seed.py --reprice`. The amount is also recorded in
+  `core.plan_price_overrides` for the audit trail.
+- **No Stripe:** `core.plan_price_overrides` IS the price — `GET /billing/plans`
+  serves it in place of the mock amount (`source` stays `"mock"`).
+
+Either way the plans cache is dropped and the admin app calls noey-frontend's
+`POST /api/revalidate-prices` (shared `PRICES_REVALIDATE_SECRET`), so the
+pricing pages, JSON-LD offers, `/pricing.md` and `/llms.txt` update at once.
+Every change is written to `core.admin_audit_events` with before/after.
+Note: re-running the seed with `--reprice` later resets Stripe to the amounts
+in `catalog.py` — update the catalog if an admin-set price should stick.
 
 ---
 
@@ -184,9 +208,9 @@ python scripts/stripe_seed.py --reprice  # after changing an amount in catalog.p
 
 Idempotent. It creates/refreshes:
 
-1. Products `noey_lite`, `noey_starter`, `noey_pro`, `noey_studio` (metadata `noey_tier`).
+1. Products `noey_lite`, `noey_starter`, `noey_pro`, `noey_studio`, `noey_agency`, `noey_max` (metadata `noey_tier`).
 2. Monthly THB prices with lookup keys `noey_lite_monthly`, `noey_starter_monthly`,
-   `noey_pro_monthly`, `noey_studio_monthly` (metadata `noey_tier`).
+   `noey_pro_monthly`, `noey_studio_monthly`, `noey_agency_monthly`, `noey_max_monthly` (metadata `noey_tier`).
    A price that differs from the catalog is **kept and reported** unless
    `--reprice` is given; then a new price takes the lookup key
    (`transfer_lookup_key=true`) and the old one is archived — existing
@@ -344,7 +368,7 @@ All JSON; errors are FastAPI's `{"detail": …}`; auth is `Authorization: Bearer
 
 Email verification, password reset, email change and the contact form:
 `docs/email-sendgrid.md`.
-| `GET /billing/plans` | — (public) | 200 `{source: "stripe"\|"mock", currency: "thb", plans: [{tier, lookup_key, interval: "month", unit_amount}]}` (satang; lite, starter, pro, studio) | — |
+| `GET /billing/plans` | — (public) | 200 `{source: "stripe"\|"mock", currency: "thb", plans: [{tier, lookup_key, interval: "month", unit_amount}]}` (satang; lite, starter, pro, studio, agency, max) | — |
 | `GET /billing/me` | — | 200 `{plan, status, lookup_key, current_period_end (ISO), cancel_at_period_end, payment_method: {brand, last4}\|null, billing_enabled}` | 401 |
 | `POST /billing/checkout` | `{lookup_key}` | 200 `{url}` | 409 live subscription exists / enterprise account · 422 unknown key · 502 Stripe failure · 503 not configured or price not seeded |
 | `POST /billing/change-plan` | `{lookup_key}` | 200 `{url}` (portal confirm page) | 409 no live subscription / same plan / change already scheduled · 422 · 502 · 503 |

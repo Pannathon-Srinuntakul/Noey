@@ -23,9 +23,10 @@ from sqlalchemy.orm import Mapped, mapped_column
 from packages.db.base import Base
 
 CORE_SCHEMA = "core"
-# lite/starter/pro/studio are the self-service paid tiers (packages/billing/
-# catalog.py maps each to its Stripe price); `enterprise` is admin-only.
-PLAN_VALUES = ("free", "lite", "starter", "pro", "studio", "enterprise")
+# lite/starter/pro/studio/agency/max are the self-service paid tiers
+# (packages/billing/catalog.py maps each to its Stripe price); `enterprise` is
+# admin-only. Not a DB constraint — `users.plan` is a plain string column.
+PLAN_VALUES = ("free", "lite", "starter", "pro", "studio", "agency", "max", "enterprise")
 
 
 class Tenant(Base):
