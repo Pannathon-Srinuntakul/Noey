@@ -228,6 +228,37 @@ the owner's laptop). See `loadtest/README.md`.
 
 **`docs_raw/`** — raw TikTok Affiliate API documentation (markdown); reference when building scraper or API integrations.
 
+## Capacity (measured, not guessed)
+
+`docs/load-test-2026-09-22.md` found the whole stack's ceiling was a
+15-connection SQLAlchemy pool per process; `docs/load-test-2026-09-23.md` is the
+re-run after the fix (100 users: 319 jobs completed and none lost, against 52
+completed and 72 lost). Four things hold that up — change any of them together,
+not alone:
+
+- **Pool size is explicit**: `DB_POOL_SIZE`, `DB_MAX_OVERFLOW`,
+  `DB_POOL_TIMEOUT_SEC`, `DB_POOL_RECYCLE_SEC`. Production runs API 20+10,
+  worker 40+20. The worker's pool must stay ≥ `WORKER_MAX_JOBS`.
+- **`API_WORKERS`** gives the API more than one core (one uvicorn process is one
+  event loop). Each worker is a process with its OWN pool, so
+  `API_WORKERS × (pool + overflow)` is what reaches Postgres (500
+  `max_connections` there, measured 2026-09-23). Migrate + seed run under a
+  Postgres advisory lock because every process starts at once.
+- **`GET /jobs/{id}` answers from Redis** (`packages/db/job_cache.py`). The
+  worker mirrors each status after the row commits; the endpoint falls back to
+  Postgres on a miss, a foreign tenant, or a running job old enough for the
+  stale reaper. Job ids repeat (`vlocal_<uid[:8]>`), so the cache is dropped on
+  enqueue and on cancel — otherwise the previous run's terminal status answers
+  the next run's first polls.
+- **A job waiting on the AI does not hold a connection** —
+  `tasks._release_connection` commits before each long model call.
+
+Vendor quota: the DAILY request cap is the real ceiling (Tier 1 = 10,000 Flash /
+250 Pro a day; a cut uses 4-5 Flash calls). `packages/billing/vendor_limits.py`
+counts it per Pacific day alongside the per-minute window, fails fast with
+`VendorDailyLimit` when it is spent, warns once a day at
+`GEMINI_RPD_ALERT_RATIO`, and `GET /admin/vendor-quota` shows it.
+
 ## Skills (load the matching one before working in that area)
 
 Skill files live in `.Codex/skills/<name>/`.
