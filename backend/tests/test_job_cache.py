@@ -195,3 +195,88 @@ async def test_redis_failure_is_never_an_error(monkeypatch):
     )
     assert await job_cache.get(JOB_ID) is None
     await job_cache.drop(JOB_ID)
+
+
+# ── the cache must not outlive the run it describes ──────────────────────────
+
+async def test_enqueue_drops_the_previous_runs_cached_result(monkeypatch):
+    """Job ids repeat, so the cache from the last run must go at enqueue.
+
+    ``vlocal_<uid[:8]>`` is derived from the project, so starting the same
+    project again reuses the id. A terminal cached entry is always served, so
+    without the drop the new run's first polls would answer "done" with the
+    previous run's result.
+    """
+    from packages.db import job_cache as cache_mod
+    from services.api.routers import videos
+
+    dropped: list[str] = []
+
+    async def fake_drop(job_id: str) -> None:
+        dropped.append(job_id)
+
+    class _Pool:
+        async def enqueue_job(self, *a, **k):  # noqa: ANN002, ANN003, ANN202
+            return None
+
+        async def close(self) -> None:
+            return None
+
+    async def fake_create_pool(_settings):  # noqa: ANN001, ANN202
+        # The drop has to happen BEFORE the worker can pick the job up.
+        assert dropped == [JOB_ID]
+        return _Pool()
+
+    monkeypatch.setattr(cache_mod, "drop", fake_drop)
+    monkeypatch.setattr("arq.create_pool", fake_create_pool)
+    await videos._enqueue(JOB_ID, "analyze_dub_local", project_uid="p")
+    assert dropped == [JOB_ID]
+
+
+async def test_cancelling_a_job_drops_its_cache(monkeypatch):
+    # A running job younger than the stale window is served from the cache
+    # without reading the row, so a cancel that only wrote the row would stay
+    # invisible to the polling client.
+    from packages.db import job_cache as cache_mod
+    from services.api.routers import videos
+
+    dropped: list[str] = []
+
+    async def fake_drop(job_id: str) -> None:
+        dropped.append(job_id)
+
+    class _Job:
+        status = "running"
+        progress = 50
+        result: dict | None = None
+        error: str | None = None
+
+    class _Result:
+        def scalar_one_or_none(self):  # noqa: ANN202
+            return _Job()
+
+    class _Session:
+        async def execute(self, *a, **k):  # noqa: ANN002, ANN003, ANN202
+            return _Result()
+
+        async def commit(self) -> None:
+            return None
+
+        async def __aenter__(self):  # noqa: ANN202
+            return self
+
+        async def __aexit__(self, *exc) -> None:  # noqa: ANN002
+            return None
+
+    def fake_sessionmaker():  # noqa: ANN202
+        return _Session
+
+    # conftest's engine-disposal fixture calls get_sessionmaker.cache_clear(),
+    # so the stand-in has to carry one too.
+    fake_sessionmaker.cache_clear = lambda: None  # type: ignore[attr-defined]
+    fake_sessionmaker.cache_info = lambda: __import__("types").SimpleNamespace(currsize=0)  # type: ignore[attr-defined]
+
+    monkeypatch.setattr(cache_mod, "drop", fake_drop)
+    monkeypatch.setattr("packages.db.session.get_sessionmaker", fake_sessionmaker)
+    await videos._mark_job_cancelled(JOB_ID)
+    assert dropped == [JOB_ID]

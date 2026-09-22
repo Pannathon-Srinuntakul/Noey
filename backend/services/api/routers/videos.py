@@ -118,6 +118,15 @@ async def _enqueue(job_id: str, fn: str, *, user: Any = None, **kwargs) -> None:
     from arq import create_pool
     from arq.connections import RedisSettings
 
+    from packages.db import job_cache
+
+    # Job ids are derived from the project uid (``vlocal_<uid[:8]>``), so
+    # starting the SAME project again reuses the id. Without this the cached
+    # copy of the PREVIOUS run — terminal, therefore always served — would
+    # answer the first polls of the new one, and the client would read a
+    # finished job with the old result before the worker wrote anything.
+    await job_cache.drop(job_id)
+
     settings = get_settings()
     redis = RedisSettings.from_dsn(settings.redis_url)
     redis.conn_timeout = 5
@@ -150,6 +159,12 @@ async def _mark_job_cancelled(job_id: str) -> None:
             job.result = {"step": "cancelled", "message": "ยกเลิกโดยผู้ใช้"}
             job.error = "cancelled by user"
             await session.commit()
+            # The cached copy still says running, and running-and-recent is
+            # served without reading the row — so the cancel would be invisible
+            # to the polling client for the whole stale window.
+            from packages.db import job_cache
+
+            await job_cache.drop(job_id)
 
 
 async def _cancel_project(session: AsyncSession, proj: VideoProject) -> None:
