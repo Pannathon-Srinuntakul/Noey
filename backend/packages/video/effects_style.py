@@ -231,9 +231,10 @@ async def distill_style_prompt(
     from packages.llm.config import call_kwargs
     from packages.llm.files import delete_gemini_files, gemini_video_block, upload_gemini_file
     from packages.llm.gateway import acompletion_stream_thinking
+    from packages.video.quality import effects_model
 
     settings = get_settings()
-    model = f"gemini/{settings.effects_vision_model}"
+    model = f"gemini/{effects_model()}"
     ref_path = pathlib.Path(reference_path) if reference_path else None
     desc = (description or "").strip()
 
@@ -263,6 +264,12 @@ async def distill_style_prompt(
 
         extra = call_kwargs(model=model, effort=settings.effects_vision_effort)
         extra["timeout"] = settings.effects_vision_timeout_sec
+        if ref_path is not None and _guess_mime(ref_path, default="video/mp4").startswith("video/"):
+            # The billing guard prices the reference as measured on disk.
+            from packages.video.ffmpeg_bin import measured_seconds
+
+            extra["billing_video_sec"] = measured_seconds(ref_path)
+            extra["billing_video_precision"] = "standard"
         # Same Gemini structured-output path as effects placement.
         extra["response_format"] = {
             "type": "json_schema",

@@ -60,15 +60,35 @@ ADMIN_ROUTES = sorted(r for r in _all_routes() if "/admin" in r[1])
 PROTECTED = [r for r in ADMIN_ROUTES if r not in PUBLIC_ADMIN_ROUTES]
 
 
+#: Token billing's admin routes (docs/token-billing-design.md §9.5) — named so
+#: a rename cannot silently drop one out of the guard walk below.
+BILLING_ADMIN_ROUTES = {
+    ("POST", "/admin/users/{user_id}/window-reset"),
+    ("POST", "/admin/users/{user_id}/wallet-adjust"),
+    ("POST", "/admin/users/{user_id}/quota-reset"),
+    ("GET", "/admin/estimate-accuracy"),
+    ("GET", "/admin/billing-config"),
+    ("PUT", "/admin/billing-config"),
+    ("GET", "/admin/circuit-breaker"),
+    ("PUT", "/admin/circuit-breaker"),
+    ("GET", "/admin/fx"),
+    ("PUT", "/admin/fx"),
+    ("POST", "/admin/fx/refresh"),
+    ("GET", "/admin/reconciliation"),
+    ("PUT", "/admin/reconciliation/{month}"),
+}
+
+
 def test_the_route_list_is_what_the_guard_test_thinks_it_is():
-    assert len(PROTECTED) >= 12, PROTECTED
+    assert len(PROTECTED) >= 24, PROTECTED
+    assert set(PROTECTED) >= BILLING_ADMIN_ROUTES, BILLING_ADMIN_ROUTES - set(PROTECTED)
     assert PUBLIC_ADMIN_ROUTES <= set(ADMIN_ROUTES)
     # The old /usage/admin/* routes (ordinary user token) must stay gone.
     assert not [r for r in _all_routes() if r[1].startswith("/usage/admin")]
 
 
 def _concrete(path: str, user_id: int) -> str:
-    return path.replace("{user_id}", str(user_id))
+    return path.replace("{user_id}", str(user_id)).replace("{month}", "2020-01")
 
 
 async def _send(c, method: str, path: str, headers: dict[str, str]):  # type: ignore[no-untyped-def]

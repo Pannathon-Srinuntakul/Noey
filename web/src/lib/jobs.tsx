@@ -52,8 +52,17 @@ function PipelineHost({
   const pipelineRef = useRef(pipeline)
 
   const { uid } = project
-  const { step, progressMsg, thinking, error, mediaKey, stopping, editScript, showEditor } =
-    pipeline
+  const {
+    step,
+    progressMsg,
+    waitingSlot,
+    thinking,
+    error,
+    mediaKey,
+    stopping,
+    editScript,
+    showEditor
+  } = pipeline
   const updatedAt = pipeline.project.updatedAt
 
   // Effects run in declaration order, so this refreshes the ref before the
@@ -79,6 +88,7 @@ function PipelineHost({
     uid,
     step,
     progressMsg,
+    waitingSlot,
     thinking,
     error,
     mediaKey,

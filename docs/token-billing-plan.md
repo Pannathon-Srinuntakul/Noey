@@ -1,14 +1,15 @@
 # Token billing & usage limits — implementation plan
 
-Status: **planned, not built** (owner-approved decisions 2026-09-22). Today the backend still
-counts raw vendor tokens against a per-UTC-day cap (`settings.plan_token_limit`,
-`packages/llm/usage.py:_period_start`). Start after the frontend redesign lands.
+Status: **built** (2026-09-22; owner-approved decisions of the same day). How it maps onto the
+code, every deviation and the API contracts: `docs/token-billing-design.md` (§18–§22). Not built
+yet: the §8 plan-feature enforcement (a follow-up after the website redesign), the noey-frontend
+account pages, and the owner's console steps (live Stripe keys, vendor-side spend caps).
 
 ## 1. The unit
 
 - Users see one unit internally called **token**, but the UI shows **percentages only**
-  (never token counts), Claude-style, with English labels: `5-hour limit`, `Weekly limit`,
-  `Monthly limit`.
+  (never token counts), Claude-style, with Thai labels per docs/design/editor-limits.md (the website pricing copy keeps its
+  English `5-hour limit` / `Weekly limit` / `Monthly limit` wording).
 - Cost peg: **1M tokens = ฿50 vendor cost** at 2027 reference prices and ฿34.5/USD.
   Real cost today ≈ ฿33/1M (Gemini Flash is half price until 2026-12-31).
 - **Sell price: ฿250 per 1M tokens, same for every plan.**
@@ -83,7 +84,9 @@ billed seconds. Gaps to close:
 ## 5. Surfaces
 
 - `GET /usage/me`: percentages + reset times per window, plan, concurrency; never token counts.
-- Web editor: settings page meters, wizard estimate, clear "limit reached · Resets 2:30 PM".
+- Web editor + desktop: follow **docs/design/editor-limits.md** (owner design 2026-09-22 — Thai labels
+  `โควตารายเดือน` / `โควตารายสัปดาห์` / `โควตารอบ 5 ชั่วโมง`, usage card, near-limit banner, quota-exhausted
+  modal, one-line notices, plans list with change-plan + confirm/consent modal) plus the wizard estimate.
   Desktop uses the same backend (enforced automatically); its UI gap goes in `PARITY.md`.
 - noey-frontend account pages: the same meters.
 - Admin: real tokens + ฿ cost per user/job; cost per 1M and margin per 1M; editable
@@ -128,6 +131,8 @@ stop, refunds, concurrency queue, circuit breaker, and admin/user endpoint secur
 
 ## 8. Plan features promised by the website (source of truth: noey-frontend `lib/plans.ts`)
 
+**Status: built 2026-09-22** — see docs/token-billing-design.md §23.
+
 Owner rule (2026-09-22): where the backend or editor does not match what the pricing page
 promises, change the product to match the website. Follow-up pass AFTER the token workflow and
 the website redesign land (re-read the final `lib/plans.ts` first — the redesign may reword it).
@@ -145,3 +150,7 @@ Gaps found 2026-09-22:
 
 Enforce server-side (API + worker) and show the matching state in web + desktop (hide/lock the
 control with an upgrade hint, block uploads over the footage/project limit before upload).
+
+Over-limit accounts when enforcement starts (owner, 2026-09-22): existing projects stay openable
+and editable; creating a NEW project is blocked until the user deletes down below the limit.
+Nothing is ever deleted automatically.

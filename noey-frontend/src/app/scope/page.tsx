@@ -29,7 +29,6 @@ export default function ScopePage() {
   return (
     <main id="main" className="container page scope">
       <Breadcrumb trail={TRAIL} />
-      <p className="eyebrow">ทำอะไรได้บ้าง</p>
       <h1 className="page-title scope__title">ระบบคัดช็อตให้ แล้วคุณเกลาต่อ</h1>
       {/* Answer-first: the whole scope in one quotable paragraph. */}
       <p className="lead-columns">

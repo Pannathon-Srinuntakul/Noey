@@ -32,7 +32,10 @@ ENV NEXT_PUBLIC_SITE_URL=$NEXT_PUBLIC_SITE_URL \
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-RUN npm run build
+# public/ is empty in this app and git does not keep empty folders, so a
+# checkout (Railway, CI) has none — and the run stage copies it. Make sure it
+# exists instead of failing the build with "/app/public: not found".
+RUN mkdir -p public && npm run build
 
 FROM node:24-alpine AS run
 WORKDIR /app

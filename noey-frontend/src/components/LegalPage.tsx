@@ -40,7 +40,6 @@ export function LegalPage({ pageKey, title, doc }: { pageKey: LegalKey; title: s
     <main id="main" className="container page">
       <article className="legal">
         <Breadcrumb trail={trail} />
-        <p className="eyebrow">เอกสาร</p>
         <h1 className="page-title legal__title">{title}</h1>
         <p className="legal__intro">{doc.intro}</p>
         <p className="legal__updated">

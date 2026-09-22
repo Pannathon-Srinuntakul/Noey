@@ -30,6 +30,7 @@ DELETE /videos/{uid}/music             — dub: clear the attached music track
 
 from __future__ import annotations
 
+import asyncio
 import json
 import pathlib
 import re
@@ -37,7 +38,7 @@ import uuid
 from pathlib import Path
 from typing import Literal
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi import Response
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
@@ -64,6 +65,9 @@ from packages.video.s3 import (
 )
 from packages.video.storage import data_root
 from packages.video.timeline import cuts_duration, normalize_dub_edit_script
+from packages.billing import estimate as estimator
+from packages.billing import plan_features
+from services.api.billing_start import load_run, release_on_error, settle_run, start_paid_run
 from services.api.deps import CurrentUser, db_session
 from services.api.routers.videos import _enqueue, _get_project
 
@@ -132,7 +136,10 @@ class AnalyzeFramesOut(BaseModel):
 
 class ProxyManifestEntry(BaseModel):
     clip_id: str
+    #: The upload's name — matched against the multipart file names only. The
+    #: server stores each proxy under a name of its own (``proxy_NNN.mp4``).
     file: str
+    #: What the CLIENT says; kept for the prompt's clip bounds, never priced.
     durationSec: float = Field(gt=0)
     order: int = 0
 
@@ -147,6 +154,8 @@ class PlanDubIn(BaseModel):
     musicOffsetSec: float = Field(0.0, ge=0)
     musicTrimInSec: float = Field(0.0, ge=0)
     musicTrimOutSec: float | None = Field(None, gt=0)
+    #: Continue on the top-up balance when the plan's windows are exhausted.
+    allow_wallet: bool = False
 
 
 def _music_window_kwargs(
@@ -182,11 +191,170 @@ class LocalStatusIn(BaseModel):
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
+#: Client proxies are 480 px tall (web/src/engine/jobs/extractProxy.ts, the
+#: desktop sidecar's proxy.py), so their SHORT side is at most 480; +2 for the
+#: even-width rounding. A bigger file is not a proxy: it costs upload time and
+#: storage, and full-resolution footage at a high sampling rate is exactly what
+#: the provider refuses outright — after billing the input (packages/llm/files.py).
+PROXY_MAX_SHORT_SIDE = 482
+
+
+async def _measure_upload(
+    path: Path, *, label: str, max_short_side: int | None = None, max_sec: float | None = None
+) -> float:
+    """Length of a file the server just received, FAIL CLOSED (422).
+
+    Every AI start is priced on footage the SERVER measured: a length the
+    client states (``local_meta.clips``, a manifest's ``durationSec``) could be
+    anything, while the provider bills the whole file. A file whose length
+    cannot be read — not even by decoding it — is refused instead of counted
+    as zero seconds (docs/token-billing-design.md §15, 2026-09-22 review)."""
+    import asyncio
+
+    from packages.video.ffmpeg_bin import MediaUnmeasurable, measure_media
+
+    try:
+        m = await asyncio.to_thread(measure_media, path)
+    except MediaUnmeasurable:
+        raise HTTPException(422, f"อ่านความยาวไฟล์{label}ไม่ได้ — กรุณาส่งไฟล์วิดีโอที่เปิดได้") from None
+    if max_short_side and m.width and m.height and min(m.width, m.height) > max_short_side:
+        raise HTTPException(422, f"ไฟล์{label}ความละเอียดสูงเกินไป — กรุณาสร้างไฟล์พรีวิวใหม่จากแอป")
+    if max_sec is not None and m.duration_sec > max_sec:
+        raise HTTPException(422, f"ไฟล์{label}ยาวเกิน {int(max_sec // 60)} นาที")
+    return m.duration_sec
+
+
+_REFERENCE_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp"}
+
+
+class _StagedProxies:
+    """Proxies written to a private staging folder and measured, waiting for
+    the reservation. ``records`` are the manifest rows the worker will read
+    (server-made file names; ``measuredSec`` = the probed length)."""
+
+    def __init__(self, folder: Path, records: list[dict]) -> None:
+        self.folder = folder
+        self.records = records
+
+    def discard(self) -> None:
+        import shutil
+
+        shutil.rmtree(self.folder, ignore_errors=True)
+
+    def install(self, proxy_dir: Path) -> None:
+        """Replace ``proxy_dir``'s proxies + manifest with the staged ones."""
+        proxy_dir.mkdir(parents=True, exist_ok=True)
+        for stale in proxy_dir.glob("proxy_*.mp4"):
+            stale.unlink(missing_ok=True)
+        for rec in self.records:
+            (self.folder / rec["file"]).replace(proxy_dir / rec["file"])
+        (proxy_dir / "proxy_manifest.json").write_text(
+            json.dumps(self.records, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        self.discard()
+
+
+async def _stage_proxies(
+    uid: str, uploads: list[tuple[ProxyManifestEntry, UploadFile]]
+) -> _StagedProxies:
+    """Write each upload under a server-made name and measure it (422 when a
+    file is unreadable or bigger than a proxy). The destination NAME is ours,
+    never the client's: ``entry.file`` is free text from the request, and
+    ``proxy_dir / "../../x"`` keeps the traversal while ``proxy_dir / "C:/..."``
+    discards the base entirely — an arbitrary write on the API host, which
+    also runs the worker and holds the provider keys."""
+    folder = data_root() / "video_outputs" / uid / f".incoming-{uuid.uuid4().hex}"
+    folder.mkdir(parents=True, exist_ok=True)
+    records: list[dict] = []
+    try:
+        for idx, (entry, upload) in enumerate(uploads):
+            stored = f"proxy_{idx:03d}.mp4"
+            dest = folder / stored
+            dest.write_bytes(await upload.read())
+            seconds = await _measure_upload(dest, label="พรีวิวคลิป", max_short_side=PROXY_MAX_SHORT_SIDE)
+            # The worker reads the file back through the manifest, so record the
+            # name that actually exists on disk.
+            records.append({**entry.model_dump(), "file": stored, "measuredSec": round(seconds, 3)})
+    except BaseException:
+        import shutil
+
+        shutil.rmtree(folder, ignore_errors=True)
+        raise
+    return _StagedProxies(folder, records)
+
+
+async def _measure_stored_proxies(proxy_dir: Path, manifest_file: Path) -> list[float]:
+    """Measure the proxies an earlier upload left on disk (a re-edit that did
+    not re-send them). The manifest is ours, but its lengths may be what a
+    client stated before measuring existed — so the FILES are measured."""
+    try:
+        records = json.loads(manifest_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise HTTPException(400, "ไม่พบ proxy ของคลิปต้นฉบับ — กรุณา analyze ใหม่อีกครั้ง") from exc
+    out: list[float] = []
+    for rec in records if isinstance(records, list) else []:
+        name = str((rec or {}).get("file") or "")
+        path = proxy_dir / Path(name).name
+        if name and path.is_file():
+            out.append(await _measure_upload(path, label="พรีวิวคลิป"))
+    if not out:
+        raise HTTPException(400, "ไม่พบ proxy ของคลิปต้นฉบับ — กรุณา analyze ใหม่อีกครั้ง")
+    return out
+
+
+def _safe_upload_name(name: str) -> str:
+    """A client file name used only as a KEY (manifest ↔ upload), never as a
+    path. Refuses anything that is not a bare file name."""
+    if (
+        not name
+        or name in (".", "..")
+        or "/" in name
+        or "\\" in name
+        or ".." in name
+        or ":" in name
+        or name.startswith(".")
+    ):
+        raise HTTPException(422, f"ชื่อไฟล์ไม่ถูกต้อง: {name[:80]!r}")
+    return name
+
+
 async def _get_local_project(session: AsyncSession, uid: str, user_id: int) -> VideoProject:
     proj = await _get_project(session, uid, user_id)
     if proj.origin != "local":
         raise HTTPException(400, "endpoint นี้ใช้ได้เฉพาะโปรเจกต์ local-render")
     return proj
+
+
+async def enforce_new_project(
+    session: AsyncSession, user: User, *, declared_sec: float | None = None, adding: int = 1
+) -> None:
+    """A NEW project on this plan (docs/token-billing-plan.md §8): 403
+    ``project_limit`` when the account already keeps the plan's maximum —
+    existing projects are never touched — and 422 ``footage_over_limit`` when
+    the footage the client declares is over the per-project cap. The declared
+    length is only an early refusal; every start route re-checks the footage
+    it measures itself (services/api/billing_start.py)."""
+    if declared_sec is not None:
+        refusal = plan_features.check_footage(user, float(declared_sec))
+        if refusal is not None:
+            raise HTTPException(422, refusal)
+    if plan_features.project_limit(user) is None:
+        return
+    from sqlalchemy import func
+
+    existing = (
+        await session.execute(select(func.count()).select_from(VideoProject).where(VideoProject.user_id == user.id))
+    ).scalar_one()
+    refusal = plan_features.check_new_project(user, int(existing or 0), adding)
+    if refusal is not None:
+        raise HTTPException(403, refusal)
+
+
+def enforce_feature(user: User, feature: plan_features.Feature) -> None:
+    """403 ``plan_feature`` when the plan does not include ``feature``."""
+    refusal = plan_features.check_feature(user, feature)
+    if refusal is not None:
+        raise HTTPException(403, refusal)
 
 
 # ── endpoints ─────────────────────────────────────────────────────────────────
@@ -200,6 +368,7 @@ async def create_local_project(
     allowed = ("dub_first", "talking_head", "highlight", "speech_highlights", "speech_scenes")
     if body.mode not in allowed:
         raise HTTPException(400, f"local-render รองรับเฉพาะโหมด {', '.join(allowed)}")
+    await enforce_new_project(session, auth.user, declared_sec=sum(c.durationSec for c in body.clips))
 
     proj = VideoProject(
         user_id=auth.user_id,
@@ -238,12 +407,14 @@ async def create_local_project(
 async def analyze_frames(
     uid: str,
     auth: CurrentUser,
+    request: Request,
     session: AsyncSession = Depends(db_session),
     files: list[UploadFile] = File(...),
     manifest: str = Form(...),
     music_offset_sec: float = Form(0.0, ge=0),
     music_trim_in_sec: float = Form(0.0, ge=0),
     music_trim_out_sec: float | None = Form(None, gt=0),
+    allow_wallet: bool = Form(False),
 ) -> AnalyzeFramesOut:
     proj = await _get_local_project(session, uid, auth.user_id)
     if proj.mode not in ("dub_first", "highlight"):
@@ -264,48 +435,61 @@ async def analyze_frames(
     if missing or extra:
         raise HTTPException(422, f"manifest/ไฟล์ไม่ตรงกัน (missing={sorted(missing)}, extra={sorted(extra)})")
 
-    root = data_root()
-    frames_dir = root / "video_outputs" / uid / "frames"
-    frames_dir.mkdir(parents=True, exist_ok=True)
-    manifest_records: list[dict] = []
-    for f in files:
-        entry = by_name[f.filename or ""]
-        safe_name = f"{entry.clip_id}_{entry.time:.2f}.jpg".replace("/", "_")
-        dest = frames_dir / safe_name
-        dest.write_bytes(await f.read())
-        manifest_records.append({**entry.model_dump(), "file": f"frames/{safe_name}"})
-
-    (frames_dir / "frames_manifest.json").write_text(
-        json.dumps(manifest_records, ensure_ascii=False, indent=2), encoding="utf-8"
+    # Reserve BEFORE anything is stored (docs/token-billing-design.md §6.1),
+    # priced on the frames this request actually carries — each is one image
+    # to the model — not on clip lengths the client stated.
+    run_id = await start_paid_run(
+        auth, request,
+        estimator.estimate_run(
+            kind="analyze_frames", engine=proj.engine, precision=proj.precision,
+            frame_count=len(files),
+        ),
+        allow_wallet=allow_wallet, job_id=f"vlocal_{uid[:8]}", reference_id=uid,
+        mode=proj.mode, engine=proj.engine, precision=proj.precision,
     )
-    await push_project_files(uid)  # JPEGs + manifest only — no video bytes
+    async with release_on_error(run_id):
+        root = data_root()
+        frames_dir = root / "video_outputs" / uid / "frames"
+        frames_dir.mkdir(parents=True, exist_ok=True)
+        manifest_records: list[dict] = []
+        for f in files:
+            entry = by_name[f.filename or ""]
+            safe_name = f"{entry.clip_id}_{entry.time:.2f}.jpg".replace("/", "_")
+            dest = frames_dir / safe_name
+            dest.write_bytes(await f.read())
+            manifest_records.append({**entry.model_dump(), "file": f"frames/{safe_name}"})
 
-    job_id = f"vlocal_{uid[:8]}"
-    await session.execute(text("SET search_path TO core, public"))
-    existing = await session.get(Job, job_id)
-    if existing:
-        existing.status = "queued"
-        existing.progress = 2
-        existing.result = {"step": "queued", "message": "รับ frames แล้ว รอ worker วิเคราะห์…"}
-        existing.error = None
-    else:
-        session.add(Job(
-            id=job_id,
-            tenant_id=auth.tenant_id,
-            type="video_edit",
-            status="queued",
-            progress=2,
-            result={"step": "queued", "message": "รับ frames แล้ว รอ worker วิเคราะห์…"},
-        ))
-    await bind_tenant_search_path(session, auth.tenant_slug)
-    proj.status = "processing"
-    proj.job_id = job_id
-    await session.commit()
+        (frames_dir / "frames_manifest.json").write_text(
+            json.dumps(manifest_records, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        await push_project_files(uid)  # JPEGs + manifest only — no video bytes
 
-    await _enqueue(
-        job_id, "analyze_dub_local",
-        project_uid=uid, tenant_slug=auth.tenant_slug, **music_window,
-    )
+        job_id = f"vlocal_{uid[:8]}"
+        await session.execute(text("SET search_path TO core, public"))
+        existing = await session.get(Job, job_id)
+        if existing:
+            existing.status = "queued"
+            existing.progress = 2
+            existing.result = {"step": "queued", "message": "รับ frames แล้ว รอ worker วิเคราะห์…"}
+            existing.error = None
+        else:
+            session.add(Job(
+                id=job_id,
+                tenant_id=auth.tenant_id,
+                type="video_edit",
+                status="queued",
+                progress=2,
+                result={"step": "queued", "message": "รับ frames แล้ว รอ worker วิเคราะห์…"},
+            ))
+        await bind_tenant_search_path(session, auth.tenant_slug)
+        proj.status = "processing"
+        proj.job_id = job_id
+        await session.commit()
+
+        await _enqueue(
+            job_id, "analyze_dub_local",
+            project_uid=uid, tenant_slug=auth.tenant_slug, run_id=run_id, **music_window, user=auth.user,
+        )
     return AnalyzeFramesOut(job_id=job_id)
 
 
@@ -313,6 +497,7 @@ async def analyze_frames(
 async def analyze_video(
     uid: str,
     auth: CurrentUser,
+    request: Request,
     session: AsyncSession = Depends(db_session),
     files: list[UploadFile] = File(...),
     manifest: str = Form(...),
@@ -323,6 +508,7 @@ async def analyze_video(
     music_offset_sec: float = Form(0.0, ge=0),
     music_trim_in_sec: float = Form(0.0, ge=0),
     music_trim_out_sec: float | None = Form(None, gt=0),
+    allow_wallet: bool = Form(False),
 ) -> AnalyzeFramesOut:
     """dub_first: receive per-clip proxy MP4s (Gemini native-video path).
 
@@ -405,74 +591,74 @@ async def analyze_video(
     except (json.JSONDecodeError, ValueError) as exc:
         raise HTTPException(422, f"manifest ไม่ถูกต้อง: {exc}") from exc
 
-    by_file = {e.file: e for e in entries}
+    by_file = {_safe_upload_name(e.file): e for e in entries}
     uploaded_names = [f.filename for f in files]
     missing = set(by_file) - set(uploaded_names)
     extra = set(uploaded_names) - set(by_file)
     if missing or extra:
         raise HTTPException(422, f"manifest/ไฟล์ไม่ตรงกัน (missing={sorted(missing)}, extra={sorted(extra)})")
 
+    # The footage is measured BEFORE the reservation, because the reservation
+    # is priced on it: the proxies land in a staging folder, are probed, and
+    # only move into place once the run is reserved (a refused start leaves
+    # nothing behind — docs/token-billing-design.md §6.1).
     root = data_root()
-    proxy_dir = root / "video_outputs" / uid / "proxy"
-    proxy_dir.mkdir(parents=True, exist_ok=True)
-    manifest_records: list[dict] = []
-    for idx, f in enumerate(files):
-        entry = by_file[f.filename or ""]
-        # The destination NAME is ours, never the client's. `entry.file` is
-        # free text from the request: `proxy_dir / "../../x"` keeps the
-        # traversal and `proxy_dir / "C:/..."` discards the base entirely, so
-        # the old form was an arbitrary write on the API host — which also runs
-        # the worker and holds the provider keys. analyze-frames below already
-        # synthesizes its names; this is the same rule.
-        stored = f"proxy_{idx:03d}.mp4"
-        dest = proxy_dir / stored
-        dest.write_bytes(await f.read())
-        # The worker reads the file back through the manifest, so record the
-        # name that actually exists on disk.
-        manifest_records.append({**entry.model_dump(), "file": stored})
+    staging = await _stage_proxies(uid, [(by_file[f.filename or ""], f) for f in files])
+    try:
+        run_id = await start_paid_run(
+            auth, request,
+            estimator.estimate_run(
+                kind="analyze_video", engine=proj.engine, precision=proj.precision,
+                clip_secs=[rec["measuredSec"] for rec in staging.records],
+            ),
+            allow_wallet=allow_wallet, job_id=f"vlocal_{uid[:8]}", reference_id=uid,
+            mode=proj.mode, engine=proj.engine, precision=proj.precision,
+        )
+    except BaseException:
+        staging.discard()
+        raise
+    async with release_on_error(run_id):
+        staging.install(root / "video_outputs" / uid / "proxy")
+        await push_project_files(uid)  # proxy MP4s + manifest only
 
-    (proxy_dir / "proxy_manifest.json").write_text(
-        json.dumps(manifest_records, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    await push_project_files(uid)  # proxy MP4s + manifest only
+        job_id = f"vlocal_{uid[:8]}"
+        await session.execute(text("SET search_path TO core, public"))
+        existing = await session.get(Job, job_id)
+        queued = {
+            "step": "queued",
+            "message": "รับวิดีโอแล้ว รอ worker วิเคราะห์…",
+            "style_uid": chosen_style_uid or None,
+        }
+        if existing:
+            existing.status = "queued"
+            existing.progress = 2
+            existing.result = queued
+            existing.error = None
+        else:
+            session.add(Job(
+                id=job_id,
+                tenant_id=auth.tenant_id,
+                type="video_edit",
+                status="queued",
+                progress=2,
+                result=queued,
+            ))
+        await bind_tenant_search_path(session, auth.tenant_slug)
+        proj.status = "processing"
+        proj.job_id = job_id
+        await session.commit()
 
-    job_id = f"vlocal_{uid[:8]}"
-    await session.execute(text("SET search_path TO core, public"))
-    existing = await session.get(Job, job_id)
-    queued = {
-        "step": "queued",
-        "message": "รับวิดีโอแล้ว รอ worker วิเคราะห์…",
-        "style_uid": chosen_style_uid or None,
-    }
-    if existing:
-        existing.status = "queued"
-        existing.progress = 2
-        existing.result = queued
-        existing.error = None
-    else:
-        session.add(Job(
-            id=job_id,
-            tenant_id=auth.tenant_id,
-            type="video_edit",
-            status="queued",
-            progress=2,
-            result=queued,
-        ))
-    await bind_tenant_search_path(session, auth.tenant_slug)
-    proj.status = "processing"
-    proj.job_id = job_id
-    await session.commit()
-
-    # style_uid travels with the job; the worker resolves the prose from the
-    # DB at run time (DB is the only source — no style file on disk/S3).
-    await _enqueue(
-        job_id,
-        "analyze_dub_video_local",
-        project_uid=uid,
-        tenant_slug=auth.tenant_slug,
-        style_uid=chosen_style_uid,
-        **music_window,
-    )
+        # style_uid travels with the job; the worker resolves the prose from the
+        # DB at run time (DB is the only source — no style file on disk/S3).
+        await _enqueue(
+            job_id,
+            "analyze_dub_video_local",
+            project_uid=uid,
+            tenant_slug=auth.tenant_slug,
+            style_uid=chosen_style_uid,
+            run_id=run_id,
+            **music_window, user=auth.user,
+        )
     return AnalyzeFramesOut(job_id=job_id)
 
 
@@ -481,6 +667,7 @@ async def plan_dub(
     uid: str,
     auth: CurrentUser,
     body: PlanDubIn,
+    request: Request,
     session: AsyncSession = Depends(db_session),
 ) -> dict:
     proj = await _get_local_project(session, uid, auth.user_id)
@@ -496,11 +683,24 @@ async def plan_dub(
         raise HTTPException(404, "edit_script.json หายจาก server") from exc
     edit_script = json.loads(edit_script_file.read_text(encoding="utf-8"))
 
+    from packages.billing import guard
     from packages.video.dub_ai import plan_dub_timeline_cuts
 
-    usage_token = set_usage_ctx(
-        UsageCtx(user_id=auth.user_id, tenant_id=auth.tenant_id, feature="video_cut", reference_id=uid)
+    # The only route that calls a model itself: it reserves, meters and
+    # settles inline instead of in a worker (docs/token-billing-design.md §6.1).
+    run_id = await start_paid_run(
+        auth, request, estimator.estimate_run(kind="plan_dub", engine=proj.engine, precision=proj.precision),
+        allow_wallet=body.allow_wallet, job_id=None, reference_id=uid,
+        mode=proj.mode, engine=proj.engine, precision=proj.precision,
     )
+    run = await load_run(run_id)
+    usage_token = set_usage_ctx(
+        UsageCtx(
+            user_id=auth.user_id, tenant_id=auth.tenant_id, feature="video_cut", reference_id=uid, run_id=run_id,
+        )
+    )
+    outcome = "our_failure"
+    meter_token = guard.set_meter(guard.meter_for_run(run) if run is not None else None)
     try:
         render_cuts = await plan_dub_timeline_cuts(
             edit_script,
@@ -511,7 +711,18 @@ async def plan_dub(
             music_trim_in_sec=body.musicTrimInSec,
             music_trim_out_sec=body.musicTrimOutSec,
         )
+        outcome = "ok"
+    except guard.RunBudgetExceeded as exc:
+        outcome = "limit_stop"
+        raise HTTPException(
+            402, {"code": "limit_stop", "message": guard.LIMIT_STOP_MESSAGE},
+        ) from exc
+    except guard.ServicePaused as exc:
+        raise HTTPException(
+            503, {"code": "service_paused", "message": guard.SERVICE_PAUSED_MESSAGE},
+        ) from exc
     except ValueError as exc:
+        outcome = "user_error"
         # Through the SAME funnel the Exception arm below uses. `str(exc)`
         # forwarded the raiser's literal text -- which named the vendor -- into
         # a persisted error the project card then displayed in every browser.
@@ -529,7 +740,9 @@ async def plan_dub(
         log.warning("local_plan_dub_failed", uid=uid, error=str(exc))
         raise HTTPException(502, format_exception_message(exc)) from exc
     finally:
+        guard.reset_meter(meter_token)
         reset_usage_ctx(usage_token)
+        await settle_run(run_id, outcome)
 
     clips_meta = (proj.local_meta or {}).get("clips", [])
     first = clips_meta[0] if clips_meta else {}
@@ -605,6 +818,7 @@ async def transcode_clip(
     session: AsyncSession = Depends(db_session),
     file: UploadFile = File(...),
 ) -> TranscodeOut:
+    enforce_feature(auth.user, "transcode")
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in _TRANSCODE_SUFFIXES:
         raise HTTPException(422, f"ไฟล์ประเภทนี้ไม่รองรับ ({suffix or 'ไม่ทราบนามสกุล'})")
@@ -643,7 +857,7 @@ async def transcode_clip(
         "transcode_for_web",
         user_id=auth.user_id,
         token=token,
-        filename=name,
+        filename=name, user=auth.user,
     )
     log.info("transcode_queued", user_id=auth.user_id, token=token, bytes=size)
     return TranscodeOut(job_id=job_id, token=token)
@@ -842,6 +1056,12 @@ async def _project_files(uid: str) -> dict[str, int]:
 #: so a short cache turns O(files x projects) back into O(projects).
 _USED_CACHE: dict[int, tuple[float, int, int]] = {}
 _USED_CACHE_TTL_SEC = 20.0
+#: The last measured value per user, kept past the TTL: a read-only meter
+#: (GET /usage/me) shows this instead of waiting on a fresh walk.
+_USED_LAST: dict[int, tuple[int, int]] = {}
+#: Projects measured at once. One S3 LIST each; sequential, 40 projects cost
+#: seconds on every settings-page load (2026-09-22).
+_USED_WALK_CONCURRENCY = 8
 
 
 async def _storage_used(session: AsyncSession, user_id: int) -> tuple[int, int]:
@@ -869,23 +1089,87 @@ async def _storage_used(session: AsyncSession, user_id: int) -> tuple[int, int]:
             select(VideoProject.uid).where(VideoProject.user_id == user_id)
         )
     ).scalars().all()
+    return await _walk_storage(user_id, list(rows))
 
-    total = 0
-    stored = 0
-    for uid in rows:
-        size = sum((await _project_files(uid)).values())
-        if size:
-            total += size
-            stored += 1
+
+async def _walk_storage(user_id: int, rows: list[str]) -> tuple[int, int]:
+    """Measure the given projects' files — no database access, so it can run
+    on after the request that started it has moved on."""
+    import time
+
+    gate = asyncio.Semaphore(_USED_WALK_CONCURRENCY)
+
+    async def _size(uid: str) -> int:
+        async with gate:
+            return sum((await _project_files(uid)).values())
+
+    sizes = await asyncio.gather(*(_size(uid) for uid in rows))
+    total = sum(sizes)
+    stored = sum(1 for size in sizes if size)
     _USED_CACHE[user_id] = (time.monotonic() + _USED_CACHE_TTL_SEC, total, stored)
+    _USED_LAST[user_id] = (total, stored)
     return total, stored
 
 
+async def storage_used_for_display(
+    session: AsyncSession, user_id: int, *, wait_sec: float = 1.5
+) -> tuple[int, int] | None:
+    """`_storage_used` for a meter that must not stall a page.
+
+    Waits at most `wait_sec` for a fresh walk; past that, answers with the last
+    measured value (None if there has never been one) and lets the walk finish
+    in the background, so the next load has it. Quota ENFORCEMENT keeps calling
+    `_storage_used` directly — only display may be a little stale. The project
+    list is read here, on the request's session; only the file walk (no
+    database) outlives the request.
+    """
+    import time
+
+    cached = _USED_CACHE.get(user_id)
+    if cached and cached[0] > time.monotonic():
+        return cached[1], cached[2]
+    rows = (
+        await session.execute(
+            select(VideoProject.uid).where(VideoProject.user_id == user_id)
+        )
+    ).scalars().all()
+    task = asyncio.ensure_future(_walk_storage(user_id, list(rows)))
+    try:
+        return await asyncio.wait_for(asyncio.shield(task), timeout=wait_sec)
+    except TimeoutError:
+        return _USED_LAST.get(user_id)
+
+
 async def _quota_for(session: AsyncSession, user_id: int) -> tuple[int, str]:
-    """The plan's storage allowance for this user. 0 means unlimited."""
+    """The plan's storage allowance for this user. 0 means unlimited.
+
+    Per plan from packages/billing/limits.py (Free 1 GB … Max 100 GB). Admin /
+    internal accounts are unlimited like enterprise. A downgrade that leaves
+    an account over its new allowance only refuses NEW bytes — nothing is
+    ever deleted automatically (owner, 2026-09-22).
+    """
     user = await session.get(User, user_id)
     plan = str(getattr(user, "plan", None) or "free")
+    if bool(getattr(user, "is_admin", False)):
+        return 0, plan
     return get_settings().plan_storage_limit(plan), plan
+
+
+async def enforce_storage_quota(session: AsyncSession, user_id: int, incoming_bytes: int) -> None:
+    """507 when ``incoming_bytes`` more would take the account past its plan's
+    storage. For routes that keep uploaded bytes on the server (the server
+    pipeline's uploads); ``put_web_file`` does its own replace-aware check."""
+    quota, _plan = await _quota_for(session, user_id)
+    if not quota:
+        return
+    used, _ = await _storage_used(session, user_id)
+    projected = used + max(0, int(incoming_bytes))
+    if projected > quota:
+        raise HTTPException(
+            507,
+            f"พื้นที่เก็บเต็มแล้ว ({_human_bytes(projected)} จาก "
+            f"{_human_bytes(quota)}) — ลบโปรเจกต์เก่าออกก่อน",
+        )
 
 
 @router.get("/storage", response_model=StorageOut)
@@ -1027,9 +1311,11 @@ async def delete_web_file(
 async def transcribe_audio(
     uid: str,
     auth: CurrentUser,
+    request: Request,
     session: AsyncSession = Depends(db_session),
     files: list[UploadFile] = File(...),
     style_uid: str = Form(""),
+    allow_wallet: bool = Form(False),
 ) -> AnalyzeFramesOut:
     """Speech modes: receive speech WAVs → transcribe + plan on the server.
 
@@ -1056,45 +1342,76 @@ async def transcribe_audio(
         if not f.filename or not name_re.match(f.filename):
             raise HTTPException(422, f"ชื่อไฟล์เสียงต้องเป็น audio_NNN.wav (ได้ {f.filename})")
 
+    # The WAVs ARE what gets transcribed (and billed per second), so they are
+    # measured before the reservation, which is priced on them — never on the
+    # clip lengths the client stated. They wait in staging until then.
     root = data_root()
-    audio_dir = root / "video_outputs" / uid / "audio"
-    audio_dir.mkdir(parents=True, exist_ok=True)
-    for stale in audio_dir.glob("audio_*.wav"):
-        stale.unlink(missing_ok=True)
-    for f in files:
-        (audio_dir / f.filename).write_bytes(await f.read())
-
-    await push_project_files(uid)  # WAVs only
-
-    job_id = f"vlocal_{uid[:8]}"
-    await session.execute(text("SET search_path TO core, public"))
-    existing = await session.get(Job, job_id)
-    if existing:
-        existing.status = "queued"
-        existing.progress = 2
-        existing.result = {"step": "queued", "message": "รับไฟล์เสียงแล้ว รอ worker ถอดเสียง…"}
-        existing.error = None
-    else:
-        session.add(Job(
-            id=job_id,
-            tenant_id=auth.tenant_id,
-            type="video_edit",
-            status="queued",
-            progress=2,
-            result={"step": "queued", "message": "รับไฟล์เสียงแล้ว รอ worker ถอดเสียง…"},
-        ))
-    await bind_tenant_search_path(session, auth.tenant_slug)
-    proj.status = "processing"
-    proj.job_id = job_id
-    await session.commit()
-
-    if proj.mode == "talking_head":
-        await _enqueue(job_id, "plan_talking_local", project_uid=uid, tenant_slug=auth.tenant_slug)
-    else:
-        await _enqueue(
-            job_id, "plan_speech_local",
-            project_uid=uid, tenant_slug=auth.tenant_slug, style_uid=style_uid.strip(),
+    staging = root / "video_outputs" / uid / f".incoming-audio-{uuid.uuid4().hex}"
+    try:
+        staging.mkdir(parents=True, exist_ok=True)
+        audio_secs: list[float] = []
+        for f in files:
+            dest = staging / str(f.filename)
+            dest.write_bytes(await f.read())
+            audio_secs.append(await _measure_upload(dest, label="เสียง"))
+        run_id = await start_paid_run(
+            auth, request,
+            estimator.estimate_run(
+                kind="transcribe_audio", engine=proj.engine, precision=proj.precision,
+                clip_secs=audio_secs,
+            ),
+            allow_wallet=allow_wallet, job_id=f"vlocal_{uid[:8]}", reference_id=uid,
+            mode=proj.mode, engine=proj.engine, precision=proj.precision,
         )
+    except BaseException:
+        import shutil
+
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+    async with release_on_error(run_id):
+        audio_dir = root / "video_outputs" / uid / "audio"
+        audio_dir.mkdir(parents=True, exist_ok=True)
+        for stale in audio_dir.glob("audio_*.wav"):
+            stale.unlink(missing_ok=True)
+        for wav in staging.glob("audio_*.wav"):
+            wav.replace(audio_dir / wav.name)
+        import shutil
+
+        shutil.rmtree(staging, ignore_errors=True)
+
+        await push_project_files(uid)  # WAVs only
+
+        job_id = f"vlocal_{uid[:8]}"
+        await session.execute(text("SET search_path TO core, public"))
+        existing = await session.get(Job, job_id)
+        if existing:
+            existing.status = "queued"
+            existing.progress = 2
+            existing.result = {"step": "queued", "message": "รับไฟล์เสียงแล้ว รอ worker ถอดเสียง…"}
+            existing.error = None
+        else:
+            session.add(Job(
+                id=job_id,
+                tenant_id=auth.tenant_id,
+                type="video_edit",
+                status="queued",
+                progress=2,
+                result={"step": "queued", "message": "รับไฟล์เสียงแล้ว รอ worker ถอดเสียง…"},
+            ))
+        await bind_tenant_search_path(session, auth.tenant_slug)
+        proj.status = "processing"
+        proj.job_id = job_id
+        await session.commit()
+
+        if proj.mode == "talking_head":
+            await _enqueue(
+                job_id, "plan_talking_local", project_uid=uid, tenant_slug=auth.tenant_slug, run_id=run_id, user=auth.user,
+            )
+        else:
+            await _enqueue(
+                job_id, "plan_speech_local",
+                project_uid=uid, tenant_slug=auth.tenant_slug, style_uid=style_uid.strip(), run_id=run_id, user=auth.user,
+            )
     return AnalyzeFramesOut(job_id=job_id)
 
 
@@ -1225,6 +1542,7 @@ async def upload_music(
     numba compilation on the first call in a process's lifetime can take
     30s+ on its own.
     """
+    enforce_feature(auth.user, "music")
     proj = await _get_local_project(session, uid, auth.user_id)
     if proj.mode not in ("dub_first", "highlight"):
         raise HTTPException(400, "เพลงประกอบใช้ได้เฉพาะโหมด dub_first / highlight")
@@ -1300,6 +1618,7 @@ async def delete_music(
 async def reedit_dub_scenes(
     uid: str,
     auth: CurrentUser,
+    request: Request,
     session: AsyncSession = Depends(db_session),
     preview: UploadFile = File(...),
     manifest: str = Form(...),
@@ -1309,6 +1628,7 @@ async def reedit_dub_scenes(
     music_offset_sec: float = Form(0.0, ge=0),
     music_trim_in_sec: float = Form(0.0, ge=0),
     music_trim_out_sec: float | None = Form(None, gt=0),
+    allow_wallet: bool = Form(False),
 ) -> AnalyzeFramesOut:
     """dub_first: AI-assisted re-edit of the current edit script.
 
@@ -1373,71 +1693,101 @@ async def reedit_dub_scenes(
     proxy_dir = output_dir / "proxy"
     proxy_manifest_file = proxy_dir / "proxy_manifest.json"
 
+    # Everything the model will watch is measured BEFORE the reservation,
+    # which is priced on it: the re-uploaded (or stored) source proxies AND
+    # the live preview. Uploads wait in staging until the run is reserved.
+    staged: _StagedProxies | None = None
     if proxies:
         try:
             proxy_entries = [ProxyManifestEntry.model_validate(e) for e in json.loads(proxy_manifest)]
         except (json.JSONDecodeError, ValueError) as exc:
             raise HTTPException(422, f"proxy_manifest ไม่ถูกต้อง: {exc}") from exc
-        proxy_dir.mkdir(parents=True, exist_ok=True)
         by_name = {f.filename: f for f in proxies}
+        pairs: list[tuple[ProxyManifestEntry, UploadFile]] = []
         for entry in proxy_entries:
-            up = by_name.get(entry.file)
+            up = by_name.get(_safe_upload_name(entry.file))
             if up is None:
                 raise HTTPException(422, f"ไม่พบไฟล์ proxy {entry.file} ในคำขอ")
-            (proxy_dir / entry.file).write_bytes(await up.read())
-        proxy_manifest_file.write_text(
-            json.dumps([e.model_dump() for e in proxy_entries], ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-    elif not proxy_manifest_file.is_file():
+            pairs.append((entry, up))
+        staged = await _stage_proxies(uid, pairs)
+        proxy_secs = [float(rec["measuredSec"]) for rec in staged.records]
+    elif proxy_manifest_file.is_file():
+        proxy_secs = await _measure_stored_proxies(proxy_dir, proxy_manifest_file)
+    else:
         raise HTTPException(400, "ไม่พบ proxy ของคลิปต้นฉบับ — กรุณา analyze ใหม่อีกครั้ง")
 
-    reedit_dir = output_dir / "ai_reedit"
-    reedit_dir.mkdir(parents=True, exist_ok=True)
-    preview_path = reedit_dir / "edited_preview.mp4"
-    preview_path.write_bytes(await preview.read())
-    (reedit_dir / "reedit_request.json").write_text(
-        json.dumps(body.model_dump(), ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    await push_project_files(uid)  # preview MP4 + request JSON only
+    preview_stage = output_dir / f".incoming-preview-{uuid.uuid4().hex}.mp4"
+    try:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        preview_stage.write_bytes(await preview.read())
+        preview_sec = await _measure_upload(preview_stage, label="พรีวิว", max_short_side=PROXY_MAX_SHORT_SIDE)
+        run_id = await start_paid_run(
+            auth, request,
+            estimator.estimate_run(
+                # The re-edit call samples every file at the provider default,
+                # whatever the project's precision.
+                kind="reedit", engine=proj.engine, precision="standard",
+                clip_secs=[*proxy_secs, preview_sec],
+            ),
+            allow_wallet=allow_wallet, job_id=f"vlocal_{uid[:8]}", reference_id=uid,
+            mode=proj.mode, engine=proj.engine, precision=proj.precision,
+        )
+    except BaseException:
+        preview_stage.unlink(missing_ok=True)
+        if staged is not None:
+            staged.discard()
+        raise
+    async with release_on_error(run_id):
+        if staged is not None:
+            staged.install(proxy_dir)
 
-    job_id = f"vlocal_{uid[:8]}"
-    await session.execute(text("SET search_path TO core, public"))
-    existing = await session.get(Job, job_id)
-    queued = {
-        "step": "queued",
-        "message": "รับคำสั่งแก้ไขแล้ว รอ AI ประมวลผล…",
-        "style_uid": chosen_style_uid or None,
-    }
-    if existing:
-        existing.status = "queued"
-        existing.progress = 2
-        existing.result = queued
-        existing.error = None
-    else:
-        session.add(Job(
-            id=job_id,
-            tenant_id=auth.tenant_id,
-            type="video_edit",
-            status="queued",
-            progress=2,
-            result=queued,
-        ))
-    await bind_tenant_search_path(session, auth.tenant_slug)
-    proj.status = "processing"
-    proj.job_id = job_id
-    await session.commit()
+        reedit_dir = output_dir / "ai_reedit"
+        reedit_dir.mkdir(parents=True, exist_ok=True)
+        preview_path = reedit_dir / "edited_preview.mp4"
+        preview_stage.replace(preview_path)
+        (reedit_dir / "reedit_request.json").write_text(
+            json.dumps(body.model_dump(), ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        await push_project_files(uid)  # preview MP4 + request JSON only
 
-    # style_uid travels with the job; the worker resolves the prose from the
-    # DB at run time (DB is the only source — no style file on disk/S3).
-    await _enqueue(
-        job_id,
-        "reedit_dub_scenes_local",
-        project_uid=uid,
-        tenant_slug=auth.tenant_slug,
-        style_uid=chosen_style_uid,
-        **music_window,
-    )
+        job_id = f"vlocal_{uid[:8]}"
+        await session.execute(text("SET search_path TO core, public"))
+        existing = await session.get(Job, job_id)
+        queued = {
+            "step": "queued",
+            "message": "รับคำสั่งแก้ไขแล้ว รอ AI ประมวลผล…",
+            "style_uid": chosen_style_uid or None,
+        }
+        if existing:
+            existing.status = "queued"
+            existing.progress = 2
+            existing.result = queued
+            existing.error = None
+        else:
+            session.add(Job(
+                id=job_id,
+                tenant_id=auth.tenant_id,
+                type="video_edit",
+                status="queued",
+                progress=2,
+                result=queued,
+            ))
+        await bind_tenant_search_path(session, auth.tenant_slug)
+        proj.status = "processing"
+        proj.job_id = job_id
+        await session.commit()
+
+        # style_uid travels with the job; the worker resolves the prose from the
+        # DB at run time (DB is the only source — no style file on disk/S3).
+        await _enqueue(
+            job_id,
+            "reedit_dub_scenes_local",
+            project_uid=uid,
+            tenant_slug=auth.tenant_slug,
+            style_uid=chosen_style_uid,
+            run_id=run_id,
+            **music_window, user=auth.user,
+        )
     return AnalyzeFramesOut(job_id=job_id)
 
 
@@ -1447,6 +1797,7 @@ async def reedit_dub_scenes(
 async def plan_effects(
     uid: str,
     auth: CurrentUser,
+    request: Request,
     session: AsyncSession = Depends(db_session),
     proxy: UploadFile = File(...),
     prompt: str = Form(""),
@@ -1455,6 +1806,7 @@ async def plan_effects(
     cuts: str = Form(""),
     use_previous: bool = Form(False),
     reference: UploadFile | None = File(None),
+    allow_wallet: bool = Form(False),
 ) -> AnalyzeFramesOut:
     """AI-assisted effects placement: receive a downscaled proxy of the finished
     cut video + an optional instruction + an optional timed script/transcript,
@@ -1496,106 +1848,143 @@ async def plan_effects(
     (effects_dir / "prompt.txt").write_text(prompt or "", encoding="utf-8")
     (effects_dir / "script.txt").write_text(script or "", encoding="utf-8")
 
-    # Real scene-cut boundaries (see docstring) — cleared each run so a
-    # de-selected/stale value never silently lingers. Only written when the
-    # payload actually parses to a non-empty list of numbers; anything else
-    # (missing, malformed, empty) leaves transitions/sceneDrifts disabled,
-    # never raises — this is a nice-to-have enhancement, not a hard input.
-    cuts_file = effects_dir / "cuts.json"
-    cuts_file.unlink(missing_ok=True)
-    if cuts.strip():
-        try:
-            parsed_cuts = json.loads(cuts)
-            if isinstance(parsed_cuts, list) and parsed_cuts:
-                cuts_file.write_text(
-                    json.dumps([float(c) for c in parsed_cuts if isinstance(c, (int, float))]),
-                    encoding="utf-8",
+    # Reserve before the rest is stored, priced on EVERY video the model will
+    # watch, as measured here: the cut proxy and, when attached, the style
+    # reference (capped like a style's, it is billed per second too). A file
+    # whose length cannot be read is refused, never counted as zero
+    # (docs/token-billing-design.md §6.1, §15).
+    settings = get_settings()
+    staged_ref: Path | None = None
+    try:
+        media_secs = [await _measure_upload(effects_dir / "cut_proxy.mp4", label="วิดีโอที่ตัดแล้ว")]
+        image_refs = 0
+        if reference is not None:
+            ref_suffix = Path(reference.filename or "").suffix.lower() or ".mp4"
+            if not re.fullmatch(r"\.[a-z0-9]{1,5}", ref_suffix):
+                raise HTTPException(422, "นามสกุลไฟล์อ้างอิงไม่ถูกต้อง")
+            staged_ref = effects_dir / f".incoming-reference{ref_suffix}"
+            staged_ref.write_bytes(await reference.read())
+            if ref_suffix in _REFERENCE_IMAGE_SUFFIXES:
+                image_refs = 1
+            else:
+                media_secs.append(await _measure_upload(
+                    staged_ref, label="อ้างอิง", max_sec=float(settings.reference_max_sec),
+                ))
+        run_id = await start_paid_run(
+            auth, request,
+            estimator.estimate_run(
+                # The placement call samples at the provider default.
+                kind="plan_effects", engine=proj.engine, precision="standard",
+                clip_secs=media_secs, frame_count=image_refs,
+            ),
+            allow_wallet=allow_wallet, job_id=f"vlocal_{uid[:8]}", reference_id=uid,
+            mode=proj.mode, engine=proj.engine, precision=proj.precision,
+        )
+    except BaseException:
+        if staged_ref is not None:
+            staged_ref.unlink(missing_ok=True)
+        raise
+    async with release_on_error(run_id):
+        # Real scene-cut boundaries (see docstring) — cleared each run so a
+        # de-selected/stale value never silently lingers. Only written when the
+        # payload actually parses to a non-empty list of numbers; anything else
+        # (missing, malformed, empty) leaves transitions/sceneDrifts disabled,
+        # never raises — this is a nice-to-have enhancement, not a hard input.
+        cuts_file = effects_dir / "cuts.json"
+        cuts_file.unlink(missing_ok=True)
+        if cuts.strip():
+            try:
+                parsed_cuts = json.loads(cuts)
+                if isinstance(parsed_cuts, list) and parsed_cuts:
+                    cuts_file.write_text(
+                        json.dumps([float(c) for c in parsed_cuts if isinstance(c, (int, float))]),
+                        encoding="utf-8",
+                    )
+            except (json.JSONDecodeError, TypeError, ValueError):
+                log.warning("plan_effects_cuts_unparseable", uid=uid, cuts_raw=cuts[:200])
+
+        # A chosen saved STYLE (packages/db/models/effect_style.py) — its distilled
+        # prose is written to style.txt so plan_effects_local can splice it as the
+        # authoritative <style> block. Cleared each run; a de-selected style this
+        # time must not silently reuse last run's. Only ready styles carry prose.
+        #
+        # Also delete the S3 object when clearing: push_outputs never removes
+        # orphans, so a later worker pull would resurrect last run's style.txt
+        # (live report 2026-07-18: user picked drift style but AI followed a
+        # stale zoom-hold style.txt from a prior attempt on the same project).
+        style_file = effects_dir / "style.txt"
+        style_file.unlink(missing_ok=True)
+        await delete_output_file(uid, "effects/style.txt")
+        chosen_style_uid = style_uid.strip()
+        if chosen_style_uid:
+            from packages.db.models.effect_style import EffectStyle
+
+            style = await session.get(EffectStyle, chosen_style_uid)
+            if style is None or style.user_id != auth.user_id:
+                raise HTTPException(404, "ไม่พบสไตล์ที่เลือก")
+            if style.system_prompt:
+                style_file.write_text(style.system_prompt, encoding="utf-8")
+                log.info(
+                    "plan_effects_style_selected",
+                    uid=uid,
+                    style_uid=chosen_style_uid,
+                    style_name=style.name,
+                    prompt_chars=len(style.system_prompt),
                 )
-        except (json.JSONDecodeError, TypeError, ValueError):
-            log.warning("plan_effects_cuts_unparseable", uid=uid, cuts_raw=cuts[:200])
-
-    # A chosen saved STYLE (packages/db/models/effect_style.py) — its distilled
-    # prose is written to style.txt so plan_effects_local can splice it as the
-    # authoritative <style> block. Cleared each run; a de-selected style this
-    # time must not silently reuse last run's. Only ready styles carry prose.
-    #
-    # Also delete the S3 object when clearing: push_outputs never removes
-    # orphans, so a later worker pull would resurrect last run's style.txt
-    # (live report 2026-07-18: user picked drift style but AI followed a
-    # stale zoom-hold style.txt from a prior attempt on the same project).
-    style_file = effects_dir / "style.txt"
-    style_file.unlink(missing_ok=True)
-    await delete_output_file(uid, "effects/style.txt")
-    chosen_style_uid = style_uid.strip()
-    if chosen_style_uid:
-        from packages.db.models.effect_style import EffectStyle
-
-        style = await session.get(EffectStyle, chosen_style_uid)
-        if style is None or style.user_id != auth.user_id:
-            raise HTTPException(404, "ไม่พบสไตล์ที่เลือก")
-        if style.system_prompt:
-            style_file.write_text(style.system_prompt, encoding="utf-8")
-            log.info(
-                "plan_effects_style_selected",
-                uid=uid,
-                style_uid=chosen_style_uid,
-                style_name=style.name,
-                prompt_chars=len(style.system_prompt),
-            )
+            else:
+                log.warning(
+                    "plan_effects_style_empty_prompt",
+                    uid=uid,
+                    style_uid=chosen_style_uid,
+                    style_name=style.name,
+                )
         else:
-            log.warning(
-                "plan_effects_style_empty_prompt",
-                uid=uid,
-                style_uid=chosen_style_uid,
-                style_name=style.name,
-            )
-    else:
-        log.info("plan_effects_style_none", uid=uid)
+            log.info("plan_effects_style_none", uid=uid)
 
-    # The reference is OPTIONAL and named by its real extension (the AI call
-    # needs a real suffix to guess mime type) — any stale file from a previous
-    # run is removed first so an omitted param this time doesn't silently
-    # reuse last run's attachment.
-    for stale in effects_dir.glob("reference.*"):
-        stale.unlink(missing_ok=True)
-        await delete_output_file(uid, f"effects/{stale.name}")
-    if reference is not None:
-        suffix = Path(reference.filename or "").suffix or ".mp4"
-        (effects_dir / f"reference{suffix}").write_bytes(await reference.read())
+        # The reference is OPTIONAL and named by its real extension (the AI call
+        # needs a real suffix to guess mime type) — any stale file from a previous
+        # run is removed first so an omitted param this time doesn't silently
+        # reuse last run's attachment.
+        for stale in effects_dir.glob("reference.*"):
+            stale.unlink(missing_ok=True)
+            await delete_output_file(uid, f"effects/{stale.name}")
+        if staged_ref is not None:
+            staged_ref.replace(effects_dir / f"reference{staged_ref.suffix}")
 
-    await push_project_files(uid)  # proxy MP4 + prompt + script + optional reference
+        await push_project_files(uid)  # proxy MP4 + prompt + script + optional reference
 
-    job_id = f"vlocal_{uid[:8]}"
-    await session.execute(text("SET search_path TO core, public"))
-    existing = await session.get(Job, job_id)
-    queued = {
-        "step": "queued",
-        "message": "รับวิดีโอแล้ว รอ AI วางเอฟเฟกต์…",
-        "style_uid": chosen_style_uid or None,
-    }
-    if existing:
-        existing.status = "queued"
-        existing.progress = 2
-        existing.result = queued
-        existing.error = None
-    else:
-        session.add(Job(
-            id=job_id, tenant_id=auth.tenant_id, type="video_edit",
-            status="queued", progress=2, result=queued,
-        ))
-    await session.commit()
+        job_id = f"vlocal_{uid[:8]}"
+        await session.execute(text("SET search_path TO core, public"))
+        existing = await session.get(Job, job_id)
+        queued = {
+            "step": "queued",
+            "message": "รับวิดีโอแล้ว รอ AI วางเอฟเฟกต์…",
+            "style_uid": chosen_style_uid or None,
+        }
+        if existing:
+            existing.status = "queued"
+            existing.progress = 2
+            existing.result = queued
+            existing.error = None
+        else:
+            session.add(Job(
+                id=job_id, tenant_id=auth.tenant_id, type="video_edit",
+                status="queued", progress=2, result=queued,
+            ))
+        await session.commit()
 
-    # style_uid travels with the job so the worker can re-apply from DB AFTER
-    # s3_pull (belt-and-suspenders against a stale style.txt resurrected from
-    # an older outputs/ prefix).
-    await _enqueue(
-        job_id,
-        "plan_effects_local",
-        project_uid=uid,
-        tenant_slug=auth.tenant_slug,
-        style_uid=chosen_style_uid,
-        use_previous=use_previous,
-    )
+        # style_uid travels with the job so the worker can re-apply from DB AFTER
+        # s3_pull (belt-and-suspenders against a stale style.txt resurrected from
+        # an older outputs/ prefix).
+        await _enqueue(
+            job_id,
+            "plan_effects_local",
+            project_uid=uid,
+            tenant_slug=auth.tenant_slug,
+            style_uid=chosen_style_uid,
+            use_previous=use_previous,
+            run_id=run_id, user=auth.user,
+        )
     return AnalyzeFramesOut(job_id=job_id)
 
 

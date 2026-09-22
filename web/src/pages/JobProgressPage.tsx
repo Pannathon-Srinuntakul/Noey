@@ -1,6 +1,8 @@
-import { useEffect, useRef } from 'react'
-import { Loader2, Square } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { Hourglass, Loader2, Square } from 'lucide-react'
 import { useJobs } from '../lib/jobs'
+import { getUsage } from '../lib/api'
+import { queueNotice } from '../lib/usageLimits'
 import {
   etaMinutes,
   progressPercent,
@@ -29,12 +31,39 @@ function formatDuration(totalSec: number): string {
  * The AI thinking log is deliberately NOT shown anywhere on this build — raw
  * reasoning text identifies the vendor behind it (business-secret rule).
  */
+/**
+ * How many jobs the plan runs at once — asked only once a job is actually
+ * waiting for a slot, since that is the one moment the number matters. Null
+ * until known (or when the read fails: the notice then has no number).
+ */
+function useConcurrencyMax(waiting: boolean): number | null {
+  const { session } = useJobs()
+  const [max, setMax] = useState<number | null>(null)
+  useEffect(() => {
+    if (!waiting) return
+    let cancelled = false
+    getUsage(session.baseUrl, session.accessToken)
+      .then((u) => {
+        if (!cancelled) setMax(u.concurrency.max)
+      })
+      .catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
+    // `session` is recreated per provider render; the token is what matters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [waiting])
+  return max
+}
+
 export default function JobProgressPage({ uid }: { uid: string }): React.JSX.Element {
   const { jobFor } = useJobs()
   const { navigate } = useRouter()
   const job = jobFor(uid)
   const step = job?.step as ProjectStep | undefined
   const busy = step ? isBusy(step) : false
+  const waitingSlot = job?.waitingSlot ?? false
+  const concurrencyMax = useConcurrencyMax(waitingSlot)
 
   /**
    * A job that FINISHES while this page is open has nothing left to show — send
@@ -123,10 +152,26 @@ export default function JobProgressPage({ uid }: { uid: string }): React.JSX.Ele
               request 2026-09-09). */}
           <div className="rounded-md border border-divider px-5 py-[18px]">
             <p className="text-[15px] font-semibold text-ink">สิ่งที่ AI กำลังทำ</p>
-            <p className="mt-2.5 flex items-center gap-2 text-sm text-muted">
-              <Loader2 size={14} className="shrink-0 animate-spin text-accent" />
-              {job.progressMsg || SHORT_STEP_LABELS[step as ProjectStep]}
-            </p>
+            {waitingSlot ? (
+              // Queued behind the plan's own concurrency cap: not stuck, and
+              // not something to stop — it starts by itself (design §4).
+              <p className="mt-2.5 flex items-start gap-2 text-sm leading-[1.6] text-ink-2">
+                <Hourglass size={14} className="mt-[3px] shrink-0 text-accent" />
+                <span>
+                  รอคิว — มีงานอื่นของคุณกำลังทำอยู่
+                  <span className="block text-muted">
+                    {concurrencyMax !== null
+                      ? queueNotice(concurrencyMax)
+                      : 'งานนี้จะเริ่มเองเมื่อมีช่องว่าง'}
+                  </span>
+                </span>
+              </p>
+            ) : (
+              <p className="mt-2.5 flex items-center gap-2 text-sm text-muted">
+                <Loader2 size={14} className="shrink-0 animate-spin text-accent" />
+                {job.progressMsg || SHORT_STEP_LABELS[step as ProjectStep]}
+              </p>
+            )}
           </div>
         </div>
 

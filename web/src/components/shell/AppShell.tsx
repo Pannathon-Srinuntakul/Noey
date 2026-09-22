@@ -1,3 +1,4 @@
+import { UsageBanner } from './UsageBanner'
 import { useEffect, useState } from 'react'
 import type { Session } from '../../App'
 import { useJobs } from '../../lib/jobs'
@@ -87,6 +88,7 @@ export function AppShell({
               : undefined
           }
         />
+        {showNav ? <UsageBanner /> : null}
         <div className="relative flex min-h-0 flex-1">
           {showNav ? (
             <NavRail

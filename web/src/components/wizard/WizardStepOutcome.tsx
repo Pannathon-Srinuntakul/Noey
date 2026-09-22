@@ -133,7 +133,9 @@ export function WizardStepOutcome({
   cutStyles,
   previewThumb,
   onPickMusic,
-  onEditMusicRange
+  onEditMusicRange,
+  musicLocked = null,
+  onSeePlans
 }: {
   state: WizardState
   patch: Patch
@@ -141,6 +143,10 @@ export function WizardStepOutcome({
   previewThumb: string | null
   onPickMusic: () => void
   onEditMusicRange: () => void
+  /** Set when the plan has no background music (docs/token-billing-plan.md
+   * §8): the line to show instead of the picker. */
+  musicLocked?: string | null
+  onSeePlans?: () => void
 }): React.JSX.Element {
   const isCut = state.uiMode === 'highlight'
   const isLongform = state.uiMode === 'longform'
@@ -398,6 +404,20 @@ export function WizardStepOutcome({
                   <span className="text-[13px] leading-[1.6] text-muted">
                     โหมดนี้ใช้เสียงในคลิป ยังผสมเพลงทับไม่ได้
                   </span>
+                ) : musicLocked ? (
+                  // Locked by the plan: say which plan has it, and where to get it.
+                  <>
+                    <span className="text-[13px] leading-[1.6] text-muted">{musicLocked}</span>
+                    {onSeePlans ? (
+                      <button
+                        type="button"
+                        onClick={onSeePlans}
+                        className="text-[13px] text-accent transition-colors duration-state ease-out hover:text-accent-hover-text"
+                      >
+                        ดูแผน
+                      </button>
+                    ) : null}
+                  </>
                 ) : state.music ? (
                   <>
                     <span className="inline-flex h-[34px] max-w-[280px] items-center gap-2 rounded-md border border-accent bg-accent-tint px-3 text-sm text-accent">

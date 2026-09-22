@@ -339,10 +339,52 @@ interface RemoteProject {
  * another, many of them waiting on S3 — and people refreshed to see their work
  * (live report 2026-09-21, production).
  */
-export async function restoreMissingProjects(
+export function restoreMissingProjects(
   session: ApiSession,
   onRestored?: () => void
 ): Promise<number> {
+  // Single-flight: the mount restore, a StrictMode remount and a focus resync
+  // used to run side by side, each fetching every missing project.json — the
+  // browser's six connections to the API filled with duplicates and every
+  // other request (the settings page's usage card included) queued behind them.
+  if (restoreInFlight) return restoreInFlight
+  restoreInFlight = runRestore(session, onRestored).finally(() => {
+    restoreInFlight = null
+  })
+  return restoreInFlight
+}
+
+let restoreInFlight: Promise<number> | null = null
+
+/**
+ * Server projects whose project.json is not there (404): a server row that
+ * never got its files, or one whose files were removed. Remembered for this
+ * browser so every load and focus does not ask for them again; retried after a
+ * day in case the files turn up.
+ */
+const MISSING_KEY = 'noey:restore-missing'
+const MISSING_TTL_MS = 24 * 60 * 60 * 1000
+
+function readMissing(): Map<string, number> {
+  try {
+    const raw = window.localStorage.getItem(MISSING_KEY)
+    const parsed = raw ? (JSON.parse(raw) as Record<string, number>) : {}
+    const now = Date.now()
+    return new Map(Object.entries(parsed).filter(([, at]) => now - at < MISSING_TTL_MS))
+  } catch {
+    return new Map()
+  }
+}
+
+function writeMissing(missing: Map<string, number>): void {
+  try {
+    window.localStorage.setItem(MISSING_KEY, JSON.stringify(Object.fromEntries(missing)))
+  } catch {
+    // Storage blocked: the only cost is asking again next time.
+  }
+}
+
+async function runRestore(session: ApiSession, onRestored?: () => void): Promise<number> {
   const remote = await listRemoteProjects(session)
   if (remote.length === 0) return 0
 
@@ -355,13 +397,19 @@ export async function restoreMissingProjects(
       .map((p) => p.remote?.uid)
       .filter((u): u is string => !!u)
   )
-  const todo = remote.filter((row) => row.origin === 'local' && !knownRemote.has(row.uid))
+  const missing = readMissing()
+  const todo = remote.filter(
+    (row) => row.origin === 'local' && !knownRemote.has(row.uid) && !missing.has(row.uid)
+  )
   let restored = 0
 
   const restoreOne = async (row: RemoteProject): Promise<void> => {
     try {
       const blob = await pullProjectFile(session, row.uid, 'project.json')
-      if (!blob) return
+      if (!blob) {
+        missing.set(row.uid, Date.now())
+        return
+      }
       const text = await blob.text()
       const parsed = JSON.parse(text) as { uid?: string }
       // The record keeps its ORIGINAL local uid: every stored path is built
@@ -391,6 +439,7 @@ export async function restoreMissingProjects(
       while (next < todo.length) await restoreOne(todo[next++])
     })
   )
+  writeMissing(missing)
   return restored
 }
 

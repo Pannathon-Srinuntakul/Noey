@@ -343,3 +343,27 @@ def test_offset_does_not_mutate_the_input():
     offset_items(segs, 10.0, ("start", "end"))
     assert segs[0]["start"] == 1.0
     assert segs[0]["words"][0]["start"] == 1.0
+
+
+# ── a rejected FILE is the user's input, not our failure (billing review) ────
+
+@pytest.mark.parametrize(
+    ("status", "user_input"), [(400, True), (413, True), (415, True), (422, True), (401, False), (403, False)]
+)
+async def test_a_file_the_service_rejects_is_a_user_input_error(monkeypatch, status, user_input):
+    """A paid run that ends on a 4xx for the uploaded audio settles as
+    user_error (charged what it used); our key / quota problems stay ours."""
+    import httpx
+
+    from packages.core.errors import UserInputError
+    from packages.video import elevenlabs_stt
+
+    real_client = httpx.AsyncClient
+
+    def mocked(**kwargs):
+        return real_client(transport=httpx.MockTransport(lambda req: httpx.Response(status, text="bad file")))
+
+    monkeypatch.setattr(httpx, "AsyncClient", mocked)
+    with pytest.raises(elevenlabs_stt.ElevenLabsSTTError) as exc:
+        await elevenlabs_stt._post_stt(b"x", {"model_id": "scribe_v2"}, "a.wav", timeout_sec=5)
+    assert isinstance(exc.value, UserInputError) is user_input

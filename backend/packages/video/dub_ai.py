@@ -987,6 +987,15 @@ def build_dub_edit_instruction_text_video(
     )
 
 
+def _billed_video_seconds(clip_videos: list[tuple[str, pathlib.Path, float]]) -> float:
+    """Σ seconds of the video files a request attaches, as measured on disk
+    (the stated duration only when a file cannot be measured — the upload
+    route already refused unmeasurable files)."""
+    from packages.video.ffmpeg_bin import measured_seconds
+
+    return round(sum(measured_seconds(path, fallback=duration) for _cid, path, duration in clip_videos), 3)
+
+
 async def generate_dub_edit_script_video(
     clip_videos: list[tuple[str, pathlib.Path, float]],
     *,
@@ -1071,6 +1080,11 @@ async def generate_dub_edit_script_video(
         messages = [{"role": "user", "content": _build_content(sample_fps)}]
         extra = call_kwargs(model=resolved_model, effort=settings.dub_vision_effort)
         extra["timeout"] = settings.dub_vision_timeout_sec
+        # The per-call billing guard prices the footage this request really
+        # attaches: each file as measured here, never the length a client
+        # stated (packages/billing/guard.py). Popped by the gateway.
+        extra["billing_video_sec"] = _billed_video_seconds(clip_videos)
+        extra["billing_video_precision"] = "high" if sample_fps > 0 else "standard"
         # Gemini does not reliably follow a JSON shape from prose instructions
         # alone (observed in production: it invented its own top-level keys
         # instead of "segments"). response_schema constrains decoding so the
@@ -1116,13 +1130,34 @@ async def generate_dub_edit_script_video(
         attempt = 0
         while attempt < MAX_BOUNDS_ATTEMPTS:
             attempt += 1
-            resp = await acompletion_stream_thinking(
-                messages,
-                system=resolved_system,
-                project_uid=project_uid,
-                on_thinking=on_thinking,
-                **extra,
-            )
+            if best is None:
+                resp = await acompletion_stream_thinking(
+                    messages,
+                    system=resolved_system,
+                    project_uid=project_uid,
+                    on_thinking=on_thinking,
+                    **extra,
+                )
+            else:
+                # A correction pass is OPTIONAL: a usable answer is in hand, so
+                # if the run's budget (packages/billing/guard.py) has no room
+                # for another full call, keep that answer rather than stopping
+                # the whole job. Lazy import: this module is shared with the
+                # desktop sidecar, which has no billing.
+                from packages.billing import guard
+
+                try:
+                    with guard.optional_call():
+                        resp = await acompletion_stream_thinking(
+                            messages,
+                            system=resolved_system,
+                            project_uid=project_uid,
+                            on_thinking=on_thinking,
+                            **extra,
+                        )
+                except guard.OptionalCallSkipped:
+                    log.warning("dub_bounds_retry_skipped_budget", project_uid=project_uid, attempt=attempt)
+                    break
             raw_text = resp.choices[0].message.content or ""
             if not raw_text.strip():
                 finish = getattr(resp.choices[0], "finish_reason", None)
@@ -1135,11 +1170,17 @@ async def generate_dub_edit_script_video(
                         model=resolved_model,
                     )
                     sample_fps = 0
+                    extra["billing_video_precision"] = "standard"
                     messages = [{"role": "user", "content": _build_content(0)}]
                     attempt -= 1  # the refusal never produced an answer to judge
                     continue
                 if finish == "content_filter":
-                    raise ValueError(
+                    # The user's footage was refused — input the user controls,
+                    # and the refused request's input was still billed. A
+                    # user_error run is charged, not refunded (core/errors.py).
+                    from packages.core.errors import UserInputError
+
+                    raise UserInputError(
                         "ผู้ให้บริการ AI ปฏิเสธวิดีโอนี้ — ลองตัดคลิปให้สั้นลง "
                         "หรือเลือกช่วงอื่นแล้วลองใหม่"
                     )
@@ -1330,6 +1371,7 @@ async def generate_dub_reedit_script_video(
     from packages.llm.config import call_kwargs
     from packages.llm.files import delete_gemini_files, gemini_video_block, upload_gemini_file
     from packages.llm.gateway import acompletion_stream_thinking
+    from packages.video.quality import reedit_model
     from packages.video.timeline import (
         clamp_dub_segments_to_clip_durations,
         parse_llm_json,
@@ -1337,7 +1379,7 @@ async def generate_dub_reedit_script_video(
     )
 
     settings = get_settings()
-    model = f"gemini/{settings.dub_vision_model}"
+    model = f"gemini/{reedit_model()}"
 
     preview_path, _preview_duration = edited_preview
     file_ids: list[str] = []
@@ -1366,6 +1408,12 @@ async def generate_dub_reedit_script_video(
         messages = [{"role": "user", "content": user_msg_content}]
         extra = call_kwargs(model=model, effort=settings.dub_vision_effort)
         extra["timeout"] = settings.dub_vision_timeout_sec
+        # Every video this request attaches — the live preview AND each source
+        # proxy — at the provider's default sampling (no fps is set here).
+        extra["billing_video_sec"] = _billed_video_seconds(
+            [("edited_preview", preview_path, _preview_duration), *clip_videos]
+        )
+        extra["billing_video_precision"] = "standard"
         extra["response_format"] = {
             "type": "json_object",
             "response_schema": DUB_EDIT_SCHEMA_VIDEO,

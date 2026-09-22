@@ -17,9 +17,13 @@ import { useJobs } from '../../lib/jobs'
 
 export function WizardStepFiles({
   state,
-  setFiles
+  setFiles,
+  estimate
 }: {
   state: WizardState
+  /** The pre-flight usage line ("ใช้ประมาณ 18% ของ…"), shown as soon as every
+   * clip has a length — before the user has gone any further. */
+  estimate?: React.ReactNode
   /** Updater form, not a plain value: the phone-receive modal keeps the
    * callback it was mounted with, so appending against the `files` captured in
    * that render would make every arriving file overwrite the previous one. */
@@ -101,6 +105,10 @@ export function WizardStepFiles({
             {total === null ? '' : ` · รวม ${fmtClock(total)} / ${fmtClock(cap)}`}
           </span>
         </div>
+
+        {estimate && files.length > 0 ? (
+          <div className="shrink-0 border-b border-divider px-5 py-3">{estimate}</div>
+        ) : null}
 
         {heavy ? (
           <p className="shrink-0 border-b border-divider px-5 py-3 text-sm leading-[1.6] text-accent">

@@ -75,3 +75,27 @@ describe('the UI never names the AI stack', () => {
     })
   }
 })
+
+/**
+ * Users never see token counts (docs/token-billing-plan.md §1): limits are
+ * percentages, the top-up balance is baht. The word itself in a rendered
+ * string is the tell — a label, a unit, a "N tokens" — so screens (.tsx) and
+ * the module that words limits for them may not carry it at all.
+ */
+describe('the UI never states usage in tokens', () => {
+  const TOKEN_WORD = /โทเคน|\btokens?\b/i
+  const files = sourceFiles(SRC).filter(
+    (f) => f.endsWith('.tsx') || f.endsWith('usageLimits.ts') || f.endsWith('usageEstimate.ts')
+  )
+
+  for (const file of files) {
+    const rel = file.slice(SRC.length + 1)
+    it(`${rel} has no token wording in any string`, () => {
+      // `${token}` inside a URL template is a variable, not wording.
+      const hits = stringsOf(readFileSync(file, 'utf8'))
+        .map((s) => s.replace(/\$\{[^}]*\}/g, ''))
+        .filter((s) => TOKEN_WORD.test(s))
+      expect(hits, `token wording in ${rel}`).toEqual([])
+    })
+  }
+})

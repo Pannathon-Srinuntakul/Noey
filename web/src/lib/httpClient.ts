@@ -1,6 +1,8 @@
 /** HTTP client for backend API calls — routed through the Electron main process
  * so packaged/desktop origins are not blocked by server CORS. */
 
+import { DEVICE_HEADER, deviceId } from './usageLimits'
+
 export interface ApiFetchInit {
   method?: string
   headers?: Record<string, string>
@@ -20,7 +22,9 @@ export async function apiFetch(url: string, init: ApiFetchInit = {}): Promise<Ap
   const result = await window.noey.api.fetch({
     url,
     method: init.method,
-    headers: init.headers,
+    // Every call carries the install's random device id: the start routes and
+    // /auth/register read it for the free-tier limits (docs/token-billing-design.md §12).
+    headers: { [DEVICE_HEADER]: deviceId(), ...(init.headers ?? {}) },
     jsonBody: init.body,
     formFields: init.formFields,
     formFiles: init.formFiles

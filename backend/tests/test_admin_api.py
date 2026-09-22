@@ -1,7 +1,8 @@
 # ruff: noqa: F811  (pytest fixtures imported from tests/admin_helpers.py are parameters here)
 """Admin dashboard behaviour: the facts it reports, and that its actions reach
-the same state the web editor and the marketing site read (users.plan,
-usage_reset_at, is_active/token_version, GET /billing/plans).
+the same state the web editor and the marketing site read (users.plan, the
+rolling windows in core.usage_accounts, is_active/token_version,
+GET /billing/plans).
 """
 
 import uuid
@@ -9,7 +10,7 @@ from types import SimpleNamespace
 
 from packages.admin import pricing
 from packages.auth.tokens import encode_access
-from packages.billing import catalog, service
+from packages.billing import catalog, limits, service
 from services.api.main import app
 from services.api.routers import admin as admin_router
 from tests.admin_helpers import (  # noqa: F401  (fixtures)
@@ -59,6 +60,13 @@ async def _seed_usage(user_id: int) -> str:
         "(:b, :u, :s, 'talking_head', 'error', 'lite', 'standard', NULL, NULL)",
         a=uid, b=str(uuid.uuid4()), u=user_id, s=slug,
     )
+    # The plan's rolling windows (packages/billing/runs.py): 4,300 tokens
+    # charged in a Weekly window that started just now.
+    await db(
+        "INSERT INTO core.usage_accounts (user_id, weekly_started_at, weekly_used, monthly_started_at, "
+        "monthly_used, five_hour_started_at, five_hour_used) VALUES (:u, now(), 4300, now(), 4300, now(), 4300)",
+        u=user_id,
+    )
     return uid
 
 
@@ -84,11 +92,24 @@ async def test_dashboard_reports_real_usage_facts(mail):
         ("gemini-3.7-flash", "video_cut"),
         ("gemini-3.1-pro-preview", "video_effects"),
     }
-    assert me["stt"] == [{"model": "scribe_v2", "seconds": 90.0}]
+    # Seeded rows predate cost recording: no recorded cost, all of it "uncosted"
+    # for the admin app to price from its (draft) price table.
+    assert me["stt"] == [
+        {"model": "scribe_v2", "seconds": 90.0, "tokens": 0, "cost_thb": 0.0, "uncosted_seconds": 90.0}
+    ]
+    flash = next(t for t in me["tokens"] if t["model"] == "gemini-3.7-flash")
+    assert (flash["cost_thb"], flash["uncosted_input"], flash["uncosted_output"]) == (0.0, 1000, 200)
+    assert data["rate_card"]["version"] == "v1" and data["fx"]["usd_thb"] > 0
+    assert "scribe_v2" in data["stt_defaults"]
     assert (me["clips"], me["failed"], me["projects"]) == (1, 1, 2)
     assert me["engine_pro_pct"] == 50.0 and me["precision_high_pct"] == 50.0
     assert me["last_active_days"] == 0
-    assert me["quota_used_tokens"] == 4300 and me["quota_used_pct"] is not None
+    # The admin sees real tokens per window; the percentage is what the user sees.
+    assert me["quota_window"] == "weekly" and me["quota_used_tokens"] == 4300
+    assert me["quota_used_pct"] == round(4300 / limits.window_limit("starter", "weekly") * 100, 1)
+    assert [w["key"] for w in me["windows"]] == ["weekly"] and me["windows"][0]["resets_at"].endswith("Z")
+    assert data["circuit_breaker"]["enabled"] in (True, False) and "estimate_accuracy" in data
+    assert data["billing_config"]["sell_thb_per_1m"] == 250
     assert data["period"]["days"] == 30
     assert "gemini-3.7-flash" in data["model_defaults"]
     assert data["cost_config"]["fx_rate"] > 0
@@ -100,6 +121,10 @@ async def test_dashboard_reports_real_usage_facts(mail):
     first = next(j for j in jobs if j["uid"] == project)
     assert first["name"] == "รีวิวรองเท้า" and first["footage_sec"] == 42.5
     assert {t["feature"] for t in first["tokens"]} == {"video_cut", "video_effects"}
+    body = detail.json()
+    assert body["limits"]["windows"][0]["used_tokens"] == 4300
+    assert body["wallet"]["balance_satang"] == 0 and body["runs"] == []
+    assert body["estimate_accuracy"]["overall"]["runs"] == 0
 
 
 async def test_dashboard_rejects_a_bad_period(mail):
@@ -136,13 +161,18 @@ async def test_quota_reset_moves_the_web_apps_quota_window(mail):
         await _seed_usage(target)
         try:
             token = await _user_token(target)
-            before = (await c.get("/usage/me", headers=bearer(token))).json()["used_tokens"]
+            before = (await c.get("/usage/me", headers=bearer(token))).json()
             r = await c.post(f"/admin/users/{target}/quota-reset", headers=bearer(s["access_token"]))
-            after = (await c.get("/usage/me", headers=bearer(token))).json()["used_tokens"]
+            after = (await c.get("/usage/me", headers=bearer(token))).json()
         finally:
             await _cleanup_projects(target)
-    assert before == 4300 and r.status_code == 200 and after == 0
-    assert await db("SELECT 1 FROM core.admin_audit_events WHERE action = 'quota_reset' AND target_user_id = :t", t=target)
+    assert before["usage_pct"] == round(4300 / limits.window_limit("free", "monthly") * 100, 1)
+    assert r.status_code == 200 and after["usage_pct"] == 0.0
+    assert after["limits"][0]["active"] is False and after["limits"][0]["resets_at"] is None
+    audit = await db(
+        "SELECT detail FROM core.admin_audit_events WHERE action = 'quota_reset' AND target_user_id = :t", t=target
+    )
+    assert audit[0][0]["windows"]["monthly"]["used"] == 4300
 
 
 async def test_deactivation_signs_the_user_out_of_the_web_app_and_back(mail):

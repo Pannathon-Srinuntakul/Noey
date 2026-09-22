@@ -38,6 +38,16 @@ def is_local_deployment(host: str | None) -> bool:
     return (host or "").strip().lower() in LOCAL_DB_HOSTS
 
 
+#: Strictly this machine. ``LOCAL_DB_HOSTS`` also admits docker-compose service
+#: names, which a self-hosted deployment uses too — fine for "which secrets
+#: may be placeholders", not for anything that mints money.
+LOOPBACK_DB_HOSTS = {"localhost", "127.0.0.1", "::1"}
+
+
+def is_loopback_host(host: str | None) -> bool:
+    return (host or "").strip().lower() in LOOPBACK_DB_HOSTS
+
+
 def is_localhost_url(url: str | None) -> bool:
     """Whether a URL points at the machine it is opened on (a dev default)."""
     host = (urlsplit((url or "").strip()).hostname or "").lower()
@@ -259,75 +269,73 @@ class Settings(BaseSettings):
     # temperature is deliberately NOT set: omitted, Scribe uses the value tuned
     # for the model (≈0 per the docs), which is what transcription wants.
 
-    # --- LLM plan limits (tokens per DAILY window, 0 = unlimited) ---
-    # The window is a rolling UTC calendar day — see packages/llm/usage.py:_period_start.
-    # Env var names keep the "_monthly_" spelling for backward compatibility only.
-    # 10M/day while the product is in testing with a single owner (owner's call,
-    # 2026-08-12). It was 0 (unlimited), but the desktop settings screen shows
-    # usage as a share of the quota and there is no share of "unlimited".
-    # Raise it here or via PLAN_FREE_MONTHLY_TOKENS — do not hardcode the number
-    # anywhere else.
-    plan_free_monthly_tokens: int = 10_000_000
-    # PLACEHOLDER (2026-09-21): lite and studio were added with self-service
-    # billing before the owner costed them. The numbers only keep the paid
-    # ladder in price order around starter/pro — they are not a decision.
-    # Override via PLAN_LITE_MONTHLY_TOKENS / PLAN_STUDIO_MONTHLY_TOKENS.
-    plan_lite_monthly_tokens: int = 1_000_000
-    plan_starter_monthly_tokens: int = 2_000_000
-    plan_pro_monthly_tokens: int = 10_000_000
-    plan_studio_monthly_tokens: int = 20_000_000
-    # PLACEHOLDER (2026-09-22): agency/max were added with the 7-plan ladder;
-    # they only continue the ladder in price order. Real limits (weekly +
-    # 5-hour windows in the owner's own token unit) replace this whole block.
-    plan_agency_monthly_tokens: int = 40_000_000
-    plan_max_monthly_tokens: int = 70_000_000
-    plan_enterprise_monthly_tokens: int = 0  # 0 = unlimited
-
-    def plan_token_limit(self, plan: str) -> int:
-        """Return the per-day token limit for the given plan name. 0 means unlimited."""
-        mapping = {
-            "free":       self.plan_free_monthly_tokens,
-            "lite":       self.plan_lite_monthly_tokens,
-            "starter":    self.plan_starter_monthly_tokens,
-            "pro":        self.plan_pro_monthly_tokens,
-            "studio":     self.plan_studio_monthly_tokens,
-            "agency":     self.plan_agency_monthly_tokens,
-            "max":        self.plan_max_monthly_tokens,
-            "enterprise": self.plan_enterprise_monthly_tokens,
-        }
-        return mapping.get(plan, self.plan_free_monthly_tokens)
+    # --- Plan limits ---
+    # The AI limits (rate-card tokens per rolling 5-hour / weekly / monthly
+    # window, concurrency) live in ONE table: packages/billing/limits.py —
+    # owner-approved numbers, deliberately not env-tunable. The old per-UTC-day
+    # PLAN_*_MONTHLY_TOKENS settings were removed with the daily quota.
 
     # --- Server storage per plan (web build) ---
-    # How much project storage an account may keep on the server. Same shape as
-    # the token limits above and settable by env for the same reason: the plans
-    # differ in exactly these figures, and the number must live in ONE place.
-    # 10 GB across the board for the original four — the tiers were not sold
-    # yet. The owner's pricing design says free 1 GB / starter 5 GB / pro 10 GB;
-    # aligning these is the owner's call, so they are deliberately untouched.
-    # lite and studio take the design's figures (3 GB / 30 GB).
-    plan_free_storage_bytes: int = 10 * 1024**3
-    plan_lite_storage_bytes: int = 3 * 1024**3
-    plan_starter_storage_bytes: int = 10 * 1024**3
-    plan_pro_storage_bytes: int = 10 * 1024**3
-    plan_studio_storage_bytes: int = 30 * 1024**3
-    # agency/max (2026-09-22): continue the ladder; owner has not set figures.
-    plan_agency_storage_bytes: int = 60 * 1024**3
-    plan_max_storage_bytes: int = 100 * 1024**3
-    plan_enterprise_storage_bytes: int = 0  # 0 = unlimited
+    # Default: packages/billing/limits.py PLAN_LIMITS[*].storage_gb (owner,
+    # 2026-09-22: Free 1 GB, Lite 3, Starter 5, Pro 10, Studio 30, Agency 60,
+    # Max 100 — the website's figures). Each PLAN_<TIER>_STORAGE_BYTES env var
+    # still overrides one tier (an operational escape hatch, e.g. a disk
+    # emergency). enterprise and admin accounts are unlimited (0).
+    plan_free_storage_bytes: int | None = None
+    plan_lite_storage_bytes: int | None = None
+    plan_starter_storage_bytes: int | None = None
+    plan_pro_storage_bytes: int | None = None
+    plan_studio_storage_bytes: int | None = None
+    plan_agency_storage_bytes: int | None = None
+    plan_max_storage_bytes: int | None = None
 
     def plan_storage_limit(self, plan: str) -> int:
         """Bytes of server storage the given plan allows. 0 means unlimited."""
-        mapping = {
-            "free":       self.plan_free_storage_bytes,
-            "lite":       self.plan_lite_storage_bytes,
-            "starter":    self.plan_starter_storage_bytes,
-            "pro":        self.plan_pro_storage_bytes,
-            "studio":     self.plan_studio_storage_bytes,
-            "agency":     self.plan_agency_storage_bytes,
-            "max":        self.plan_max_storage_bytes,
-            "enterprise": self.plan_enterprise_storage_bytes,
-        }
-        return mapping.get(plan, self.plan_free_storage_bytes)
+        from packages.billing.limits import UNLIMITED_PLANS, plan_limits
+
+        name = (plan or "free").lower()
+        if name in UNLIMITED_PLANS:
+            return 0
+        limits = plan_limits(name)
+        tier = name if name in ("free", "lite", "starter", "pro", "studio", "agency", "max") else "free"
+        override = getattr(self, f"plan_{tier}_storage_bytes", None)
+        if override is not None:
+            return int(override)
+        return int(limits.storage_gb) * 1024**3
+
+    # --- Token billing guards (docs/token-billing-design.md §6, §10, §12) ---
+    #: Output + thinking budget the per-call guard assumes for a model call
+    #: that sets no max_tokens and runs outside a paid run's profile. Paid runs
+    #: use their profile's max_output (packages/billing/estimate.py).
+    llm_max_output_tokens: int = 8_000
+    #: Cross-process vendor rate limits (packages/billing/vendor_limits.py):
+    #: requests / tokens per minute per Gemini family, and concurrent
+    #: speech-to-text requests. 0 disables that limit. Defaults sit under the
+    #: paid-tier AI Studio limits; set them to the project's real quota.
+    gemini_rpm_flash: int = 1_000
+    gemini_tpm_flash: int = 1_000_000
+    gemini_rpm_pro: int = 150
+    gemini_tpm_pro: int = 1_000_000
+    elevenlabs_max_concurrency: int = 5
+    #: How long a call may wait for a vendor slot before failing (retryable).
+    vendor_wait_max_sec: int = 300
+    #: Free-tier abuse limits (packages/billing/free_tier.py): distinct free
+    #: accounts that may start AI work from one IP / device in 30 days, and
+    #: free AI runs per IP / device per day. Proposals, env-tunable.
+    free_accounts_per_ip: int = 3
+    free_runs_per_ip_day: int = 10
+    #: Runs per user per UTC day that end in ``our_failure`` and are refunded
+    #: in full. Past this, a further failed run is charged what it used
+    #: (capped at its ceiling): a failure we cannot tell from input the user
+    #: controls (a timeout on an oversized file) must not be free to repeat.
+    billing_free_refunds_per_day: int = 3
+    #: Longest style-reference clip accepted (seconds) — cut / effects styles
+    #: and the plan-effects reference: every second is billed video input.
+    reference_max_sec: int = 1200
+    #: Mock top-up (credits the wallet without a payment) — explicit opt-in,
+    #: and even then only with the database on loopback. Refused at startup on
+    #: a real deployment (assert_production_secrets).
+    wallet_mock_topup: bool = False
 
     # --- Billing (Stripe) — see docs/billing-stripe.md ---
     # Everything below is optional: with the key or the webhook secret unset,
@@ -475,6 +483,11 @@ def assert_production_secrets() -> None:
         problems.append(
             "ADMIN_PASSWORD is unset, so a fresh database is seeded with the "
             "placeholder admin login from scripts/migrate_to_multitenant.py."
+        )
+    if s.wallet_mock_topup:
+        problems.append(
+            "WALLET_MOCK_TOPUP is on — it credits wallet balance without a payment. "
+            "Development only; unset it."
         )
     if not problems:
         return

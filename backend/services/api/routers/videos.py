@@ -15,7 +15,9 @@ from __future__ import annotations
 
 import pathlib
 import uuid
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from typing import Any
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select, text
@@ -42,6 +44,8 @@ from packages.video.timeline import (
     normalize_dub_edit_script,
     resolve_edit_target,
 )
+from packages.billing import estimate as estimator
+from services.api.billing_start import release_run, start_paid_run
 from services.api.deps import CurrentUser, db_session
 
 router = APIRouter(prefix="/videos", tags=["videos"])
@@ -91,7 +95,24 @@ async def _redirect_presigned_output(project_uid: str, filename: str) -> Redirec
     return RedirectResponse(url)
 
 
-async def _enqueue(job_id: str, fn: str, **kwargs) -> None:  # type: ignore[type-arg]
+def queue_priority_kwargs(user: Any) -> dict[str, Any]:
+    """arq orders its queue by score (the enqueue time in ms). Scoring a job
+    ``queue_lead_sec`` in the past puts it ahead of everything enqueued within
+    that lead — the plan's queue priority (Pro "ahead", Studio+ "first";
+    docs/token-billing-plan.md §8). Normal plans enqueue as before."""
+    from datetime import UTC, datetime, timedelta
+
+    from packages.billing.plan_features import queue_lead_sec
+
+    lead = queue_lead_sec(user)
+    if lead <= 0:
+        return {}
+    return {"_defer_until": datetime.now(UTC) - timedelta(seconds=lead)}
+
+
+async def _enqueue(job_id: str, fn: str, *, user: Any = None, **kwargs) -> None:  # type: ignore[type-arg]
+    """Enqueue ``fn``. Pass ``user`` (the account the work is for) so the
+    job gets its plan's queue priority."""
     import asyncio
 
     from arq import create_pool
@@ -104,7 +125,7 @@ async def _enqueue(job_id: str, fn: str, **kwargs) -> None:  # type: ignore[type
     log.info("video_enqueue_start", job_id=job_id, fn=fn, redis_host=redis.host)
     try:
         pool = await asyncio.wait_for(create_pool(redis), timeout=15.0)
-        await pool.enqueue_job(fn, job_id=job_id, **kwargs)
+        await pool.enqueue_job(fn, job_id=job_id, **queue_priority_kwargs(user), **kwargs)
         await pool.close()
     except TimeoutError as exc:
         log.error("video_enqueue_redis_timeout", job_id=job_id, redis_url=settings.redis_url)
@@ -289,6 +310,7 @@ DURATION_MODES = ("full",)
 @router.post("", response_model=UploadResponse, status_code=201)
 async def upload_video(
     auth: CurrentUser,
+    request: Request,
     files: list[UploadFile] = File(...),
     mode: str = Form(default="talking_head"),
     upload_mode: str = Form(default="merge"),
@@ -296,9 +318,15 @@ async def upload_video(
     target_duration_sec: int | None = Form(default=None),
     brief: str | None = Form(default=None),
     user_script: str | None = Form(default=None),
+    allow_wallet: bool = Form(default=False),
     session: AsyncSession = Depends(db_session),
 ) -> UploadResponse:
-    """Upload one or more video clips; start the AI editing pipeline."""
+    """Upload one or more video clips; start the AI editing pipeline.
+
+    The uploads stay on the server, so they count against the plan's storage
+    (507 before anything is written). Each project reserves its estimate once
+    its clips' real lengths are known (402 / 429 / 503 — see
+    services/api/billing_start.py); the reservation travels with the chain."""
     log.info(
         "video_upload_start",
         user_id=auth.user_id,
@@ -317,6 +345,13 @@ async def upload_video(
     if target_duration_sec is not None:
         if target_duration_sec < 15 or target_duration_sec > 600:
             raise HTTPException(400, "target_duration_sec must be between 15 and 600")
+
+    from services.api.routers.videos_local import enforce_new_project, enforce_storage_quota
+
+    await enforce_new_project(
+        session, auth.user, adding=len(files) if upload_mode == "separate" and len(files) > 1 else 1
+    )
+    await enforce_storage_quota(session, auth.user_id, sum(int(f.size or 0) for f in files))
 
     data_root_path = data_root()
     created: list[UploadProjectItem] = []
@@ -360,25 +395,68 @@ async def upload_video(
             )
         )
 
-    await session.commit()
-    log.info("video_upload_saved", projects=[c.project_uid for c in created])
+    # One reservation per project, priced on the clips' measured lengths.
+    # dub_first's server chain reads sampled frames; talking_head transcribes
+    # and plans (packages/billing/estimate.py MODE_PROFILES).
+    run_ids: dict[str, str] = {}
+    try:
+        for item in created:
+            clips = sorted((data_root_path / "video_uploads" / item.project_uid).glob("clip_*"))
+            secs = [await _measured_seconds_or_422(p) for p in clips]
+            kind = "analyze_frames" if mode == "dub_first" else "server_pipeline"
+            run_ids[item.project_uid] = await start_paid_run(
+                auth, request, estimator.estimate_run(kind=kind, clip_secs=secs),
+                allow_wallet=allow_wallet, job_id=item.job_id, reference_id=item.project_uid, mode=mode,
+            )
 
-    # Push uploaded files to S3 (no-op when S3 not fully configured)
-    for item in created:
-        up_dir = data_root() / "video_uploads" / item.project_uid
-        await push_uploads(item.project_uid, up_dir)
-    log.info("video_upload_s3_done", s3_enabled=s3_enabled())
+        await session.commit()
+        log.info("video_upload_saved", projects=[c.project_uid for c in created])
 
-    for item in created:
-        await _enqueue(
-            item.job_id,
-            "ingest_video",
-            project_uid=item.project_uid,
-            tenant_slug=auth.tenant_slug,
-        )
+        # Push uploaded files to S3 (no-op when S3 not fully configured)
+        for item in created:
+            up_dir = data_root() / "video_uploads" / item.project_uid
+            await push_uploads(item.project_uid, up_dir)
+        log.info("video_upload_s3_done", s3_enabled=s3_enabled())
+
+        for item in created:
+            await _enqueue(
+                item.job_id,
+                "ingest_video",
+                project_uid=item.project_uid,
+                tenant_slug=auth.tenant_slug,
+                run_id=run_ids[item.project_uid], user=auth.user,
+            )
+    except BaseException:
+        for run_id in run_ids.values():
+            await release_run(run_id)
+        for item in created:
+            _drop_upload_dir(data_root_path, item.project_uid)
+        raise
     log.info("video_upload_enqueued", job_ids=[c.job_id for c in created])
 
     return UploadResponse(projects=created)
+
+
+async def _measured_seconds_or_422(path: pathlib.Path) -> float:
+    """A clip's length for the reservation, FAIL CLOSED: an unreadable clip is
+    refused (422), never priced as zero seconds — the provider bills whatever
+    reaches it (packages/video/ffmpeg_bin.py:measure_media)."""
+    import asyncio
+
+    from packages.video.ffmpeg_bin import MediaUnmeasurable, measure_media
+
+    try:
+        return (await asyncio.to_thread(measure_media, path)).duration_sec
+    except MediaUnmeasurable:
+        raise HTTPException(422, "อ่านความยาวคลิปไม่ได้ — กรุณาส่งไฟล์วิดีโอที่เปิดได้") from None
+
+
+def _drop_upload_dir(root: pathlib.Path, project_uid: str) -> None:
+    """A start refused after the bytes landed (limit reached, enqueue failed)
+    must not leave an orphan upload the storage quota would count."""
+    import shutil
+
+    shutil.rmtree(root / "video_uploads" / project_uid, ignore_errors=True)
 
 
 @router.get("", response_model=list[VideoProjectOut])
@@ -742,7 +820,7 @@ async def save_edit_timeline(
     await session.commit()
 
     await push_project_files(uid)
-    await _enqueue(job_id, render_task, project_uid=uid, tenant_slug=auth.tenant_slug)
+    await _enqueue(job_id, render_task, project_uid=uid, tenant_slug=auth.tenant_slug, user=auth.user)
     return UploadProjectItem(project_uid=uid, job_id=job_id)
 
 
@@ -796,7 +874,9 @@ async def get_source_file(
 async def upload_voiceover(
     uid: str,
     auth: CurrentUser,
+    request: Request,
     file: UploadFile = File(...),
+    allow_wallet: bool = Form(default=False),
     session: AsyncSession = Depends(db_session),
 ) -> VideoProjectOut:
     """Upload voiceover file for a dub_first project. Triggers plan_dub_timeline."""
@@ -815,6 +895,28 @@ async def upload_voiceover(
     if ext.lower() not in allowed:
         raise HTTPException(400, f"Unsupported audio format '{ext}'. Use mp3/wav/m4a/aac/ogg.")
 
+    job_id = p.job_id or f"video_{uid[:8]}"
+    run_id = await start_paid_run(
+        auth, request, estimator.estimate_run(kind="voiceover"),
+        allow_wallet=allow_wallet, job_id=job_id, reference_id=uid, mode=p.mode,
+    )
+    try:
+        return await _store_voiceover_and_plan(session, auth, p, uid, file, ext, job_id, run_id)
+    except BaseException:
+        await release_run(run_id)
+        raise
+
+
+async def _store_voiceover_and_plan(
+    session: AsyncSession,
+    auth: CurrentUser,
+    p: VideoProject,
+    uid: str,
+    file: UploadFile,
+    ext: str,
+    job_id: str,
+    run_id: str,
+) -> VideoProjectOut:
     vo_dir = data_root() / "video_uploads" / uid
     vo_dir.mkdir(parents=True, exist_ok=True)
     vo_path = vo_dir / f"voiceover{ext}"
@@ -828,7 +930,6 @@ async def upload_voiceover(
     await push_uploads(uid, vo_dir)
 
     # Reuse the same job_id so the frontend can keep polling
-    job_id = p.job_id or f"video_{uid[:8]}"
     from packages.db.models.core_auth import Job
     from sqlalchemy import select as _sel
     from packages.db.session import bind_tenant_search_path
@@ -843,7 +944,7 @@ async def upload_voiceover(
     await bind_tenant_search_path(session, auth.tenant_slug)
     await session.commit()
 
-    await _enqueue(job_id, "plan_dub_timeline", project_uid=uid, tenant_slug=auth.tenant_slug)
+    await _enqueue(job_id, "plan_dub_timeline", project_uid=uid, tenant_slug=auth.tenant_slug, run_id=run_id, user=auth.user)
     return _to_out(p)
 
 

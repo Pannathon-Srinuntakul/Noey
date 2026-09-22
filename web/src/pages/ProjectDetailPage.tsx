@@ -432,6 +432,14 @@ export default function ProjectDetailPage({ uid }: { uid: string }): React.JSX.E
                 </span>
               ) : null}
             </div>
+            {step === 'error' && job.project.billingStop?.walletCanCover ? (
+              // The plan's limit refused the run; the top-up balance can pay.
+              <div className="mt-3">
+                <Button variant="primary" onClick={() => void job.continueOnWallet()}>
+                  ใช้ยอดเงินคงเหลือทำต่อ
+                </Button>
+              </div>
+            ) : null}
             {ready && job.mode === 'speech_highlights' && highlightItems.length > 0 ? (
               <p className="mt-1.5 text-[13px] tabular-nums text-muted">
                 รวม {fmtClock(highlightItems.reduce((a, h) => a + (h.durationSec || 0), 0))}{' '}

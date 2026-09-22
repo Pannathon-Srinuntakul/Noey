@@ -65,12 +65,19 @@ class User(Base):
     token_version: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
-    # Subscription plan — limits monthly token usage (see packages/llm/usage.py)
+    # Subscription plan — its limits are packages/billing/limits.py; the
+    # rolling-window state is core.usage_accounts (packages/billing/runs.py).
     plan: Mapped[str] = mapped_column(String(32), default="free", server_default="free")
-    # Manual reset point set by admin; NULL means auto-reset at start of calendar month
+    # When an admin last reset this account's windows (audit convenience; the
+    # windows themselves live in core.usage_accounts). Kept until the admin app
+    # stops reading it — nothing enforces from it any more.
     usage_reset_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Free-tier abuse limits (packages/billing/free_tier.py): salted hashes of
+    # the sign-up IP and the client's device id — never the raw values.
+    signup_ip_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    signup_device_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

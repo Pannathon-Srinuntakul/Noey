@@ -1,4 +1,9 @@
-"""Per-user LLM usage tracking, limit enforcement, and cost estimation.
+"""Per-user LLM usage attribution: the usage context, token extraction, access gate.
+
+Plan limits are NOT enforced here any more: they are rolling windows checked
+once at job start with a reservation (packages/billing/runs.py), and a
+per-call job ceiling in the gateway (packages/billing/guard.py). Vendor cost
+is priced when a row is recorded (packages/billing/vendor_cost.py).
 
 Usage context is propagated via a ContextVar so callers don't need to thread it
 through every function signature.  Set it once before a user-triggered LLM flow:
@@ -13,7 +18,6 @@ from __future__ import annotations
 
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from typing import Any
 
 from packages.core.logging import get_logger
@@ -35,6 +39,11 @@ class UsageCtx:
     tenant_id: int
     feature: str              # chat | video | prompt_cron
     reference_id: str | None = field(default=None)
+    # The paid run (core.ai_runs.id) this work is charged to, and the
+    # core.jobs id it runs under. Stamped on every usage row; null until the
+    # caller has started a run (scripts never do).
+    run_id: str | None = field(default=None)
+    job_id: str | None = field(default=None)
 
 
 def set_usage_ctx(ctx: UsageCtx) -> "Token[UsageCtx | None]":
@@ -48,39 +57,6 @@ def get_usage_ctx() -> UsageCtx | None:
 
 def reset_usage_ctx(token: "Token[UsageCtx | None]") -> None:
     _ctx_var.reset(token)
-
-
-# ---------------------------------------------------------------------------
-# Model price table  (input, output) USD per 1 million tokens
-# ---------------------------------------------------------------------------
-
-MODEL_PRICES: dict[str, tuple[float, float]] = {
-    # Haiku family
-    "claude-haiku-4-5":                       (0.80,  4.00),
-    "claude-haiku-4-5-20251001":              (0.80,  4.00),
-    "anthropic/claude-haiku-4-5":             (0.80,  4.00),
-    "anthropic/claude-haiku-4-5-20251001":    (0.80,  4.00),
-    # Sonnet family
-    "claude-sonnet-4-6":                      (3.00, 15.00),
-    "anthropic/claude-sonnet-4-6":            (3.00, 15.00),
-    # Opus family
-    "claude-opus-4-8":                        (15.00, 75.00),
-    "anthropic/claude-opus-4-8":              (15.00, 75.00),
-    # OpenAI
-    "gpt-4o":                                 (2.50, 10.00),
-    "openai/gpt-4o":                          (2.50, 10.00),
-    # Gemini
-    "gemini/gemini-1.5-pro":                  (3.50, 10.50),
-    "gemini/gemini-1.5-flash":                (0.075, 0.30),
-}
-
-_DEFAULT_PRICE = (3.00, 15.00)  # fallback — Sonnet rate
-
-
-def estimate_cost_usd(model: str, input_tokens: int, output_tokens: int) -> float:
-    """Compute approximate USD cost for a single call."""
-    in_price, out_price = MODEL_PRICES.get(model, _DEFAULT_PRICE)
-    return (input_tokens * in_price + output_tokens * out_price) / 1_000_000
 
 
 def _usage_from_stream_chunk(chunk: Any) -> Any | None:
@@ -153,6 +129,41 @@ def extract_usage_tokens(usage: Any) -> tuple[int, int]:
     return inp, out
 
 
+def _get(obj: Any, name: str) -> Any:
+    if obj is None:
+        return None
+    if isinstance(obj, dict):
+        return obj.get(name)
+    return getattr(obj, name, None)
+
+
+def extract_cached_tokens(usage: Any) -> int:
+    """Prompt tokens the vendor served from its context cache (0 when unknown).
+
+    LiteLLM maps Gemini's ``cachedContentTokenCount`` onto the OpenAI shape
+    ``usage.prompt_tokens_details.cached_tokens``; Anthropic-style usage
+    reports ``cache_read_input_tokens`` instead.
+    """
+    if usage is None:
+        return 0
+    details = _get(usage, "prompt_tokens_details")
+    cached = _get(details, "cached_tokens")
+    if not isinstance(cached, (int, float)) or cached <= 0:
+        cached = _get(usage, "cache_read_input_tokens")
+    try:
+        return max(0, int(cached or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def extract_stream_cached_from_chunks(chunks: Any) -> int:
+    """Highest cached-token count reported on any streaming chunk."""
+    best = 0
+    for chunk in chunks or []:
+        best = max(best, extract_cached_tokens(_usage_from_stream_chunk(chunk)))
+    return best
+
+
 def merge_provider_usage(
     *pairs: tuple[int, int],
 ) -> tuple[int, int]:
@@ -163,20 +174,6 @@ def merge_provider_usage(
         best_in = max(best_in, inp)
         best_out = max(best_out, out)
     return best_in, best_out
-
-
-# ---------------------------------------------------------------------------
-# Custom exception
-# ---------------------------------------------------------------------------
-
-class UsageLimitExceeded(Exception):
-    def __init__(self, used: int, limit: int, plan: str) -> None:
-        self.used = used
-        self.limit = limit
-        self.plan = plan
-        super().__init__(
-            f"Token limit exceeded for plan '{plan}': used {used:,} / {limit:,}"
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -199,7 +196,7 @@ def ai_access_problem(user: Any) -> str | None:
     """Why this user may not START paid AI work, or None.
 
     THE policy, read by the request-time gate (services/api/ai_gate.py) and by
-    `check_limit` before every model call. REQUIRE_VERIFIED_EMAIL_FOR_AI off,
+    `check_ai_access` before every model call. REQUIRE_VERIFIED_EMAIL_FOR_AI off,
     an admin, or a verified email → allowed.
     """
     if not get_settings().require_verified_email_for_ai:
@@ -244,19 +241,15 @@ def build_usage_tasks(per_feature: dict[str, int]) -> list[dict[str, object]]:
 
     Always returns every task, zeros included, so the client never has to
     decide whether a missing row means "none" or "not reported". Percentages
-    are of the period total, which is the sum of the input — a task's share of
-    "unlimited" would be meaningless, so the quota does not appear here.
+    are of the period total, which is the sum of the input. Shares only —
+    users never see token counts (docs/token-billing-plan.md §1).
     """
     totals: dict[str, int] = {task: 0 for task in USAGE_TASKS}
     for feature, tokens in per_feature.items():
         totals[task_for_feature(feature)] += tokens
     grand = sum(totals.values())
     return [
-        {
-            "task": task,
-            "total_tokens": tokens,
-            "pct": round(tokens / grand * 100, 1) if grand > 0 else 0.0,
-        }
+        {"task": task, "pct": round(tokens / grand * 100, 1) if grand > 0 else 0.0}
         for task, tokens in totals.items()
     ]
 
@@ -265,105 +258,41 @@ def build_usage_tasks(per_feature: dict[str, int]) -> list[dict[str, object]]:
 # DB helpers (lazy import to avoid circular deps at module load time)
 # ---------------------------------------------------------------------------
 
-def _period_start(reset_at: datetime | None) -> datetime:
-    """Return the start of the current usage period (a rolling UTC day).
-
-    Quotas reset every calendar day (UTC). A manual admin reset (``reset_at``)
-    takes precedence only when it falls within today — so a reset earlier today
-    counts usage from that instant, while a stale reset from a previous day is
-    ignored in favor of the daily start.
-    """
-    now = datetime.now(tz=timezone.utc)
-    day_start = datetime(now.year, now.month, now.day, tzinfo=timezone.utc)
-    if reset_at is not None and reset_at > day_start:
-        return reset_at
-    return day_start
-
-
-async def sum_tokens_since(
-    user_id: int,
-    since: datetime,
-    session: Any,
-) -> int:
-    """Sum input + output tokens for a user from ``since`` to now."""
-    from sqlalchemy import func, select
-    from packages.db.models.llm_usage import LlmUsageLog
-
-    result = await session.execute(
-        select(func.coalesce(func.sum(LlmUsageLog.input_tokens + LlmUsageLog.output_tokens), 0))
-        .where(LlmUsageLog.user_id == user_id)
-        .where(LlmUsageLog.created_at >= since)
-    )
-    return int(result.scalar() or 0)
-
-
-async def record_stt_usage(ctx: UsageCtx, audio_sec: float, model: str = "") -> None:
-    """Insert one SttUsageLog row. Failures are logged but never re-raised.
+async def record_stt_usage(
+    ctx: UsageCtx, audio_sec: float, model: str = "", *, keyterms: bool = False,
+    clip_index: int | None = None,
+) -> None:
+    """Record one transcribed file. Durable; never raises.
 
     Attribution lives here because the ElevenLabs key is one shared account —
     its own totals are every user's usage combined, so they can never be shown
-    to an individual user.
+    to an individual user. Thin wrapper over packages/billing/metering.py.
     """
-    from packages.db.models.stt_usage import SttUsageLog
+    from packages.billing.metering import record_stt_clip
 
-    if audio_sec <= 0:
-        return
-
-    try:
-        maker = get_sessionmaker()
-        async with maker() as session:
-            from sqlalchemy import text
-            await session.execute(text("SET search_path TO core, public"))
-            session.add(
-                SttUsageLog(
-                    user_id=ctx.user_id,
-                    tenant_id=ctx.tenant_id,
-                    reference_id=ctx.reference_id,
-                    audio_sec=float(audio_sec),
-                    model=model,
-                )
-            )
-            await session.commit()
-    except Exception as exc:  # noqa: BLE001
-        log.warning("stt_usage_record_failed", error=str(exc)[:200])
+    await record_stt_clip(
+        ctx, clip_index=clip_index, billed_sec=audio_sec, model=model, keyterms=keyterms
+    )
 
 
-async def check_limit(ctx: UsageCtx) -> None:
-    """Raise UsageLimitExceeded if the user has exceeded their plan quota.
+async def check_ai_access(ctx: UsageCtx) -> None:
+    """Raise ``EmailNotVerified`` if the account may not use paid AI.
 
-    Opens its own short-lived session so it can be called from gateway.py
-    without requiring the caller to manage session lifetime.
+    Defense in depth behind the request-time gate: work enqueued before the
+    gate, or by a route missing from its list, still stops here. Opens its own
+    short-lived session so the gateway can call it before every model call.
     """
+    from sqlalchemy import select, text
+
     from packages.db.models.core_auth import User
 
-    settings = get_settings()
-
-    maker = get_sessionmaker()
-    async with maker() as session:
-        from sqlalchemy import select, text
+    async with get_sessionmaker()() as session:
         await session.execute(text("SET search_path TO core, public"))
-
         user = (
             await session.execute(select(User).where(User.id == ctx.user_id))
         ).scalar_one_or_none()
-        if user is None:
-            return  # no user → don't block (can't check plan)
-
-        # Defense in depth behind the request-time gate: work enqueued before
-        # the gate, or by a route missing from its list, still stops here.
-        if ai_access_problem(user):
+        if user is not None and ai_access_problem(user):
             raise EmailNotVerified()
-
-        plan = str(user.plan or "free")
-        limit = settings.plan_token_limit(plan)
-        if limit == 0:
-            return  # unlimited plan
-
-        since = _period_start(user.usage_reset_at)
-        used = await sum_tokens_since(ctx.user_id, since, session)
-
-        if used >= limit:
-            raise UsageLimitExceeded(used, limit, plan)
 
 
 async def record_usage(
@@ -371,29 +300,16 @@ async def record_usage(
     model: str,
     input_tokens: int,
     output_tokens: int,
+    cached_tokens: int = 0,
 ) -> None:
-    """Insert one LlmUsageLog row.  Failures are logged but never re-raised."""
-    from packages.db.models.llm_usage import LlmUsageLog
+    """Record one successful model call. Durable; never raises.
 
-    if input_tokens == 0 and output_tokens == 0:
-        return  # nothing to record (e.g. local model without usage reporting)
+    Kept for callers outside the gateway; the gateway records every attempt
+    itself via packages/billing/metering.py (``record_llm_attempt``).
+    """
+    from packages.billing.metering import record_llm_attempt
 
-    try:
-        maker = get_sessionmaker()
-        async with maker() as session:
-            from sqlalchemy import text
-            await session.execute(text("SET search_path TO core, public"))
-            session.add(
-                LlmUsageLog(
-                    user_id=ctx.user_id,
-                    tenant_id=ctx.tenant_id,
-                    feature=ctx.feature,
-                    reference_id=ctx.reference_id,
-                    model=model,
-                    input_tokens=input_tokens,
-                    output_tokens=output_tokens,
-                )
-            )
-            await session.commit()
-    except Exception as exc:  # noqa: BLE001
-        log.warning("llm_usage_record_failed", error=str(exc)[:200])
+    await record_llm_attempt(
+        ctx, model=model, status="ok", input_tokens=input_tokens,
+        cached_tokens=cached_tokens, output_tokens=output_tokens,
+    )

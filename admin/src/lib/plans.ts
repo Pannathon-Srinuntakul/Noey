@@ -65,3 +65,24 @@ export const TASK_USE_LABEL: Record<string, string> = {
   style: "สรุปสไตล์",
   other: "งานข้อความ",
 };
+
+/** Plan limits in rate-card tokens — mirrors backend packages/billing/limits.py
+ * (owner-approved 2026-09-22). The admin sees the real numbers; users only
+ * ever see percentages. Weekly = monthly ÷ 4.33, 5-hour = 40% of weekly. */
+export const PLAN_LIMITS: Record<string, { monthly: number; windows: Array<"five_hour" | "weekly" | "monthly">; concurrency: number; storageGb: number }> = {
+  free: { monthly: 100_000, windows: ["monthly"], concurrency: 1, storageGb: 1 },
+  lite: { monthly: 800_000, windows: ["weekly"], concurrency: 1, storageGb: 3 },
+  starter: { monthly: 1_600_000, windows: ["weekly"], concurrency: 1, storageGb: 5 },
+  pro: { monthly: 4_000_000, windows: ["weekly", "five_hour"], concurrency: 2, storageGb: 10 },
+  studio: { monthly: 8_000_000, windows: ["weekly", "five_hour"], concurrency: 3, storageGb: 30 },
+  agency: { monthly: 16_000_000, windows: ["weekly", "five_hour"], concurrency: 4, storageGb: 60 },
+  max: { monthly: 28_000_000, windows: ["weekly", "five_hour"], concurrency: 5, storageGb: 100 },
+};
+
+export function weeklyLimit(monthly: number): number {
+  return Math.floor(monthly / 4.33);
+}
+
+export function fiveHourLimit(monthly: number): number {
+  return Math.floor(weeklyLimit(monthly) * 0.4);
+}

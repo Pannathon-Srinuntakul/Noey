@@ -7,8 +7,7 @@
 
 import type { ApiSession } from './videosLocalApi'
 import { apiFetch } from './httpClient'
-import { ApiError, connectErrorMessage, refresh } from './api'
-import { responseErrorDetail } from './apiError'
+import { ApiError, connectErrorMessage, refresh, errorFromResponse } from './api'
 
 export interface StyleSummary {
   uid: string
@@ -87,7 +86,7 @@ async function request<T>(
     return request<T>(session, path, init, true)
   }
 
-  if (!res.ok) throw new ApiError(res.status, responseErrorDetail(res))
+  if (!res.ok) throw errorFromResponse(res)
   if (res.status === 204) return undefined as T
   return res.json() as T
 }

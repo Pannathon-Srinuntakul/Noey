@@ -2,12 +2,31 @@ import { useCallback, useEffect, useState } from 'react'
 import { LogOut } from 'lucide-react'
 import type { Session } from '../App'
 import type { StorageReport } from '@renderer/platform/types'
-import { ApiError, getUsage, restoreSession, type Usage } from '../lib/api'
+import {
+  ApiError,
+  getPlanPrices,
+  getUsage,
+  getWallet,
+  previewPlanChange,
+  startTopup,
+  switchPlan,
+  type Usage,
+  type Wallet
+} from '../lib/api'
+import { checkoutAlreadyCredited, formatPack } from '../lib/usageLimits'
+import { withFreshToken } from '../lib/freshToken'
+import { useToast } from '../lib/toast'
 import { usePrefs } from '../lib/prefs'
 import { isBusy } from '../lib/projectFlow'
 import { DUB_DURATION_AUTO, DUB_DURATION_FIXED } from '../lib/dubBrief'
 import { UI_MODE_LABEL } from '../lib/wizardState'
 import { Bar, TaskBreakdown } from '../components/settings/TaskBreakdown'
+import { UsageCard } from '../components/settings/UsageCard'
+import { PlansCard } from '../components/settings/PlansCard'
+import { PlanChangeDialog } from '../components/settings/PlanChangeDialog'
+import { useUsageInfo } from '../lib/usageInfo'
+import { planLabel } from '../lib/planLadder'
+import { WalletCard } from '../components/settings/WalletCard'
 import { DiagnosticsTab } from '../components/settings/DiagnosticsTab'
 import { PageHeader } from '../components/shell/PageHeader'
 import { Button } from '../components/ui/Button'
@@ -16,7 +35,6 @@ import { Skeleton } from '../components/ui/Skeleton'
 import { Switch } from '../components/ui/Switch'
 import { Tabs } from '../components/ui/Tabs'
 import { authedFetch, serverMessage } from '../lib/authedFetch'
-import { emitTokens } from '../lib/sessionBus'
 import { useConfirm } from '../lib/confirm'
 import { useJobs } from '../lib/jobs'
 
@@ -31,7 +49,7 @@ const DEFAULT_DURATION_CHOICES = [
 type TabKey = 'usage' | 'storage' | 'defaults' | 'diagnostics' | 'account'
 
 const TABS: { key: TabKey; label: string }[] = [
-  { key: 'usage', label: 'เครดิตและการใช้งาน' },
+  { key: 'usage', label: 'การใช้งาน' },
   { key: 'storage', label: 'ที่เก็บไฟล์' },
   { key: 'defaults', label: 'ค่าเริ่มต้นของงานใหม่' },
   // A phone has no console, and a render that stops on a phone is exactly the
@@ -39,17 +57,6 @@ const TABS: { key: TabKey; label: string }[] = [
   { key: 'diagnostics', label: 'บันทึกการทำงาน' },
   { key: 'account', label: 'บัญชี' }
 ]
-
-/** How long the user has to wait for the daily quota to roll over. */
-function untilResetLabel(): string {
-  const now = new Date()
-  const next = new Date(
-    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1, 0, 0, 0)
-  )
-  const mins = Math.max(0, Math.round((next.getTime() - now.getTime()) / 60000))
-  const h = Math.floor(mins / 60)
-  return h >= 1 ? `รีเซ็ตอีก ${h} ชม.` : `รีเซ็ตอีก ${mins} นาที`
-}
 
 function fmtGB(bytes: number): string {
   if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(1)} GB`
@@ -85,46 +92,61 @@ function StatRow({ label, value }: { label: string; value: string }): React.JSX.
   )
 }
 
-async function fetchUsage(session: Session): Promise<Usage> {
-  let accessToken = session.accessToken
-  try {
-    return await getUsage(session.baseUrl, accessToken)
-  } catch (err) {
-    if (!(err instanceof ApiError) || err.status !== 401) throw err
-  }
-  const pair = await restoreSession(session.baseUrl, accessToken, session.refreshToken)
-  if (!pair) throw new ApiError(401, 'เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่')
-  accessToken = pair.access_token
-  await window.noey.auth.save({
-    baseUrl: session.baseUrl,
-    email: session.profile.email,
-    accessToken: pair.access_token,
-    refreshToken: pair.refresh_token
-  })
-  // Storage alone left React state and the service worker on the dead token;
-  // the bus hands the pair to App, which updates both.
-  emitTokens(pair.access_token, pair.refresh_token)
-  return getUsage(session.baseUrl, accessToken)
-}
-
 // ── tab: usage ───────────────────────────────────────────────────────────────
 
+/**
+ * Plan limits, the top-up balance and where the work went — as percentages
+ * and baht only (docs/token-billing-design.md §19; docs/design/editor-limits.md
+ * §1). Nothing here states, or could be turned back into, a token count.
+ */
 function UsageTab({ session }: { session: Session }): React.JSX.Element {
   const [usage, setUsage] = useState<Usage | null>(null)
+  const [wallet, setWallet] = useState<Wallet | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [technicalOpen, setTechnicalOpen] = useState(false)
+  const [topupBusy, setTopupBusy] = useState(false)
+  // A checkout opened in another tab: refresh when the user comes back to
+  // this one, since that is when the payment has (probably) gone through.
+  const [awaitingPayment, setAwaitingPayment] = useState(false)
   const { projects } = useProjectCounts()
+  const { showToast } = useToast()
+  const { refresh: refreshShellUsage } = useUsageInfo()
+  // Monthly prices by tier (satang) for the plan list — public, no token.
+  const [prices, setPrices] = useState<Record<string, number>>({})
+  const [pickTier, setPickTier] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    getPlanPrices(session.baseUrl)
+      .then((r) => {
+        if (!cancelled) setPrices(Object.fromEntries(r.plans.map((p) => [p.tier, p.unit_amount])))
+      })
+      .catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
+  }, [session.baseUrl])
+
+  const fetchAll = useCallback(async (): Promise<{ usage: Usage; wallet: Wallet | null }> => {
+    const [u, w] = await Promise.all([
+      withFreshToken(session, getUsage),
+      // The wallet is secondary: a server without it must not blank the meters.
+      withFreshToken(session, getWallet).catch(() => null)
+    ])
+    return { usage: u, wallet: w }
+  }, [session])
 
   /** Retry after a failed load — clears the error up front so the panel goes
    * back to the skeleton instead of holding a stale message. */
   const load = useCallback(async (): Promise<void> => {
     setError(null)
     try {
-      setUsage(await fetchUsage(session))
+      const r = await fetchAll()
+      setUsage(r.usage)
+      setWallet(r.wallet)
     } catch (err) {
       setError(err instanceof ApiError ? err.detail : 'โหลดข้อมูลไม่สำเร็จ')
     }
-  }, [session])
+  }, [fetchAll])
 
   // The first fetch is its own inline flow rather than a call to `load`: no
   // state is touched before the first await (the skeleton already covers the
@@ -133,8 +155,10 @@ function UsageTab({ session }: { session: Session }): React.JSX.Element {
     let cancelled = false
     void (async () => {
       try {
-        const result = await fetchUsage(session)
-        if (!cancelled) setUsage(result)
+        const r = await fetchAll()
+        if (cancelled) return
+        setUsage(r.usage)
+        setWallet(r.wallet)
       } catch (err) {
         if (!cancelled) setError(err instanceof ApiError ? err.detail : 'โหลดข้อมูลไม่สำเร็จ')
       }
@@ -142,7 +166,82 @@ function UsageTab({ session }: { session: Session }): React.JSX.Element {
     return () => {
       cancelled = true
     }
-  }, [session])
+  }, [fetchAll])
+
+  useEffect(() => {
+    if (!awaitingPayment) return
+    const onFocus = (): void => {
+      setAwaitingPayment(false)
+      void load()
+    }
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
+  }, [awaitingPayment, load])
+
+  /**
+   * Open the checkout. The tab is opened BEFORE the request: a browser only
+   * lets a click open a window, and after an await it is no longer the click
+   * that asks. A local server with no payment provider credits at once
+   * (`checkoutAlreadyCredited`), so that tab is closed again unused.
+   */
+  const onTopup = async (packSatang: number, method: string): Promise<void> => {
+    setTopupBusy(true)
+    const pending = window.open('about:blank', '_blank')
+    try {
+      const { url } = await withFreshToken(session, (base, token) =>
+        startTopup(base, token, packSatang, method)
+      )
+      if (checkoutAlreadyCredited(url)) {
+        pending?.close()
+        showToast({ text: `เติมเงิน ${formatPack(packSatang)} แล้ว`, variant: 'ok' })
+        await load()
+        return
+      }
+      if (pending) {
+        pending.opener = null
+        pending.location.href = url
+      } else {
+        window.location.assign(url)
+      }
+      setAwaitingPayment(true)
+    } catch (err) {
+      pending?.close()
+      showToast({ text: err instanceof ApiError ? err.detail : 'เปิดหน้าชำระเงินไม่สำเร็จ' })
+    } finally {
+      setTopupBusy(false)
+    }
+  }
+
+  /**
+   * Go ahead with a plan change the dialog confirmed. A payment page opens in
+   * a new tab — opened BEFORE the request, like the top-up, because after an
+   * await the browser no longer counts it as the click's window. A change the
+   * server made (or scheduled) itself just refreshes the meters.
+   */
+  const onSwitchPlan = async (tier: string): Promise<void> => {
+    const pending = tier !== 'free' ? window.open('about:blank', '_blank') : null
+    try {
+      const r = await withFreshToken(session, (base, token) => switchPlan(base, token, tier, true))
+      if (r.url) {
+        if (pending) {
+          pending.opener = null
+          pending.location.href = r.url
+        } else {
+          window.location.assign(r.url)
+        }
+        setAwaitingPayment(true)
+      } else {
+        pending?.close()
+        showToast({ text: `เปลี่ยนเป็นแผน ${planLabel(tier)} แล้ว`, variant: 'ok' })
+      }
+      setPickTier(null)
+      await load()
+      refreshShellUsage()
+    } catch (err) {
+      pending?.close()
+      throw err
+    }
+  }
 
   if (error) {
     return (
@@ -165,34 +264,15 @@ function UsageTab({ session }: { session: Session }): React.JSX.Element {
     )
   }
 
-  const pct = usage.unlimited ? null : (usage.usage_pct ?? 0)
   const tasks = usage.by_task ?? []
-  const featureShares = featureSharePct(usage)
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Stacks on a phone: the quota card is flex-1 next to a `sm:w-[300px]`
-          sibling that is w-full below sm, which squeezed the quota — the one
-          number on the page — to its min-content. */}
-      <div className="flex flex-col gap-4 sm:flex-row">
-        {/* The quota is the one card on this page that carries the accent —
-         * accent border and accent figure, per R5. */}
-        <div className="flex-1 rounded-md border border-accent p-5">
-          <p className="text-sm text-muted">โควตาที่ใช้ไปวันนี้</p>
-          {pct === null ? (
-            <p className="mt-1.5 text-sm text-muted">แผนนี้ไม่จำกัดโควตา จึงไม่มีสัดส่วนให้แสดง</p>
-          ) : (
-            <>
-              <p className="mt-1.5 text-[34px] font-semibold leading-[1.1] tabular-nums text-accent">
-                {Math.min(100, Math.round(pct))}
-                <span className="text-[20px]">%</span>
-              </p>
-              <div className="mt-3.5">
-                <Bar pct={pct} />
-              </div>
-              <p className="mt-2.5 text-sm tabular-nums text-muted">{untilResetLabel()}</p>
-            </>
-          )}
+      {/* Stacks on a phone: the usage card is flex-1 next to a `sm:w-[300px]`
+          sibling that is w-full below sm. */}
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
+        <div className="min-w-0 flex-1">
+          <UsageCard usage={usage} />
         </div>
 
         {/* Straight off the local registry, so it counts every project on this
@@ -207,63 +287,33 @@ function UsageTab({ session }: { session: Session }): React.JSX.Element {
         </div>
       </div>
 
-      <Section
-        title="การใช้งานแยกตามงาน"
-        hint={
-          tasks.length === 0
-            ? 'เซิร์ฟเวอร์รุ่นนี้ยังไม่ส่งข้อมูลแยกตามงาน'
-            : 'สัดส่วนของโควตา AI ที่ใช้ไปวันนี้ — การถอดเสียงคิดแยกต่างหาก ไม่รวมอยู่ในนี้'
+      {wallet ? (
+        <WalletCard wallet={wallet} busy={topupBusy} onTopup={(p, m) => void onTopup(p, m)} />
+      ) : null}
+
+      <PlansCard
+        current={usage.plan}
+        prices={prices}
+        pendingPlan={usage.pending_plan?.plan ?? null}
+        onPick={setPickTier}
+      />
+      <PlanChangeDialog
+        key={pickTier ?? 'none'}
+        tier={pickTier}
+        loadPreview={(tier) =>
+          withFreshToken(session, (base, token) => previewPlanChange(base, token, tier))
         }
-      >
-        {tasks.length > 0 ? <TaskBreakdown tasks={tasks} /> : null}
+        onConfirm={onSwitchPlan}
+        onClose={() => setPickTier(null)}
+      />
 
-        {/* R5 puts the disclosure inside this card as its last line. It is a
-         * bare link, not a header row: a header row would nest the refresh
-         * <Button> inside a <button>. */}
-        <p className="mt-4 border-t border-divider pt-3.5 text-sm leading-[1.6] text-muted">
-          <button
-            type="button"
-            onClick={() => setTechnicalOpen((v) => !v)}
-            aria-expanded={technicalOpen}
-            className="text-accent underline hover:text-accent-hover-text"
-          >
-            ดูรายละเอียดทางเทคนิค
-          </button>{' '}
-          สำหรับสัดส่วนแยกตามคำขอ
-        </p>
-
-        {technicalOpen ? (
-          <div className="mt-3 text-sm text-ink-2" style={{ userSelect: 'text' }}>
-            <p className="text-muted">
-              แผน {usage.plan} · {usage.unlimited ? 'ไม่จำกัดโควตา' : 'มีโควตารายวัน'}
-            </p>
-            {featureShares.length > 0 ? (
-              <div className="mt-2 flex flex-col gap-1">
-                {featureShares.map((f) => (
-                  <p key={f.feature} className="flex justify-between gap-3 tabular-nums">
-                    <span className="text-muted">{f.feature}</span>
-                    <span>{f.pct}%</span>
-                  </p>
-                ))}
-              </div>
-            ) : (
-              <p className="mt-2 text-muted">ยังไม่มีคำขอในรอบนี้</p>
-            )}
-          </div>
-        ) : null}
-      </Section>
+      {!usage.unlimited && tasks.some((t) => t.pct > 0) ? (
+        <Section title="การใช้งานแยกตามงาน" hint="สัดส่วนของที่ใช้ไปในรอบปัจจุบัน">
+          <TaskBreakdown tasks={tasks} />
+        </Section>
+      ) : null}
     </div>
   )
-}
-
-/** Per-request usage as shares of the day's total. The ledger is kept in
- * tokens, but the UI only ever states usage as a percentage. */
-function featureSharePct(usage: Usage): { feature: string; pct: number }[] {
-  const total = usage.by_feature.reduce((sum, f) => sum + f.total_tokens, 0)
-  if (total <= 0) return []
-  return [...usage.by_feature]
-    .sort((a, b) => b.total_tokens - a.total_tokens)
-    .map((f) => ({ feature: f.feature, pct: Math.round((f.total_tokens / total) * 100) }))
 }
 
 /** Counts straight off the local registry — nothing here is an estimate. */

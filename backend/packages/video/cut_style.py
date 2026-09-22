@@ -297,7 +297,9 @@ async def distill_cut_style_prompt(
     settings = get_settings()
     # Same tier as the dub analyze pass — rhythm analysis is the hard part
     # the flash models fail at (see settings.dub_vision_model comment).
-    model = f"gemini/{settings.dub_vision_model}"
+    from packages.video.quality import cut_style_model
+
+    model = f"gemini/{cut_style_model()}"
     ref_path = pathlib.Path(reference_path) if reference_path else None
     desc = (description or "").strip()
 
@@ -351,6 +353,12 @@ async def distill_cut_style_prompt(
         # though the model it runs on is the dub one.
         extra = call_kwargs(model=model, effort=settings.effects_vision_effort)
         extra["timeout"] = settings.dub_vision_timeout_sec
+        if ref_path is not None:
+            # The billing guard prices the reference as measured on disk.
+            from packages.video.ffmpeg_bin import measured_seconds
+
+            extra["billing_video_sec"] = measured_seconds(ref_path)
+            extra["billing_video_precision"] = "high" if settings.cut_style_ref_fps > 0 else "standard"
         extra["response_format"] = {
             "type": "json_schema",
             "response_schema": CUT_OBSERVATION_SCHEMA,

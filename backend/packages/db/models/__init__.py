@@ -17,13 +17,17 @@ from packages.db.models.admin import (
     AdminSetting,
     PlanPriceOverride,
 )
+from packages.db.models.ai_run import AiRun
 from packages.db.models.auth_token import AuthToken
 from packages.db.models.billing import BillingAccount, StripeEvent
 from packages.db.models.core_auth import Job, Membership, Tenant, User
 from packages.db.models.effect_style import EffectStyle
+from packages.db.models.fx import FxRate, VendorInvoice
 from packages.db.models.llm_usage import LlmUsageLog
 from packages.db.models.stt_usage import SttUsageLog
+from packages.db.models.usage_account import UsageAccount
 from packages.db.models.video_project import VideoProject
+from packages.db.models.wallet import WalletLedger, WalletLot
 
 __all__ = [
     "AdminAuditEvent",
@@ -31,9 +35,11 @@ __all__ = [
     "AdminLoginChallenge",
     "AdminSession",
     "AdminSetting",
+    "AiRun",
     "AuthToken",
     "BillingAccount",
     "EffectStyle",
+    "FxRate",
     "Job",
     "LlmUsageLog",
     "Membership",
@@ -41,6 +47,10 @@ __all__ = [
     "StripeEvent",
     "SttUsageLog",
     "Tenant",
+    "UsageAccount",
     "User",
+    "VendorInvoice",
     "VideoProject",
+    "WalletLedger",
+    "WalletLot",
 ]

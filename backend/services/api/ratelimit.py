@@ -42,6 +42,9 @@ LOGIN_EMAIL_IP = Limit("login:email_ip", 10, _15_MIN)
 LOGIN_IP = Limit("login:ip", 100, _15_MIN)
 REGISTER_EMAIL = Limit("register:email", 5, _HOUR)
 REGISTER_IP = Limit("register:ip", 20, _HOUR)
+#: Free-tier abuse (docs/token-billing-plan.md §6): new accounts per IP per
+#: day, on top of the hourly burst limit above.
+REGISTER_IP_DAY = Limit("register:ip_day", 5, 24 * _HOUR)
 FORGOT_EMAIL = Limit("forgot_password:email", 3, _HOUR)
 FORGOT_IP = Limit("forgot_password:ip", 20, _HOUR)
 RESEND_ACCOUNT = Limit("resend_verification:account", 3, _HOUR)
@@ -53,6 +56,9 @@ CONTACT_IP = Limit("contact:ip", 10, _HOUR)
 #: change-password checks the current password: a stolen session token must
 #: not be able to guess it without limit.
 CHANGE_PASSWORD_ACCOUNT = Limit("change_password:account", 10, _15_MIN)
+#: The wizard re-asks for an estimate as files / mode / precision change
+#: (debounced client-side); this only stops a runaway loop.
+USAGE_ESTIMATE_ACCOUNT = Limit("usage_estimate:account", 60, 60)
 
 #: Admin dashboard login (services/api/routers/admin.py). Tighter than the
 #: public login: there are a handful of admins, and each step is guarded twice
@@ -67,9 +73,9 @@ ADMIN_RESEND_IP = Limit("admin_resend:ip", 10, _HOUR)
 ADMIN_REFRESH_IP = Limit("admin_refresh:ip", 240, _15_MIN)
 
 ALL_LIMITS: tuple[Limit, ...] = (
-    LOGIN_EMAIL_IP, LOGIN_IP, REGISTER_EMAIL, REGISTER_IP, FORGOT_EMAIL, FORGOT_IP,
+    LOGIN_EMAIL_IP, LOGIN_IP, REGISTER_EMAIL, REGISTER_IP, REGISTER_IP_DAY, FORGOT_EMAIL, FORGOT_IP,
     RESEND_ACCOUNT, RESEND_IP, CHANGE_EMAIL_ACCOUNT, CHANGE_EMAIL_IP, CONTACT_EMAIL, CONTACT_IP,
-    CHANGE_PASSWORD_ACCOUNT, ADMIN_LOGIN_EMAIL, ADMIN_LOGIN_IP, ADMIN_OTP_CHALLENGE, ADMIN_OTP_IP,
+    CHANGE_PASSWORD_ACCOUNT, USAGE_ESTIMATE_ACCOUNT, ADMIN_LOGIN_EMAIL, ADMIN_LOGIN_IP, ADMIN_OTP_CHALLENGE, ADMIN_OTP_IP,
     ADMIN_RESEND_CHALLENGE, ADMIN_RESEND_IP, ADMIN_REFRESH_IP,
 )
 

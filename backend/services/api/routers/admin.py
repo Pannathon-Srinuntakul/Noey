@@ -10,10 +10,18 @@ POST /admin/auth/refresh   a new access token while the session is alive
 Behind ``current_admin`` (services/api/admin_deps.py):
 GET  /admin/auth/me                 POST /admin/auth/logout
 GET  /admin/dashboard               GET  /admin/users/{id}
-PATCH /admin/users/{id}/plan        POST /admin/users/{id}/quota-reset
-PATCH /admin/users/{id}/active
+PATCH /admin/users/{id}/plan        POST /admin/users/{id}/quota-reset (all windows)
+PATCH /admin/users/{id}/active      POST /admin/users/{id}/window-reset
+POST /admin/users/{id}/wallet-adjust
 GET/PUT /admin/cost-config          GET/PUT /admin/plan-prices
-GET  /admin/audit
+GET/PUT /admin/fx                   POST /admin/fx/refresh
+GET  /admin/reconciliation          PUT  /admin/reconciliation/{month}
+GET  /admin/estimate-accuracy       GET/PUT /admin/billing-config
+GET/PUT /admin/circuit-breaker      GET  /admin/audit
+
+The admin sees REAL rate-card tokens and baht (users only ever see
+percentages): per-user windows, runs (estimate / actual / charged / cost),
+wallet balances.
 
 Every write is audited with before/after (core.admin_audit_events). Responses
 carry no password hash, token or payment secret. Money is computed by the admin
@@ -32,18 +40,22 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import set_committed_value
 
+from packages.admin import accuracy
 from packages.admin import auth as admin_auth
+from packages.admin import billing_config as billing_cfg
 from packages.admin import metrics
+from packages.admin import reconciliation as recon
 from packages.admin.cost_config import (
     CostConfig,
     default_model_price,
-    known_stt_rates,
+    known_stt_prices,
     load_cost_config,
     save_cost_config,
 )
 from packages.admin.pricing import MAX_PRICE_THB, PriceChangeError, change_prices, current_prices
 from packages.auth.accounts import normalize_email
-from packages.billing import catalog
+from packages.billing import catalog, fx, guard, rate_card, runs, vendor_cost, wallet
+from packages.billing.accounts import get_account as get_usage_account
 from packages.billing.client import billing_enabled, get_stripe_client
 from packages.billing.service import get_account
 from packages.core.logging import get_logger
@@ -130,6 +142,35 @@ class PlanIn(BaseModel):
 
 class ActiveIn(BaseModel):
     active: bool
+
+
+class FxIn(BaseModel):
+    #: THB per USD; null clears the override (back to the fetched rate).
+    usd_thb: float | None = Field(default=None, ge=fx.SANE_BAND[0], le=fx.SANE_BAND[1])
+
+
+class WindowResetIn(BaseModel):
+    window: Literal["five_hour", "weekly", "monthly"]
+
+
+class WalletAdjustIn(BaseModel):
+    #: Signed satang: positive credits a 12-month ``admin`` lot, negative
+    #: takes from the balance (never below zero).
+    amount_satang: int = Field(ge=-10_000_000, le=10_000_000)
+    note: Annotated[str, StringConstraints(min_length=1, max_length=200, strip_whitespace=True)]
+
+
+class BreakerIn(BaseModel):
+    enabled: bool
+    daily_cap_thb: float = Field(ge=0, le=10_000_000)
+    hard_stop_ratio: float = Field(default=1.25, ge=1.0, le=10.0)
+    alert_email: Annotated[str, StringConstraints(max_length=255, strip_whitespace=True)] | None = None
+
+
+class InvoiceIn(BaseModel):
+    vendor: Literal["gemini", "elevenlabs"]
+    amount_thb: float = Field(ge=0, le=100_000_000)
+    note: Annotated[str, StringConstraints(max_length=200, strip_whitespace=True)] | None = None
 
 
 class PricesIn(BaseModel):
@@ -424,7 +465,13 @@ async def dashboard(
     data["model_defaults"] = {
         m["model"]: default_model_price(m["model"]).model_dump() for m in data["models_seen"]
     }
-    data["stt_rates"] = known_stt_rates()
+    data["stt_defaults"] = known_stt_prices()
+    data["rate_card"] = rate_card.describe()
+    quote = await fx.current_usd_thb(db)
+    data["fx"] = {"usd_thb": quote.usd_thb, "source": quote.source}
+    data["billing_config"] = billing_cfg.view(await billing_cfg.load(db))
+    data["circuit_breaker"] = await guard.status()
+    data["estimate_accuracy"] = await accuracy.estimate_accuracy(db, period.start_utc, period.end_utc)
     data["prices"] = {"source": source, "satang": prices, "billing_enabled": billing_enabled()}
     data["plan_values"] = list(PLAN_VALUES)
     data["paid_tiers"] = [p.tier for p in catalog.PAID_PLANS]
@@ -444,6 +491,14 @@ async def user_detail(user_id: int, admin: CurrentAdmin, db: CoreSession) -> dic
         "live": catalog.is_live(account.status) if account else False,
         "current_period_end": account.current_period_end.isoformat() if account and account.current_period_end else None,
     }
+    now = datetime.now(UTC)
+    detail["limits"] = metrics.window_facts(user, await get_usage_account(db, user_id), now)
+    detail["wallet"] = await wallet.summary(db, user_id, now)
+    detail["runs"] = await accuracy.recent_runs(db, user_id)
+    detail["estimate_accuracy"] = await accuracy.estimate_accuracy(
+        db, now - timedelta(days=90), now + timedelta(seconds=1), user_id
+    )
+    detail["failed_runs_30d"] = await accuracy.refunded_summary(db, user_id, now - timedelta(days=30))
     return detail
 
 
@@ -486,17 +541,51 @@ async def set_plan(user_id: int, body: PlanIn, admin: CurrentAdmin, db: CoreSess
 
 @router.post("/users/{user_id}/quota-reset", response_model=UserActionOut)
 async def reset_quota(user_id: int, admin: CurrentAdmin, db: CoreSession) -> UserActionOut:
-    """Today's AI quota counts from now (packages/llm/usage.py:_period_start)."""
+    """Every window (5-hour, weekly, monthly) starts over at the user's next
+    use. Kept as the "reset all" alias of ``window-reset``."""
     user = await _target(db, user_id)
-    before = user.usage_reset_at
+    before = await runs.reset_windows(db, user_id, ("five_hour", "weekly", "monthly"))
     user.usage_reset_at = datetime.now(UTC)
     await admin_auth.audit(
         db, "quota_reset", actor_user_id=admin.user_id, email=str(admin.user.email), target_user_id=user_id,
-        ip=admin.ip, user_agent=admin.user_agent,
-        detail={"before": before.isoformat() if before else None, "after": user.usage_reset_at.isoformat()},
+        ip=admin.ip, user_agent=admin.user_agent, detail={"windows": before},
     )
     await db.commit()
     return _action_out(user)
+
+
+@router.post("/users/{user_id}/window-reset")
+async def reset_window(user_id: int, body: WindowResetIn, admin: CurrentAdmin, db: CoreSession) -> dict[str, Any]:
+    """One window (5-hour / weekly / monthly) starts over at the user's next
+    use. Open reservations stay held. Audited with the tokens it cleared."""
+    user = await _target(db, user_id)
+    before = await runs.reset_windows(db, user_id, (body.window,))
+    user.usage_reset_at = datetime.now(UTC)
+    await admin_auth.audit(
+        db, "window_reset", actor_user_id=admin.user_id, email=str(admin.user.email), target_user_id=user_id,
+        ip=admin.ip, user_agent=admin.user_agent, detail={"window": body.window, "before": before[body.window]},
+    )
+    await db.commit()
+    return metrics.window_facts(user, await get_usage_account(db, user_id), datetime.now(UTC))
+
+
+@router.post("/users/{user_id}/wallet-adjust")
+async def adjust_wallet(user_id: int, body: WalletAdjustIn, admin: CurrentAdmin, db: CoreSession) -> dict[str, Any]:
+    """Credit (a 12-month ``admin`` lot) or debit a user's top-up balance."""
+    await _target(db, user_id)
+    if body.amount_satang == 0:
+        raise HTTPException(status_code=422, detail="จำนวนเงินต้องไม่เป็นศูนย์")
+    before = await wallet.balance(db, user_id)
+    applied = await wallet.adjust(db, user_id, body.amount_satang, actor_user_id=admin.user_id, note=body.note)
+    after = await wallet.balance(db, user_id)
+    await admin_auth.audit(
+        db, "wallet_adjust", actor_user_id=admin.user_id, email=str(admin.user.email), target_user_id=user_id,
+        ip=admin.ip, user_agent=admin.user_agent,
+        detail={"requested_satang": body.amount_satang, "applied_satang": applied, "before_satang": before,
+                "after_satang": after, "note": body.note},
+    )
+    await db.commit()
+    return await wallet.summary(db, user_id)
 
 
 @router.patch("/users/{user_id}/active", response_model=UserActionOut)
@@ -556,6 +645,9 @@ async def get_cost_config(admin: CurrentAdmin, db: CoreSession) -> CostConfig:
 async def put_cost_config(body: CostConfig, admin: CurrentAdmin, db: CoreSession) -> CostConfig:
     before = await load_cost_config(db)
     await save_cost_config(db, body, admin.user_id)
+    # This process prices new usage rows from it right away; the worker's
+    # cache lapses within a minute (packages/billing/vendor_cost.py).
+    vendor_cost.invalidate_cache()
     await admin_auth.audit(
         db, "cost_config_change", actor_user_id=admin.user_id, email=str(admin.user.email), ip=admin.ip,
         user_agent=admin.user_agent,
@@ -563,6 +655,136 @@ async def put_cost_config(body: CostConfig, admin: CurrentAdmin, db: CoreSession
     )
     await db.commit()
     return body
+
+
+async def _fx_view(db: AsyncSession) -> dict[str, Any]:
+    quote = await fx.resolve_usd_thb(db)
+    latest = await fx.latest_fetched(db)
+    return {
+        "usd_thb": quote.usd_thb,
+        "source": quote.source,
+        "override": await fx.load_override(db),
+        "fetched": {
+            "usd_thb": float(latest.usd_thb), "date": latest.rate_date.isoformat(), "source": latest.source,
+        } if latest else None,
+        "history": await fx.history(db),
+        "band": list(fx.SANE_BAND),
+    }
+
+
+@router.get("/fx")
+async def get_fx(admin: CurrentAdmin, db: CoreSession) -> dict[str, Any]:
+    """The USD→THB rate vendor cost is priced with, where it came from, 30 days of history."""
+    return await _fx_view(db)
+
+
+@router.put("/fx")
+async def put_fx(body: FxIn, admin: CurrentAdmin, db: CoreSession) -> dict[str, Any]:
+    """Set or clear the manual override (it always wins over the fetched rate)."""
+    before = await fx.load_override(db)
+    await fx.save_override(db, body.usd_thb, admin.user_id)
+    await admin_auth.audit(
+        db, "fx_override_change", actor_user_id=admin.user_id, email=str(admin.user.email), ip=admin.ip,
+        user_agent=admin.user_agent, detail={"before": before, "after": body.usd_thb},
+    )
+    await db.commit()
+    vendor_cost.invalidate_cache()
+    return await _fx_view(db)
+
+
+@router.post("/fx/refresh")
+async def refresh_fx_now(admin: CurrentAdmin, db: CoreSession) -> dict[str, Any]:
+    """Fetch today's rate now instead of waiting for the daily job."""
+    quote = await fx.refresh_fx(db)
+    if quote is None:
+        raise HTTPException(status_code=502, detail="ดึงอัตราแลกเปลี่ยนไม่สำเร็จ ลองใหม่ภายหลัง")
+    vendor_cost.invalidate_cache()
+    return await _fx_view(db)
+
+
+@router.get("/reconciliation")
+async def get_reconciliation(
+    admin: CurrentAdmin, db: CoreSession, month: Annotated[str | None, Query()] = None
+) -> dict[str, Any]:
+    """Recorded vendor cost vs the invoice, per vendor, for a UTC month (default: this one)."""
+    month = month or datetime.now(UTC).strftime("%Y-%m")
+    try:
+        return await recon.reconciliation(db, month)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+
+
+@router.put("/reconciliation/{month}")
+async def put_reconciliation(month: str, body: InvoiceIn, admin: CurrentAdmin, db: CoreSession) -> dict[str, Any]:
+    """Store what a vendor actually invoiced for the month."""
+    try:
+        before = await recon.save_invoice(db, month, body.vendor, body.amount_thb, body.note, admin.user_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    await admin_auth.audit(
+        db, "vendor_invoice_change", actor_user_id=admin.user_id, email=str(admin.user.email), ip=admin.ip,
+        user_agent=admin.user_agent,
+        detail={"month": month, "vendor": body.vendor, "before": before,
+                "after": {"amount_thb": body.amount_thb, "note": body.note}},
+    )
+    await db.commit()
+    return await recon.reconciliation(db, month)
+
+
+@router.get("/estimate-accuracy")
+async def get_estimate_accuracy(
+    admin: CurrentAdmin,
+    db: CoreSession,
+    date_from: Annotated[date | None, Query(alias="from")] = None,
+    date_to: Annotated[date | None, Query(alias="to")] = None,
+    user_id: Annotated[int | None, Query()] = None,
+) -> dict[str, Any]:
+    """Estimate vs actual over paid runs (default: the last 30 Bangkok days),
+    for everyone or one user."""
+    end = date_to or metrics.today_bangkok()
+    start = date_from or end - timedelta(days=29)
+    try:
+        period = metrics.make_period(start, end)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    return await accuracy.estimate_accuracy(db, period.start_utc, period.end_utc, user_id)
+
+
+@router.get("/billing-config")
+async def get_billing_config(admin: CurrentAdmin, db: CoreSession) -> dict[str, Any]:
+    """Reference cost + sell price per 1M (display/margin only), the top-up
+    price and the rate card (read-only: charges come from code)."""
+    return billing_cfg.view(await billing_cfg.load(db))
+
+
+@router.put("/billing-config")
+async def put_billing_config(body: billing_cfg.BillingConfig, admin: CurrentAdmin, db: CoreSession) -> dict[str, Any]:
+    before = await billing_cfg.load(db)
+    await billing_cfg.save(db, body, admin.user_id)
+    await admin_auth.audit(
+        db, "billing_config_change", actor_user_id=admin.user_id, email=str(admin.user.email), ip=admin.ip,
+        user_agent=admin.user_agent, detail={"before": before.model_dump(), "after": body.model_dump()},
+    )
+    await db.commit()
+    return billing_cfg.view(body)
+
+
+@router.get("/circuit-breaker")
+async def get_circuit_breaker(admin: CurrentAdmin) -> dict[str, Any]:
+    """The daily AI spend cap, today's spend (UTC day) and whether it tripped."""
+    return await guard.status()
+
+
+@router.put("/circuit-breaker")
+async def put_circuit_breaker(body: BreakerIn, admin: CurrentAdmin, db: CoreSession) -> dict[str, Any]:
+    before = await guard.load_breaker(db)
+    after = await guard.save_breaker(db, body.model_dump(), admin.user_id)
+    await admin_auth.audit(
+        db, "circuit_breaker_change", actor_user_id=admin.user_id, email=str(admin.user.email), ip=admin.ip,
+        user_agent=admin.user_agent, detail={"before": before, "after": after},
+    )
+    await db.commit()
+    return await guard.status()
 
 
 @router.get("/plan-prices")

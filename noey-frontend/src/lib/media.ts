@@ -32,8 +32,8 @@ export const MEDIA = {
   stepStyle: {
     ratio: "4 / 3",
     kind: "image",
-    placeholderLabel: "ภาพหน้าจอ: เลือกสไตล์การตัด",
-    brief: "Step 2 screenshot (4:3): choosing length, cut style and voice option.",
+    placeholderLabel: "ภาพหน้าจอ: เลือกโหมดและความยาว",
+    brief: "Step 2 screenshot (4:3): choosing mode, length and voice option.",
   },
   stepTimeline: {
     ratio: "4 / 3",

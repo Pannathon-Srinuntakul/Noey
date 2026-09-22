@@ -63,7 +63,9 @@ const STEPS = [
   {
     media: MEDIA.stepStyle,
     title: "บอกว่าอยากได้คลิปแบบไหน",
-    body: "เลือกความยาวที่ต้องการ สไตล์การตัด และจะใช้เสียงในคลิปเดิมหรือพากย์ใหม่ จากนั้นกดปุ่มเดียวแล้วรอผล",
+    // "สไตล์การตัด" dropped from the design's copy: styles are hidden on the web
+    // editor (owner, 2026-09-22), so the site must not promise them.
+    body: "เลือกโหมด ความยาวที่ต้องการ และจะใช้เสียงในคลิปเดิมหรือพากย์ใหม่ จากนั้นกดปุ่มเดียวแล้วรอผล",
   },
   {
     media: MEDIA.stepTimeline,

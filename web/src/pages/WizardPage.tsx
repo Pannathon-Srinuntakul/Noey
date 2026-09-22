@@ -28,6 +28,20 @@ import MusicRangePicker from '../components/MusicRangePicker'
 import { WizardStepFiles } from '../components/wizard/WizardStepFiles'
 import { WizardStepOutcome } from '../components/wizard/WizardStepOutcome'
 import { WizardStepReview } from '../components/wizard/WizardStepReview'
+import { UsageEstimateLine } from '../components/wizard/UsageEstimate'
+import { useUsageEstimate } from '../lib/useUsageEstimate'
+import { QuotaDialog } from '../components/QuotaDialog'
+import { LimitNotices } from '../components/LimitNotices'
+import { useUsageInfo } from '../lib/usageInfo'
+import {
+  featureLockedLine,
+  footageNotice,
+  projectLimitNotice,
+  storageNotice,
+  type LimitNotice
+} from '../lib/planLadder'
+import type { Usage } from '../lib/api'
+import { estimateRequestFor, startDecision } from '../lib/usageEstimate'
 
 type StepNo = 1 | 2 | 3
 
@@ -80,6 +94,33 @@ function StepRail({ current }: { current: StepNo }): React.JSX.Element {
  * receive a `patch`. Submission is derived through `buildSubmission` so step 3
  * cannot drift from what is actually sent.
  */
+/**
+ * The pre-upload refusals of docs/design/editor-limits.md §4, for what the
+ * plan includes (docs/token-billing-plan.md §8): footage per project, storage
+ * left, projects kept. Blocking ones stop the start before a byte uploads; the
+ * server refuses the same things regardless. Nothing is known (and nothing is
+ * blocked) until the usage answer arrives.
+ */
+function wizardPlanNotices(state: WizardState, usage: Usage | null): LimitNotice[] {
+  if (!usage || usage.unlimited || !usage.features) return []
+  const groups: WizardFile[][] =
+    state.uploadMode === 'separate' && state.files.length > 1
+      ? state.files.map((f) => [f])
+      : [state.files]
+  const out: LimitNotice[] = []
+  const longest = Math.max(0, ...groups.map((g) => totalDurationSec(g) ?? 0))
+  const footage = footageNotice(longest, usage.features.footage_sec)
+  if (footage) out.push(footage)
+  const bytes = state.files.reduce((sum, f) => sum + (f.sizeBytes ?? 0), 0)
+  const storage = storageNotice(usage.storage.used_bytes, usage.storage.quota_bytes, bytes)
+  if (storage) out.push(storage)
+  if (usage.projects) {
+    const projects = projectLimitNotice(usage.projects.count, usage.projects.max, groups.length)
+    if (projects) out.push(projects)
+  }
+  return out
+}
+
 export default function WizardPage({
   /** Clips another screen already received (see `Route.wizard`). Read once,
    * as the wizard's opening state — later edits belong to the wizard. */
@@ -113,6 +154,20 @@ export default function WizardPage({
   const [pendingMusicFile, setPendingMusicFile] = useState<File | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Pre-flight estimate (docs/token-billing-plan.md §4.1): asked as soon as
+  // every chosen clip has a length, re-asked when the mode or tiers change.
+  const { estimate, loading: estimating } = useUsageEstimate(session, estimateRequestFor(state))
+  // "Continue with my balance" — consent for THIS start only; it rides to the
+  // pipeline on the project row (`allowWallet`) and is spent there.
+  const [allowWallet, setAllowWallet] = useState(false)
+  const [quotaOpen, setQuotaOpen] = useState(false)
+  const { usage } = useUsageInfo()
+  const planNotices = wizardPlanNotices(state, usage)
+  const planBlocked = planNotices.some((n) => n.block)
+  const musicLocked =
+    usage?.features && !usage.features.music
+      ? featureLockedLine('music', usage.features.music_min_plan)
+      : null
   // Kept so re-opening the range picker on the same track does not force the
   // user back through the native file dialog.
   const musicFileRef = useRef<File | null>(null)
@@ -294,7 +349,19 @@ export default function WizardPage({
     patch({ music: { path, name: f.name, ...range } })
   }
 
-  const submit = async (): Promise<void> => {
+  /**
+   * Start, unless the estimate says the plan cannot pay for it. Blocked here,
+   * before a single byte uploads — the old path found out at the analyze call,
+   * minutes of import later.
+   */
+  const start = (): void => {
+    // The plan notices above the button already say why; nothing uploads.
+    if (planBlocked) return
+    if (startDecision(estimate, allowWallet) === 'go') void submit(allowWallet)
+    else setQuotaOpen(true)
+  }
+
+  const submit = async (payWithWallet: boolean): Promise<void> => {
     setBusy(true)
     setError(null)
     try {
@@ -326,7 +393,7 @@ export default function WizardPage({
           project.uid
         )
         const stagedMusic =
-          s.mode !== 'talking_head' && state.music
+          s.mode !== 'talking_head' && state.music && !musicLocked
             ? await stageIntoStore(state.music.path, project.uid)
             : null
 
@@ -348,7 +415,8 @@ export default function WizardPage({
           engine: state.engine,
           precision: state.precision,
           captionStyle: s.captionStyle,
-          beatSync: s.beatSync
+          beatSync: s.beatSync,
+          allowWallet: payWithWallet || undefined
         })
         created.push(withSettings)
       }
@@ -369,7 +437,34 @@ export default function WizardPage({
     }
   }
 
-  const gate = step === 1 ? fileStepGate(state) : step === 2 ? outcomeStepGate(state) : { ok: true }
+  const onNoticeAction = (target: NonNullable<LimitNotice['target']>): void => {
+    if (target === 'files') setStep(1)
+    else if (target === 'projects') navigate({ name: 'projects' })
+    else navigate({ name: 'settings' })
+  }
+
+  const estimateLine = (
+    <>
+      <LimitNotices notices={planNotices} onAction={onNoticeAction} />
+      {planBlocked ? null : (
+        <UsageEstimateLine
+          estimate={estimate}
+          loading={estimating}
+          allowWallet={allowWallet}
+          onAllowWallet={setAllowWallet}
+        />
+      )}
+    </>
+  )
+
+  const baseGate: { ok: boolean; reason?: string } =
+    step === 1 ? fileStepGate(state) : step === 2 ? outcomeStepGate(state) : { ok: true }
+  // A plan refusal (footage / storage / projects) stops the wizard at the
+  // files step, where the fix is — the reason is the notice itself.
+  const gate =
+    step === 1 && baseGate.ok && planBlocked
+      ? { ok: false, reason: planNotices.find((n) => n.block)?.when ?? '' }
+      : baseGate
   const cutStyleName = cutStyles.find((s) => s.uid === state.cutStyleUid)?.name ?? null
   const sourceTotal = totalDurationSec(state.files)
   const sourceSummary =
@@ -393,6 +488,11 @@ export default function WizardPage({
         <WizardStepFiles
           state={state}
           setFiles={(update) => setState((prev) => ({ ...prev, files: update(prev.files) }))}
+          estimate={
+            planNotices.length || estimating || (estimate && !estimate.unlimited)
+              ? estimateLine
+              : undefined
+          }
         />
       ) : step === 2 ? (
         <WizardStepOutcome
@@ -405,6 +505,8 @@ export default function WizardPage({
             if (musicFileRef.current) setPendingMusicFile(musicFileRef.current)
             else pickMusicFile()
           }}
+          musicLocked={musicLocked}
+          onSeePlans={() => navigate({ name: 'settings' })}
         />
       ) : (
         <WizardStepReview
@@ -430,15 +532,28 @@ export default function WizardPage({
                   {error}
                 </p>
               ) : null}
-              <Button
-                variant="primary"
-                className="h-12 w-full text-base"
-                icon={<Sparkles size={17} />}
-                loading={busy}
-                onClick={() => void submit()}
-              >
-                เริ่มตัดต่อ
-              </Button>
+              {estimateLine}
+              {planBlocked ? (
+                <Button
+                  variant="primary"
+                  className="h-12 w-full text-base"
+                  icon={<Sparkles size={17} />}
+                  disabled
+                  disabledReason={planNotices.find((n) => n.block)?.when ?? ''}
+                >
+                  เริ่มตัดต่อ
+                </Button>
+              ) : (
+                <Button
+                  variant="primary"
+                  className="h-12 w-full text-base"
+                  icon={<Sparkles size={17} />}
+                  loading={busy}
+                  onClick={start}
+                >
+                  เริ่มตัดต่อ
+                </Button>
+              )}
               <Button className="w-full" icon={<ArrowLeft size={16} />} onClick={() => setStep(2)}>
                 ย้อนกลับ
               </Button>
@@ -446,6 +561,23 @@ export default function WizardPage({
           }
         />
       )}
+
+      <QuotaDialog
+        open={quotaOpen}
+        limitKey={estimate?.binding ?? null}
+        resetsAt={estimate?.resets_at ?? null}
+        walletSatang={estimate?.fits === 'wallet' ? estimate.wallet_satang : null}
+        onClose={() => setQuotaOpen(false)}
+        onUseWallet={() => {
+          setQuotaOpen(false)
+          setAllowWallet(true)
+          void submit(true)
+        }}
+        onAddQuota={() => {
+          setQuotaOpen(false)
+          navigate({ name: 'settings' })
+        }}
+      />
 
       {pendingMusicFile ? (
         <MusicRangePicker
@@ -490,12 +622,7 @@ export default function WizardPage({
             </Button>
           )}
           {step === 3 ? (
-            <Button
-              variant="primary"
-              icon={<Sparkles size={17} />}
-              loading={busy}
-              onClick={() => void submit()}
-            >
+            <Button variant="primary" icon={<Sparkles size={17} />} loading={busy} onClick={start}>
               เริ่มตัดต่อ
             </Button>
           ) : gate.ok ? (

@@ -214,3 +214,18 @@ def admin_login_code(*, brand: str, code: str, ip: str | None) -> RenderedEmail:
         note="รหัสนี้ใช้ได้ครั้งเดียว และหมดอายุใน 10 นาที อย่าบอกรหัสนี้กับใคร",
         footer="ถ้าคุณไม่ได้เข้าสู่ระบบ ให้เปลี่ยนรหัสผ่านทันที เพราะมีคนรู้รหัสผ่านของคุณ",
     ))
+
+
+def circuit_breaker_tripped(*, brand: str, day: str, spend_thb: float, cap_thb: float) -> RenderedEmail:
+    """Admin alert: today's AI spend reached the daily circuit-breaker cap and
+    new AI jobs are paused (packages/billing/guard.py)."""
+    return _render(brand, f"งาน AI ถูกหยุดชั่วคราว: ถึงเพดานค่าใช้จ่ายรายวัน — {brand}", _Body(
+        heading="ถึงเพดานค่าใช้จ่าย AI รายวันแล้ว",
+        paragraphs=(
+            f"ค่าใช้จ่าย AI วันที่ {escape(day)} (UTC) ถึง ฿{spend_thb:,.2f} "
+            f"จากเพดาน ฿{cap_thb:,.2f} ระบบหยุดรับงาน AI ใหม่ของลูกค้าแล้ว",
+            "งานที่เริ่มไปแล้วยังทำต่อได้จนกว่าจะเกินเพดานมากกว่าที่ตั้งไว้ "
+            "ปรับเพดานหรือปิดการหยุดอัตโนมัติได้ที่แผงผู้ดูแลระบบ",
+        ),
+        note="แจ้งเตือนนี้ส่งครั้งเดียวต่อวัน",
+    ))

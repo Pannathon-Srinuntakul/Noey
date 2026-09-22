@@ -1,6 +1,7 @@
 import "server-only";
 import { headers } from "next/headers";
 import { API_URL } from "./config";
+import type { UsageLimit } from "../usage-limits";
 
 /**
  * The only place this site talks to the FastAPI backend. Browsers never call
@@ -89,9 +90,19 @@ export interface MeOut {
 /** `GET /usage/me` — only the fields this site renders. */
 export interface UsageMe {
   plan: string;
-  period_start: string;
-  usage_pct: number | null;
   unlimited: boolean;
-  reset_at: string | null;
-  by_task?: Array<{ task: string; total_tokens: number; pct: number }>;
+  /** The plan's ENFORCED windows (Free: monthly; Lite/Starter: weekly; Pro+: weekly + five_hour). */
+  limits?: UsageLimit[];
+  /** Set when the fullest window has no headroom left. */
+  blocked?: { key: string; resets_at: string | null } | null;
+  concurrency?: { max: number; running: number; queued: number } | null;
+  wallet?: { balance_satang: number; next_expiry: string | null } | null;
+  pending_plan?: { plan: string; at: string } | null;
+  grace_until?: string | null;
+  /** Shares only — the backend no longer sends token counts. */
+  by_task?: Array<{ task: string; pct: number }>;
+  // Legacy single-meter fields, still sent for older clients.
+  period_start?: string;
+  usage_pct?: number | null;
+  reset_at?: string | null;
 }

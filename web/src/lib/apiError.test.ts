@@ -20,6 +20,20 @@ describe('apiErrorDetail', () => {
     expect(msg).not.toContain('HTTP 422')
   })
 
+  it('words a billing refusal instead of showing HTTP 402', () => {
+    const msg = apiErrorDetail(402, {
+      detail: { code: 'limit_reached', window: 'weekly', resets_at: null, wallet_can_cover: false }
+    })
+    expect(msg).toBe('โควตารายสัปดาห์หมดแล้ว')
+    expect(apiErrorDetail(503, { detail: { code: 'service_paused', message: 'พักระบบ' } })).toBe(
+      'พักระบบ'
+    )
+  })
+
+  it('reads the message of any other object detail', () => {
+    expect(apiErrorDetail(409, { detail: { message: 'ชนกัน' } })).toBe('ชนกัน')
+  })
+
   it('falls back to the status when the body says nothing', () => {
     expect(apiErrorDetail(500, {})).toBe('HTTP 500')
     expect(apiErrorDetail(500, null)).toBe('HTTP 500')

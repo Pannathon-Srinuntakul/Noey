@@ -246,6 +246,87 @@ def media_duration(path: str | Path) -> float:
     return float(meta.get("format", {}).get("duration", 0) or 0)
 
 
+class MediaUnmeasurable(ValueError):
+    """The file's length could not be determined, not even by decoding it."""
+
+
+class MediaMeasure(NamedTuple):
+    duration_sec: float
+    #: Display size of the first video stream (0 × 0 for audio-only).
+    width: int
+    height: int
+
+
+def _seconds(value: Any) -> float:
+    try:
+        out = float(value)
+    except (TypeError, ValueError):  # ffprobe says "N/A" for unknown
+        return 0.0
+    return out if out > 0 else 0.0
+
+
+def _decoded_seconds(path: str | Path) -> float:
+    """Length by decoding the whole file (``-f null``) — for containers that
+    carry no duration header, e.g. a browser MediaRecorder WebM. Slow on long
+    files, which is why it is only the fallback."""
+    proc = subprocess.run(
+        [ffmpeg_cmd(), "-nostdin", "-hide_banner", "-nostats", "-v", "error", "-i", str(path),
+         "-f", "null", "-progress", "pipe:1", "-"],
+        capture_output=True, text=True, timeout=600, check=False,
+    )
+    best = 0.0
+    for line in proc.stdout.splitlines():
+        key, _, value = line.partition("=")
+        if key in ("out_time_us", "out_time_ms"):  # both are microseconds in ffmpeg ≥ 4
+            best = max(best, _seconds(value) / 1_000_000)
+    return best
+
+
+def measure_media(path: str | Path) -> MediaMeasure:
+    """Length (and video display size) of a file, FAIL CLOSED.
+
+    For billing: every second of footage sent to a model is paid for, so a
+    length that cannot be read must never count as zero. Tries the container
+    header, then the longest stream, then a full decode; raises
+    ``MediaUnmeasurable`` when none gives a positive length.
+    """
+    try:
+        meta = probe_media(path)
+    except Exception as exc:  # not a media file at all (re-raised below)
+        raise MediaUnmeasurable(f"unreadable media: {Path(path).name}") from exc
+    streams = meta.get("streams", []) or []
+    duration = _seconds((meta.get("format") or {}).get("duration"))
+    if duration <= 0:
+        duration = max((_seconds(s.get("duration")) for s in streams), default=0.0)
+    if duration <= 0:
+        try:
+            duration = _decoded_seconds(path)
+        except Exception:  # noqa: BLE001
+            duration = 0.0
+    if duration <= 0:
+        raise MediaUnmeasurable(f"no measurable duration: {Path(path).name}")
+    width = height = 0
+    video = next((s for s in streams if s.get("codec_type") == "video"), None)
+    if video is not None:
+        try:
+            width, height = display_size(
+                {"width": video.get("width") or 0, "height": video.get("height") or 0,
+                 "rotation": stream_rotation(video)}
+            )
+        except (TypeError, ValueError):
+            width = height = 0
+    return MediaMeasure(duration, int(width), int(height))
+
+
+def measured_seconds(path: str | Path, fallback: float = 0.0) -> float:
+    """``measure_media`` duration, or ``fallback`` when it cannot be measured —
+    for callers that must not fail (the file was already measured at upload)."""
+    try:
+        return measure_media(path).duration_sec
+    except MediaUnmeasurable:
+        return max(0.0, float(fallback or 0.0))
+
+
 # (encoder, extra ffmpeg-python output kwargs) — checked in this order.
 # NVENC/QSV/AMF are Windows+Linux (whichever GPU vendor is actually present);
 # VideoToolbox is macOS. Each candidate is a REAL probe encode, not just "is

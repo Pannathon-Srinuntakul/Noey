@@ -129,3 +129,77 @@ def test_run_transcription_reports_the_model_it_used(monkeypatch) -> None:
     result = asyncio.run(stt.run_transcription([pathlib.Path("a.wav")]))
     assert result is not None
     assert result["stt_model"] == get_settings().elevenlabs_stt_model
+
+
+def test_each_file_is_reported_as_soon_as_it_is_billed(monkeypatch) -> None:
+    """Per-file recording: a run that dies on clip 2 already billed clip 1."""
+    from packages.video import elevenlabs_stt as stt
+
+    replies = iter([{"words": [], "text": "", "audio_duration_secs": 7.5}, RuntimeError("Scribe 500")])
+
+    async def fake_transcribe(wav, keyterms, *, diarize=None):  # noqa: ANN001, ARG001
+        item = next(replies)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+    monkeypatch.setattr(stt, "transcribe_clip", fake_transcribe)
+    monkeypatch.setattr("packages.video.ffmpeg_bin.media_duration", lambda p: 7.5, raising=False)
+    billed: list[tuple[int, float, bool]] = []
+
+    async def on_billed(idx: int, sec: float, keyterms: bool) -> None:
+        billed.append((idx, sec, keyterms))
+
+    import pytest
+
+    with pytest.raises(RuntimeError):
+        asyncio.run(
+            stt.run_transcription(
+                [pathlib.Path("a.wav"), pathlib.Path("b.wav")],
+                keyterms=["Noey", " "],
+                on_clip_billed=on_billed,
+            )
+        )
+    assert billed == [(0, 7.5, True)]
+
+
+def test_blank_keyterms_are_not_a_keyterms_request(monkeypatch) -> None:
+    from packages.video import elevenlabs_stt as stt
+
+    async def fake_transcribe(wav, keyterms, *, diarize=None):  # noqa: ANN001, ARG001
+        return {"words": [], "text": "", "audio_duration_secs": 2.0}
+
+    monkeypatch.setattr(stt, "transcribe_clip", fake_transcribe)
+    monkeypatch.setattr("packages.video.ffmpeg_bin.media_duration", lambda p: 2.0, raising=False)
+    billed: list[tuple[int, float, bool]] = []
+
+    async def on_billed(idx: int, sec: float, keyterms: bool) -> None:
+        billed.append((idx, sec, keyterms))
+
+    asyncio.run(stt.run_transcription([pathlib.Path("a.wav")], keyterms=["", "  "], on_clip_billed=on_billed))
+    assert billed == [(0, 2.0, False)]
+
+
+def test_the_worker_hook_records_the_clip_against_the_task_context(monkeypatch) -> None:
+    from packages.billing import metering
+    from packages.core.settings import get_settings
+    from packages.llm.usage import UsageCtx, reset_usage_ctx, set_usage_ctx
+    from services.worker import tasks
+
+    calls: list[dict] = []
+
+    async def fake(ctx, **kw):  # noqa: ANN001
+        calls.append({"ctx": ctx, **kw})
+        return 0
+
+    monkeypatch.setattr(metering, "record_stt_clip", fake)
+    ctx = UsageCtx(user_id=3, tenant_id=1, feature="video_cut", reference_id="p", job_id="vlocal_x")
+    token = set_usage_ctx(ctx)
+    try:
+        asyncio.run(tasks._record_stt_clip(1, 12.0, True))
+    finally:
+        reset_usage_ctx(token)
+    assert calls == [
+        {"ctx": ctx, "clip_index": 1, "billed_sec": 12.0,
+         "model": get_settings().elevenlabs_stt_model, "keyterms": True}
+    ]

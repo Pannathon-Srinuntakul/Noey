@@ -221,9 +221,13 @@ export function ProjectGridCard({
           open
           project={job.project}
           onClose={() => setRecutOpen(false)}
-          onSubmit={(text) => {
+          onSubmit={(text, allowWallet) => {
             setRecutOpen(false)
-            void job.recut(text)
+            // Consent rides on the project row and is spent by the start call.
+            void (async () => {
+              if (allowWallet) await job.patch({ allowWallet: true })
+              await job.recut(text)
+            })()
           }}
         />
       ) : null}
@@ -413,6 +417,16 @@ export function ProjectGridCard({
               onClick={() => navigate({ name: 'progress', uid: job.project.uid })}
             >
               ดูรายละเอียด
+            </Button>
+          ) : step === 'error' && job.project.billingStop?.walletCanCover ? (
+            // The plan's limit refused this run but the top-up balance can pay
+            // for it — the way out is one press, with the amount on it.
+            <Button
+              variant="primary"
+              className="w-full"
+              onClick={() => void job.continueOnWallet()}
+            >
+              ใช้ยอดเงินคงเหลือทำต่อ
             </Button>
           ) : step === 'error' ? (
             <Button variant="secondary" className="w-full" onClick={() => void job.retry()}>

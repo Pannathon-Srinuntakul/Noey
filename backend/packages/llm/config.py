@@ -118,10 +118,22 @@ def call_kwargs(
     return _with_effort(extra, resolved, resolved_effort)
 
 
+def vision_model() -> str:
+    """The model the frame-based vision path calls (``vision_call_kwargs``) —
+    also what the billing estimator prices ``analyze_frames`` at."""
+    s = get_settings()
+    return s.llm_vision_model or s.llm_model
+
+
+def text_model() -> str:
+    """The default model for a text call that names none (``gateway.complete``)."""
+    return get_settings().llm_model
+
+
 def vision_call_kwargs() -> dict:
     """Vision-heavy tasks (video scene matching, cut planning)."""
     s = get_settings()
-    model = s.llm_vision_model or s.llm_model
+    model = vision_model()
     effort = s.llm_vision_effort or "medium"
     extra = call_kwargs(model=model, effort=effort)
     extra["timeout"] = int(s.llm_vision_timeout_sec)

@@ -1,5 +1,13 @@
 """Stripe webhook: verify, deduplicate, resolve the customer, re-sync.
 
+A paid one-time TOP-UP Checkout Session (``mode=payment`` with ``noey_topup``
+metadata) is the exception: it credits the wallet directly
+(packages/billing/topup.py) instead of re-syncing a subscription. Its way
+back — a refund (``charge.refunded``) or a chargeback
+(``charge.dispute.created``) — takes the unspent balance back out of that
+lot; a failed delayed payment (``checkout.session.async_payment_failed``)
+credited nothing and is only acknowledged.
+
 Every handled event funnels into the same sync (``service.sync_account``): the
 event only says WHICH customer changed; what changed is re-read from Stripe.
 That makes the handler immune to out-of-order and duplicated delivery, and
@@ -15,6 +23,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from packages.billing import topup
 from packages.billing.objects import field, id_of, metadata_value
 from packages.billing.service import lock_account, lock_account_by_customer, sync_account
 from packages.core.logging import get_logger
@@ -29,6 +38,8 @@ log = get_logger(__name__)
 HANDLED_EVENTS: tuple[str, ...] = (
     "checkout.session.completed",
     "checkout.session.async_payment_succeeded",
+    "checkout.session.async_payment_failed",
+    *topup.REVERSAL_EVENTS,
     "customer.subscription.created",
     "customer.subscription.updated",
     "customer.subscription.deleted",
@@ -120,7 +131,25 @@ async def handle_event(session: AsyncSession, client: stripe.StripeClient, event
         return "ignored"
 
     obj = event.data.object
+    if event.type in topup.REVERSAL_EVENTS:
+        # Only a top-up's money is ours to take back here; a subscription
+        # charge is not in the wallet (reverse_from_event answers not_topup).
+        outcome = await topup.reverse_from_event(session, event.type, event.id, obj, client=client)
+        await session.commit()
+        return f"topup_{outcome}"
+    if event.type == "checkout.session.async_payment_failed":
+        # A delayed method (PromptPay) never paid: nothing was credited, and
+        # a subscription checkout that fails this way leaves no subscription.
+        await session.commit()
+        return "payment_failed"
     if event.type.startswith("checkout.session."):
+        if topup.is_topup_session(obj):
+            # A one-time top-up (packages/billing/topup.py): credit the wallet
+            # once per session — completed (card) or async_payment_succeeded
+            # (PromptPay) may both arrive; the unique session id dedupes.
+            outcome = await topup.credit_from_session(session, obj)
+            await session.commit()
+            return f"topup_{outcome}"
         if field(obj, "mode") != "subscription":
             await session.commit()
             return "ignored"

@@ -86,6 +86,7 @@ import type { ProjectMode, ProjectStep } from './projectFlow'
 import { isBusy, isTerminal, resumeStep } from './projectFlow'
 import { canSnapToBeat, canUseZoomEffects } from './platformFeatures'
 import { transcodeOnServer } from './serverTranscode'
+import { isWaitingSlot } from './usageLimits'
 
 /** Rejects with a labeled error if `promise` doesn't settle within `ms` —
  * used around local Electron IPC calls that should always be fast, so a
@@ -224,6 +225,9 @@ export interface ProjectPipeline {
    * this session — the only honest basis for a remaining-time estimate. */
   runStartedAt: number | null
   progressMsg: string
+  /** The server job is queued behind the plan's concurrency cap
+   * (`step: "waiting_slot"`) — it starts on its own when a slot frees. */
+  waitingSlot: boolean
   thinking: string
   editScript: DubEditScript | null
   error: string | null
@@ -244,6 +248,9 @@ export interface ProjectPipeline {
   updateMusic: (patch: Partial<NonNullable<LocalProject['music']>>) => Promise<void>
   removeMusic: () => Promise<void>
   retry: () => Promise<void>
+  /** Retry a run the plan's limit refused, paying the difference from the
+   * top-up balance (the card's "ใช้ยอดเงินคงเหลือทำต่อ"). */
+  continueOnWallet: () => Promise<void>
   /** Re-run the cut with the same settings plus a comment on what to change. */
   recut: (text: string) => Promise<void>
   /** Put the render kept before the last recut back, discarding the new one. */
@@ -318,6 +325,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     return Math.max(1, Math.round((Date.now() - started) / 1000))
   }
   const [thinking, setThinking] = useState('')
+  const [waitingSlot, setWaitingSlot] = useState(false)
   const [editScript, setEditScript] = useState<DubEditScript | null>(
     (initial.editScript as unknown as DubEditScript | undefined) ?? null
   )
@@ -346,6 +354,27 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
   }
   /** True once this run has been stopped or superseded — bail out. */
   const isStale = (token: number): boolean => token !== runIdRef.current
+  /**
+   * `pollJob` that also reports whether the job is waiting for one of the
+   * plan's job slots, so the progress screen can say "it will start by
+   * itself" instead of looking stuck.
+   */
+  const pollTracked: typeof pollJob = (s, jobId, onTick, opts) =>
+    pollJob(
+      s,
+      jobId,
+      (status) => {
+        setWaitingSlot(isWaitingSlot(status.result))
+        onTick(status)
+      },
+      opts
+    ).finally(() => setWaitingSlot(false))
+  /** Did the user agree to pay from the top-up balance for the next start? */
+  const walletOptIn = (): boolean => projectRef.current.allowWallet === true
+  /** A start was accepted: the consent is spent (it is per run, never standing). */
+  const spendWalletOptIn = async (): Promise<void> => {
+    if (projectRef.current.allowWallet) await patchProject({ allowWallet: undefined })
+  }
   const stoppingRef = useRef(false)
   const disposedRef = useRef(false)
   const pipelineRef = useRef<Promise<void> | null>(null)
@@ -636,8 +665,12 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     const message = exc instanceof ApiError ? exc.detail : String((exc as Error).message ?? exc)
     void window.noey.log.write('useProjectPipeline', `fail uid=${project.uid}: ${message}`)
     if (!disposedRef.current) setError(message)
+    // A limit / paused-service refusal rides along so the card can offer the
+    // matching way out (reset time, continue with the balance) — written with
+    // the error every time, so a later ordinary failure clears it.
+    const refusal = exc instanceof ApiError ? exc.refusal : null
     // Persisted unconditionally — see handlePipelineError.
-    await patchProject({ step: 'error', error: message })
+    await patchProject({ step: 'error', error: message, billingStop: refusal ?? undefined })
     const remoteUid = project.remote?.uid
     if (remoteUid) {
       patchLocalStatus(session, remoteUid, 'error', message).catch(() => undefined)
@@ -952,8 +985,10 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
         briefWithRecutNotes(current),
         // Re-sent every run, including "ให้ AI ตัดใหม่": the local project row
         // is the source of truth for the user's tier choice.
-        { engine: current.engine, precision: current.precision }
+        { engine: current.engine, precision: current.precision },
+        walletOptIn()
       )
+      await spendWalletOptIn()
 
       // Warm the editor's thumbnail lanes while the AI poll runs — the engine
       // is idle for those minutes, and the first editor open used to pay this
@@ -977,7 +1012,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
       await patchProject({ remote: { uid: remoteUid, jobId: job_id } })
 
       abortRef.current = new AbortController()
-      await pollJob(
+      await pollTracked(
         session,
         job_id,
         (status) => {
@@ -1399,8 +1434,10 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
         session,
         remoteUid,
         voDuration,
-        live().clips.map((c) => c.durationSec)
+        live().clips.map((c) => c.durationSec),
+        walletOptIn()
       )
+      await spendWalletOptIn()
 
       await patchProject({ step: 'final_rendering', timeline })
       const projectDir = await window.noey.projects.dir(project.uid)
@@ -1563,8 +1600,10 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
       await patchProject({ step: 'transcribing' })
       setProgressMsg('กำลังอัพโหลดไฟล์เสียง…')
       const { job_id } = await uploadAudio(session, remoteUid, project.uid, wavs, {
-        styleUid: speechMode === 'speech_scenes' ? projectRef.current.cutStyleUid : undefined
+        styleUid: speechMode === 'speech_scenes' ? projectRef.current.cutStyleUid : undefined,
+        allowWallet: walletOptIn()
       })
+      await spendWalletOptIn()
       // Same stop-during-upload hole as runAnalyze -- see the comment there.
       if (isStale(runToken)) {
         cancelRemoteProject(session, remoteUid).catch(() => undefined)
@@ -1574,7 +1613,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
 
       abortRef.current = new AbortController()
       let selecting = false
-      await pollJob(
+      await pollTracked(
         session,
         job_id,
         (status) => {
@@ -1679,7 +1718,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     beginRun()
     abortRef.current = new AbortController()
     try {
-      await pollJob(
+      await pollTracked(
         session,
         jobId,
         (status) => {
@@ -1989,6 +2028,12 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
       pipelineRef.current = null
     })
     await pipelineRef.current
+  }
+
+  const continueOnWallet = async (): Promise<void> => {
+    if (pipelineRef.current) return
+    await patchProject({ allowWallet: true })
+    await retry()
   }
 
   /**
@@ -2567,9 +2612,11 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
       remoteUid,
       previewPath,
       { selectedLineIds, instruction },
-      project.cutStyleUid
+      project.cutStyleUid,
+      walletOptIn()
     )
-    const final = await pollJob(session, job_id, (status) => {
+    await spendWalletOptIn()
+    const final = await pollTracked(session, job_id, (status) => {
       const result = status.result as { thinking?: string; message?: string } | null
       if (result?.thinking) setThinking(result.thinking)
       else if (result?.message) setProgressMsg(result.message)
@@ -2671,6 +2718,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     mode,
     runStartedAt,
     progressMsg,
+    waitingSlot,
     thinking,
     editScript,
     error,
@@ -2691,6 +2739,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     updateMusic,
     removeMusic,
     retry,
+    continueOnWallet,
     recut,
     revertRecut,
     applyShotSwap,

@@ -15,7 +15,13 @@ import { adminApi } from "@/lib/server/api";
 import { accessToken, clearSession, deleteCookie, readCookie, writeTokens } from "@/lib/server/auth";
 import { ADMIN_URL, COOKIE_SECURE, PRICES_REVALIDATE_SECRET, SITE_URL } from "@/lib/server/config";
 import { CHALLENGE_MAX_AGE, isAdminTokens, spec } from "@/lib/session";
-import type { CostConfig, DashboardData, PlanPrices, UserDetail } from "@/lib/types";
+import {
+  FX_BAND, validBreaker, validFxOverride, validInvoice, validMonth, validPer1M, validWalletAdjust, validWindow,
+} from "@/lib/billing";
+import type {
+  BillingConfigView, BreakerSettings, CircuitBreaker, CostConfig, DashboardData, FxView, LimitFacts, PlanPrices,
+  Reconciliation, UserDetail, Vendor, WalletSummary, WindowKey,
+} from "@/lib/types";
 
 export type ActionResult<T> = { ok: true; data: T } | { ok: false; error: string; signedOut?: boolean };
 
@@ -185,6 +191,23 @@ export async function resetQuotaAction(userId: number): Promise<ActionResult<unk
   return authed(`/admin/users/${userId}/quota-reset`, { method: "POST" });
 }
 
+/** One window (5-hour / weekly / monthly) starts over at the user's next use. Audited by the backend. */
+export async function resetWindowAction(userId: number, window: WindowKey): Promise<ActionResult<LimitFacts>> {
+  if (!validId(userId) || !validWindow(window)) return { ok: false, error: GENERIC };
+  return authed<LimitFacts>(`/admin/users/${userId}/window-reset`, { method: "POST", body: { window } });
+}
+
+/** Credit (positive) or debit (negative) a user's top-up balance, in satang. Audited. */
+export async function walletAdjustAction(userId: number, amountSatang: number, note: string): Promise<ActionResult<WalletSummary>> {
+  if (!validId(userId) || !validWalletAdjust(amountSatang, note)) {
+    return { ok: false, error: "จำนวนเงินต้องไม่เป็นศูนย์ ไม่เกิน ฿100,000 และต้องมีเหตุผล" };
+  }
+  return authed<WalletSummary>(`/admin/users/${userId}/wallet-adjust`, {
+    method: "POST",
+    body: { amount_satang: amountSatang, note: note.trim().slice(0, 200) },
+  });
+}
+
 export async function setActiveAction(userId: number, active: boolean): Promise<ActionResult<unknown>> {
   if (!validId(userId) || typeof active !== "boolean") return { ok: false, error: GENERIC };
   return authed(`/admin/users/${userId}/active`, { method: "PATCH", body: { active } });
@@ -223,4 +246,60 @@ export async function savePricesAction(prices: Record<string, number>): Promise<
   const r = await authed<PlanPrices>("/admin/plan-prices", { method: "PUT", body: { prices: clean } });
   if (!r.ok) return r;
   return { ok: true, data: { ...r.data, siteRefreshed: await revalidateSite() } };
+}
+
+// ── FX + reconciliation ─────────────────────────────────────────────────────
+
+export async function getFxAction(): Promise<ActionResult<FxView>> {
+  return authed<FxView>("/admin/fx");
+}
+
+/** `null` clears the override (back to the daily fetched rate). */
+export async function setFxOverrideAction(usdThb: number | null): Promise<ActionResult<FxView>> {
+  if (!validFxOverride(usdThb)) return { ok: false, error: `อัตราต้องอยู่ระหว่าง ${FX_BAND[0]}–${FX_BAND[1]} บาทต่อดอลลาร์` };
+  return authed<FxView>("/admin/fx", { method: "PUT", body: { usd_thb: usdThb } });
+}
+
+export async function refreshFxAction(): Promise<ActionResult<FxView>> {
+  return authed<FxView>("/admin/fx/refresh", { method: "POST" });
+}
+
+export async function getReconciliationAction(month: string): Promise<ActionResult<Reconciliation>> {
+  if (!validMonth(month)) return { ok: false, error: GENERIC };
+  return authed<Reconciliation>(`/admin/reconciliation?month=${month}`);
+}
+
+export async function saveInvoiceAction(
+  month: string, vendor: Vendor, amountThb: number, note: string | null,
+): Promise<ActionResult<Reconciliation>> {
+  if (!validMonth(month) || !validInvoice(vendor, amountThb)) return { ok: false, error: "ยอดใบแจ้งหนี้ไม่ถูกต้อง" };
+  const cleanNote = typeof note === "string" && note.trim() ? note.trim().slice(0, 200) : null;
+  return authed<Reconciliation>(`/admin/reconciliation/${month}`, {
+    method: "PUT",
+    body: { vendor, amount_thb: amountThb, note: cleanNote },
+  });
+}
+
+// ── billing config + circuit breaker ───────────────────────────────────────
+
+/** Reference cost and sell price per 1M — display/margin only; charges come from code. */
+export async function saveBillingConfigAction(referenceThb: number, sellThb: number): Promise<ActionResult<BillingConfigView>> {
+  if (!validPer1M(referenceThb) || !validPer1M(sellThb)) return { ok: false, error: "ราคาต่อ 1 ล้านโทเค็นต้องมากกว่า 0 และไม่เกิน ฿10,000" };
+  return authed<BillingConfigView>("/admin/billing-config", {
+    method: "PUT",
+    body: { reference_thb_per_1m: referenceThb, sell_thb_per_1m: sellThb },
+  });
+}
+
+export async function getCircuitBreakerAction(): Promise<ActionResult<CircuitBreaker>> {
+  return authed<CircuitBreaker>("/admin/circuit-breaker");
+}
+
+export async function saveCircuitBreakerAction(b: BreakerSettings): Promise<ActionResult<CircuitBreaker>> {
+  if (!validBreaker(b)) return { ok: false, error: "ค่าเพดานไม่ถูกต้อง — เพดาน 0–10,000,000 บาท ตัวคูณหยุดทันที 1–10" };
+  const email = typeof b.alert_email === "string" && b.alert_email.trim() ? b.alert_email.trim() : null;
+  return authed<CircuitBreaker>("/admin/circuit-breaker", {
+    method: "PUT",
+    body: { enabled: b.enabled, daily_cap_thb: b.daily_cap_thb, hard_stop_ratio: b.hard_stop_ratio, alert_email: email },
+  });
 }

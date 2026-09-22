@@ -24,7 +24,7 @@ from packages.llm.usage import (
     EmailNotVerified,
     UsageCtx,
     ai_access_problem,
-    check_limit,
+    check_ai_access,
 )
 from services.api import deps
 from services.api.ai_gate import AI_ROUTES
@@ -474,7 +474,7 @@ async def test_the_gate_spares_admins_and_can_be_switched_off(monkeypatch):
     assert switched_off.status_code == 404
 
 
-async def test_check_limit_enforces_the_same_policy_before_model_calls():
+async def test_check_ai_access_enforces_the_same_policy_before_model_calls():
     maker = get_sessionmaker()
     async with maker() as session:
         user, tenant = await create_account(
@@ -484,6 +484,6 @@ async def test_check_limit_enforces_the_same_policy_before_model_calls():
         user_id, tenant_id = int(user.id), int(tenant.id)
     assert ai_access_problem(user) == EMAIL_NOT_VERIFIED_DETAIL
     with pytest.raises(EmailNotVerified):
-        await check_limit(UsageCtx(user_id=user_id, tenant_id=tenant_id, feature="video_cut"))
+        await check_ai_access(UsageCtx(user_id=user_id, tenant_id=tenant_id, feature="video_cut"))
     await _db("UPDATE core.users SET email_verified_at = now() WHERE id = :i", i=user_id)
-    await check_limit(UsageCtx(user_id=user_id, tenant_id=tenant_id, feature="video_cut"))
+    await check_ai_access(UsageCtx(user_id=user_id, tenant_id=tenant_id, feature="video_cut"))

@@ -903,7 +903,9 @@ async def _select(
     settings = get_settings()
     # Text-only call, but the dub vision model (Gemini) is the model already
     # keyed and priced for this pipeline; SPEECH_SELECT_MODEL overrides.
-    model_name = getattr(settings, "speech_select_model", "") or settings.dub_vision_model
+    from packages.video.quality import speech_model
+
+    model_name = speech_model()
     model = model_name if "/" in model_name else f"gemini/{model_name}"
 
     extra = call_kwargs(model=model, effort=settings.dub_vision_effort)

@@ -471,7 +471,7 @@ async def test_distill_style_local_routes_cut_kind_to_cut_distiller(
     monkeypatch.setattr(tasks, "_update_job", fake_update_job)
     monkeypatch.setattr(tasks, "_get_tenant_id_by_slug", fake_get_tenant_id)
     monkeypatch.setattr(
-        tasks, "_set_video_usage_ctx", lambda style, tenant_id, uid, feature="video_cut": None
+        tasks, "_set_video_usage_ctx", lambda style, tenant_id, uid, feature="video_cut", **_kw: None
     )
     # Both distillers are imported inside the task body at call time, so
     # patching the source modules intercepts the routing decision.

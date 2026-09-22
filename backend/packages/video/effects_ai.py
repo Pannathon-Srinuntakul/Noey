@@ -471,10 +471,11 @@ async def generate_effects_placement(
     from packages.llm.gateway import acompletion_stream_thinking
     from packages.video.effects import EffectInstance
     from packages.video.ffmpeg_bin import media_duration
+    from packages.video.quality import effects_model
     from packages.video.timeline import parse_llm_json
 
     settings = get_settings()
-    model = f"gemini/{settings.effects_vision_model}"
+    model = f"gemini/{effects_model()}"
     video_path = pathlib.Path(video_path)
     duration_sec = media_duration(video_path)
     ref_path = pathlib.Path(reference_path) if reference_path else None
@@ -565,6 +566,15 @@ async def generate_effects_placement(
         # reasoning budget. Lower it only with a comparison in hand.
         extra = call_kwargs(model=model, effort=settings.effects_vision_effort)
         extra["timeout"] = settings.effects_vision_timeout_sec
+        # The billing guard prices every video this request attaches: the cut
+        # AND a video style reference (an image reference is priced as one).
+        billed_sec = float(duration_sec or 0.0)
+        if ref_path is not None and ref_mime.startswith("video/"):
+            from packages.video.ffmpeg_bin import measured_seconds
+
+            billed_sec += measured_seconds(ref_path)
+        extra["billing_video_sec"] = billed_sec
+        extra["billing_video_precision"] = "standard"
         if previous_doc and previous_doc.get("instances"):
             # Regenerate: bump sampling temperature so the retake actually varies.
             extra["temperature"] = 1.0

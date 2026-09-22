@@ -1,13 +1,13 @@
-"""Tests for LLM usage tracking, limit enforcement, and gateway integration.
+"""Tests for LLM usage tracking, the access gate, and gateway integration.
 
-All DB calls are mocked — no real Postgres required.
+All DB calls are mocked — no real Postgres required. Plan limits moved to
+packages/billing (rolling windows reserved at job start — tests/test_runs.py;
+the per-call job ceiling — tests/test_guard.py).
 """
 
 from __future__ import annotations
 
 import types
-import asyncio
-from datetime import datetime, timedelta, timezone
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -16,9 +16,6 @@ import pytest
 import packages.llm.gateway as gw
 from packages.llm.usage import (
     UsageCtx,
-    UsageLimitExceeded,
-    _period_start,
-    estimate_cost_usd,
     extract_stream_usage_from_chunks,
     extract_usage_tokens,
     get_usage_ctx,
@@ -64,38 +61,7 @@ def test_reset_restores_previous():
     assert get_usage_ctx() is None
 
 
-# ── 2. period_start ──────────────────────────────────────────────────────────
-
-def _today_start() -> datetime:
-    now = datetime.now(tz=timezone.utc)
-    return datetime(now.year, now.month, now.day, tzinfo=timezone.utc)
-
-
-def test_period_start_honors_reset_within_today():
-    # A manual reset later in the same UTC day takes precedence.
-    reset = _today_start() + timedelta(hours=5)
-    assert _period_start(reset) == reset
-
-
-def test_period_start_ignores_stale_reset():
-    # A reset from a previous day is ignored → falls back to the daily start.
-    stale = datetime(2020, 1, 1, tzinfo=timezone.utc)
-    assert _period_start(stale) == _today_start()
-
-
-def test_period_start_daily_fallback():
-    result = _period_start(None)
-    assert result == _today_start()
-    assert result.hour == 0 and result.minute == 0 and result.second == 0
-
-
-# ── 3. estimate_cost_usd ─────────────────────────────────────────────────────
-
-def test_cost_known_model():
-    cost = estimate_cost_usd("anthropic/claude-haiku-4-5-20251001", 1_000_000, 1_000_000)
-    # input: 0.80 + output: 4.00 = $4.80
-    assert abs(cost - 4.80) < 0.001
-
+# ── 2. token extraction ───────────────────────────────────────────────────────
 
 def test_extract_usage_tokens_uses_total_when_thinking_not_in_completion():
     usage = types.SimpleNamespace(prompt_tokens=10_000, completion_tokens=500, total_tokens=15_000)
@@ -173,8 +139,8 @@ async def test_stream_thinking_requests_include_usage(monkeypatch):
     monkeypatch.setattr(gw.litellm, "acompletion", fake_acompletion)
     monkeypatch.setattr(gw.litellm, "stream_chunk_builder", fake_builder)
 
-    with patch("packages.llm.gateway.check_limit", new=AsyncMock()):
-        with patch("packages.llm.gateway.record_usage", new=AsyncMock()) as fake_record:
+    with patch("packages.llm.gateway.check_ai_access", new=AsyncMock()):
+        with patch("packages.llm.gateway.record_llm_attempt", new=AsyncMock()) as fake_record:
             token = set_usage_ctx(_ctx())
             try:
                 await gw.acompletion_stream_thinking(
@@ -182,186 +148,76 @@ async def test_stream_thinking_requests_include_usage(monkeypatch):
                     project_uid="proj-1",
                     model="gemini/gemini-3.1-pro-preview",
                 )
-                await asyncio.sleep(0)
             finally:
                 reset_usage_ctx(token)
 
     assert captured.get("stream_options") == {"include_usage": True}
+    # Awaited inside the call (durable recording), not scheduled for later.
     fake_record.assert_awaited_once()
-    assert fake_record.await_args.args[2:] == (1_000, 200)
+    kw = fake_record.await_args.kwargs
+    assert (kw["status"], kw["input_tokens"], kw["output_tokens"]) == ("ok", 1_000, 200)
 
 
-def test_cost_unknown_model_uses_default():
-    cost = estimate_cost_usd("some/unknown-model", 1_000_000, 0)
-    # default input = 3.00 $/MTok
-    assert abs(cost - 3.00) < 0.001
+# ── 3. the access gate before every model call ──────────────────────────────
 
+def _session_returning(user):  # noqa: ANN001, ANN202
+    session = AsyncMock()
+    session.execute = AsyncMock(side_effect=[
+        MagicMock(),  # SET search_path
+        MagicMock(scalar_one_or_none=MagicMock(return_value=user)),
+    ])
+    maker = MagicMock()
+    maker.return_value.__aenter__ = AsyncMock(return_value=session)
+    maker.return_value.__aexit__ = AsyncMock(return_value=False)
+    return maker
 
-def test_zero_tokens_zero_cost():
-    assert estimate_cost_usd("anthropic/claude-sonnet-4-6", 0, 0) == 0.0
-
-
-# ── 4. check_limit: passes under limit ───────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_check_limit_passes_under_limit():
-    """User has used 1000 tokens; limit is 50000 — should NOT raise."""
-    ctx = _ctx(user_id=99)
+async def test_check_ai_access_refuses_an_unverified_account(monkeypatch):
+    from packages.llm import usage
+    from packages.llm.usage import EmailNotVerified, check_ai_access
 
-    mock_user = MagicMock()
-    mock_user.plan = "free"
-    mock_user.usage_reset_at = None
+    user = types.SimpleNamespace(is_admin=False, email_verified_at=None, plan="pro")
+    monkeypatch.setattr(usage, "get_sessionmaker", lambda: _session_returning(user))
+    with pytest.raises(EmailNotVerified):
+        await check_ai_access(_ctx(user_id=9))
 
-    with (
-        patch("packages.llm.usage.get_settings") as mock_settings,
-        patch("packages.llm.usage.get_sessionmaker") as mock_maker,
-    ):
-        mock_settings.return_value.plan_token_limit.return_value = 50_000
-
-        mock_session = AsyncMock()
-        mock_session.execute = AsyncMock(side_effect=[
-            MagicMock(),                                                       # SET search_path
-            MagicMock(scalar_one_or_none=MagicMock(return_value=mock_user)),  # User query
-            MagicMock(scalar=MagicMock(return_value=1_000)),                  # sum_tokens_since
-        ])
-        mock_maker.return_value.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_maker.return_value.return_value.__aexit__ = AsyncMock(return_value=False)
-
-        # Should not raise
-        from packages.llm.usage import check_limit
-        await check_limit(ctx)
-
-
-# ── 5. check_limit: raises when over limit ────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_check_limit_raises_over_limit():
-    """User has used 60000 tokens; limit is 50000 — should raise UsageLimitExceeded."""
-    ctx = _ctx(user_id=99)
+async def test_check_ai_access_never_counts_tokens(monkeypatch):
+    """A verified account passes whatever it used: limits are not checked per call any more."""
+    from packages.llm import usage
+    from packages.llm.usage import check_ai_access
 
-    mock_user = MagicMock()
-    mock_user.plan = "free"
-    mock_user.usage_reset_at = None
-
-    with (
-        patch("packages.llm.usage.get_settings") as mock_settings,
-        patch("packages.llm.usage.get_sessionmaker") as mock_maker,
-    ):
-        mock_settings.return_value.plan_token_limit.return_value = 50_000
-
-        mock_session = AsyncMock()
-        mock_session.execute = AsyncMock(side_effect=[
-            MagicMock(),                                                       # SET search_path
-            MagicMock(scalar_one_or_none=MagicMock(return_value=mock_user)),  # User query
-            MagicMock(scalar=MagicMock(return_value=60_000)),                 # sum_tokens_since
-        ])
-        mock_maker.return_value.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_maker.return_value.return_value.__aexit__ = AsyncMock(return_value=False)
-
-        from packages.llm.usage import check_limit
-        with pytest.raises(UsageLimitExceeded) as exc_info:
-            await check_limit(ctx)
-
-        assert exc_info.value.used == 60_000
-        assert exc_info.value.limit == 50_000
-        assert exc_info.value.plan == "free"
-
-
-# ── 6. unlimited plan never raises ───────────────────────────────────────────
-
-@pytest.mark.asyncio
-async def test_unlimited_plan_never_raises():
-    """Enterprise plan (limit=0) should never raise regardless of usage."""
-    ctx = _ctx(user_id=7)
-
-    mock_user = MagicMock()
-    mock_user.plan = "enterprise"
-    mock_user.usage_reset_at = None
-
-    with (
-        patch("packages.llm.usage.get_settings") as mock_settings,
-        patch("packages.llm.usage.get_sessionmaker") as mock_maker,
-    ):
-        mock_settings.return_value.plan_token_limit.return_value = 0  # unlimited
-
-        mock_session = AsyncMock()
-        mock_session.execute = AsyncMock(
-            return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=mock_user))
-        )
-        mock_maker.return_value.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_maker.return_value.return_value.__aexit__ = AsyncMock(return_value=False)
-
-        from packages.llm.usage import check_limit
-        await check_limit(ctx)  # must not raise even if token count were huge
-
-
-# ── 7. reset_at resets the accounting window ─────────────────────────────────
-
-@pytest.mark.asyncio
-async def test_reset_at_resets_window():
-    """Tokens before usage_reset_at should not count toward current period.
-
-    We simulate this by verifying that sum_tokens_since is called with the
-    explicit reset_at datetime (a same-day admin reset), not the daily start.
-    """
-    reset_time = _today_start() + timedelta(hours=1)
-    ctx = _ctx(user_id=5)
-
-    mock_user = MagicMock()
-    mock_user.plan = "starter"
-    mock_user.usage_reset_at = reset_time
-
-    calls: list[datetime] = []
-
-    async def fake_sum_tokens(user_id: int, since: datetime, session: object) -> int:
-        calls.append(since)
-        return 0  # well under limit
-
-    with (
-        patch("packages.llm.usage.get_settings") as mock_settings,
-        patch("packages.llm.usage.get_sessionmaker") as mock_maker,
-        patch("packages.llm.usage.sum_tokens_since", side_effect=fake_sum_tokens),
-    ):
-        mock_settings.return_value.plan_token_limit.return_value = 500_000
-
-        mock_session = AsyncMock()
-        mock_session.execute = AsyncMock(
-            return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=mock_user))
-        )
-        mock_maker.return_value.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_maker.return_value.return_value.__aexit__ = AsyncMock(return_value=False)
-
-        from packages.llm.usage import check_limit
-        await check_limit(ctx)
-
-    assert len(calls) == 1
-    assert calls[0] == reset_time  # must use the explicit reset_at, not start-of-month
+    user = types.SimpleNamespace(is_admin=False, email_verified_at="2026-01-01", plan="free")
+    monkeypatch.setattr(usage, "get_sessionmaker", lambda: _session_returning(user))
+    await check_ai_access(_ctx(user_id=9))
+    assert not hasattr(usage, "check_limit") and not hasattr(usage, "UsageLimitExceeded")
 
 
 # ── 8. gateway records usage on successful call ───────────────────────────────
 
 @pytest.mark.asyncio
 async def test_gateway_records_on_successful_call(monkeypatch):
-    """Integration: gateway.acompletion() should schedule record_usage when ctx is set."""
+    """Integration: gateway.acompletion() records the call (awaited) when ctx is set."""
     recorded: list[tuple] = []
 
-    async def fake_record(ctx, model, inp, out):
-        recorded.append((ctx, model, inp, out))
+    async def fake_record(ctx, *, model, status, input_tokens, cached_tokens, output_tokens):
+        recorded.append((ctx, model, input_tokens, output_tokens))
+        return 0
 
     monkeypatch.setattr(gw.litellm, "acompletion", AsyncMock(
         return_value=_fake_litellm_response(input_tok=200, output_tok=80)
     ))
 
-    # Patch check_limit and record_usage at the gateway module level
+    # Patch the access gate and the recorder at the gateway module level
     # (they're imported there, so patching the source module won't affect it)
-    with patch("packages.llm.gateway.check_limit", new=AsyncMock()):
-        with patch("packages.llm.gateway.record_usage", side_effect=fake_record):
+    with patch("packages.llm.gateway.check_ai_access", new=AsyncMock()):
+        with patch("packages.llm.gateway.record_llm_attempt", side_effect=fake_record):
             ctx = _ctx(user_id=42)
             token = set_usage_ctx(ctx)
             try:
                 await gw.complete("test prompt")
-                # Let the fire-and-forget coroutine run
-                await asyncio.sleep(0)
             finally:
                 reset_usage_ctx(token)
 
@@ -372,25 +228,25 @@ async def test_gateway_records_on_successful_call(monkeypatch):
     assert out == 80
 
 
-# ── 9. gateway raises HTTP 429 when limit exceeded ───────────────────────────
+# ── 9. gateway raises HTTP 403 for an unverified account ─────────────────────
 
 @pytest.mark.asyncio
-async def test_gateway_raises_429_on_limit_exceeded(monkeypatch):
-    """gateway.acompletion() should raise HTTP 429 when check_limit fires."""
+async def test_gateway_raises_403_for_an_unverified_account(monkeypatch):
     from fastapi import HTTPException
 
-    async def fake_check_limit(ctx):
-        raise UsageLimitExceeded(used=60_000, limit=50_000, plan="free")
+    from packages.llm.usage import EmailNotVerified
 
-    monkeypatch.setattr(gw.litellm, "acompletion", AsyncMock(return_value=_fake_litellm_response()))
+    async def refuse(ctx):  # noqa: ANN001, ANN202
+        raise EmailNotVerified()
 
-    with patch("packages.llm.gateway.check_limit", side_effect=fake_check_limit):
-        ctx = _ctx(user_id=99)
-        token = set_usage_ctx(ctx)
+    sent = AsyncMock(return_value=_fake_litellm_response())
+    monkeypatch.setattr(gw.litellm, "acompletion", sent)
+    with patch("packages.llm.gateway.check_ai_access", side_effect=refuse):
+        token = set_usage_ctx(_ctx(user_id=99))
         try:
             with pytest.raises(HTTPException) as exc_info:
                 await gw.complete("blocked call")
-            assert exc_info.value.status_code == 429
-            assert exc_info.value.detail["error"] == "token_limit_exceeded"
         finally:
             reset_usage_ctx(token)
+    assert exc_info.value.status_code == 403
+    sent.assert_not_awaited()

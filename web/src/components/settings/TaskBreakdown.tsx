@@ -2,8 +2,8 @@ import type { UsageByTask, UsageTask } from '../../lib/api'
 
 /** Names the user recognises for the four groups the server reports. They are
  * groups of AI calls, not pipeline stages — one dub call writes the script and
- * picks the scenes, so those share a row. Speech-to-text has no row because
- * ElevenLabs Scribe is not token-billed and never appears in the ledger.
+ * picks the scenes, so those share a row. Speech-to-text has no row of its
+ * own: the server counts it into `cut`, since the speech modes cut from it.
  *
  * Module-private: exporting it alongside the components would break Fast
  * Refresh for this file, and nothing outside needs it. */

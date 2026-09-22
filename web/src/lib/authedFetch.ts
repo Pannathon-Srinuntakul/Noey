@@ -16,6 +16,8 @@
 
 import { refresh } from './api'
 import type { ApiSession } from './videosLocalApi'
+import { apiErrorDetail } from './apiError'
+import { DEVICE_HEADER, deviceId } from './usageLimits'
 
 export function apiBase(session: ApiSession): string {
   return session.baseUrl.replace(/\/+$/, '')
@@ -37,6 +39,8 @@ export async function authedFetch(
 ): Promise<Response> {
   const headers = new Headers(init.headers)
   headers.set('Authorization', `Bearer ${session.accessToken}`)
+  // Same device id every other call sends (lib/httpClient.ts).
+  if (!headers.has(DEVICE_HEADER)) headers.set(DEVICE_HEADER, deviceId())
   const res = await fetch(`${apiBase(session)}${path}`, { ...init, headers })
 
   if (res.status !== 401 || retried) return res
@@ -68,6 +72,11 @@ export async function serverMessage(res: Response, fallback: string): Promise<st
   try {
     const body = (await res.clone().json()) as { detail?: unknown }
     if (typeof body.detail === 'string' && body.detail.trim()) return body.detail.trim()
+    // An object detail (a billing refusal) is worded by the shared mapper.
+    if (body.detail && typeof body.detail === 'object' && !Array.isArray(body.detail)) {
+      const text = apiErrorDetail(res.status, body)
+      if (!text.startsWith('HTTP ')) return text
+    }
   } catch {
     // Not JSON — the fallback is the honest answer.
   }

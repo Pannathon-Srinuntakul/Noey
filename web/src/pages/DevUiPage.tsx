@@ -281,14 +281,14 @@ export default function DevUiPage(): React.JSX.Element {
 
         {/* Sample shares, so the settings breakdown can be checked without a
             backend that already reports `by_task`. */}
-        <Section title="Usage by task (settings → เครดิตและการใช้งาน)">
+        <Section title="Usage by task (settings → การใช้งาน)">
           <div className="w-full max-w-[560px]">
             <TaskBreakdown
               tasks={[
-                { task: 'cut', total_tokens: 510_000, pct: 51 },
-                { task: 'effects', total_tokens: 270_000, pct: 27 },
-                { task: 'style', total_tokens: 160_000, pct: 16 },
-                { task: 'other', total_tokens: 60_000, pct: 6 }
+                { task: 'cut', pct: 51 },
+                { task: 'effects', pct: 27 },
+                { task: 'style', pct: 16 },
+                { task: 'other', pct: 6 }
               ]}
             />
           </div>

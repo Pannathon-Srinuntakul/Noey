@@ -9,6 +9,8 @@
  * what is wrong.
  */
 
+import { parseRefusal, refusalMessage } from './usageLimits'
+
 type FieldError = { loc?: unknown[]; msg?: string; type?: string }
 
 /** Last non-numeric path segment of `loc` — the field name, minus body/query. */
@@ -36,6 +38,15 @@ export function apiErrorDetail(status: number, body: unknown): string {
   const detail = (body as { detail?: unknown })?.detail
 
   if (typeof detail === 'string' && detail.trim()) return detail
+
+  // A billing refusal (402 limit / 429 free tier / 503 paused) is an OBJECT
+  // detail. Worded here so its reset time is in the viewer's timezone.
+  const refusal = parseRefusal(body)
+  if (refusal) return refusalMessage(refusal)
+  const objMessage = (detail as { message?: unknown } | null)?.message
+  if (detail && typeof detail === 'object' && typeof objMessage === 'string' && objMessage.trim()) {
+    return objMessage
+  }
 
   if (Array.isArray(detail)) {
     const parts = (detail as FieldError[])

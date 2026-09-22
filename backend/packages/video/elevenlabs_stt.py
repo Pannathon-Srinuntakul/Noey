@@ -52,8 +52,10 @@ import pathlib
 import re
 import wave
 from collections.abc import Awaitable, Callable
+from contextlib import AbstractAsyncContextManager
 from typing import Any
 
+from packages.core.errors import UserInputError
 from packages.core.logging import get_logger
 
 log = get_logger(__name__)
@@ -79,10 +81,30 @@ _RETRY_STATUS = frozenset({429, 500, 502, 503, 504})
 ProgressFn = Callable[[str, int, int], Awaitable[None]]
 # return True to abort (partial result is discarded by the caller)
 AbortFn = Callable[[], Awaitable[bool]]
+# (clip_index, billed_audio_sec, keyterms_sent) — one call per billed file
+ClipBilledFn = Callable[[int, float, bool], Awaitable[None]]
+#: ``(clip_index, wav)`` before a file is sent — the worker's per-call billing
+#: guard; raising stops the run without sending that file.
+BeforeClipFn = Callable[[int, pathlib.Path], Awaitable[None]]
+#: An async context manager factory held around each request — the worker's
+#: cross-process vendor concurrency slot.
+ClipSlotFn = Callable[[], AbstractAsyncContextManager[None]]
 
 
 class ElevenLabsSTTError(RuntimeError):
     """Scribe request failed after retries, or returned an unusable body."""
+
+
+class ElevenLabsInputRejected(ElevenLabsSTTError, UserInputError):
+    """Scribe refused the FILE itself (400 / 413 / 415 / 422): the audio the
+    user uploaded is unusable. A ``UserInputError`` so a paid run that ends
+    here is charged what it already used instead of refunded — otherwise one
+    good long file followed by a garbage one bills us for the first and
+    refunds the user in full (packages/core/errors.py)."""
+
+
+#: Statuses that mean "this file", not "our key / quota / their outage".
+_INPUT_REJECTED_STATUS = frozenset({400, 413, 415, 422})
 
 
 # ── request ───────────────────────────────────────────────────────────────────
@@ -243,7 +265,12 @@ async def _post_stt(
                     )
                     await asyncio.sleep(_RETRY_BACKOFF[attempt])
                     continue
-                raise ElevenLabsSTTError(
+                error_cls = (
+                    ElevenLabsInputRejected
+                    if resp.status_code in _INPUT_REJECTED_STATUS
+                    else ElevenLabsSTTError
+                )
+                raise error_cls(
                     f"Scribe returned {resp.status_code}: {resp.text[:500]}"
                 )
             except (httpx.TransportError, httpx.TimeoutException) as exc:
@@ -566,11 +593,23 @@ async def run_transcription(
     project_uid: str = "",
     on_progress: ProgressFn | None = None,
     should_abort: AbortFn | None = None,
+    on_clip_billed: ClipBilledFn | None = None,
+    before_clip: BeforeClipFn | None = None,
+    clip_slot: ClipSlotFn | None = None,
 ) -> dict[str, Any] | None:
     """Transcribe every clip WAV with Scribe and assemble the project transcript.
 
     Returns the transcript dict documented at module level, or None when
     ``should_abort`` fired (the caller discards the partial result).
+
+    ``on_clip_billed(clip_index, billed_sec, keyterms_sent)`` runs as soon as
+    each file comes back, BEFORE the next one is sent — so a run that fails or
+    is stopped on clip 3 has already recorded clips 1–2, which were billed.
+    The worker records usage there; this module stays free of billing imports
+    (the desktop sidecar imports it). ``before_clip(clip_index, wav)`` runs
+    just before a file is sent (the worker's per-call guard — raising stops
+    the run there), and ``clip_slot()`` is held around each request (the
+    worker's vendor concurrency slot).
 
     Clips run sequentially: it keeps progress reporting and abort honest, and
     Scribe is fast enough on the batch endpoint that the wall-clock saved by
@@ -594,16 +633,27 @@ async def run_transcription(
     # Taken from the reply rather than measured off the WAVs, because it is
     # what the service says it processed.
     billed_audio_sec = 0.0
+    # Mirrors build_stt_fields: blank terms are dropped, and an empty list
+    # sends no keyterms field (and no surcharge).
+    keyterms_sent = any(t and t.strip() for t in (keyterms or []))
 
     for idx, wav in enumerate(audio_files):
         if should_abort and await should_abort():
             return None
         await _progress("clip", idx, len(audio_files))
 
-        response = await transcribe_clip(wav, keyterms, diarize=diarize)
+        if before_clip is not None:
+            await before_clip(idx, wav)
+        if clip_slot is not None:
+            async with clip_slot():
+                response = await transcribe_clip(wav, keyterms, diarize=diarize)
+        else:
+            response = await transcribe_clip(wav, keyterms, diarize=diarize)
         clip_billed = response.get("audio_duration_secs")
         if isinstance(clip_billed, (int, float)):
             billed_audio_sec += float(clip_billed)
+            if on_clip_billed is not None:
+                await on_clip_billed(idx, float(clip_billed), keyterms_sent)
         raw_tokens = response.get("words") or []
         # Legacy settings-driven diarization keeps only the dominant speaker
         # (talking_head: drop the TV in the next room). An EXPLICIT diarize=True

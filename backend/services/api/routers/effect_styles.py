@@ -17,7 +17,7 @@ import shutil
 import uuid as _uuid
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,6 +30,8 @@ from packages.db.models.effect_style import (
     EffectStyle,
 )
 from packages.video.storage import data_root
+from packages.billing import estimate as estimator
+from services.api.billing_start import release_run, start_paid_run
 from services.api.deps import CurrentUser, db_session
 from services.api.routers.videos import _enqueue
 
@@ -118,10 +120,54 @@ async def _create_distill_job(session: AsyncSession, style: EffectStyle, auth: C
     return job_id
 
 
-async def _enqueue_distill(style_uid: str, auth: CurrentUser) -> None:
+async def _enqueue_distill(style_uid: str, auth: CurrentUser, run_id: str) -> None:
     await _enqueue(
         f"style_{style_uid[:8]}", "distill_style_local",
-        style_uid=style_uid, tenant_slug=auth.tenant_slug,
+        style_uid=style_uid, tenant_slug=auth.tenant_slug, run_id=run_id, user=auth.user,
+    )
+
+
+async def _reference_seconds(ref_rel: str | None) -> float:
+    """Length of the stored reference clip (0 for none / an image), FAIL
+    CLOSED: a clip whose length cannot be read — not even by decoding it,
+    e.g. a browser MediaRecorder WebM with no duration header — is refused
+    (422), never priced as zero seconds of a Pro video call. Over
+    ``settings.reference_max_sec`` is refused too (every second is billed)."""
+    if not ref_rel or Path(ref_rel).suffix.lower() in _IMAGE_SUFFIXES:
+        return 0.0
+    import asyncio
+
+    from packages.core.settings import get_settings
+    from packages.video.ffmpeg_bin import MediaUnmeasurable, measure_media
+
+    try:
+        seconds = (await asyncio.to_thread(measure_media, data_root() / ref_rel)).duration_sec
+    except MediaUnmeasurable:
+        raise HTTPException(422, "อ่านความยาวคลิปอ้างอิงไม่ได้ — กรุณาส่งไฟล์วิดีโอที่เปิดได้") from None
+    cap = float(get_settings().reference_max_sec)
+    if seconds > cap:
+        raise HTTPException(400, f"คลิปอ้างอิงต้องยาวไม่เกิน {int(cap // 60)} นาที")
+    return seconds
+
+
+async def _reserve_distill(
+    auth: CurrentUser, request: Request, style: EffectStyle | None, style_uid: str, kind: str,
+    ref_rel: str | None, allow_wallet: bool,
+) -> str:
+    """Reserve the distillation run (docs/token-billing-design.md §6.1), priced
+    at the model the style's kind really runs (cut styles use the dub vision
+    model, effects styles the effects model)."""
+    from packages.video import quality
+
+    ref_sec = await _reference_seconds(ref_rel)
+    model = quality.cut_style_model() if kind == "cut" else quality.effects_model()
+    image_ref = bool(ref_rel) and Path(ref_rel or "").suffix.lower() in _IMAGE_SUFFIXES
+    return await start_paid_run(
+        auth, request,
+        estimator.estimate_run(
+            kind="distill_style", clip_secs=[ref_sec], model=model, frame_count=1 if image_ref else None,
+        ),
+        allow_wallet=allow_wallet, job_id=f"style_{style_uid[:8]}", reference_id=style_uid,
     )
 
 
@@ -130,12 +176,14 @@ async def _enqueue_distill(style_uid: str, auth: CurrentUser) -> None:
 @router.post("", response_model=StyleCreateOut, status_code=201)
 async def create_style(
     auth: CurrentUser,
+    request: Request,
     session: AsyncSession = Depends(db_session),
     name: str = Form(...),
     description: str = Form(""),
     kind: str = Form("effects"),
     target_platform: str = Form(""),
     reference: UploadFile | None = File(None),
+    allow_wallet: bool = Form(False),
 ) -> StyleCreateOut:
     """Create a style (status=pending) and enqueue its distillation.
 
@@ -168,24 +216,14 @@ async def create_style(
         ref_path.write_bytes(await reference.read())
         ref_rel = f"effect_styles/{style_uid}/reference{suffix}"
 
-        if kind == "cut":
-            # Soft duration cap: reject clips over 20 minutes (~400k Gemini
-            # tokens — comfortably inside the 1M context; same ceiling as the
-            # dub footage bundle). If the probe itself fails, allow and let
-            # the distillation worker deal with it.
-            dur: float | None = None
-            try:
-                from packages.video.ffmpeg_bin import media_duration
-
-                dur = media_duration(ref_path)
-            except Exception as exc:  # noqa: BLE001 — soft cap, probe failure allowed
-                log.warning(
-                    "cut_style_duration_probe_failed",
-                    style_uid=style_uid, error=str(exc),
-                )
-            if dur is not None and dur > 1200:
-                shutil.rmtree(d, ignore_errors=True)
-                raise HTTPException(400, "คลิปอ้างอิงต้องยาวไม่เกิน 20 นาที")
+    # The reference is measured (and capped at settings.reference_max_sec —
+    # ~20 minutes, ~400k Gemini tokens) inside the reservation; a refusal of
+    # any kind removes what was stored.
+    try:
+        run_id = await _reserve_distill(auth, request, None, style_uid, kind, ref_rel, allow_wallet)
+    except BaseException:
+        shutil.rmtree(_style_dir(style_uid), ignore_errors=True)
+        raise
 
     style = EffectStyle(
         uid=style_uid,
@@ -198,12 +236,16 @@ async def create_style(
         reference_clip_path=ref_rel,
         status="pending",
     )
-    session.add(style)
-    await session.flush()
+    try:
+        session.add(style)
+        await session.flush()
 
-    job_id = await _create_distill_job(session, style, auth)
-    await session.commit()
-    await _enqueue_distill(style_uid, auth)
+        job_id = await _create_distill_job(session, style, auth)
+        await session.commit()
+        await _enqueue_distill(style_uid, auth, run_id)
+    except BaseException:
+        await release_run(run_id)
+        raise
     log.info("effect_style_created", style_uid=style_uid, has_reference=ref_rel is not None)
     return StyleCreateOut(style_uid=style_uid, job_id=job_id)
 
@@ -267,18 +309,27 @@ async def update_style(
 async def regenerate_style(
     uid: str,
     auth: CurrentUser,
+    request: Request,
     session: AsyncSession = Depends(db_session),
+    allow_wallet: bool = Form(False),
 ) -> StyleCreateOut:
     """Re-run distillation from the stored reference clip and/or description."""
     style = await _get_style(session, uid, auth.user_id)
     if not (style.description or style.reference_clip_path):
         raise HTTPException(400, "สไตล์นี้ไม่มีคำอธิบายหรือคลิปอ้างอิงให้วิเคราะห์ใหม่")
-    style.status = "pending"
-    style.error_msg = None
-    await session.flush()
-    job_id = await _create_distill_job(session, style, auth)
-    await session.commit()
-    await _enqueue_distill(style.uid, auth)
+    run_id = await _reserve_distill(
+        auth, request, style, style.uid, style.kind, style.reference_clip_path, allow_wallet,
+    )
+    try:
+        style.status = "pending"
+        style.error_msg = None
+        await session.flush()
+        job_id = await _create_distill_job(session, style, auth)
+        await session.commit()
+        await _enqueue_distill(style.uid, auth, run_id)
+    except BaseException:
+        await release_run(run_id)
+        raise
     return StyleCreateOut(style_uid=style.uid, job_id=job_id)
 
 

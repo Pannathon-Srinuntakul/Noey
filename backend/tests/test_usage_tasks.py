@@ -1,6 +1,5 @@
-"""Task grouping + the daily-quota shape the desktop settings screen reads."""
+"""Task grouping — the shares (never token counts) GET /usage/me reports per task."""
 
-from packages.core.settings import get_settings
 from packages.llm.usage import USAGE_TASKS, task_for_feature
 
 
@@ -23,11 +22,12 @@ def test_unknown_and_missing_features_fall_back_to_other() -> None:
     assert task_for_feature("") == "other"
 
 
-def test_free_plan_has_a_daily_quota_so_a_percentage_exists() -> None:
+def test_free_plan_has_a_monthly_limit_so_a_percentage_exists() -> None:
     # A share of "unlimited" is not a number — the settings screen needs a limit.
-    settings = get_settings()
-    assert settings.plan_token_limit("free") == 10_000_000
-    assert settings.plan_token_limit("free") > 0
+    from packages.billing import limits
+
+    assert limits.window_limit("free", "monthly") == 100_000
+    assert limits.plan_limits("free").windows == ("monthly",)
 
 
 def test_build_usage_tasks_always_lists_all_four() -> None:
@@ -54,8 +54,9 @@ def test_build_usage_tasks_merges_legacy_features_into_cut() -> None:
     from packages.llm.usage import build_usage_tasks
 
     by = {r["task"]: r for r in build_usage_tasks({"video": 50, "video_edit": 50})}
-    assert by["cut"]["total_tokens"] == 100
     assert by["cut"]["pct"] == 100.0
+    # Users never see token counts (docs/token-billing-plan.md §1).
+    assert all(set(r) == {"task", "pct"} for r in by.values())
 
 
 def test_build_usage_tasks_handles_a_period_with_no_usage() -> None:
@@ -63,4 +64,4 @@ def test_build_usage_tasks_handles_a_period_with_no_usage() -> None:
 
     rows = build_usage_tasks({})
     # No division by zero, and no task claiming a share of nothing.
-    assert all(r["total_tokens"] == 0 and r["pct"] == 0.0 for r in rows)
+    assert all(r["pct"] == 0.0 for r in rows)

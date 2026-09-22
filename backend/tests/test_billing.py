@@ -951,8 +951,12 @@ async def test_card_change_in_the_portal_reaches_the_account(fake):
 
 async def test_unhandled_event_types_are_acknowledged(fake):
     async with _client() as c:
-        r = await _deliver(c, _event("charge.refunded", {"id": "ch_1", "object": "charge"}))
+        r = await _deliver(c, _event("payment_intent.created", {"id": "pi_1", "object": "payment_intent"}))
+        # charge.refunded is handled now (a top-up refund takes the balance
+        # back — tests/test_wallet.py); one that names no payment is a no-op.
+        refund = await _deliver(c, _event("charge.refunded", {"id": "ch_1", "object": "charge"}))
     assert r.status_code == 200 and r.json() == {"status": "ignored"}
+    assert refund.status_code == 200 and refund.json() == {"status": "topup_no_payment_intent"}
 
 
 async def test_a_stripe_failure_is_a_retryable_500_and_not_marked_processed(fake):

@@ -4,8 +4,9 @@ import { useEffect, useRef } from "react";
 import { b0, baht, num, pct } from "@/lib/format";
 import { jobCost, type Ctx, type UserMoney } from "@/lib/money";
 import { MODE_LABEL, PLAN_KEYS, STATUS_LABEL, planLabel } from "@/lib/plans";
-import type { UserDetail } from "@/lib/types";
+import type { LimitFacts, UserDetail, WindowKey } from "@/lib/types";
 import { LOSS, OK, Seg, TASKS, TaskBars } from "./ui";
+import { LimitsSection, RunsSection, WalletSection } from "./UserBilling";
 
 function relDay(iso: string | null): string {
   if (!iso) return "—";
@@ -14,7 +15,7 @@ function relDay(iso: string | null): string {
 }
 
 export function UserDrawer({
-  u, ctx, detail, detailError, isSelf, onClose, onPlan, onResetQuota, onToggleActive,
+  u, ctx, detail, detailError, isSelf, onClose, onPlan, onResetQuota, onResetWindow, onWalletAdjust, onToggleActive,
 }: {
   u: UserMoney;
   ctx: Ctx;
@@ -24,6 +25,8 @@ export function UserDrawer({
   onClose: () => void;
   onPlan: (plan: string) => void;
   onResetQuota: () => void;
+  onResetWindow: (w: WindowKey) => void;
+  onWalletAdjust: (satang: number, note: string) => void;
   onToggleActive: () => void;
 }) {
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -37,6 +40,19 @@ export function UserDrawer({
     label: t.label, color: t.color, value: baht(u.tasks[t.k]), pct: pct((u.tasks[t.k] / ttSum) * 100), w: Math.round((u.tasks[t.k] / ttMax) * 100),
   }));
   const high = u.precision_high_pct;
+  // The detail call has the freshest limits; until it lands, the dashboard's
+  // flattened per-user facts.
+  const limits: LimitFacts | null =
+    detail?.limits ??
+    (u.windows
+      ? {
+          effective_plan: u.effective_plan ?? u.plan, unlimited: !!u.unlimited, windows: u.windows,
+          quota_window: u.quota_window ?? null, quota_limit_tokens: u.quota_limit_tokens,
+          quota_used_tokens: u.quota_used_tokens, quota_used_pct: u.quota_used_pct,
+          wallet_balance_satang: u.wallet_balance_satang ?? 0, pending_plan: u.pending_plan ?? null,
+          grace_until: u.grace_until ?? null,
+        }
+      : null);
   const eyebrow: React.CSSProperties = { margin: "0 0 12px", fontSize: 12.5, letterSpacing: ".06em", textTransform: "uppercase", color: "var(--color-neutral-600)" };
 
   return (
@@ -57,7 +73,7 @@ export function UserDrawer({
         <div style={{ padding: "18px 24px 0" }}>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", border: "1px solid var(--color-divider)", borderRadius: 4 }}>
             {[
-              { label: "จ่าย/เดือน", value: u.internal ? "—" : b0(u.pays * (30 / ctx.days)) },
+              { label: "จ่าย/เดือน", value: u.internal ? "—" : b0((u.pays + u.topup) * (30 / ctx.days)) },
               { label: "ต้นทุน", value: baht(u.cost) },
               { label: "กำไร", value: u.internal ? "—" : baht(u.profit), color: u.internal ? "var(--color-neutral-600)" : u.profit >= 0 ? OK : LOSS },
             ].map((x, i) => (
@@ -67,10 +83,17 @@ export function UserDrawer({
               </div>
             ))}
           </div>
+          {u.topup > 0 && (
+            <p className="num" style={{ margin: "8px 0 0", fontSize: 12, color: "var(--color-neutral-600)" }}>
+              รวมเติมเงิน {baht(u.topup)} ในช่วงนี้ · ใช้จากยอดเติม {baht(u.walletSpent)}
+            </p>
+          )}
           {u.planPrice > 0 && !u.subscription.live && !u.internal && (
             <p style={{ margin: "8px 0 0", fontSize: 12, color: "var(--color-neutral-600)" }}>ไม่มีการสมัครสมาชิกที่ชำระเงิน — แผนนี้ผู้ดูแลตั้งให้</p>
           )}
         </div>
+
+        <LimitsSection limits={limits} onResetWindow={onResetWindow} onResetAll={onResetQuota} />
 
         <div style={{ padding: "20px 24px 0" }}>
           <p style={eyebrow}>ต้นทุนแยกตามงาน</p>
@@ -95,6 +118,15 @@ export function UserDrawer({
             {high === null ? "ยังไม่มีโปรเจกต์ในช่วงนี้" : high > 25 ? "Precision high กินโทเค็นวิดีโอราว 4 เท่าของ standard" : "ส่วนใหญ่อยู่ที่ standard ซึ่งเป็นค่าเริ่มต้น"}
           </p>
         </div>
+
+        <WalletSection wallet={detail?.wallet ?? null} onAdjust={onWalletAdjust} />
+
+        <RunsSection
+          runs={detail ? detail.runs ?? [] : null}
+          accuracy={detail?.estimate_accuracy ?? null}
+          failed={detail?.failed_runs_30d ?? null}
+          error={detailError}
+        />
 
         <div style={{ padding: "20px 24px 0" }}>
           <p style={{ ...eyebrow, marginBottom: 10 }}>งานล่าสุด</p>
@@ -147,9 +179,6 @@ export function UserDrawer({
             style={{ marginBottom: 16, flexWrap: "wrap" }}
           />
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <button type="button" className="btn btn-secondary" onClick={onResetQuota} style={{ fontFamily: "inherit", fontSize: 13 }}>
-              รีเซ็ตโควตาวันนี้
-            </button>
             <button
               type="button"
               className={`btn btn-secondary${u.active ? " btn-danger" : ""}`}
@@ -164,7 +193,7 @@ export function UserDrawer({
           <p style={{ margin: "12px 0 0" }} className="small">
             {isSelf
               ? "นี่คือบัญชีของคุณเอง — ปิดการใช้งานตัวเองไม่ได้"
-              : `โควตาวันนี้ใช้ไป ${u.quota_used_pct === null ? "— (ไม่จำกัด)" : `${Math.round(u.quota_used_pct)}%`} · ปิดบัญชีแล้วผู้ใช้จะออกจากระบบทุกเครื่องทันที ไฟล์และโปรเจกต์ยังอยู่ครบ`}
+              : "ปิดบัญชีแล้วผู้ใช้จะออกจากระบบทุกเครื่องทันที ไฟล์และโปรเจกต์ยังอยู่ครบ"}
           </p>
         </div>
       </aside>

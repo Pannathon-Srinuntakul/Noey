@@ -4,9 +4,15 @@
  * report the renewed tokens via onTokens so the caller can persist them.
  */
 
-import { ApiError, connectErrorMessage, refresh } from './api'
-import { apiErrorDetail } from './apiError'
+import { ApiError, connectErrorMessage, errorFromResponse, refresh } from './api'
 import { apiFetch } from './httpClient'
+import {
+  isWaitingSlot,
+  jobStopRefusal,
+  refusalMessage,
+  type EstimateRequest,
+  type UsageEstimate
+} from './usageLimits'
 
 export interface ApiSession {
   baseUrl: string
@@ -111,15 +117,7 @@ async function request<T>(
     return request<T>(session, path, init, true)
   }
 
-  if (!res.ok) {
-    let detail = `HTTP ${res.status}`
-    try {
-      detail = apiErrorDetail(res.status, res.json())
-    } catch {
-      /* non-JSON body */
-    }
-    throw new ApiError(res.status, detail)
-  }
+  if (!res.ok) throw errorFromResponse(res)
   if (res.status === 204) return undefined as T
   return res.json() as T
 }
@@ -155,7 +153,10 @@ export async function analyzeVideo(
   brief?: string,
   /** AI quality tiers. Omitted fields mean "keep what the server stored" — a
    * re-analyze that forgets them must not silently downgrade a Pro project. */
-  tiers?: { engine?: string; precision?: string }
+  tiers?: { engine?: string; precision?: string },
+  /** The user agreed to pay from the top-up balance if the plan's limits
+   * cannot cover this run (docs/token-billing-design.md §9.3). */
+  allowWallet = false
 ): Promise<{ job_id: string }> {
   const manifest = proxies.map((e) => ({
     clip_id: e.clip_id,
@@ -170,7 +171,8 @@ export async function analyzeVideo(
       ...(styleUid ? { style_uid: styleUid } : {}),
       ...(brief?.trim() ? { brief: brief.trim() } : {}),
       ...(tiers?.engine ? { engine: tiers.engine } : {}),
-      ...(tiers?.precision ? { precision: tiers.precision } : {})
+      ...(tiers?.precision ? { precision: tiers.precision } : {}),
+      ...walletField(allowWallet)
     },
     formFiles: await Promise.all(
       proxies.map(async (entry) => ({
@@ -209,14 +211,22 @@ export async function pollJob(
     const status = await getJob(session, jobId)
     onTick(status)
     if (status.status === 'ok') return status
-    if (status.status === 'error') throw new ApiError(500, status.error ?? 'job ล้มเหลว')
+    if (status.status === 'error') {
+      // A run the budget guard or the service pause stopped is not a crash:
+      // it carries a code the UI turns into its own state (retry, reset time).
+      const stopped = jobStopRefusal(status.result)
+      if (stopped) throw new ApiError(402, refusalMessage(stopped), stopped)
+      throw new ApiError(500, status.error ?? 'job ล้มเหลว')
+    }
     // Any movement — a progress bump or leaving the queue — resets the clock;
-    // a long stage is not a stall.
-    if (status.progress !== lastProgress || status.status !== 'queued') {
+    // a long stage is not a stall. Neither is waiting for one of the plan's
+    // own job slots (`waiting_slot`): the worker is alive and re-checking.
+    const waitingSlot = isWaitingSlot(status.result)
+    if (status.progress !== lastProgress || status.status !== 'queued' || waitingSlot) {
       lastProgress = status.progress
       lastMovementAt = Date.now()
     }
-    if (status.status === 'queued' && Date.now() - lastMovementAt > queuedStallMs) {
+    if (status.status === 'queued' && !waitingSlot && Date.now() - lastMovementAt > queuedStallMs) {
       throw new ApiError(
         503,
         'งานถูกส่งเข้าคิวแล้วแต่ไม่มีตัวประมวลผลรับไปทำ — ตรวจว่า worker (python -m services.worker) กำลังรันอยู่ แล้วลองใหม่'
@@ -234,11 +244,16 @@ export function planDub(
   session: ApiSession,
   remoteUid: string,
   voDurationSec: number,
-  clipDurations: number[]
+  clipDurations: number[],
+  allowWallet = false
 ): Promise<DubTimeline> {
   return request(session, `/videos/${remoteUid}/plan-dub`, {
     method: 'POST',
-    body: JSON.stringify({ voDurationSec, clipDurations })
+    body: JSON.stringify({
+      voDurationSec,
+      clipDurations,
+      ...(allowWallet ? { allow_wallet: true } : {})
+    })
   })
 }
 
@@ -270,7 +285,7 @@ export async function uploadAudio(
   remoteUid: string,
   localUid: string,
   wavFiles: { file: string; name: string }[],
-  opts: { styleUid?: string } = {}
+  opts: { styleUid?: string; allowWallet?: boolean } = {}
 ): Promise<{ job_id: string }> {
   const formFiles: { field: string; path: string; filename: string }[] = []
   for (const wav of wavFiles) {
@@ -285,7 +300,10 @@ export async function uploadAudio(
     formFiles,
     // speech_scenes carries its saved cut style; the other speech modes send
     // nothing and the server ignores the field.
-    ...(opts.styleUid ? { formFields: { style_uid: opts.styleUid } } : {})
+    formFields: {
+      ...(opts.styleUid ? { style_uid: opts.styleUid } : {}),
+      ...walletField(opts.allowWallet)
+    }
   })
 }
 
@@ -367,14 +385,16 @@ export async function reeditDubScenes(
   { selectedLineIds, instruction }: { selectedLineIds: number[]; instruction: string },
   styleUid?: string,
   proxies: ProxyManifestEntry[] = [],
-  proxyPaths: string[] = []
+  proxyPaths: string[] = [],
+  allowWallet = false
 ): Promise<{ job_id: string }> {
   return request(session, `/videos/${remoteUid}/reedit-dub-scenes`, {
     method: 'POST',
     formFields: {
       manifest: JSON.stringify({ selectedLineIds, instruction }),
       ...(proxies.length ? { proxy_manifest: JSON.stringify(proxies) } : {}),
-      ...(styleUid ? { style_uid: styleUid } : {})
+      ...(styleUid ? { style_uid: styleUid } : {}),
+      ...walletField(allowWallet)
     },
     formFiles: [
       { field: 'preview', path: previewPath, filename: 'edited_preview.mp4' },
@@ -385,4 +405,21 @@ export async function reeditDubScenes(
       }))
     ]
   })
+}
+
+/** Form field for `allow_wallet` — sent only when true, so a server that
+ * predates the top-up wallet never sees an unknown field. */
+function walletField(allowWallet: boolean | undefined): Record<string, string> {
+  return allowWallet ? { allow_wallet: 'true' } : {}
+}
+
+/**
+ * `POST /usage/estimate` — what a run with these clips would use, as a
+ * percentage of each of the plan's limits, and whether it fits what is left
+ * (`plan`), fits only with the top-up balance (`wallet`) or not at all
+ * (`none`). The start routes recompute it from server-held durations; this is
+ * the preview the wizard shows before anything uploads.
+ */
+export function estimateUsage(session: ApiSession, body: EstimateRequest): Promise<UsageEstimate> {
+  return request(session, '/usage/estimate', { method: 'POST', body: JSON.stringify(body) })
 }

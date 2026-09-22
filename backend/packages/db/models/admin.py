@@ -120,7 +120,8 @@ class AdminAuditEvent(Base):
     email: Mapped[str | None] = mapped_column(String(255), nullable=True)
     #: login_failed | login_otp_sent | login_otp_failed | login_success | logout |
     #: plan_change | quota_reset | account_activate | account_deactivate |
-    #: price_change | cost_config_change
+    #: price_change | cost_config_change | fx_override_change |
+    #: vendor_invoice_change
     action: Mapped[str] = mapped_column(String(40))
     target_user_id: Mapped[int | None] = mapped_column(
         BigInteger, ForeignKey(f"{CORE_SCHEMA}.users.id", ondelete="SET NULL"), nullable=True

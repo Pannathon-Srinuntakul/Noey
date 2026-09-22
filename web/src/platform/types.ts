@@ -114,6 +114,22 @@ export interface LocalProject {
    * them for free (which reported the old cut as the recut). */
   analysisOwed?: boolean
   remote?: { uid: string; jobId?: string }
+  /** The user agreed to pay from the top-up balance when the plan's limits
+   * cannot cover the NEXT paid start (wizard toggle, or "ใช้ยอดเงินคงเหลือทำต่อ"
+   * on a limit error). Sent as `allow_wallet` and cleared once a start is
+   * accepted — consent is per run, never standing. */
+  allowWallet?: boolean
+  /** Why the last run was refused or stopped by the plan's limits (or a
+   * paused service), for the error card's reset time and wallet action.
+   * Written with `error`; meaningful only while step is 'error'. */
+  billingStop?: {
+    code: 'limit_reached' | 'free_tier_limited' | 'service_paused' | 'limit_stop'
+    window: 'five_hour' | 'weekly' | 'monthly' | null
+    resetsAt: string | null
+    walletCanCover: boolean
+    walletSatang: number
+    serverMessage: string | null
+  }
   voiceoverPath?: string
   /** Recorded per-line takes, keyed by `voiceoverLineId`. The assembled
    * `voiceoverPath` is rebuilt from these, so re-recording one line never

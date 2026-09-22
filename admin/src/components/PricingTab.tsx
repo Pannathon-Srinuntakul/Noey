@@ -3,11 +3,13 @@
 import { b0, baht, num, pct } from "@/lib/format";
 import { forecast, planRow, type Ctx, type ForecastIn, type Summary } from "@/lib/money";
 import { PLAN_QUOTA, PRICED_KEYS, planLabel } from "@/lib/plans";
-import type { DashboardData } from "@/lib/types";
-import { LOSS, NumberInput, OK } from "./ui";
+import type { ActionResult } from "@/app/actions";
+import type { BillingConfigView, DashboardData } from "@/lib/types";
+import { BillingConfigCard } from "./BillingConfigCard";
+import { LOSS, NumberInput, OK, type ConfirmSpec } from "./ui";
 
 export function PricingTab({
-  ctx, s, data, draft, setDraft, dirty, onSave, onCancel, fc, setFc, fcDefaults,
+  ctx, s, data, draft, setDraft, dirty, onSave, onCancel, fc, setFc, fcDefaults, handle, ask, onBillingSaved,
 }: {
   ctx: Ctx;
   s: Summary;
@@ -20,6 +22,9 @@ export function PricingTab({
   fc: ForecastIn;
   setFc: (f: ForecastIn | null) => void;
   fcDefaults: ForecastIn;
+  handle: <T>(r: ActionResult<T>) => r is { ok: true; data: T };
+  ask: (spec: ConfirmSpec) => void;
+  onBillingSaved: (cfg: BillingConfigView) => void;
 }) {
   const stripe = data.prices.source === "stripe";
   const out = forecast(ctx, s, fc);
@@ -27,16 +32,14 @@ export function PricingTab({
     { label: "ผู้ใช้ทั้งหมด", value: num(out.users), sub: `จ่ายเงิน ${num(out.payingUsers)} คน` },
     { label: "รายได้ต่อเดือน", value: b0(out.revenue), sub: ctx.cfg.vat_included ? "หัก VAT แล้ว" : "ไม่มี VAT" },
     { label: "ต้นทุนตามการใช้งาน", value: b0(out.variable), sub: "โทเค็น + ถอดเสียง" },
-    { label: "ต้นทุนคงที่", value: b0(out.fixed), sub: fc.fixed === null ? `เครดิตเหลือ ${b0(out.unused)}` : "กรอกเอง" },
+    { label: "ต้นทุนคงที่", value: b0(out.fixed), sub: fc.fixed === null ? "จากต้นทุนคงที่ + บัญชีผู้ดูแล" : "กรอกเอง" },
     {
       label: out.profit >= 0 ? "กำไรต่อเดือน" : "ขาดทุนต่อเดือน", value: b0(out.profit), color: out.profit >= 0 ? OK : LOSS,
       sub: out.revenue > 0 ? `${pct((out.profit / out.revenue) * 100)} ของรายได้` : "—",
     },
   ];
   const fcNote =
-    (out.profit >= 0 ? `กำไร ${b0(out.profit)}/เดือน` : `ยังขาดอีก Starter ${out.needStarter} คน หรือ Pro ${out.needPro} คน`) +
-    ` · ต้องใช้เครดิตถอดเสียง ${num(out.credits)}` +
-    (out.credits > Number(ctx.cfg.stt.credits) ? " เกินแพ็กเกจ ต้องขยับขึ้น" : ` จากแพ็กเกจ ${num(ctx.cfg.stt.credits)}`);
+    out.profit >= 0 ? `กำไร ${b0(out.profit)}/เดือน` : `ยังขาดอีก Starter ${out.needStarter} คน หรือ Pro ${out.needPro} คน`;
 
   const set = (field: "counts" | "price" | "cost", k: string, v: number) =>
     setFc({ ...fc, [field]: { ...fc[field], [k]: Math.max(0, v) } });
@@ -106,6 +109,8 @@ export function PricingTab({
         </p>
       </section>
 
+      <BillingConfigCard s={s} data={data} handle={handle} ask={ask} onSaved={onBillingSaved} />
+
       <section className="card" style={{ marginTop: 20 }} aria-labelledby="fc-title">
         <div style={{ display: "flex", alignItems: "baseline", gap: 12, marginBottom: 16 }}>
           <p id="fc-title" className="card-title">คาดการณ์</p>
@@ -133,7 +138,7 @@ export function PricingTab({
               <span style={{ width: 42 }}>บาท</span>
               <NumberInput label="ต้นทุนคงที่ต่อเดือน" value={Math.round(out.fixed)} onChange={(v) => setFc({ ...fc, fixed: Math.max(0, v) })} />
             </label>
-            <p style={{ margin: "9px 0 0", fontSize: 11.5, color: "var(--color-neutral-600)" }}>เซิร์ฟเวอร์ ค่าถอดเสียงที่เหลือ และบัญชีผู้ดูแล</p>
+            <p style={{ margin: "9px 0 0", fontSize: 11.5, color: "var(--color-neutral-600)" }}>เซิร์ฟเวอร์ ค่าบริการรายเดือน และบัญชีผู้ดูแล</p>
           </div>
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(168px, 1fr))", border: "1px solid var(--color-divider)", borderRadius: 4, marginTop: 18 }}>

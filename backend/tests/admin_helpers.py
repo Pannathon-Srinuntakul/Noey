@@ -129,3 +129,15 @@ async def new_admin(c: AsyncClient, mail: FakeMailer, *, remember: bool = False)
     address = email("admin")
     uid = await make_user(address, admin=True)
     return uid, address, await sign_in(c, mail, address, remember=remember)
+
+
+async def user_token(user_id: int) -> str:
+    """An ordinary web/desktop access token for ``user_id``."""
+    from packages.auth.tokens import encode_access
+
+    row = await db(
+        "SELECT t.id, t.slug, u.token_version FROM core.tenants t JOIN core.memberships m ON m.tenant_id = t.id "
+        "JOIN core.users u ON u.id = m.user_id WHERE m.user_id = :u",
+        u=user_id,
+    )
+    return encode_access(user_id, int(row[0][0]), str(row[0][1]), int(row[0][2]))

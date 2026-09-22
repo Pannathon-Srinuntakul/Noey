@@ -28,7 +28,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from packages.billing import catalog
+from packages.billing import catalog, plan_change
 from packages.billing.catalog import PaidPlan
 from packages.billing.objects import field, id_of, items_of, metadata_value
 from packages.core.logging import get_logger
@@ -245,12 +245,18 @@ async def _payment_method_for(client: stripe.StripeClient, sub: Any, customer_id
 
 
 async def _apply(
+    session: AsyncSession,
     client: stripe.StripeClient,
     account: BillingAccount,
     user: User,
     sub: Any | None,
 ) -> None:
-    """Mirror one subscription (or none) into the account row and `users.plan`."""
+    """Mirror one subscription (or none) into the account row and `users.plan`.
+
+    The plan itself moves by the owner's rules in packages/billing/plan_change.py
+    (upgrade now, downgrade / cancel at period end, 3-day grace after a failed
+    payment) — Stripe says WHAT the customer has, plan_change decides WHEN it
+    applies."""
     live = sub is not None and catalog.is_live(field(sub, "status"))
     if sub is None:
         account.stripe_subscription_id = None
@@ -284,9 +290,17 @@ async def _apply(
     if user.plan == ENTERPRISE_TIER:
         # Admin-granted; Stripe never overrides it (docs/billing-stripe.md).
         return
-    if user.plan != new_plan:
-        log.info("billing_plan_changed", user_id=user.id, old=user.plan, new=new_plan)
-        user.plan = new_plan
+    before = user.plan
+    await plan_change.mirror_subscription(
+        session,
+        user,
+        new_plan,
+        status=field(sub, "status") if sub is not None else None,
+        period_end=_period_end(sub) if sub is not None else None,
+        ending=bool(sub is not None and live and _scheduled_to_end(sub)),
+    )
+    if user.plan != before:
+        log.info("billing_plan_changed", user_id=user.id, old=before, new=user.plan)
 
 
 async def sync_account(
@@ -299,7 +313,7 @@ async def sync_account(
     row lock (``lock_account*``) and commits. Returns the subscription mirrored."""
     subs = await fetch_subscriptions(client, account.stripe_customer_id)
     chosen = _choose_subscription(subs, account.stripe_customer_id)
-    await _apply(client, account, user, chosen)
+    await _apply(session, client, account, user, chosen)
     await session.flush()
     return chosen
 
@@ -559,7 +573,7 @@ async def _update_and_mirror(
 ) -> None:
     params["expand"] = ["default_payment_method"]
     updated = await client.v1.subscriptions.update_async(subscription_id, params)
-    await _apply(client, account, user, updated)
+    await _apply(session, client, account, user, updated)
     await session.commit()
 
 

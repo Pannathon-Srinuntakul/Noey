@@ -7,14 +7,17 @@ import {
   idleLogoutAction,
   logoutAction,
   resetQuotaAction,
+  resetWindowAction,
   saveCostConfigAction,
   savePricesAction,
   setActiveAction,
   setPlanAction,
+  walletAdjustAction,
   type ActionResult,
 } from "@/app/actions";
-import { b0 } from "@/lib/format";
-import { ctxFrom, forecastDefaults, pricesFromSatang, summarize, type ForecastIn } from "@/lib/money";
+import { WINDOW_LABELS } from "@/lib/billing";
+import { b0, baht, num } from "@/lib/format";
+import { ctxFrom, forecastDefaults, priceAt, pricesFromSatang, summarize, type ForecastIn } from "@/lib/money";
 import { PAID_KEYS, planLabel } from "@/lib/plans";
 import type { CostConfig, DashboardData, UserDetail } from "@/lib/types";
 import { CostsTab } from "./CostsTab";
@@ -51,18 +54,26 @@ function rangeFor(period: Period, today: string, custom: { from: string; to: str
   return Number.isFinite(n) && n >= 1 && n <= MAX_DAYS && custom.to <= today ? custom : null;
 }
 
-function costDiff(saved: CostConfig, d: CostConfig): string[] {
+function costDiff(saved: CostConfig, d: CostConfig, today: string): string[] {
   const lines: string[] = [];
   if (saved.fx_rate !== d.fx_rate) lines.push(`อัตราแลกเปลี่ยน ฿${saved.fx_rate.toFixed(2)} → ฿${d.fx_rate.toFixed(2)}`);
   for (const key of new Set([...Object.keys(saved.models), ...Object.keys(d.models)])) {
     const a = saved.models[key];
     const b = d.models[key];
     if (!a && b) lines.push(`${key} — ตั้งราคา $${b.input}/$${b.output}`);
-    else if (a && b && (a.input !== b.input || a.output !== b.output)) lines.push(`${key} — $${a.input}/$${a.output} → $${b.input}/$${b.output}`);
+    else if (a && b && JSON.stringify(a) !== JSON.stringify(b)) {
+      const [pa, pb] = [priceAt(a, today), priceAt(b, today)];
+      lines.push(`${key} — $${pa.input}/$${pa.output} → $${pb.input}/$${pb.output}`);
+    }
   }
-  const sttLabels: Record<string, string> = { model: "โมเดล", credits_per_hour: "เครดิต/ชม.", monthly_price: "ค่าแพ็กเกจ", credits: "เครดิตในแพ็กเกจ" };
-  for (const k of Object.keys(sttLabels) as Array<keyof CostConfig["stt"]>) {
-    if (String(saved.stt[k]) !== String(d.stt[k])) lines.push(`ถอดเสียง ${sttLabels[k]} — ${saved.stt[k]} → ${d.stt[k]}`);
+  for (const key of new Set([...Object.keys(saved.stt), ...Object.keys(d.stt)])) {
+    const a = saved.stt[key];
+    const b = d.stt[key];
+    if (!b) continue;
+    if (!a || a.usd_per_hour !== b.usd_per_hour || a.keyterms_usd_per_hour !== b.keyterms_usd_per_hour) {
+      const before = a ? `$${a.usd_per_hour} + $${a.keyterms_usd_per_hour}` : "ราคาตั้งต้น";
+      lines.push(`ถอดเสียง ${key} — ${before} → $${b.usd_per_hour} + $${b.keyterms_usd_per_hour} ต่อชั่วโมง`);
+    }
   }
   for (const x of saved.fixed) {
     const y = d.fixed.find((z) => z.id === x.id);
@@ -296,9 +307,13 @@ export function Dashboard({ initial, adminEmail, idleMs }: { initial: DashboardD
             setCfg={setDraftCost}
             dirty={costDirty}
             onCancel={() => setDraftCost(null)}
+            handle={handle}
+            onFxChange={(fx) => setData((d) => ({ ...d, fx: { usd_thb: fx.usd_thb, source: fx.source } }))}
+            ask={setConfirm}
+            done={(msg) => { setConfirm(null); say(msg); }}
             onSave={() => {
               if (!draftCost) return;
-              const lines = costDiff(data.cost_config, draftCost);
+              const lines = costDiff(data.cost_config, draftCost, data.today);
               setConfirm({
                 title: "บันทึกค่าต้นทุน", body: "ทุกตัวเลขในหน้านี้จะคิดใหม่ตามค่านี้",
                 lines: lines.length ? lines : ["ไม่มีการเปลี่ยนแปลง"], okLabel: "บันทึก",
@@ -326,6 +341,13 @@ export function Dashboard({ initial, adminEmail, idleMs }: { initial: DashboardD
             fc={fc ?? fcDefaults}
             setFc={(f) => { setFc(f); if (f === null) say("คืนค่าคาดการณ์แล้ว"); }}
             fcDefaults={fcDefaults}
+            handle={handle}
+            ask={setConfirm}
+            onBillingSaved={(bc) => {
+              setData((d) => ({ ...d, billing_config: bc }));
+              setConfirm(null);
+              say("บันทึกราคาต่อโทเค็นแล้ว");
+            }}
             onSave={() => {
               if (!draftPrices) return;
               const changed = PAID_KEYS.filter((k) => Number(draftPrices[k]) !== Number(savedPrices[k]));
@@ -382,20 +404,56 @@ export function Dashboard({ initial, adminEmail, idleMs }: { initial: DashboardD
               },
             });
           }}
-          onResetQuota={() =>
+          onResetQuota={() => {
+            const windows = (detail?.data?.limits ?? selUser).windows ?? [];
             setConfirm({
-              title: "รีเซ็ตโควตาวันนี้", body: selUser.email,
+              title: "รีเซ็ตทุกช่วง", body: selUser.email,
               lines: [
-                `โควตาที่ใช้ไป ${selUser.quota_used_pct === null ? "—" : `${Math.round(selUser.quota_used_pct)}%`} จะกลับเป็น 0%`,
-                "โทเค็นที่ใช้ก่อนหน้านี้ยังอยู่ในต้นทุน",
+                ...windows.map((w) => `${WINDOW_LABELS[w.key]} ${Math.round(w.used_pct)}% → 0%`),
+                "Monthly ที่นับไว้เบื้องหลังก็เริ่มใหม่ด้วย · ทุกช่วงเริ่มนับเมื่อใช้ครั้งถัดไป",
+                "โทเค็นที่ใช้ก่อนหน้านี้ยังอยู่ในต้นทุน · บันทึกในประวัติผู้ดูแล",
               ],
-              okLabel: "รีเซ็ตโควตา",
+              okLabel: "รีเซ็ตทุกช่วง",
               ok: async () => {
                 const r = await resetQuotaAction(selUser.id);
-                if (handle(r)) await afterWrite("รีเซ็ตโควตาแล้ว", selUser.id);
+                if (handle(r)) await afterWrite("รีเซ็ตทุกช่วงแล้ว", selUser.id);
               },
-            })
-          }
+            });
+          }}
+          onResetWindow={(key) => {
+            const w = ((detail?.data?.limits ?? selUser).windows ?? []).find((x) => x.key === key);
+            setConfirm({
+              title: `รีเซ็ต ${WINDOW_LABELS[key]}`, body: selUser.email,
+              lines: [
+                w ? `ใช้ไป ${Math.round(w.used_pct)}% (${num(w.used_tokens)} จาก ${num(w.limit_tokens)} โทเค็น) → 0%` : "ช่วงนี้จะเริ่มนับใหม่",
+                "เริ่มนับใหม่เมื่อใช้ครั้งถัดไป · งานที่จองโควตาไว้ยังค้างอยู่",
+                "โทเค็นที่ใช้ก่อนหน้านี้ยังอยู่ในต้นทุน · บันทึกในประวัติผู้ดูแล",
+              ],
+              okLabel: "รีเซ็ต",
+              ok: async () => {
+                const r = await resetWindowAction(selUser.id, key);
+                if (handle(r)) await afterWrite(`รีเซ็ต ${WINDOW_LABELS[key]} แล้ว`, selUser.id);
+              },
+            });
+          }}
+          onWalletAdjust={(satang, note) => {
+            const balance = detail?.data?.wallet?.balance_satang ?? selUser.wallet_balance_satang ?? 0;
+            const after = Math.max(0, balance + satang);
+            setConfirm({
+              title: satang > 0 ? "เพิ่มยอดเงินเติม" : "หักยอดเงินเติม", body: selUser.email,
+              lines: [
+                `${satang > 0 ? "เพิ่ม" : "หัก"} ${baht(Math.abs(satang) / 100)} · ยอด ${baht(balance / 100)} → ${baht(after / 100)}`,
+                `เหตุผล: ${note}`,
+                satang > 0 ? "เป็นก้อนใหม่อายุ 12 เดือน" : "หักได้ไม่เกินยอดที่มี",
+              ],
+              okLabel: satang > 0 ? "เพิ่มยอด" : "หักยอด",
+              danger: satang < 0,
+              ok: async () => {
+                const r = await walletAdjustAction(selUser.id, satang, note);
+                if (handle(r)) await afterWrite("ปรับยอดเงินเติมแล้ว", selUser.id);
+              },
+            });
+          }}
           onToggleActive={() =>
             setConfirm({
               title: selUser.active ? "ปิดการใช้งานบัญชี" : "เปิดใช้งานบัญชี",

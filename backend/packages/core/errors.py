@@ -7,6 +7,20 @@ import re
 from typing import Any
 
 
+class UserInputError(ValueError):
+    """A job cannot finish because of what the USER sent: missing uploads, a
+    bad manifest, footage over a limit, a clip the model provider refuses to
+    look at, an audio file the transcription service rejects.
+
+    A paid run that ends with one settles as ``user_error`` (charged what it
+    used — packages/billing/runs.py), not ``our_failure`` (refunded): the
+    vendor has usually billed the attempt already, and refunding input the
+    user controls lets one account burn vendor spend for free, over and over.
+    Lives here, not in the worker, so the shared video/LLM packages (and the
+    desktop sidecar that imports them) can raise it without a billing import.
+    """
+
+
 def format_http_detail(status_code: int, detail: Any) -> str:
     """Turn a FastAPI HTTPException.detail into a short user-facing string."""
     if isinstance(detail, dict):

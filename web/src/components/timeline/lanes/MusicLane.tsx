@@ -1,6 +1,8 @@
 import { Loader2, Music2, RefreshCw, Trash2, Volume2, VolumeX } from 'lucide-react'
 import { memo } from 'react'
 import type { EditorMusic, MusicPatch } from '../../../lib/editorApi'
+import { featureLockedLine } from '../../../lib/planLadder'
+import { useUsageInfo } from '../../../lib/usageInfo'
 import { MIN_LANE_PX, MUSIC_LANE_PX } from '../constants'
 import { MusicBlock } from './MusicBlock'
 import { TrackRow } from './TrackRow'
@@ -45,6 +47,11 @@ export const MusicLane = memo(function MusicLane({
   onPickMusic: () => void
   onRemoveMusic: () => void
 }): React.JSX.Element {
+  const { usage } = useUsageInfo()
+  const musicLocked =
+    usage?.features && !usage.features.music
+      ? featureLockedLine('music', usage.features.music_min_plan)
+      : null
   return (
     <TrackRow
       heightPx={MUSIC_LANE_PX}
@@ -98,6 +105,15 @@ export const MusicLane = memo(function MusicLane({
           onChange={onCommitMusic}
           onDraftChange={onMusicDraft}
         />
+      ) : musicLocked ? (
+        // No background music on this plan (docs/token-billing-plan.md §8) —
+        // a track already on a project stays (above); only adding is locked.
+        <span
+          className="flex h-full items-center justify-center rounded-md border border-dashed border-border-faint text-[13px] text-muted"
+          style={{ width: Math.max(editedDur * pxPerSec, MIN_LANE_PX) }}
+        >
+          {musicLocked}
+        </span>
       ) : (
         <button
           type="button"

@@ -4,12 +4,15 @@ ONE list, read by `current_user` (services/api/deps.py) — every authenticated
 request passes through there before its endpoint runs, so no endpoint needs
 editing and the refusal (403) comes before any upload is stored, any project
 is marked busy or any job is queued. The policy itself is
-`packages.llm.usage.ai_access_problem`, which `check_limit` also applies
-before every model call (the worker's calls included).
+`packages.llm.usage.ai_access_problem`, which `check_ai_access` also
+applies before every model call (the worker's calls included).
 
 Add a route here when you add an endpoint that queues or makes a model or
-speech-to-text call. tests/test_email_flows.py fails if an entry stops
-matching a real route.
+speech-to-text call — and make that endpoint call
+``services.api.billing_start.start_paid_run`` too (reservation against the
+plan's windows, free-tier and circuit-breaker checks). tests/test_email_flows.py
+fails if an entry stops matching a real route; tests/test_billing_start.py fails
+if one of them does not reserve.
 """
 
 from fastapi import HTTPException, Request

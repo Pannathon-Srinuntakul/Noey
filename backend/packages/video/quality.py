@@ -87,3 +87,41 @@ def precision_fps(precision: str | None) -> int:
 def resolve(engine: str | None, precision: str | None) -> tuple[str, int]:
     """(model_id, fps) for a project's stored tiers."""
     return engine_model(engine), precision_fps(precision)
+
+
+# ── the model each non-tiered call site uses ─────────────────────────────────
+#
+# One resolver per call site, imported by the call site AND by the billing
+# estimator (packages/billing/estimate.py:model_for). The estimate prices its
+# reservation at the model that will actually run: when the two disagreed
+# (Flash priced, Pro called) the per-call guard stopped every run before its
+# first request.
+
+
+def reedit_model() -> str:
+    """AI re-edit of a dub edit script (dub_ai.generate_dub_reedit_script_video)."""
+    from packages.core.settings import get_settings
+
+    return get_settings().dub_vision_model
+
+
+def speech_model() -> str:
+    """Speech-mode scene / highlight selection (speech_select)."""
+    from packages.core.settings import get_settings
+
+    s = get_settings()
+    return getattr(s, "speech_select_model", "") or s.dub_vision_model
+
+
+def effects_model() -> str:
+    """Effects placement and effects-style distillation."""
+    from packages.core.settings import get_settings
+
+    return get_settings().effects_vision_model
+
+
+def cut_style_model() -> str:
+    """Cut-style distillation (cut_style.distill_cut_style_prompt)."""
+    from packages.core.settings import get_settings
+
+    return get_settings().dub_vision_model

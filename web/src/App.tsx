@@ -8,6 +8,7 @@ import { JobsProvider } from './lib/jobs'
 import { PrefsProvider } from './lib/prefs'
 import { RouterProvider } from './lib/router'
 import { ToastProvider } from './lib/toast'
+import { UsageProvider } from './lib/usageContext'
 import { AppShell } from './components/shell/AppShell'
 import { RouteView } from './components/shell/RouteView'
 import { TitleBar } from './components/shell/TitleBar'
@@ -108,9 +109,11 @@ function Workspace({
               {/* Editor AI work lives here, not in the editors: leaving the
                   screen must not kill a running job (see lib/fxJobs). */}
               <FxJobsProvider>
-                <AppShell session={session}>
-                  <RouteView session={session} onLogout={onLogout} />
-                </AppShell>
+                <UsageProvider session={session}>
+                  <AppShell session={session}>
+                    <RouteView session={session} onLogout={onLogout} />
+                  </AppShell>
+                </UsageProvider>
               </FxJobsProvider>
             </JobsProvider>
           </RouterProvider>

@@ -59,15 +59,24 @@ async def _get_tenant_id_by_slug(tenant_slug: str) -> int | None:
 
 
 def _set_video_usage_ctx(
-    proj: Any, tenant_id: int | None, project_uid: str, feature: str = "video_cut"
+    proj: Any,
+    tenant_id: int | None,
+    project_uid: str,
+    feature: str = "video_cut",
+    *,
+    job_id: str | None = None,
+    run_id: str | None = None,
 ) -> Any:
     """Set LLM usage context for a video task. Returns the context token to reset later.
 
     ``feature`` decides which task the tokens are reported under — see
     ``packages.llm.usage._TASK_BY_FEATURE``. Default is the cut/script planning
-    bucket, which is what most video tasks do.
+    bucket, which is what most video tasks do. ``job_id`` / ``run_id`` are
+    stamped on every usage row the task writes; ``run_id`` defaults to the
+    paid run the task is running under (``billed_task``).
     """
     from packages.llm.usage import UsageCtx, set_usage_ctx
+    run_id = run_id or _current_run.get()
     if tenant_id is None:
         return None
     user_id = getattr(proj, "user_id", None)
@@ -79,29 +88,46 @@ def _set_video_usage_ctx(
             tenant_id=tenant_id,
             feature=feature,
             reference_id=project_uid,
+            job_id=job_id,
+            run_id=run_id,
         )
     )
 
 
-async def _record_stt(transcript: dict[str, Any] | None) -> None:
-    """Bill this run's transcribed audio to whoever triggered it.
+async def _record_stt_clip(clip_index: int, billed_sec: float, keyterms_sent: bool) -> None:
+    """``run_transcription``'s per-file hook: bill that file to whoever triggered it.
 
-    The ElevenLabs key is one shared account, so its own totals cover every
-    user — per-user attribution can only happen here, against the UsageCtx the
-    task already set.
+    Called as each file comes back, so a run that dies on clip 3 has already
+    recorded clips 1–2 (we paid for them). The ElevenLabs key is one shared
+    account, so its own totals cover every user — per-user attribution can
+    only happen here, against the UsageCtx the task already set.
     """
-    if not transcript:
-        return
-    from packages.llm.usage import get_usage_ctx, record_stt_usage
+    from packages.billing.metering import record_stt_clip
+    from packages.core.settings import get_settings
+    from packages.llm.usage import get_usage_ctx
 
-    ctx = get_usage_ctx()
-    if ctx is None:
-        return
-    await record_stt_usage(
-        ctx,
-        float(transcript.get("billed_audio_sec") or 0.0),
-        str(transcript.get("stt_model") or ""),
+    from packages.billing import guard
+
+    charged = await record_stt_clip(
+        get_usage_ctx(),
+        clip_index=clip_index,
+        billed_sec=billed_sec,
+        model=get_settings().elevenlabs_stt_model,
+        keyterms=keyterms_sent,
     )
+    guard.after_stt_clip(charged)
+
+
+def _stt_hooks() -> dict[str, Any]:
+    """``run_transcription`` kwargs every worker call site passes: per-file
+    usage recording, the per-call guard, and the vendor concurrency slot."""
+    from packages.billing import guard, vendor_limits
+
+    return {
+        "on_clip_billed": _record_stt_clip,
+        "before_clip": guard.before_stt_clip,
+        "clip_slot": vendor_limits.elevenlabs_slot,
+    }
 
 
 async def _tenant_session(tenant_slug: str) -> AsyncSession:
@@ -261,9 +287,246 @@ async def _push_project_files(project_uid: str, tenant_slug: str = "default") ->
     await push_project_files(project_uid)
 
 
+# ── paid runs (docs/token-billing-design.md §6, §10) ─────────────────────────
+#
+# Every task that makes model / speech-to-text calls is wrapped in
+# ``billed_task``. The route that enqueued it reserved the run's estimate and
+# passed ``run_id``; the wrapper then
+#
+# 1. takes a per-user CONCURRENCY SLOT (plan: 1/1/1/2/3/4/5 AI jobs at once).
+#    None free → the job row says "waiting_slot" and the task re-enqueues
+#    itself ``SLOT_RETRY_SEC`` later (arq's Retry would burn max_tries);
+# 2. runs the task inside a ``RunMeter`` (packages/billing/guard.py), so every
+#    model call and every transcribed file is checked against the run's
+#    ceiling before it is sent, and keeps the slot's lease alive;
+# 3. SETTLES the run when the task ends: ok → charged its actual (capped at the
+#    ceiling), a user cancel / bad input → the same, a guard stop → at most
+#    the reservation, anything else (vendor error, bug, timeout, breaker) →
+#    refunded (charged 0; the vendor cost stays on our books).
+#
+# A multi-task chain (server pipeline: ingest → transcribe → plan_edit) is one
+# run: a non-terminal step passes ``run_id`` on (``_chain_kwargs``) and only
+# settles on failure; the terminal step settles. A task enqueued without a
+# ``run_id`` (older API, tests) runs unbilled exactly as before.
+
+from contextvars import ContextVar  # noqa: E402
+
+# The job cannot run because of what the user sent (missing uploads, a bad
+# manifest, footage over a limit, a clip the provider refuses, an audio file
+# the transcription service rejects). Settles as ``user_error``: charged what
+# it used, not refunded like our own failures. Defined in packages/core so
+# dub_ai / elevenlabs_stt can raise it too; re-exported here.
+from packages.core.errors import UserInputError  # noqa: E402
+
+SLOT_RETRY_SEC = 15
+LEASE_HEARTBEAT_SEC = 60
+#: How long a chain step's lease holds the slot for the next step to pick up.
+CHAIN_LEASE_SEC = 30 * 60
+
+_current_run: ContextVar[str | None] = ContextVar("worker_current_run", default=None)
+
+
+def _chain_kwargs() -> dict[str, Any]:
+    """``run_id`` for the next step of a chain, when this task is a paid run."""
+    run_id = _current_run.get()
+    return {"run_id": run_id} if run_id else {}
+
+
+async def _run_db(fn: Any, *args: Any, **kwargs: Any) -> Any:
+    """Run ``fn(session, *args)`` in its own committed core-schema session."""
+    session = await _core_session()
+    try:
+        out = await fn(session, *args, **kwargs)
+        await session.commit()
+        return out
+    finally:
+        await session.close()
+
+
+async def _load_run(session: AsyncSession, run_id: str) -> Any:
+    from packages.db.models.ai_run import AiRun
+
+    return await session.get(AiRun, run_id)
+
+
+async def _lease_heartbeat(run_id: str) -> None:
+    import asyncio
+
+    from packages.billing import runs
+
+    while True:
+        await asyncio.sleep(LEASE_HEARTBEAT_SEC)
+        try:
+            await _run_db(runs.renew_lease, run_id)
+        except Exception as exc:  # noqa: BLE001 — a missed beat only risks the sweeper
+            log.warning("run_lease_renew_failed", run_id=run_id, error=str(exc)[:200])
+
+
+async def _outcome_from_job(job_id: str | None) -> str:
+    """A task that returned normally may still have recorded a failure."""
+    if not job_id:
+        return "ok"
+    session = await _core_session()
+    try:
+        job = (await session.execute(select(Job).where(Job.id == job_id))).scalar_one_or_none()
+    finally:
+        await session.close()
+    if job is None or job.status != "error":
+        return "ok"
+    step = (job.result or {}).get("step") if isinstance(job.result, dict) else None
+    return "user_cancel" if step == "cancelled" else "our_failure"
+
+
+async def _mark_stopped(job_id: str | None, code: str, message: str) -> None:
+    if job_id:
+        await _update_job(
+            job_id, "error", 0, result={"step": "stopped", "code": code, "message": message}, error=message,
+        )
+
+
+WAIT_EXPIRED_MESSAGE = "งานรอคิวนานเกินไป กรุณาเริ่มใหม่"
+
+
+async def _close_orphaned_wait(job_id: str | None, kwargs: dict[str, Any]) -> None:
+    """A task arrived for a run that is already closed. When its job row is
+    still parked in the queue (the run was swept while waiting for a slot —
+    e.g. the worker was down for hours), nothing else will ever move that row:
+    end it — and the project it holds in ``processing`` — as an error the user
+    can restart from, instead of "รอคิว" forever. A job the user already
+    cancelled, or one that another run has since taken over, is left alone."""
+    if not job_id:
+        return
+    session = await _core_session()
+    try:
+        job = (await session.execute(select(Job).where(Job.id == job_id))).scalar_one_or_none()
+        waiting = (
+            job is not None
+            and job.status == "queued"
+            and isinstance(job.result, dict)
+            and job.result.get("step") == "waiting_slot"
+        )
+    finally:
+        await session.close()
+    if not waiting:
+        return
+    await _update_job(
+        job_id, "error", 0,
+        result={"step": "error", "message": WAIT_EXPIRED_MESSAGE}, error=WAIT_EXPIRED_MESSAGE,
+    )
+    project_uid, tenant_slug = kwargs.get("project_uid"), kwargs.get("tenant_slug")
+    if project_uid and tenant_slug:
+        ts = await _tenant_session(str(tenant_slug))
+        try:
+            proj = await _get_video_project(ts, str(project_uid))
+            if proj is not None and proj.status == "processing" and proj.job_id == job_id:
+                proj.status = "error"
+                proj.error_msg = WAIT_EXPIRED_MESSAGE
+                await ts.commit()
+        finally:
+            await ts.close()
+    elif kwargs.get("style_uid") and tenant_slug:
+        # distill_style_local: the style row, not a project, waits on this job.
+        from packages.db.models.effect_style import EffectStyle
+
+        ts = await _tenant_session(str(tenant_slug))
+        try:
+            style = await ts.get(EffectStyle, str(kwargs["style_uid"]))
+            if style is not None and style.status == "pending":
+                style.status = "error"
+                style.error_msg = WAIT_EXPIRED_MESSAGE
+                await ts.commit()
+        finally:
+            await ts.close()
+    log.warning("run_wait_expired", job_id=job_id, project_uid=project_uid)
+
+
+async def _settle(run_id: str, outcome: str) -> None:
+    from packages.billing import runs
+
+    try:
+        await _run_db(runs.settle, run_id, outcome)
+    except Exception as exc:  # noqa: BLE001 — the sweeper settles it later
+        log.error("run_settle_failed", run_id=run_id, outcome=outcome, error=str(exc)[:200])
+
+
+def billed_task(*, terminal: bool = True) -> Any:
+    """Wrap an AI task: slot → meter → settle (see the block comment above)."""
+    import functools
+
+    def decorate(fn: Any) -> Any:
+        @functools.wraps(fn)
+        async def wrapper(ctx: dict[str, Any], **kwargs: Any) -> Any:
+            import asyncio
+
+            from packages.billing import guard, runs
+
+            run_id = kwargs.pop("run_id", None)
+            if not run_id:
+                return await fn(ctx, **kwargs)
+            job_id = kwargs.get("job_id")
+
+            slot = await _run_db(runs.acquire_slot, run_id)
+            if slot == "gone":
+                log.info("run_task_skipped", task=fn.__name__, run_id=run_id)
+                await _close_orphaned_wait(job_id, kwargs)
+                return {"cancelled": True, "reason": "run_closed"}
+            if slot == "wait":
+                if job_id:
+                    await _update_job(
+                        job_id, "queued", 2,
+                        result={"step": "waiting_slot", "message": "รอคิว — มีงานอื่นกำลังทำอยู่"},
+                    )
+                await ctx["redis"].enqueue_job(fn.__name__, _defer_by=SLOT_RETRY_SEC, run_id=run_id, **kwargs)
+                log.info("run_waiting_slot", task=fn.__name__, run_id=run_id)
+                return {"waiting_slot": True}
+
+            run = await _run_db(_load_run, run_id)
+            meter_token = guard.set_meter(guard.meter_for_run(run))
+            run_token = _current_run.set(run_id)
+            heartbeat = asyncio.create_task(_lease_heartbeat(run_id))
+            outcome: str | None = None
+            try:
+                result = await fn(ctx, **kwargs)
+                if isinstance(result, dict) and result.get("cancelled"):
+                    outcome = "user_cancel"
+                elif terminal:
+                    outcome = await _outcome_from_job(job_id)
+                return result
+            except guard.RunBudgetExceeded as exc:
+                outcome = "limit_stop"
+                await _mark_stopped(job_id, exc.code, str(exc))
+                return {"stopped": True, "code": exc.code}
+            except guard.ServicePaused as exc:
+                outcome = "our_failure"
+                await _mark_stopped(job_id, exc.code, str(exc))
+                return {"stopped": True, "code": exc.code}
+            except UserInputError:
+                outcome = "user_error"
+                raise
+            except BaseException:
+                outcome = "our_failure"
+                raise
+            finally:
+                heartbeat.cancel()
+                guard.reset_meter(meter_token)
+                _current_run.reset(run_token)
+                if outcome is not None:
+                    await _settle(run_id, outcome)
+                else:
+                    # A chain step handing over: hold the slot for the next one.
+                    from datetime import timedelta
+
+                    await _run_db(runs.renew_lease, run_id, hold=timedelta(seconds=CHAIN_LEASE_SEC))
+
+        return wrapper
+
+    return decorate
+
+
 # ── task: ingest_video ────────────────────────────────────────────────────────
 
 
+@billed_task(terminal=False)
 async def ingest_video(ctx: dict[str, Any], *, job_id: str, project_uid: str, tenant_slug: str) -> dict:
     """Copy uploaded clips as-is and extract mono WAV for transcription."""
     log.info("task_start", task="ingest_video", project_uid=project_uid)
@@ -286,7 +549,7 @@ async def ingest_video(ctx: dict[str, Any], *, job_id: str, project_uid: str, te
         proj = await _get_video_project(session, project_uid)
         source_files: list[str] = proj.source_files or []
         if not source_files:
-            raise ValueError("No source files found in project")
+            raise UserInputError("No source files found in project")
 
         (output_dir / "upload_sources.json").write_text(
             json.dumps(source_files, ensure_ascii=False),
@@ -316,7 +579,7 @@ async def ingest_video(ctx: dict[str, Any], *, job_id: str, project_uid: str, te
             is_dub_first = (proj_for_mode.mode == "dub_first")
 
             if not is_dub_first and not has_audio_stream(src):
-                raise ValueError(
+                raise UserInputError(
                     f"คลิป {i + 1}/{total} ไม่มีเสียง — โหมด talking head ต้องมีเสียงพูดในวิดีโอ"
                 )
 
@@ -329,7 +592,7 @@ async def ingest_video(ctx: dict[str, Any], *, job_id: str, project_uid: str, te
                 from packages.video.scene import DUB_MAX_CLIP_SEC, dub_clip_exceeds_upload_limit
 
                 if dub_clip_exceeds_upload_limit(clip_dur):
-                    raise ValueError(
+                    raise UserInputError(
                         f"คลิป {i + 1}/{total} ยาว {int(clip_dur // 60)} น.{int(clip_dur % 60):02d} วิ "
                         f"— สูงสุด {DUB_MAX_CLIP_SEC // 60} นาที กรุณาตัดคลิปให้สั้นลง"
                     )
@@ -337,7 +600,7 @@ async def ingest_video(ctx: dict[str, Any], *, job_id: str, project_uid: str, te
                 from packages.video.timeline import TALKING_HEAD_MAX_TOTAL_SEC, talking_head_exceeds_total_limit
 
                 if talking_head_exceeds_total_limit(clip_dur):
-                    raise ValueError(
+                    raise UserInputError(
                         f"คลิป {i + 1}/{total} ยาว {clip_dur / 3600:.1f} ชม. "
                         f"— talking head รองรับสูงสุด {TALKING_HEAD_MAX_TOTAL_SEC // 3600} ชั่วโมงต่อโปรเจกต์ "
                         "(รวมทุกไฟล์)"
@@ -355,7 +618,7 @@ async def ingest_video(ctx: dict[str, Any], *, job_id: str, project_uid: str, te
         if is_dub_first:
             from packages.video.scene import DUB_FIRST_MAX_TOTAL_SEC, dub_project_exceeds_total_limit
             if dub_project_exceeds_total_limit(total_dur_sec):
-                raise ValueError(
+                raise UserInputError(
                     f"คลิปทั้งหมดรวมกันยาว {int(total_dur_sec // 60)} น.{int(total_dur_sec % 60):02d} วิ "
                     f"— โหมด Dub First รองรับสูงสุด {DUB_FIRST_MAX_TOTAL_SEC // 60} นาทีต่อโปรเจกต์ "
                     "กรุณาลดจำนวน/ความยาวคลิป"
@@ -364,7 +627,7 @@ async def ingest_video(ctx: dict[str, Any], *, job_id: str, project_uid: str, te
             from packages.video.timeline import TALKING_HEAD_MAX_TOTAL_SEC, talking_head_exceeds_total_limit
 
             if talking_head_exceeds_total_limit(total_dur_sec):
-                raise ValueError(
+                raise UserInputError(
                     f"คลิปทั้งหมดรวมกันยาว {int(total_dur_sec // 3600)} ชม. "
                     f"— รองรับสูงสุด {TALKING_HEAD_MAX_TOTAL_SEC // 3600} ชั่วโมงต่อโปรเจกต์ "
                     "กรุณาลดจำนวน/ความยาวคลิป"
@@ -390,7 +653,10 @@ async def ingest_video(ctx: dict[str, Any], *, job_id: str, project_uid: str, te
         if mode == "dub_first":
             await _push_project_files(project_uid, tenant_slug)
             await _video_progress(job_id, 50, "ingest", "เตรียมวิดีโอเสร็จแล้ว กำลังวิเคราะห์ซีน…")
-            await pool.enqueue_job("analyze_dub_first", job_id=job_id, project_uid=project_uid, tenant_slug=tenant_slug)
+            await pool.enqueue_job(
+                "analyze_dub_first", job_id=job_id, project_uid=project_uid, tenant_slug=tenant_slug,
+                **_chain_kwargs(),
+            )
             await pool.close()
         else:
             await pool.close()
@@ -441,16 +707,17 @@ async def transcribe_video(ctx: dict[str, Any], *, job_id: str, project_uid: str
 
         audio_files = sorted(audio_dir.glob("audio_*.wav"))
         if not audio_files:
-            raise ValueError("No audio files to transcribe")
+            raise UserInputError("No audio files to transcribe")
         proj_for_terms = await _get_video_project(session, project_uid)
 
         # This task makes no LLM call, but the context is what tells
-        # `_record_stt` whose transcription minutes these are.
+        # `_record_stt_clip` whose transcription minutes these are.
         _set_video_usage_ctx(
             proj_for_terms,
             await _get_tenant_id_by_slug(tenant_slug),
             project_uid,
             feature="video_cut",
+            job_id=job_id,
         )
 
         _t_progress = _talking_transcribe_callbacks(
@@ -466,10 +733,10 @@ async def transcribe_video(ctx: dict[str, Any], *, job_id: str, project_uid: str
             project_uid=project_uid,
             on_progress=_t_progress,
             should_abort=_should_abort,
+            **_stt_hooks(),
         )
         if transcript is None:
             return {"cancelled": True}
-        await _record_stt(transcript)
         all_segments = transcript["segments"]
 
         transcript_path = output_dir / "transcript.json"
@@ -493,7 +760,9 @@ async def transcribe_video(ctx: dict[str, Any], *, job_id: str, project_uid: str
         settings = get_settings()
         pool = await create_pool(RedisSettings.from_dsn(settings.redis_url))
         await _push_project_files(project_uid, tenant_slug)
-        await pool.enqueue_job("plan_edit", job_id=job_id, project_uid=project_uid, tenant_slug=tenant_slug)
+        await pool.enqueue_job(
+            "plan_edit", job_id=job_id, project_uid=project_uid, tenant_slug=tenant_slug, **_chain_kwargs(),
+        )
         await pool.close()
 
         return {"segments": len(all_segments)}
@@ -523,6 +792,7 @@ from packages.video.plan_core import (  # noqa: E402  (planning core shared with
 # ── task: plan_edit ───────────────────────────────────────────────────────────
 
 
+@billed_task()
 async def plan_edit(ctx: dict[str, Any], *, job_id: str, project_uid: str, tenant_slug: str) -> dict:
     """Build Timeline JSON — full silence-cut, or AI highlight within target duration."""
     log.info("task_start", task="plan_edit", project_uid=project_uid)
@@ -539,7 +809,7 @@ async def plan_edit(ctx: dict[str, Any], *, job_id: str, project_uid: str, tenan
 
         proj = await _get_video_project(session, project_uid)
         tenant_id = await _get_tenant_id_by_slug(tenant_slug)
-        _usage_token = _set_video_usage_ctx(proj, tenant_id, project_uid)
+        _usage_token = _set_video_usage_ctx(proj, tenant_id, project_uid, job_id=job_id)
 
         duration_mode = proj.duration_mode  # "full" | "auto" | "custom"
         target_sec = proj.target_duration_sec  # set only when duration_mode == "custom"
@@ -928,6 +1198,7 @@ _DUB_EDIT_SYSTEM = _DUB_EDIT_SYSTEM_IMPORTED
 _DUB_TIMELINE_SYSTEM = _DUB_TIMELINE_SYSTEM_IMPORTED
 
 
+@billed_task()
 async def analyze_dub_first(ctx: dict[str, Any], *, job_id: str, project_uid: str, tenant_slug: str) -> dict:
     """1-step Claude Vision: write script + match scenes → render silent cut."""
     log.info("task_start", task="analyze_dub_first", project_uid=project_uid)
@@ -946,7 +1217,7 @@ async def analyze_dub_first(ctx: dict[str, Any], *, job_id: str, project_uid: st
 
         proj = await _get_video_project(session, project_uid)
         tenant_id = await _get_tenant_id_by_slug(tenant_slug)
-        _usage_token = _set_video_usage_ctx(proj, tenant_id, project_uid)
+        _usage_token = _set_video_usage_ctx(proj, tenant_id, project_uid, job_id=job_id)
 
         norm_files = sorted((output_dir / "normalized").glob("norm_*.*"))
         brief = proj.brief or ""
@@ -1165,6 +1436,7 @@ async def render_dub_silent(ctx: dict[str, Any], *, job_id: str, project_uid: st
 # ── task: plan_dub_timeline ───────────────────────────────────────────────────
 
 
+@billed_task()
 async def plan_dub_timeline(ctx: dict[str, Any], *, job_id: str, project_uid: str, tenant_slug: str) -> dict:
     """Load Edit Script + VO file → Claude → Timeline JSON → enqueue render_video."""
     await _video_progress(job_id, 5, "plan_dub", "กำลังวางแผน timeline ตาม voiceover…")
@@ -1181,12 +1453,12 @@ async def plan_dub_timeline(ctx: dict[str, Any], *, job_id: str, project_uid: st
 
         proj = await _get_video_project(session, project_uid)
         tenant_id = await _get_tenant_id_by_slug(tenant_slug)
-        _usage_token = _set_video_usage_ctx(proj, tenant_id, project_uid)
+        _usage_token = _set_video_usage_ctx(proj, tenant_id, project_uid, job_id=job_id)
 
         if not proj.edit_script_path:
-            raise ValueError("edit_script_path missing — run analyze_dub_first first")
+            raise UserInputError("edit_script_path missing — run analyze_dub_first first")
         if not proj.voiceover_path:
-            raise ValueError("voiceover_path missing — upload voiceover first")
+            raise UserInputError("voiceover_path missing — upload voiceover first")
 
         edit_script = json.loads((root / proj.edit_script_path).read_text(encoding="utf-8"))
         vo_path = root / proj.voiceover_path
@@ -1194,7 +1466,7 @@ async def plan_dub_timeline(ctx: dict[str, Any], *, job_id: str, project_uid: st
         from packages.video.ffmpeg_bin import media_duration
         vo_duration = media_duration(vo_path)
         if vo_duration <= 0:
-            raise ValueError("Voiceover file has no detectable duration")
+            raise UserInputError("Voiceover file has no detectable duration")
 
         # Build full timeline.json (same schema as talking_head)
         from packages.video.ffmpeg_bin import video_stream_info
@@ -1273,6 +1545,7 @@ async def plan_dub_timeline(ctx: dict[str, Any], *, job_id: str, project_uid: st
 # ── task: analyze_dub_local ──────────────────────────────────────────────────
 
 
+@billed_task()
 async def analyze_dub_local(
     ctx: dict[str, Any],
     *,
@@ -1310,11 +1583,11 @@ async def analyze_dub_local(
         output_dir = root / "video_outputs" / project_uid
         manifest_file = output_dir / "frames" / "frames_manifest.json"
         if not manifest_file.is_file():
-            raise ValueError("frames_manifest.json missing — upload frames first")
+            raise UserInputError("frames_manifest.json missing — upload frames first")
 
         proj = await _get_video_project(session, project_uid)
         tenant_id = await _get_tenant_id_by_slug(tenant_slug)
-        _usage_token = _set_video_usage_ctx(proj, tenant_id, project_uid)
+        _usage_token = _set_video_usage_ctx(proj, tenant_id, project_uid, job_id=job_id)
 
         records = json.loads(manifest_file.read_text(encoding="utf-8"))
         all_frames: list[dict[str, Any]] = []
@@ -1325,7 +1598,7 @@ async def analyze_dub_local(
                 continue
             all_frames.append({**rec, "frame_path": str(frame_path)})
         if not all_frames:
-            raise ValueError("No usable frames found in manifest")
+            raise UserInputError("No usable frames found in manifest")
 
         await _video_progress(job_id, 74, "analyze", "กำลัง match script กับซีนวิดีโอ…")
 
@@ -1491,6 +1764,7 @@ async def transcode_for_web(
         raise
 
 
+@billed_task()
 async def analyze_dub_video_local(
     ctx: dict[str, Any],
     *,
@@ -1531,11 +1805,11 @@ async def analyze_dub_video_local(
         output_dir = root / "video_outputs" / project_uid
         manifest_file = output_dir / "proxy" / "proxy_manifest.json"
         if not manifest_file.is_file():
-            raise ValueError("proxy_manifest.json missing — upload proxies first")
+            raise UserInputError("proxy_manifest.json missing — upload proxies first")
 
         proj = await _get_video_project(session, project_uid)
         tenant_id = await _get_tenant_id_by_slug(tenant_slug)
-        _usage_token = _set_video_usage_ctx(proj, tenant_id, project_uid)
+        _usage_token = _set_video_usage_ctx(proj, tenant_id, project_uid, job_id=job_id)
 
         # Cut style: DB is the only source — no style file on disk/S3.
         style_prompt = ""
@@ -1566,7 +1840,7 @@ async def analyze_dub_video_local(
                 continue
             clip_videos.append((rec["clip_id"], proxy_path, float(rec.get("durationSec") or 0)))
         if not clip_videos:
-            raise ValueError("No usable proxy clips found in manifest")
+            raise UserInputError("No usable proxy clips found in manifest")
 
         # The engine the request asked for, else the one this project ran on
         # before: a worker retry must repeat the user's choice, never reset it.
@@ -1671,6 +1945,7 @@ async def analyze_dub_video_local(
 # ── task: plan_effects_local ─────────────────────────────────────────────────
 
 
+@billed_task()
 async def plan_effects_local(
     ctx: dict[str, Any],
     *,
@@ -1704,7 +1979,7 @@ async def plan_effects_local(
         output_dir = root / "video_outputs" / project_uid
         proxy = output_dir / "effects" / "cut_proxy.mp4"
         if not proxy.is_file():
-            raise ValueError("cut_proxy.mp4 missing — upload the cut video proxy first")
+            raise UserInputError("cut_proxy.mp4 missing — upload the cut video proxy first")
 
         prompt_file = output_dir / "effects" / "prompt.txt"
         user_prompt = prompt_file.read_text(encoding="utf-8") if prompt_file.is_file() else ""
@@ -1767,7 +2042,9 @@ async def plan_effects_local(
 
         proj = await _get_video_project(session, project_uid)
         tenant_id = await _get_tenant_id_by_slug(tenant_slug)
-        _usage_token = _set_video_usage_ctx(proj, tenant_id, project_uid, feature="video_effects")
+        _usage_token = _set_video_usage_ctx(
+            proj, tenant_id, project_uid, feature="video_effects", job_id=job_id
+        )
 
         async def _push_thinking(excerpt: str) -> None:
             await _update_job(
@@ -1835,6 +2112,7 @@ async def plan_effects_local(
 # ── task: distill_style_local ────────────────────────────────────────────────
 
 
+@billed_task()
 async def distill_style_local(ctx: dict[str, Any], *, job_id: str, style_uid: str, tenant_slug: str) -> dict:
     """Distil a saved EffectStyle's reference clip + description into reusable
     style-guide prose (packages/video/effects_style.py), store it on the row.
@@ -1864,7 +2142,9 @@ async def distill_style_local(ctx: dict[str, Any], *, job_id: str, style_uid: st
                 ref_path = candidate
 
         tenant_id = await _get_tenant_id_by_slug(tenant_slug)
-        _usage_token = _set_video_usage_ctx(style, tenant_id, style_uid, feature="video_style")
+        _usage_token = _set_video_usage_ctx(
+            style, tenant_id, style_uid, feature="video_style", job_id=job_id
+        )
 
         async def _push_thinking(excerpt: str) -> None:
             await _update_job(
@@ -1922,6 +2202,7 @@ async def distill_style_local(ctx: dict[str, Any], *, job_id: str, style_uid: st
 # ── task: reedit_dub_scenes_local ────────────────────────────────────────────
 
 
+@billed_task()
 async def reedit_dub_scenes_local(
     ctx: dict[str, Any],
     *,
@@ -1962,12 +2243,12 @@ async def reedit_dub_scenes_local(
         output_dir = root / "video_outputs" / project_uid
         proj = await _get_video_project(session, project_uid)
         if not proj.edit_script_path:
-            raise ValueError("edit_script_path missing — run analyze first")
+            raise UserInputError("edit_script_path missing — run analyze first")
         edit_script = json.loads((root / proj.edit_script_path).read_text(encoding="utf-8"))
 
         proxy_manifest_file = output_dir / "proxy" / "proxy_manifest.json"
         if not proxy_manifest_file.is_file():
-            raise ValueError("proxy_manifest.json missing — run analyze first")
+            raise UserInputError("proxy_manifest.json missing — run analyze first")
         proxy_records = json.loads(proxy_manifest_file.read_text(encoding="utf-8"))
         proxy_records.sort(key=lambda r: int(r.get("order") or 0))
         clip_videos: list[tuple[str, pathlib.Path, float]] = []
@@ -1978,20 +2259,20 @@ async def reedit_dub_scenes_local(
                 continue
             clip_videos.append((rec["clip_id"], proxy_path, float(rec.get("durationSec") or 0)))
         if not clip_videos:
-            raise ValueError("No usable proxy clips found in manifest")
+            raise UserInputError("No usable proxy clips found in manifest")
 
         preview_path = output_dir / "ai_reedit" / "edited_preview.mp4"
         if not preview_path.is_file():
-            raise ValueError("edited_preview.mp4 missing — desktop must render a live preview first")
+            raise UserInputError("edited_preview.mp4 missing — desktop must render a live preview first")
         request_file = output_dir / "ai_reedit" / "reedit_request.json"
         request = json.loads(request_file.read_text(encoding="utf-8")) if request_file.is_file() else {}
         selected_line_ids = [int(x) for x in (request.get("selectedLineIds") or [])]
         instruction = str(request.get("instruction") or "").strip()
         if not instruction:
-            raise ValueError("instruction missing")
+            raise UserInputError("instruction missing")
 
         tenant_id = await _get_tenant_id_by_slug(tenant_slug)
-        _usage_token = _set_video_usage_ctx(proj, tenant_id, project_uid)
+        _usage_token = _set_video_usage_ctx(proj, tenant_id, project_uid, job_id=job_id)
 
         # Cut style: DB is the only source — no style file on disk/S3.
         style_prompt = ""
@@ -2082,6 +2363,7 @@ async def reedit_dub_scenes_local(
 # ── task: plan_talking_local ─────────────────────────────────────────────────
 
 
+@billed_task()
 async def plan_talking_local(ctx: dict[str, Any], *, job_id: str, project_uid: str, tenant_slug: str) -> dict:
     """Local-render (desktop) talking_head: transcribe uploaded WAVs + plan timeline.
 
@@ -2106,14 +2388,14 @@ async def plan_talking_local(ctx: dict[str, Any], *, job_id: str, project_uid: s
         output_dir = root / "video_outputs" / project_uid
         audio_files = sorted((output_dir / "audio").glob("audio_*.wav"))
         if not audio_files:
-            raise ValueError("No audio files to transcribe — upload them first")
+            raise UserInputError("No audio files to transcribe — upload them first")
         proj = await _get_video_project(session, project_uid)
         tenant_id = await _get_tenant_id_by_slug(tenant_slug)
-        _usage_token = _set_video_usage_ctx(proj, tenant_id, project_uid)
+        _usage_token = _set_video_usage_ctx(proj, tenant_id, project_uid, job_id=job_id)
 
         clips_meta = (proj.local_meta or {}).get("clips", [])
         if not clips_meta:
-            raise ValueError("local_meta.clips missing — create the project with clip metadata")
+            raise UserInputError("local_meta.clips missing — create the project with clip metadata")
 
         _t_progress = _talking_transcribe_callbacks(
             job_id, base_progress=10, transcribe_span=45,
@@ -2128,10 +2410,10 @@ async def plan_talking_local(ctx: dict[str, Any], *, job_id: str, project_uid: s
             project_uid=project_uid,
             on_progress=_t_progress,
             should_abort=_t_abort,
+            **_stt_hooks(),
         )
         if transcript is None:
             return {"cancelled": True}
-        await _record_stt(transcript)
 
         transcript_path = output_dir / "transcript.json"
         transcript_path.write_text(json.dumps(transcript, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -2247,6 +2529,7 @@ async def _load_cut_style_prompt(session: Any, style_uid: str, project_uid: str)
     return ""
 
 
+@billed_task()
 async def plan_speech_local(ctx: dict[str, Any], *, job_id: str, project_uid: str, tenant_slug: str, style_uid: str = "") -> dict:
     """Local-render speech modes (R17): transcribe with speakers, pick by segment.
 
@@ -2288,16 +2571,16 @@ async def plan_speech_local(ctx: dict[str, Any], *, job_id: str, project_uid: st
         output_dir = root / "video_outputs" / project_uid
         audio_files = sorted((output_dir / "audio").glob("audio_*.wav"))
         if not audio_files:
-            raise ValueError("No audio files to transcribe — upload them first")
+            raise UserInputError("No audio files to transcribe — upload them first")
         proj = await _get_video_project(session, project_uid)
         if proj.mode not in ("speech_scenes", "speech_highlights"):
             raise ValueError(f"plan_speech_local got mode {proj.mode}")
         tenant_id = await _get_tenant_id_by_slug(tenant_slug)
-        _usage_token = _set_video_usage_ctx(proj, tenant_id, project_uid)
+        _usage_token = _set_video_usage_ctx(proj, tenant_id, project_uid, job_id=job_id)
 
         clips_meta = (proj.local_meta or {}).get("clips", [])
         if not clips_meta:
-            raise ValueError("local_meta.clips missing — create the project with clip metadata")
+            raise UserInputError("local_meta.clips missing — create the project with clip metadata")
 
         # One Scribe request per clip, however long the clip is: Scribe accepts
         # 3 GB / 10 h per request and parallelises anything over 8 minutes on
@@ -2340,10 +2623,10 @@ async def plan_speech_local(ctx: dict[str, Any], *, job_id: str, project_uid: st
                 project_uid=project_uid,
                 on_progress=_t_progress,
                 should_abort=_t_abort,
+                **_stt_hooks(),
             )
             if transcript is None:
                 return {"cancelled": True}
-            await _record_stt(transcript)
             stamp_path.write_text(json.dumps(stamp), encoding="utf-8")
 
         transcript_path.write_text(json.dumps(transcript, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -2629,6 +2912,72 @@ async def sweep_housekeeping(ctx: dict[str, Any]) -> dict:
 # ── WorkerSettings ────────────────────────────────────────────────────────────
 
 
+async def refresh_fx_rate(ctx: dict[str, Any]) -> dict:
+    """Daily: fetch and store the USD→THB rate usage costs are priced with.
+
+    A failed fetch keeps the last stored rate (packages/billing/fx.py falls
+    back to it for 7 days, then to the admin's manual figure).
+    """
+    from packages.billing import fx
+
+    session = await _core_session()
+    try:
+        quote = await fx.refresh_fx(session)
+    except Exception as exc:  # noqa: BLE001 — a cron hiccup must not crash the worker
+        log.error("fx_refresh_crashed", error=str(exc)[:200])
+        return {"ok": False}
+    finally:
+        await session.close()
+    return {"ok": quote is not None, "usd_thb": quote.usd_thb if quote else None}
+
+
+async def drain_usage_outbox(ctx: dict[str, Any]) -> dict:
+    """Every minute: replay usage rows that could not be written at the time
+    (packages/billing/metering.py). Idempotent per row."""
+    from packages.billing import metering
+
+    try:
+        return await metering.drain_outbox(ctx["redis"])
+    except Exception as exc:  # noqa: BLE001
+        log.error("usage_outbox_drain_crashed", error=str(exc)[:200])
+        return {"written": 0, "duplicates": 0}
+
+
+async def sweep_runs(ctx: dict[str, Any]) -> dict:
+    """Every 10 min: settle paid runs whose worker died (lapsed slot lease) or
+    that never started — charged nothing (packages/billing/runs.py)."""
+    from packages.billing import runs
+
+    try:
+        return {"orphaned": await _run_db(runs.sweep_orphans)}
+    except Exception as exc:  # noqa: BLE001 — a cron hiccup must not crash the worker
+        log.error("run_sweep_crashed", error=str(exc)[:200])
+        return {"orphaned": 0}
+
+
+async def apply_plan_changes(ctx: dict[str, Any]) -> dict:
+    """Hourly: scheduled downgrades / cancellations that are due, and lapsed
+    payment-failed graces, reach ``users.plan`` (packages/billing/plan_change.py)."""
+    from packages.billing import plan_change
+
+    try:
+        return {"changed": await _run_db(plan_change.apply_due)}
+    except Exception as exc:  # noqa: BLE001
+        log.error("plan_change_cron_crashed", error=str(exc)[:200])
+        return {"changed": 0}
+
+
+async def expire_wallet_lots(ctx: dict[str, Any]) -> dict:
+    """Daily: top-up lots older than 12 months lapse (packages/billing/wallet.py)."""
+    from packages.billing import wallet
+
+    try:
+        return {"expired": await _run_db(wallet.expire_due)}
+    except Exception as exc:  # noqa: BLE001
+        log.error("wallet_expiry_crashed", error=str(exc)[:200])
+        return {"expired": 0}
+
+
 async def startup(ctx: dict[str, Any]) -> None:
     # The worker mints nothing, but it reads the same tokens and runs beside
     # the API — a deployment where one is misconfigured is one where both are.
@@ -2677,7 +3026,14 @@ class WorkerSettings:
     # Daily housekeeping — see sweep_housekeeping for what and why.
     from arq import cron as _cron  # noqa: PLC0415 — class-body import, arq pattern
 
-    cron_jobs = [_cron(sweep_housekeeping, hour=19, minute=30)]  # ~02:30 Asia/Bangkok
+    cron_jobs = [
+        _cron(sweep_housekeeping, hour=19, minute=30),  # ~02:30 Asia/Bangkok
+        _cron(refresh_fx_rate, hour=0, minute=10),  # 00:10 UTC, after the feeds update
+        _cron(drain_usage_outbox, minute=set(range(60)), run_at_startup=True),
+        _cron(sweep_runs, minute=set(range(0, 60, 10))),
+        _cron(apply_plan_changes, minute=5),
+        _cron(expire_wallet_lots, hour=0, minute=20),  # 00:20 UTC
+    ]
     on_startup = startup
     on_shutdown = shutdown
     max_jobs = 10

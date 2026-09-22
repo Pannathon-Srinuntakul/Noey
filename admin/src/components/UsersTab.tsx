@@ -3,10 +3,11 @@
 import { useState } from "react";
 import { b0, baht, daysAgo, num } from "@/lib/format";
 import type { Summary, UserMoney } from "@/lib/money";
+import { WINDOW_LABELS } from "@/lib/billing";
 import { PLAN_KEYS, planLabel } from "@/lib/plans";
 import { LOSS, OK, Seg } from "./ui";
 
-type SortKey = "email" | "plan" | "pays" | "cost" | "profit" | "clips" | "perClip" | "sttMin" | "failed" | "quota" | "last";
+type SortKey = "email" | "plan" | "pays" | "cost" | "profit" | "clips" | "perClip" | "sttMin" | "failed" | "quota" | "wallet" | "last";
 
 export interface UsersView {
   filter: "all" | "paying" | "free" | "idle";
@@ -22,14 +23,15 @@ export const DEFAULT_USERS_VIEW: UsersView = { filter: "all", planFilter: "all",
 const COLUMNS: Array<[SortKey, string, "left" | "right"]> = [
   ["email", "ผู้ใช้", "left"], ["plan", "แผน", "left"], ["pays", "จ่าย", "right"], ["cost", "ต้นทุน", "right"],
   ["profit", "กำไร", "right"], ["clips", "คลิป", "right"], ["perClip", "ต้นทุน/คลิป", "right"],
-  ["sttMin", "นาทีถอดเสียง", "right"], ["failed", "ล้มเหลว", "right"], ["quota", "โควตาวันนี้", "right"], ["last", "ใช้ล่าสุด", "right"],
+  ["sttMin", "นาทีถอดเสียง", "right"], ["failed", "ล้มเหลว", "right"], ["quota", "โควตา", "right"], ["wallet", "ยอดเติม", "right"],
+  ["last", "ใช้ล่าสุด", "right"],
 ];
 
 function sortValue(u: UserMoney, k: SortKey): number | string {
   switch (k) {
     case "email": return u.email;
     case "plan": return PLAN_KEYS.indexOf(u.plan as (typeof PLAN_KEYS)[number]);
-    case "pays": return u.pays;
+    case "pays": return u.revenue;
     case "cost": return u.cost;
     case "profit": return u.profit;
     case "clips": return u.clips;
@@ -37,6 +39,7 @@ function sortValue(u: UserMoney, k: SortKey): number | string {
     case "sttMin": return u.sttMin;
     case "failed": return u.failed;
     case "quota": return u.quota_used_pct ?? -1;
+    case "wallet": return u.walletBalance;
     case "last": return u.last_active_days ?? 99_999;
   }
 }
@@ -78,7 +81,8 @@ export function UsersTab({
   });
 
   const rt = {
-    pays: rows.reduce((acc, u) => acc + u.pays, 0),
+    pays: rows.reduce((acc, u) => acc + u.revenue, 0),
+    wallet: rows.reduce((acc, u) => acc + u.walletBalance, 0),
     cost: rows.reduce((acc, u) => acc + u.cost, 0),
     clips: rows.reduce((acc, u) => acc + u.clips, 0),
     sttMin: rows.reduce((acc, u) => acc + u.sttMin, 0),
@@ -129,7 +133,7 @@ export function UsersTab({
       </div>
 
       <div style={{ border: "1px solid var(--color-divider)", borderRadius: 4, overflow: "auto" }}>
-        <table className="table" style={{ fontFamily: "inherit", fontSize: 13.5, minWidth: 1040 }}>
+        <table className="table" style={{ fontFamily: "inherit", fontSize: 13.5, minWidth: 1140 }}>
           <thead>
             <tr>
               {COLUMNS.map(([k, label, align], i) => {
@@ -171,14 +175,23 @@ export function UsersTab({
                     <span style={{ display: "block", fontSize: 12, marginTop: 2, color: !u.active || over ? LOSS : "var(--color-neutral-600)" }}>{note}</span>
                   </td>
                   <td><span className={`tag ${u.planPrice > 0 ? "tag-accent" : "tag-neutral"}`}>{planLabel(u.plan)}</span></td>
-                  <td className="num" style={td}>{u.internal ? "—" : b0(u.pays)}</td>
+                  <td className="num" style={td}>
+                    {u.internal ? "—" : b0(u.revenue)}
+                    {u.topup > 0 && <span style={{ display: "block", fontSize: 11.5, color: "var(--color-neutral-600)" }}>เติม {b0(u.topup)}</span>}
+                  </td>
                   <td className="num" style={td}>{baht(u.cost)}</td>
                   <td className="num" style={{ ...td, fontWeight: 500, color: u.internal ? "var(--color-neutral-600)" : u.profit >= 0 ? OK : LOSS }}>{u.internal ? "—" : baht(u.profit)}</td>
                   <td className="num" style={td}>{num(u.clips)}</td>
                   <td className="num" style={td}>{u.clips ? baht(u.cost / u.clips) : "—"}</td>
                   <td className="num" style={td}>{num(u.sttMin)}</td>
                   <td className="num" style={{ ...td, color: u.failed > 1 ? LOSS : "var(--color-neutral-700)" }}>{u.failed}</td>
-                  <td className="num" style={td}>{u.quota_used_pct === null ? "ไม่จำกัด" : `${Math.round(u.quota_used_pct)}%`}</td>
+                  <td className="num" style={{ ...td, color: (u.quota_used_pct ?? 0) >= 100 ? LOSS : undefined }}>
+                    {u.quota_used_pct === null || u.unlimited ? "ไม่จำกัด" : `${Math.round(u.quota_used_pct)}%`}
+                    {u.quota_window && !u.unlimited && (
+                      <span style={{ display: "block", fontSize: 11.5, color: "var(--color-neutral-600)" }}>{WINDOW_LABELS[u.quota_window]}</span>
+                    )}
+                  </td>
+                  <td className="num" style={td}>{u.walletBalance > 0 ? baht(u.walletBalance) : "—"}</td>
                   <td className="num" style={{ ...td, paddingRight: 16, color: u.last_active_days === null || u.last_active_days >= 14 ? "var(--color-neutral-500)" : "var(--color-text)" }}>
                     {daysAgo(u.last_active_days)}
                   </td>
@@ -198,6 +211,7 @@ export function UsersTab({
               <td className="num" style={{ ...td, fontWeight: 500 }}>{num(rt.sttMin)}</td>
               <td className="num" style={{ ...td, fontWeight: 500 }}>{rt.failed}</td>
               <td />
+              <td className="num" style={{ ...td, fontWeight: 500 }}>{baht(rt.wallet)}</td>
               <td />
             </tr>
           </tfoot>

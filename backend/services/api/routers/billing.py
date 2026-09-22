@@ -7,6 +7,8 @@ POST /billing/change-plan  customer-portal deep link confirming a plan switch
 POST /billing/cancel       end the subscription at the end of the paid period
 POST /billing/resume       undo a scheduled cancellation
 POST /billing/portal       the customer portal (invoices, card, plan)
+POST /billing/plan-preview what a plan change costs now / next period (editor dialog)
+POST /billing/plan-switch  do the change (consent required for a paid plan)
 POST /billing/webhook      Stripe only — signature-verified
 
 With STRIPE_SECRET_KEY / STRIPE_WEBHOOK_SECRET unset, everything that needs
@@ -24,7 +26,7 @@ from pydantic import BaseModel
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from packages.billing import service, webhooks
+from packages.billing import plan_switch, service, webhooks
 from packages.billing.client import billing_config_problem, billing_enabled, get_stripe_client
 from packages.billing.overrides import load_price_overrides
 from packages.billing.service import BillingError, BillingState
@@ -96,6 +98,29 @@ class LookupKeyIn(BaseModel):
 
 class UrlOut(BaseModel):
     url: str
+
+
+class PlanSwitchIn(BaseModel):
+    tier: str
+    #: The "ตัดบัตรทุกเดือนจนกว่าจะยกเลิก…" checkbox — required for a paid plan.
+    consent: bool = False
+
+
+class PlanPreviewOut(BaseModel):
+    tier: str
+    current: str
+    direction: Literal["upgrade", "downgrade", "same"]
+    due_now_satang: int
+    next_price_satang: int
+    effective_at: datetime | None
+    mode: Literal["checkout", "stripe_change", "stripe_cancel", "mock", "unavailable"]
+    exact: bool
+
+
+class PlanSwitchOut(BaseModel):
+    url: str | None
+    applied: bool
+    effective_at: datetime | None
 
 
 def _me_out(state: BillingState) -> BillingMeOut:
@@ -171,6 +196,51 @@ async def change_plan(
     except BillingError as exc:
         raise _refusal(exc) from None
     return UrlOut(url=url)
+
+
+async def _price_map(client: stripe.StripeClient | None, session: AsyncSession) -> dict[str, int]:
+    key = (get_settings().stripe_secret_key or "").strip() if client is not None else ""
+    cache_key = hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
+    overrides = await load_price_overrides(session) if client is None else None
+    plans = await service.list_plans(client, cache_key=cache_key, overrides=overrides)
+    return {p.tier: int(p.unit_amount) for p in plans.plans}
+
+
+def _switch_refusal(exc: plan_switch.PlanSwitchError) -> HTTPException:
+    return HTTPException(status_code=exc.status_code, detail=exc.detail)
+
+
+@router.post("/plan-preview", response_model=PlanPreviewOut)
+async def plan_preview(
+    body: PlanSwitchIn, auth: CurrentUser, client: OptionalStripeDep, session: CoreSession
+) -> PlanPreviewOut:
+    """The confirm dialog's numbers: the prorated charge now and the price
+    from the next period (Stripe's own preview when a subscription is live)."""
+    try:
+        p = await plan_switch.preview(session, client, auth.user, body.tier, await _price_map(client, session))
+    except plan_switch.PlanSwitchError as exc:
+        raise _switch_refusal(exc) from None
+    return PlanPreviewOut(**p.__dict__)
+
+
+@router.post("/plan-switch", response_model=PlanSwitchOut)
+async def plan_switch_route(
+    body: PlanSwitchIn, auth: CurrentUser, client: OptionalStripeDep, session: CoreSession
+) -> PlanSwitchOut:
+    """Change plan from the editor. A paid target needs ``consent: true``
+    (checked HERE, not only by the dialog's disabled button). Returns a page
+    to open (Stripe checkout / portal confirm) or ``applied`` when the change
+    is already made or scheduled."""
+    if body.tier.lower().strip() != "free" and not body.consent:
+        raise HTTPException(status_code=422, detail="ต้องยอมรับเงื่อนไขการเรียกเก็บเงินก่อน")
+    try:
+        r = await plan_switch.apply(
+            session, client, get_settings(), auth.user, body.tier, await _price_map(client, session)
+        )
+    except plan_switch.PlanSwitchError as exc:
+        raise _switch_refusal(exc) from None
+    log.info("plan_switch", user_id=auth.user_id, tier=body.tier, applied=r.applied, has_url=bool(r.url))
+    return PlanSwitchOut(url=r.url, applied=r.applied, effective_at=r.effective_at)
 
 
 @router.post("/cancel", response_model=BillingMeOut)

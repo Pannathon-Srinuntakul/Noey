@@ -7,6 +7,23 @@ import { listStyles } from '../../lib/stylesApi'
 import { Button } from '../ui/Button'
 import { Dialog } from '../ui/Dialog'
 import { Textarea } from '../ui/Input'
+import { UsageEstimateLine } from '../wizard/UsageEstimate'
+import { useUsageEstimate } from '../../lib/useUsageEstimate'
+import { startDecision } from '../../lib/usageEstimate'
+import type { EstimateRequest } from '../../lib/usageLimits'
+
+/** A recut is the same analysis over the same clips at the same tiers, so it
+ * is estimated exactly like the first cut was. */
+function recutEstimateRequest(project: LocalProject): EstimateRequest | null {
+  const clips = (project.clips ?? []).filter((c) => Number.isFinite(c.durationSec))
+  if (clips.length === 0) return null
+  return {
+    mode: project.mode ?? 'dub_first',
+    ...(project.engine ? { engine: project.engine } : {}),
+    ...(project.precision ? { precision: project.precision } : {}),
+    clips: clips.map((c) => ({ duration_sec: c.durationSec, has_audio: c.hasAudio !== false }))
+  }
+}
 
 /** "15 ส.ค. 07:13" — same shape as the card's meta line. */
 function fmtWhen(iso: string): string {
@@ -48,9 +65,13 @@ export function RecutDialog({
   open: boolean
   project: LocalProject
   onClose: () => void
-  onSubmit: (text: string) => void
+  /** `allowWallet`: the user agreed to pay from the top-up balance for this run. */
+  onSubmit: (text: string, allowWallet: boolean) => void
 }): React.JSX.Element | null {
   const { session } = useJobs()
+  const { estimate, loading: estimating } = useUsageEstimate(session, recutEstimateRequest(project))
+  const [allowWallet, setAllowWallet] = useState(false)
+  const decision = startDecision(estimate, allowWallet)
   // Mounted only while open (see the card), so a comment typed and cancelled
   // dies with the dialog — no reset effect needed.
   const [text, setText] = useState('')
@@ -96,7 +117,15 @@ export function RecutDialog({
     return parts.filter(Boolean).join(' · ')
   }, [project, cutStyleName])
 
-  const canSubmit = text.trim().length > 0
+  const canSubmit = text.trim().length > 0 && decision === 'go'
+  // The recut is refused BEFORE it re-uploads anything: the dialog already
+  // knows whether the plan (or the balance, with consent) can pay for it.
+  const blockedReason =
+    decision === 'blocked'
+      ? 'โควตาเหลือไม่พอสำหรับการตัดใหม่รอบนี้'
+      : decision === 'ask_wallet'
+        ? 'ติ๊กใช้ยอดเงินคงเหลือก่อน'
+        : 'พิมพ์บอกก่อนว่าอยากให้แก้อะไร'
 
   if (!open) return null
   return (
@@ -119,11 +148,11 @@ export function RecutDialog({
           {/* Branch on the whole element: Button's disabled/disabledReason is a
               discriminated union and cannot be narrowed through a spread. */}
           {canSubmit ? (
-            <Button variant="primary" onClick={() => onSubmit(text.trim())}>
+            <Button variant="primary" onClick={() => onSubmit(text.trim(), allowWallet)}>
               ตัดใหม่
             </Button>
           ) : (
-            <Button variant="primary" disabled disabledReason="พิมพ์บอกก่อนว่าอยากให้แก้อะไร">
+            <Button variant="primary" disabled disabledReason={blockedReason}>
               ตัดใหม่
             </Button>
           )}
@@ -192,6 +221,13 @@ export function RecutDialog({
         <p className="text-[13.5px] leading-[1.6] text-muted">
           ใช้ค่าเดิมทั้งหมด — {settings} อยากเปลี่ยนค่าพวกนี้ต้องสร้างโปรเจกต์ใหม่
         </p>
+
+        <UsageEstimateLine
+          estimate={estimate}
+          loading={estimating}
+          allowWallet={allowWallet}
+          onAllowWallet={setAllowWallet}
+        />
       </div>
     </Dialog>
   )

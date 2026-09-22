@@ -42,6 +42,7 @@ from packages.auth.email_tokens import (
 from packages.auth.hashing import hash_password, verify_password
 from packages.auth.tokens import decode, encode_access, encode_refresh, token_version_matches
 from packages.auth.turnstile import TOKEN_MAX_CHARS, verify_turnstile
+from packages.billing import free_tier
 from packages.billing.client import billing_enabled, get_stripe_client
 from packages.billing.service import sync_customer_email
 from packages.core.logging import get_logger
@@ -398,9 +399,11 @@ async def register(
     taken (any capitalisation), 422 for an invalid body, 429 when throttled.
     """
     email = normalize_email(str(body.email))
+    ip = ratelimit.client_ip(request)
     await ratelimit.enforce([
         (ratelimit.REGISTER_EMAIL, email),
-        (ratelimit.REGISTER_IP, ratelimit.client_ip(request)),
+        (ratelimit.REGISTER_IP, ip),
+        (ratelimit.REGISTER_IP_DAY, ip),
     ])
     await _require_turnstile(body.turnstile_token)
 
@@ -413,6 +416,10 @@ async def register(
         user, tenant = await create_account(
             session, email=email, password_hash=password_hash, display_name=body.display_name
         )
+        # Salted hashes only (packages/billing/free_tier.py) — for spotting
+        # many free accounts from one network / device, never the raw values.
+        user.signup_ip_hash = free_tier.identity_hash(ip)
+        user.signup_device_hash = free_tier.identity_hash(request.headers.get(free_tier.DEVICE_HEADER))
         if mailer is not None:
             raw_token = await issue_token(session, int(user.id), PURPOSE_VERIFY_EMAIL)
         # Commit BEFORE handing out tokens or mailing the link: a yield

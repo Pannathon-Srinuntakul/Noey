@@ -1,6 +1,8 @@
 """Speech-to-text usage log — core schema.
 
-One row per transcription run, holding the audio length ElevenLabs billed for.
+One row per transcribed FILE (clip), written as soon as that file is billed —
+a run that fails on clip 3 still records clips 1–2, which we paid for.
+Carries the same ``tokens`` / ``cost_thb`` split as ``llm_usage_logs``.
 
 Why a local ledger rather than asking ElevenLabs: the API key is a **single
 shared account** that every user of this system transcribes through, so its
@@ -10,8 +12,20 @@ where the user who triggered the run is known.
 """
 
 from datetime import datetime
+from decimal import Decimal
 
-from sqlalchemy import BigInteger, DateTime, Float, ForeignKey, Index, String, func
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    Numeric,
+    String,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from packages.db.base import Base
@@ -24,6 +38,7 @@ class SttUsageLog(Base):
     __table_args__ = (
         Index("ix_stt_usage_logs_user_id", "user_id"),
         Index("ix_stt_usage_logs_created_at", "created_at"),
+        Index("ix_stt_usage_logs_run_id", "run_id"),
         {"schema": CORE_SCHEMA},
     )
 
@@ -40,15 +55,31 @@ class SttUsageLog(Base):
     )
     # project_uid — nullable for runs with no project (probes, scripts).
     reference_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    # What ElevenLabs reported it processed (`audio_duration_secs`), summed
-    # over the clips of one run. Seconds, because that is the unit Scribe
-    # bills on.
+    # What ElevenLabs reported it processed (`audio_duration_secs`) for this
+    # clip. Seconds, because that is the unit Scribe bills on. (Rows written
+    # before 2026-09-22 hold the sum over a whole run.)
     audio_sec: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     # Seconds alone cannot be priced: scribe_v2_5 costs ~12.5× scribe_v2 per
     # second (measured 2026-08-12 — see packages/video/stt_pricing.py). Without
     # the model, a cost figure would be wrong by an order of magnitude the day
     # the setting changes.
     model: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    #: The request sent keyterms, which carry a per-hour surcharge (real cost
+    #: only — the rate card already includes it).
+    keyterms: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    #: Position of the file in the run's batch (null: legacy per-run rows).
+    clip_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    run_id: Mapped[str | None] = mapped_column(
+        String(32), ForeignKey(f"{CORE_SCHEMA}.ai_runs.id", ondelete="SET NULL"), nullable=True
+    )
+    job_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    #: ok | failed
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="ok", server_default="ok")
+    tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
+    rate_version: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    cost_thb: Mapped[Decimal | None] = mapped_column(Numeric(12, 4), nullable=True)
+    fx_rate: Mapped[Decimal | None] = mapped_column(Numeric(10, 4), nullable=True)
+    idem_key: Mapped[str | None] = mapped_column(String(36), nullable=True, unique=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

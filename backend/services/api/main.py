@@ -21,6 +21,7 @@ from services.api.routers import (
     usage,
     videos,
     videos_local,
+    wallet,
 )
 
 log = get_logger(__name__)
@@ -112,6 +113,7 @@ def create_app() -> FastAPI:
         jobs,
         releases,
         usage,
+        wallet,
         # `/videos/transfer/...` is all literal paths — before the two below
         # because `videos` owns GET /videos/{uid}, and FastAPI matches in
         # registration order.

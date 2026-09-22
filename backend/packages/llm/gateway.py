@@ -6,8 +6,31 @@ via config. Tool/function calling is normalized by LiteLLM; we add a graceful
 no-tools fallback for models that don't support tool calling.
 
 Usage tracking: if a UsageCtx is set via set_usage_ctx(), each call automatically:
-  1. Checks the user's plan token limit before calling the model (raises HTTP 429).
-  2. Records input/output tokens to core.llm_usage_logs after a successful call.
+  1. Re-checks that the account may use paid AI at all (verified email — the
+     defense in depth behind services/api/ai_gate.py; HTTP 403).
+  2. Before EVERY attempt, asks the per-call guard (packages/billing/guard.py)
+     whether the call still fits the paid run's ceiling and the daily circuit
+     breaker; a call that does not is never sent (``RunBudgetExceeded`` /
+     ``ServicePaused``). Plan limits themselves are checked once, at job start
+     (packages/billing/runs.py), not here.
+  3. Waits for a cross-process vendor slot (packages/billing/vendor_limits.py).
+  4. Records EVERY attempt that reached the vendor — ok, failed, or failed and
+     retried — to core.llm_usage_logs, awaited and durable
+     (packages/billing/metering.py): each one is a request we pay for. Only a
+     connection error (the request never left) is not recorded.
+
+Billing hints a call site may pass (popped here, never sent to the provider):
+``billing_video_sec`` — total seconds of every video file the request attaches
+(measured on the server) — with ``billing_video_precision`` (``standard`` /
+``high``, the sampling density it asks for), or ``billing_input_tokens`` when
+it knows the whole input count better than a local count.
+
+Output cap: for a request that sets no ``max_tokens`` of its own, the guard
+returns the output the paid run can still afford and it is sent as
+``max_tokens``; an answer cut off there (``finish_reason == "length"``) stops
+the run as ``limit_stop`` (packages/billing/guard.py). An attempt cancelled
+mid-flight (worker restart, job timeout) is still recorded — with the usage
+streamed so far, else its input estimate — before the cancellation goes on.
 """
 
 from collections.abc import Awaitable, Callable, Sequence
@@ -18,18 +41,21 @@ import time
 import litellm
 from fastapi import HTTPException
 
+from packages.billing import guard, vendor_limits
+from packages.billing.metering import record_llm_attempt
 from packages.core.logging import get_logger
 from packages.core.settings import get_settings
 from packages.llm.config import model_params
 from packages.llm.usage import (
     EmailNotVerified,
-    UsageLimitExceeded,
-    check_limit,
+    UsageCtx,
+    check_ai_access,
+    extract_cached_tokens,
+    extract_stream_cached_from_chunks,
     extract_stream_usage_from_chunks,
     extract_usage_tokens,
     get_usage_ctx,
     merge_provider_usage,
-    record_usage,
 )
 
 log = get_logger(__name__)
@@ -104,9 +130,135 @@ def _error_phase(exc: BaseException) -> str:
     return "api_error"
 
 
+#: Failures after which the request may still have been billed although the
+#: vendor reported no usage.
+_TIMEOUT_PHASES = frozenset({"hard_timeout", "timeout"})
+
+
+def _billing_hints(extra: dict[str, Any]) -> dict[str, Any]:
+    """Pop the billing-only kwargs (never sent to the provider)."""
+    return {
+        "input_tokens": extra.pop("billing_input_tokens", None),
+        "video_sec": extra.pop("billing_video_sec", None),
+        "video_precision": extra.pop("billing_video_precision", None),
+    }
+
+
+def _finish_reason(resp: Any) -> str | None:
+    try:
+        return getattr(resp.choices[0], "finish_reason", None)
+    except (AttributeError, IndexError, TypeError):
+        return None
+
+
 def _is_retryable(exc: BaseException) -> bool:
     phase = _error_phase(exc)
     return phase in {"connection", "timeout", "hard_timeout", "upstream_5xx", "rate_limit"}
+
+
+async def _record_failed_attempt(
+    ctx: UsageCtx | None,
+    model: str,
+    exc: BaseException,
+    *,
+    retried: bool,
+    chunks: Sequence[Any] | None = None,
+) -> int:
+    """Record an attempt that raised — it still reached the vendor and may be billed.
+
+    Usage comes from whatever the vendor reported before failing (stream
+    chunks already received, or a ``usage`` the exception carries); none →
+    a zero row that proves the request without claiming a cost. A connection
+    error never left this machine, so it is not a vendor request at all.
+    """
+    if ctx is None or _error_phase(exc) == "connection":
+        return 0
+    inp = out = cached = 0
+    if chunks:
+        inp, out = extract_stream_usage_from_chunks(chunks)
+        cached = extract_stream_cached_from_chunks(chunks)
+    else:
+        usage = getattr(exc, "usage", None)
+        inp, out = extract_usage_tokens(usage)
+        cached = extract_cached_tokens(usage)
+    return await record_llm_attempt(
+        ctx, model=model, status="retry" if retried else "failed",
+        input_tokens=inp, cached_tokens=cached, output_tokens=out,
+    )
+
+
+async def _check_access(ctx: UsageCtx | None) -> None:
+    """Verified-email gate before any model call (defense in depth)."""
+    if ctx is None:
+        return
+    try:
+        await check_ai_access(ctx)
+    except EmailNotVerified as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001 — a lookup hiccup must not fail the call
+        log.warning("llm_access_check_failed", error=str(exc)[:200])
+
+
+async def _admit_attempt(
+    model: str,
+    msgs: Sequence[Message],
+    kwargs: dict[str, Any],
+    hints: dict[str, Any],
+    caller_sets_max: bool,
+) -> guard.Admission:
+    """Per-call guard + vendor slot, before an attempt is sent. Returns what
+    was admitted (release it with ``guard.after_llm_call``). Applies the
+    guard's output cap as ``max_tokens`` unless the call site set its own —
+    and drops a cap an earlier attempt set, so it is not read as the call's."""
+    if not caller_sets_max:
+        kwargs.pop("max_tokens", None)
+    adm = await guard.before_llm_call(model, msgs, kwargs, **hints)
+    vendor_tokens = adm.input_tokens or (
+        hints["input_tokens"] if hints["input_tokens"] is not None else guard.count_text_tokens(msgs)
+    )
+    try:
+        await vendor_limits.acquire_gemini(model, vendor_tokens)
+    except BaseException:
+        guard.after_llm_call(adm.budget, 0)
+        raise
+    if adm.max_tokens is not None and not caller_sets_max:
+        kwargs["max_tokens"] = adm.max_tokens
+    return adm
+
+
+def _settle_failed(adm: guard.Admission, exc: BaseException, charged: int) -> None:
+    """Release a failed attempt's budget. A TIMED-OUT attempt the vendor gave
+    no usage for still counts its input against the run's ceiling (the request
+    was sent and may be billed), so N timed-out retries cannot each be
+    admitted at the full budget."""
+    if not charged and _error_phase(exc) in _TIMEOUT_PHASES:
+        guard.after_llm_call(adm.budget, adm.input_charge)
+    else:
+        guard.after_llm_call(adm.budget, charged)
+
+
+async def _record_cancelled(
+    ctx: UsageCtx | None, model: str, adm: guard.Admission, chunks: Sequence[Any] | None = None
+) -> None:
+    """An attempt cancelled mid-flight (worker SIGTERM on deploy, arq's job
+    timeout). The vendor bills the request and whatever it already streamed,
+    so it is recorded — with the streamed usage, else the admitted input
+    estimate — before the cancellation propagates. Never raises."""
+    inp = out = cached = 0
+    if chunks:
+        inp, out = extract_stream_usage_from_chunks(chunks)
+        cached = extract_stream_cached_from_chunks(chunks)
+    if not inp:
+        inp = adm.input_tokens
+    charged = 0
+    try:
+        charged = await asyncio.shield(record_llm_attempt(
+            ctx, model=model, status="cancelled", input_tokens=inp, cached_tokens=cached, output_tokens=out,
+        ))
+    except (Exception, asyncio.CancelledError) as exc:  # noqa: BLE001 — must not mask the cancel
+        log.warning("llm_cancelled_record_failed", error=str(exc)[:200])
+    guard.after_llm_call(adm.budget, charged or adm.input_charge)
+    log.warning("llm_call_cancelled", model=model, input_tokens=inp, output_tokens=out)
 
 
 async def acompletion(
@@ -122,6 +274,7 @@ async def acompletion(
     """
     extra = dict(extra)
     system = extra.pop("system", None)
+    hints = _billing_hints(extra)
     # Gemini (and OpenAI-compat) only honor system via messages[role=system].
     # A top-level litellm `system=` kwarg is Anthropic-shaped and is silently
     # dropped for Gemini — observed as ~30 input_tokens on a 12k-char system
@@ -139,24 +292,8 @@ async def acompletion(
         kwargs["tools"] = tools
 
     ctx = get_usage_ctx()
-    if ctx is not None:
-        try:
-            await check_limit(ctx)
-        except Exception as exc:
-            if isinstance(exc, EmailNotVerified):
-                raise HTTPException(status_code=403, detail=str(exc)) from exc
-            if isinstance(exc, UsageLimitExceeded):
-                raise HTTPException(
-                    status_code=429,
-                    detail={
-                        "error": "token_limit_exceeded",
-                        "used": exc.used,
-                        "limit": exc.limit,
-                        "plan": exc.plan,
-                        "message": f"คุณใช้ token ครบโควตาแล้ว ({exc.used:,}/{exc.limit:,} tokens) กรุณาติดต่อแอดมินเพื่ออัปเกรดแพลน",
-                    },
-                )
-            log.warning("llm_usage_check_failed", error=str(exc)[:200])
+    await _check_access(ctx)
+    caller_sets_max = bool(kwargs.get("max_tokens") or kwargs.get("max_completion_tokens"))
 
     stats = _payload_stats(msgs, system)
     timeout_sec = _resolve_timeout_sec(kwargs, stats["image_blocks"])
@@ -203,7 +340,9 @@ async def acompletion(
                 image_blocks=stats["image_blocks"] or None,
             )
 
+    adm = guard.Admission()
     for attempt in range(1, max_attempts + 1):
+        adm = await _admit_attempt(str(kwargs.get("model") or ""), msgs, kwargs, hints, caller_sets_max)
         heartbeat = asyncio.create_task(_wait_heartbeat())
         attempt_t0 = time.monotonic()
         tool_fallback = False
@@ -222,6 +361,9 @@ async def acompletion(
                 timeout=timeout_sec,
             )
             break
+        except asyncio.CancelledError:
+            await _record_cancelled(ctx, str(kwargs.get("model") or ""), adm)
+            raise
         except Exception as exc:  # noqa: BLE001
             elapsed_ms = round((time.monotonic() - attempt_t0) * 1000)
             total_ms = round((time.monotonic() - t0) * 1000)
@@ -240,12 +382,15 @@ async def acompletion(
                 image_blocks=stats["image_blocks"] or None,
                 error=str(exc)[:400],
             )
+            model_name = str(kwargs.get("model") or "")
             if tools and _looks_like_tool_unsupported(exc):
                 log.warning("llm_tools_unsupported_fallback", model=kwargs.get("model"))
+                _settle_failed(adm, exc, await _record_failed_attempt(ctx, model_name, exc, retried=True))
                 kwargs.pop("tools", None)
                 tools = None
                 tool_fallback = True
             elif attempt < max_attempts and _is_retryable(exc):
+                _settle_failed(adm, exc, await _record_failed_attempt(ctx, model_name, exc, retried=True))
                 wait_s = _RETRY_BACKOFF_SEC * attempt
                 log.warning(
                     "llm_call_retry",
@@ -256,6 +401,7 @@ async def acompletion(
                 )
                 await asyncio.sleep(wait_s)
             else:
+                _settle_failed(adm, exc, await _record_failed_attempt(ctx, model_name, exc, retried=False))
                 raise
         finally:
             heartbeat.cancel()
@@ -264,6 +410,7 @@ async def acompletion(
             except asyncio.CancelledError:
                 pass
         if tool_fallback:
+            adm = await _admit_attempt(str(kwargs.get("model") or ""), msgs, kwargs, hints, caller_sets_max)
             log.info(
                 "llm_call_attempt",
                 model=kwargs.get("model"),
@@ -282,6 +429,9 @@ async def acompletion(
                     timeout=timeout_sec,
                 )
                 break
+            except asyncio.CancelledError:
+                await _record_cancelled(ctx, str(kwargs.get("model") or ""), adm)
+                raise
             except Exception as exc:  # noqa: BLE001
                 elapsed_ms = round((time.monotonic() - attempt_t0) * 1000)
                 total_ms = round((time.monotonic() - t0) * 1000)
@@ -301,7 +451,11 @@ async def acompletion(
                     error=str(exc)[:400],
                     tool_fallback=True,
                 )
-                if attempt < max_attempts and _is_retryable(exc):
+                retry_next = attempt < max_attempts and _is_retryable(exc)
+                _settle_failed(adm, exc, await _record_failed_attempt(
+                    ctx, str(kwargs.get("model") or ""), exc, retried=retry_next
+                ))
+                if retry_next:
                     wait_s = _RETRY_BACKOFF_SEC * attempt
                     log.warning(
                         "llm_call_retry",
@@ -326,6 +480,7 @@ async def acompletion(
     elapsed_ms = round((time.monotonic() - t0) * 1000)
     usage = getattr(resp, "usage", None)
     input_tokens, output_tokens = extract_usage_tokens(usage)
+    cached_tokens = extract_cached_tokens(usage)
     content = ""
     try:
         content = resp.choices[0].message.content or ""
@@ -345,11 +500,15 @@ async def acompletion(
         response_preview=content[:120].replace("\n", " "),
     )
 
-    if ctx is not None and (input_tokens or output_tokens):
-        model_name = str(kwargs.get("model") or "")
-        asyncio.ensure_future(
-            record_usage(ctx, model_name, input_tokens, output_tokens)
-        )
+    # Awaited, not fire-and-forget: a row that silently fails to land is
+    # vendor cost nobody can attribute (metering retries, then outboxes).
+    charged = await record_llm_attempt(
+        ctx, model=str(kwargs.get("model") or ""), status="ok",
+        input_tokens=input_tokens, cached_tokens=cached_tokens, output_tokens=output_tokens,
+    )
+    guard.after_llm_call(adm.budget, charged)
+    if adm.max_tokens is not None and not caller_sets_max and _finish_reason(resp) == "length":
+        guard.output_truncated()
 
     return resp
 
@@ -369,6 +528,7 @@ async def acompletion_stream_thinking(
     """
     extra = dict(extra)
     system = extra.pop("system", None)
+    hints = _billing_hints(extra)
     # See acompletion(): Gemini ignores top-level `system=`; inject as message.
     msgs = list(messages)
     if system:
@@ -383,24 +543,8 @@ async def acompletion_stream_thinking(
     kwargs["stream_options"] = stream_opts
 
     ctx = get_usage_ctx()
-    if ctx is not None:
-        try:
-            await check_limit(ctx)
-        except Exception as exc:
-            if isinstance(exc, EmailNotVerified):
-                raise HTTPException(status_code=403, detail=str(exc)) from exc
-            if isinstance(exc, UsageLimitExceeded):
-                raise HTTPException(
-                    status_code=429,
-                    detail={
-                        "error": "token_limit_exceeded",
-                        "used": exc.used,
-                        "limit": exc.limit,
-                        "plan": exc.plan,
-                        "message": f"คุณใช้ token ครบโควตาแล้ว ({exc.used:,}/{exc.limit:,} tokens) กรุณาติดต่อแอดมินเพื่ออัปเกรดแพลน",
-                    },
-                )
-            log.warning("llm_usage_check_failed", error=str(exc)[:200])
+    await _check_access(ctx)
+    caller_sets_max = bool(kwargs.get("max_tokens") or kwargs.get("max_completion_tokens"))
 
     stats = _payload_stats(msgs, system)
     timeout_sec = _resolve_timeout_sec(kwargs, stats["image_blocks"])
@@ -426,8 +570,10 @@ async def acompletion_stream_thinking(
     attempt = 0
     resp: Any = None
     all_chunks: list[Any] = []
+    adm = guard.Admission()
 
     for attempt in range(1, max_attempts + 1):
+        adm = await _admit_attempt(str(kwargs.get("model") or ""), msgs, kwargs, hints, caller_sets_max)
         attempt_t0 = time.monotonic()
         try:
             log.info(
@@ -492,6 +638,9 @@ async def acompletion_stream_thinking(
             resp = litellm.stream_chunk_builder(all_chunks, messages=msgs)
             break
 
+        except asyncio.CancelledError:
+            await _record_cancelled(ctx, str(kwargs.get("model") or ""), adm, all_chunks)
+            raise
         except Exception as exc:  # noqa: BLE001
             elapsed_ms = round((time.monotonic() - attempt_t0) * 1000)
             total_ms = round((time.monotonic() - t0) * 1000)
@@ -508,7 +657,11 @@ async def acompletion_stream_thinking(
                 error=str(exc)[:400],
                 stream_thinking=True,
             )
-            if attempt < max_attempts and _is_retryable(exc):
+            retry_next = attempt < max_attempts and _is_retryable(exc)
+            _settle_failed(adm, exc, await _record_failed_attempt(
+                ctx, str(kwargs.get("model") or ""), exc, retried=retry_next, chunks=all_chunks,
+            ))
+            if retry_next:
                 wait_s = _RETRY_BACKOFF_SEC * attempt
                 log.warning("llm_call_retry", model=kwargs.get("model"), next_attempt=attempt + 1, wait_s=wait_s)
                 await asyncio.sleep(wait_s)
@@ -522,6 +675,10 @@ async def acompletion_stream_thinking(
     chunk_usage = extract_stream_usage_from_chunks(all_chunks)
     built_usage = extract_usage_tokens(getattr(resp, "usage", None))
     input_tokens, output_tokens = merge_provider_usage(chunk_usage, built_usage)
+    cached_tokens = max(
+        extract_stream_cached_from_chunks(all_chunks),
+        extract_cached_tokens(getattr(resp, "usage", None)),
+    )
     if input_tokens == 0 and output_tokens > 0:
         log.warning(
             "llm_stream_usage_missing_prompt",
@@ -560,9 +717,13 @@ async def acompletion_stream_thinking(
         response_preview=content[:120].replace("\n", " "),
     )
 
-    if ctx is not None and (input_tokens or output_tokens):
-        model_name = str(kwargs.get("model") or "")
-        asyncio.ensure_future(record_usage(ctx, model_name, input_tokens, output_tokens))
+    charged = await record_llm_attempt(
+        ctx, model=str(kwargs.get("model") or ""), status="ok",
+        input_tokens=input_tokens, cached_tokens=cached_tokens, output_tokens=output_tokens,
+    )
+    guard.after_llm_call(adm.budget, charged)
+    if adm.max_tokens is not None and not caller_sets_max and _finish_reason(resp) == "length":
+        guard.output_truncated()
 
     return resp
 
