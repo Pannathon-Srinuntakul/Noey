@@ -520,3 +520,69 @@ def upload_release_file(local_path: pathlib.Path, filename: str) -> None:
     """Upload a release asset (e.g. the desktop installer). Sync — run from a script."""
     client = _client()
     client.upload_file(str(local_path), _bucket(), _release_key(filename))
+
+
+class OutputRange:
+    """One ranged read of an output object, ready to stream."""
+
+    def __init__(self, status: int, headers: dict[str, str], body: object) -> None:
+        self.status = status
+        self.headers = headers
+        self._body = body
+
+    def iter_chunks(self, chunk_size: int = 256 * 1024):
+        try:
+            yield from self._body.iter_chunks(chunk_size)  # type: ignore[attr-defined]
+        finally:
+            self._body.close()  # type: ignore[attr-defined]
+
+
+async def open_output_range(project_uid: str, filename: str, range_header: str | None) -> OutputRange | None:
+    """Stream part of an output straight from S3, without copying it to disk.
+
+    `ensure_local_output` downloads the WHOLE object before anything can be
+    served. On a fresh API container (every deploy) that turned a one-byte
+    preview probe into a full video download, ten of them at once on a
+    project list, and every probe timed out (2026-09-22). S3 honours Range
+    itself, so a probe now costs one byte and a seek costs only what it reads.
+
+    None when S3 is off or the object does not exist.
+    """
+    if not _s3_enabled():
+        return None
+    from botocore.exceptions import ClientError
+
+    key = _output_key(project_uid, filename)
+
+    def _get() -> OutputRange | None:
+        kwargs: dict[str, str] = {"Bucket": _bucket(), "Key": key}
+        if range_header and range_header.startswith("bytes="):
+            kwargs["Range"] = range_header
+        try:
+            obj = _client().get_object(**kwargs)
+        except ClientError as exc:
+            code = exc.response.get("Error", {}).get("Code", "")
+            if code in ("404", "NoSuchKey", "NotFound"):
+                return None
+            if code == "InvalidRange":
+                return OutputRange(416, {}, _EmptyBody())
+            raise
+        headers = {
+            "Accept-Ranges": "bytes",
+            "Content-Length": str(obj.get("ContentLength", 0)),
+        }
+        status = 200
+        if obj.get("ContentRange"):
+            headers["Content-Range"] = str(obj["ContentRange"])
+            status = 206
+        return OutputRange(status, headers, obj["Body"])
+
+    return await asyncio.to_thread(_get)
+
+
+class _EmptyBody:
+    def iter_chunks(self, _size: int):
+        return iter(())
+
+    def close(self) -> None:
+        return None

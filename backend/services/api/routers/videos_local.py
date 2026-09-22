@@ -57,6 +57,8 @@ from packages.video.s3 import (
     delete_output_file,
     delete_scratch,
     list_output_files,
+    open_output_range,
+    output_relpath,
     pull_scratch_file,
     push_output_file,
     push_scratch_file,
@@ -1268,21 +1270,29 @@ async def put_web_file(
 async def get_web_file(
     uid: str,
     rel: str,
+    request: Request,
     auth: CurrentUser,
     session: AsyncSession = Depends(db_session),
-) -> FileResponse:
+) -> Response:
     """Stream one file. `FileResponse` answers Range requests, which is what
     lets a `<video>` in another browser seek without downloading the whole
     clip first."""
     await _get_local_project(session, uid, auth.user_id)
     dest = _web_file_path(uid, rel)
     if not dest.is_file():
-        # It may only exist on S3 (another host rendered it) — pull it back.
-        try:
-            await resolve_stored_output(uid, f"video_outputs/{uid}/{rel}")
-        except FileNotFoundError:
-            pass
-    if not dest.is_file():
+        # Only on S3 (another host rendered it, or this container is fresh
+        # after a deploy): serve the requested byte range straight from the
+        # bucket instead of downloading the whole clip first.
+        ranged = await open_output_range(uid, output_relpath(uid, f"video_outputs/{uid}/{rel}"), request.headers.get("range"))
+        if ranged is not None:
+            import mimetypes
+
+            from fastapi.responses import StreamingResponse
+
+            media_type = mimetypes.guess_type(dest.name)[0] or "application/octet-stream"
+            return StreamingResponse(
+                ranged.iter_chunks(), status_code=ranged.status, headers=ranged.headers, media_type=media_type
+            )
         raise HTTPException(404, "ไม่พบไฟล์นี้")
     return FileResponse(str(dest), filename=dest.name)
 

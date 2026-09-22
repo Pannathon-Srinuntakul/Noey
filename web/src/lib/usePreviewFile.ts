@@ -1,8 +1,48 @@
 import { useEffect, useState } from 'react'
 import type { ProjectMode, ProjectStep } from './projectFlow'
 
+/**
+ * At most this many preview probes are in flight at once.
+ *
+ * A browser gives one origin ~6 connections. A grid of ten finished projects
+ * fired ten probes together, each bounded at 4 s, and every other request —
+ * the settings page, the <video> that was about to play — queued behind them
+ * (live report 2026-09-22, production). Three keeps the cascade quick while
+ * leaving the connection pool free for the picture the person is looking at.
+ */
+const MAX_PARALLEL_PROBES = 3
+let probesInFlight = 0
+const probeQueue: Array<() => void> = []
+
+async function withProbeSlot<T>(run: () => Promise<T>): Promise<T> {
+  if (probesInFlight >= MAX_PARALLEL_PROBES) {
+    await new Promise<void>((resolve) => probeQueue.push(resolve))
+  }
+  probesInFlight += 1
+  try {
+    return await run()
+  } finally {
+    probesInFlight -= 1
+    probeQueue.shift()?.()
+  }
+}
+
 /** Probe a project-relative file without downloading it. */
 async function exists(uid: string, rel: string): Promise<boolean> {
+  return withProbeSlot(() => probeOnce(uid, rel))
+}
+
+/**
+ * Does this rendered file really exist? Asked by a player that failed to load,
+ * before it tells the person the clip is gone: a <video> whose request timed
+ * out under load looks exactly like a 404, and "ไม่พบไฟล์คลิป" on a clip that is
+ * there reads as lost work (live report 2026-09-22, production).
+ */
+export function probeRenderedFile(uid: string, rel: string): Promise<boolean> {
+  return exists(uid, rel)
+}
+
+async function probeOnce(uid: string, rel: string): Promise<boolean> {
   try {
     // Bounded: a probe that never settles used to hold the whole candidate
     // cascade hostage — the preview stayed null with no error.
@@ -92,9 +132,12 @@ export function usePreviewFile(
      * came back empty, so the hook shows the source clip instead of guessing a
      * highlight file that was never written. */
     hasHighlights?: boolean
+    /** False while the card is still far off-screen: no probe is sent until it
+     * is worth sending (see lib/useInView). Defaults to true. */
+    enabled?: boolean
   } = {}
 ): string | null {
-  const { highlightId, fallbackClipFile, hasHighlights = true } = opts
+  const { highlightId, fallbackClipFile, hasHighlights = true, enabled = true } = opts
   // speech_highlights is the one mode whose answer is derivable without a
   // probe: it has no final.mp4 at all, only highlights/hNN.mp4.
   const settled =
@@ -112,7 +155,7 @@ export function usePreviewFile(
 
   useEffect(() => {
     const list = previewCandidates(step, mode)
-    if (!list) return
+    if (!list || !enabled) return
     let cancelled = false
     void (async () => {
       for (let i = 0; i < list.length; i++) {
@@ -128,7 +171,7 @@ export function usePreviewFile(
     return () => {
       cancelled = true
     }
-  }, [uid, step, mode, mediaKey, probeKey])
+  }, [uid, step, mode, mediaKey, probeKey, enabled])
 
   if (settled) return settled
   if (candidates) {

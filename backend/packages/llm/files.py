@@ -10,6 +10,7 @@ from typing import Any
 import litellm
 
 from packages.core.logging import get_logger
+from packages.llm import fake
 from packages.llm.config import anthropic_file_kwargs, gemini_file_kwargs
 
 log = get_logger(__name__)
@@ -31,6 +32,9 @@ async def upload_message_file(
     mime_type: str = VISION_JPEG_MIME,
 ) -> str:
     """Upload one file for Messages API; returns Anthropic file_id."""
+    if fake.active():
+        await fake.sleep_upload()
+        return fake.fake_file_id(filename)
     kwargs = anthropic_file_kwargs()
     uploaded = await litellm.acreate_file(
         file=(filename, content, mime_type),
@@ -55,7 +59,7 @@ async def upload_message_file_path(path: pathlib.Path) -> str:
 
 async def delete_message_file(file_id: str) -> None:
     """Best-effort delete of an uploaded file."""
-    if not file_id:
+    if not file_id or fake.is_fake_file_id(file_id):
         return
     kwargs = anthropic_file_kwargs()
     await litellm.afile_delete(file_id, **kwargs)
@@ -118,8 +122,11 @@ async def upload_gemini_file(
     `purpose` is ignored by LiteLLM's Gemini handler (it always returns the
     uploaded file's URI as `id`), so any value works.
     """
-    kwargs = gemini_file_kwargs()
     raw = path.read_bytes()
+    if fake.active():
+        await fake.sleep_upload()
+        return fake.fake_file_id(path.name)
+    kwargs = gemini_file_kwargs()
     uploaded = await litellm.acreate_file(
         file=(path.name, raw, mime_type),
         purpose="user_data",
@@ -134,7 +141,7 @@ async def upload_gemini_file(
 
 async def delete_gemini_file(file_id: str) -> None:
     """Best-effort delete of an uploaded Gemini file (also auto-expires at 48h)."""
-    if not file_id:
+    if not file_id or fake.is_fake_file_id(file_id):
         return
     kwargs = gemini_file_kwargs()
     await litellm.afile_delete(file_id, **kwargs)

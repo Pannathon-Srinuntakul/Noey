@@ -177,6 +177,16 @@ Uploaded clips land in `backend/data/video_uploads/<project_uid>/`; rendered out
 
 **Optional S3/R2 storage**: set `S3_BUCKET` (+ `S3_ENDPOINT_URL` for Cloudflare R2) to sync video files between API and worker hosts. When unset, all `packages/video/s3.py` methods are no-ops and the local filesystem is sole storage.
 
+**`loadtest/`** — capacity testing WITHOUT paying a vendor: `LOADTEST_FAKE_AI=1`
+makes `packages/llm/fake.py` answer every model call, Files-API upload and
+speech-to-text request with a canned, parseable result after a realistic delay
+(everything else — reservation, guard, vendor slots, metering, queue, DB, Redis,
+S3 — stays real). Settings REFUSE to load it when the environment says
+production. `backend/scripts/seed_loadtest.py` makes the `lt-*@loadtest.noey.local`
+accounts; `loadtest/k6/editor.js` + `loadtest/runner/Dockerfile` drive one editor
+session per virtual user from a runner deployed beside the stack under test (never
+the owner's laptop). See `loadtest/README.md`.
+
 **`docs_raw/`** — raw TikTok Affiliate API documentation (markdown); reference when building scraper or API integrations.
 
 ## Skills (load the matching one before working in that area)

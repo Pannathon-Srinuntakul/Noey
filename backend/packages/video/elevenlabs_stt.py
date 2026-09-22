@@ -130,6 +130,16 @@ def raw_pcm_from_wav(wav_path: pathlib.Path) -> bytes | None:
         return None
 
 
+def _wav_seconds(wav_path: pathlib.Path) -> float:
+    """Length of a WAV from its header (0.0 when it cannot be read)."""
+    try:
+        with wave.open(str(wav_path), "rb") as w:
+            rate = w.getframerate() or 1
+            return w.getnframes() / float(rate)
+    except (wave.Error, OSError, EOFError):
+        return 0.0
+
+
 def build_stt_fields(
     *,
     model_id: str,
@@ -200,6 +210,19 @@ async def transcribe_clip(
     from packages.core.settings import get_settings
 
     s = get_settings()
+    # LOAD TEST: a canned Scribe reply after a simulated delay, sized to this
+    # WAV — never a request to the vendor (packages/llm/fake.py). Imported only
+    # when on: the desktop sidecar imports this module without packages/llm.
+    if s.loadtest_fake_ai:
+        from packages.llm import fake
+
+        if fake.active():
+            audio_sec = _wav_seconds(wav_path)
+            await fake.sleep_stt()
+            return fake.scribe_response(
+                audio_sec, diarize=s.elevenlabs_diarize if diarize is None else diarize
+            )
+
     if not s.elevenlabs_api_key:
         raise ElevenLabsSTTError(
             "ELEVENLABS_API_KEY is not set — speech-to-text cannot run. "

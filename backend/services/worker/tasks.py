@@ -12,6 +12,7 @@ Job lifecycle:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import pathlib
 import shutil
@@ -22,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.core.logging import get_logger
 from packages.core.errors import format_exception_message
+from packages.core.settings import get_settings
 from packages.db.models.core_auth import Job
 from packages.db.session import bind_tenant_search_path, get_engine, get_sessionmaker
 from packages.video.storage import data_root
@@ -1688,6 +1690,17 @@ async def _purge_uploaded_media(project_uid: str, subdirs: tuple[str, ...]) -> N
         log.warning("uploaded_media_purge_failed", project_uid=project_uid, error=str(exc))
 
 
+_TRANSCODE_GATE: asyncio.Semaphore | None = None
+
+
+def _transcode_gate() -> asyncio.Semaphore:
+    """Per-process cap on concurrent ffmpeg transcodes (settings)."""
+    global _TRANSCODE_GATE
+    if _TRANSCODE_GATE is None:
+        _TRANSCODE_GATE = asyncio.Semaphore(max(1, get_settings().worker_transcode_concurrency))
+    return _TRANSCODE_GATE
+
+
 async def transcode_for_web(
     ctx: dict[str, Any],
     *,
@@ -1734,7 +1747,8 @@ async def transcode_for_web(
 
         out = base / "converted.mp4"
         await _video_progress(job_id, 30, "transcode", "กำลังแปลงเป็น MP4 (H.264)…")
-        await asyncio.to_thread(transcode_to_h264, src, out)
+        async with _transcode_gate():
+            await asyncio.to_thread(transcode_to_h264, src, out)
 
         # The source has served its purpose the instant the output exists.
         # Failing to remove it must not fail the job — the collect step deletes
@@ -2984,10 +2998,12 @@ async def startup(ctx: dict[str, Any]) -> None:
     from packages.core.settings import assert_production_secrets
 
     assert_production_secrets()
-    from packages.core.settings import reload_settings
+    from packages.core.settings import announce_fake_ai, reload_settings
     from packages.llm.config import sync_llm_env
 
     settings = reload_settings()
+    # Load-test fake AI: refuses to boot in production, warns loudly otherwise.
+    announce_fake_ai()
     sync_llm_env()
     log.info(
         "worker_ctx_startup",
@@ -3036,7 +3052,7 @@ class WorkerSettings:
     ]
     on_startup = startup
     on_shutdown = shutdown
-    max_jobs = 10
+    max_jobs = get_settings().worker_max_jobs
     # arq requires a numeric timeout (None breaks worker init) AND derives the
     # per-job `arq:in-progress:<id>` lock TTL from it. A ~1-year timeout meant
     # that any job whose worker died mid-run (crash, Ctrl-C, a stopped run)

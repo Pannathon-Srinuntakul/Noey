@@ -1,0 +1,4 @@
+# Credentials never go into an image: pass them as env vars at run time.
+.secrets/
+*.json.part
+summary*.json

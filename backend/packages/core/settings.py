@@ -5,6 +5,7 @@ from functools import lru_cache
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Resolve .env from repo layout, not process cwd (worker cwd may vary).
@@ -52,6 +53,25 @@ def is_localhost_url(url: str | None) -> bool:
     """Whether a URL points at the machine it is opened on (a dev default)."""
     host = (urlsplit((url or "").strip()).hostname or "").lower()
     return host in {"localhost", "127.0.0.1", "::1"}
+
+
+class FakeAIInProduction(RuntimeError):
+    """LOADTEST_FAKE_AI is set in an environment that says it is production."""
+
+
+#: Environment variables that name the deployment environment. Railway sets
+#: RAILWAY_ENVIRONMENT_NAME (and the older RAILWAY_ENVIRONMENT) on every service.
+_ENVIRONMENT_VARS = ("RAILWAY_ENVIRONMENT_NAME", "RAILWAY_ENVIRONMENT", "ENVIRONMENT", "APP_ENV")
+_PRODUCTION_NAMES = {"production", "prod"}
+
+
+def production_environment_marker() -> str | None:
+    """``"VAR=value"`` for the first env var saying this is production, else None."""
+    for var in _ENVIRONMENT_VARS:
+        value = (os.getenv(var) or "").strip().lower()
+        if value in _PRODUCTION_NAMES:
+            return f"{var}={value}"
+    return None
 
 
 class Settings(BaseSettings):
@@ -312,6 +332,15 @@ class Settings(BaseSettings):
     #: requests / tokens per minute per Gemini family, and concurrent
     #: speech-to-text requests. 0 disables that limit. Defaults sit under the
     #: paid-tier AI Studio limits; set them to the project's real quota.
+    #: Jobs one worker process runs at once (arq max_jobs). Most jobs are waiting on
+    #: the AI vendors, not using CPU (measured 2026-09-22: 0.25 vCPU peak at 10),
+    #: so this can sit well above the core count. The vendor limits below and
+    #: `worker_transcode_concurrency` are what actually bound the work.
+    worker_max_jobs: int = 30
+    #: ffmpeg transcodes (the one CPU/RAM-heavy job) allowed at once per worker
+    #: process, so a burst of iPhone HEVC uploads cannot starve the AI jobs
+    #: sharing the container or run it out of memory.
+    worker_transcode_concurrency: int = 2
     gemini_rpm_flash: int = 1_000
     gemini_tpm_flash: int = 1_000_000
     gemini_rpm_pro: int = 150
@@ -336,6 +365,40 @@ class Settings(BaseSettings):
     #: and even then only with the database on loopback. Refused at startup on
     #: a real deployment (assert_production_secrets).
     wallet_mock_topup: bool = False
+
+    # --- Load testing (packages/llm/fake.py, loadtest/README.md) ---
+    #: FAKE AI: every model call, Files API upload and speech-to-text request
+    #: returns a canned answer after a delay instead of reaching a vendor.
+    #: Everything around the call — reservation, guard, vendor slots, metering,
+    #: queues, DB, Redis, S3 — stays real. For measuring capacity only; the
+    #: settings refuse to load with it on in a production environment
+    #: (``_refuse_fake_ai_in_production``).
+    loadtest_fake_ai: bool = False
+    #: Seconds a fake model call takes (median), with ±``jitter`` spread.
+    loadtest_fake_ai_delay_sec: float = 75.0
+    loadtest_fake_ai_jitter: float = 0.3
+    #: Seconds a fake speech-to-text request takes (Scribe is much faster than
+    #: a video model call). ±``jitter`` spread too.
+    loadtest_fake_stt_delay_sec: float = 15.0
+    #: Seconds a fake Files API upload takes.
+    loadtest_fake_upload_sec: float = 2.0
+
+    @field_validator("loadtest_fake_ai", mode="before")
+    @classmethod
+    def _blank_fake_ai_is_off(cls, value: object) -> object:
+        # `LOADTEST_FAKE_AI=` (set but empty) means off, not a boot failure.
+        return False if isinstance(value, str) and not value.strip() else value
+
+    @model_validator(mode="after")
+    def _refuse_fake_ai_in_production(self) -> "Settings":
+        if self.loadtest_fake_ai:
+            env = production_environment_marker()
+            if env:
+                raise FakeAIInProduction(
+                    f"Refusing to start: LOADTEST_FAKE_AI is on but {env} — fake AI "
+                    "answers must never reach a production environment. Unset LOADTEST_FAKE_AI."
+                )
+        return self
 
     # --- Billing (Stripe) — see docs/billing-stripe.md ---
     # Everything below is optional: with the key or the webhook secret unset,
@@ -496,3 +559,38 @@ def assert_production_secrets() -> None:
         "deployment) but development secrets are still in place.\n  - "
         + "\n  - ".join(problems)
     )
+
+
+def announce_fake_ai() -> bool:
+    """Startup hook for the API and the worker: re-check the production guard
+    against the live environment and, when fake AI is on, say so loudly.
+
+    ``get_settings()`` already refuses to build Settings with fake AI in a
+    production environment; this re-checks without the settings cache, so a
+    process whose environment changed after the first load still refuses.
+    Returns whether fake AI is active.
+    """
+    s = get_settings()
+    if not s.loadtest_fake_ai:
+        return False
+    env = production_environment_marker()
+    if env:
+        raise FakeAIInProduction(
+            f"Refusing to start: LOADTEST_FAKE_AI is on but {env}. Unset LOADTEST_FAKE_AI."
+        )
+    from packages.core.logging import get_logger
+
+    banner = "!" * 72
+    log = get_logger(__name__)
+    for line in (
+        banner,
+        "LOADTEST_FAKE_AI IS ON — every AI call returns a CANNED answer.",
+        (
+            f"model delay ~{s.loadtest_fake_ai_delay_sec:g}s ±{s.loadtest_fake_ai_jitter:.0%}, "
+            f"speech-to-text ~{s.loadtest_fake_stt_delay_sec:g}s. No vendor is contacted."
+        ),
+        "Never run this in production. Results are for load testing only.",
+        banner,
+    ):
+        log.warning("loadtest_fake_ai_active", banner=line)
+    return True

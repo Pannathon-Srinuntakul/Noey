@@ -8,7 +8,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from packages.core.logging import configure_logging, get_logger
-from packages.core.settings import _ENV_FILES, assert_production_secrets, get_settings
+from packages.core.settings import (
+    _ENV_FILES,
+    announce_fake_ai,
+    assert_production_secrets,
+    get_settings,
+)
 from services.api.routers import (
     admin,
     auth,
@@ -62,6 +67,8 @@ def create_app() -> FastAPI:
     # who can read this repo. Refusing to boot is the only guard that cannot
     # itself be forgotten.
     assert_production_secrets()
+    # Load-test fake AI: refuses to boot in production, warns loudly otherwise.
+    announce_fake_ai()
 
     cfg = get_settings()
     # Which .env files were actually read — both the repo root and backend/ are

@@ -33,10 +33,10 @@ mid-flight (worker restart, job timeout) is still recorded — with the usage
 streamed so far, else its input estimate — before the cancellation goes on.
 """
 
-from collections.abc import Awaitable, Callable, Sequence
-from typing import Any
 import asyncio
 import time
+from collections.abc import Awaitable, Callable, Sequence
+from typing import Any
 
 import litellm
 from fastapi import HTTPException
@@ -45,6 +45,7 @@ from packages.billing import guard, vendor_limits
 from packages.billing.metering import record_llm_attempt
 from packages.core.logging import get_logger
 from packages.core.settings import get_settings
+from packages.llm import fake
 from packages.llm.config import model_params
 from packages.llm.usage import (
     EmailNotVerified,
@@ -261,6 +262,16 @@ async def _record_cancelled(
     log.warning("llm_call_cancelled", model=model, input_tokens=inp, output_tokens=out)
 
 
+async def _vendor_acompletion(kwargs: dict[str, Any], adm: guard.Admission) -> Any:
+    """The one line that reaches a model vendor. Under LOADTEST_FAKE_AI a
+    canned answer is returned after a simulated delay instead
+    (packages/llm/fake.py) — everything before and after this call (guard,
+    vendor slot, metering) runs for real either way."""
+    if fake.active():
+        return await fake.acompletion(kwargs, input_estimate=adm.input_tokens or None)
+    return await litellm.acompletion(**kwargs)
+
+
 async def acompletion(
     messages: Sequence[Message],
     tools: list[dict] | None = None,
@@ -357,14 +368,14 @@ async def acompletion(
                 image_blocks=stats["image_blocks"] or None,
             )
             resp = await asyncio.wait_for(
-                litellm.acompletion(**kwargs),
+                _vendor_acompletion(kwargs, adm),
                 timeout=timeout_sec,
             )
             break
         except asyncio.CancelledError:
             await _record_cancelled(ctx, str(kwargs.get("model") or ""), adm)
             raise
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             elapsed_ms = round((time.monotonic() - attempt_t0) * 1000)
             total_ms = round((time.monotonic() - t0) * 1000)
             phase = _error_phase(exc)
@@ -425,14 +436,14 @@ async def acompletion(
             attempt_t0 = time.monotonic()
             try:
                 resp = await asyncio.wait_for(
-                    litellm.acompletion(**kwargs),
+                    _vendor_acompletion(kwargs, adm),
                     timeout=timeout_sec,
                 )
                 break
             except asyncio.CancelledError:
                 await _record_cancelled(ctx, str(kwargs.get("model") or ""), adm)
                 raise
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 elapsed_ms = round((time.monotonic() - attempt_t0) * 1000)
                 total_ms = round((time.monotonic() - t0) * 1000)
                 phase = _error_phase(exc)
@@ -589,7 +600,7 @@ async def acompletion_stream_thinking(
             thinking_buf: list[str] = []
             last_thinking_log = time.monotonic()
 
-            stream_iter = await litellm.acompletion(**kwargs)
+            stream_iter = await _vendor_acompletion(kwargs, adm)
             async for chunk in stream_iter:
                 all_chunks.append(chunk)
                 delta = chunk.choices[0].delta if chunk.choices else None
@@ -641,7 +652,7 @@ async def acompletion_stream_thinking(
         except asyncio.CancelledError:
             await _record_cancelled(ctx, str(kwargs.get("model") or ""), adm, all_chunks)
             raise
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             elapsed_ms = round((time.monotonic() - attempt_t0) * 1000)
             total_ms = round((time.monotonic() - t0) * 1000)
             phase = _error_phase(exc)

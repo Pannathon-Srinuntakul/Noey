@@ -7,8 +7,9 @@ import { useConfirm } from '../../lib/confirm'
 import { useRouter } from '../../lib/router'
 import { VideoModal } from '../ui/VideoModal'
 import type { ProjectPipeline } from '../../lib/useProjectPipeline'
-import { usePreviewFile } from '../../lib/usePreviewFile'
+import { probeRenderedFile, usePreviewFile } from '../../lib/usePreviewFile'
 import { seekToPosterFrame } from '../../lib/videoPoster'
+import { useInView } from '../../lib/useInView'
 import { Button } from '../ui/Button'
 import { Menu } from '../ui/Menu'
 import { Skeleton } from '../ui/Skeleton'
@@ -124,9 +125,14 @@ export function ProjectGridCard({
   // shows that one's still, so starting anywhere else would not match the
   // picture that was clicked.
   const [playerIndex, setPlayerIndex] = useState(0)
+  // Nothing is fetched for a card that is still far down the page: the probe
+  // waits, and so does the <video> below (2026-09-22 — ten cards at once left
+  // every picture black).
+  const [cardRef, inView] = useInView<HTMLDivElement>()
   const previewFile = usePreviewFile(job.project.uid, step, job.mode, job.mediaKey, {
     fallbackClipFile: job.project.clips?.[0]?.file,
-    hasHighlights: (highlightCount ?? 0) > 0
+    hasHighlights: (highlightCount ?? 0) > 0,
+    enabled: inView
   })
 
   // speech_highlights ships N finished clips; the picture can only show one, so
@@ -239,7 +245,7 @@ export function ProjectGridCard({
           flow reports its own intrinsic height and pushes the box past its
           aspect-ratio (the card ran 751px tall, three per screen). Taking the
           video out of flow lets the 3:4 ratio actually hold. */}
-      <div className="relative aspect-[3/4] w-full shrink-0 overflow-hidden bg-media">
+      <div ref={cardRef} className="relative aspect-[3/4] w-full shrink-0 overflow-hidden bg-media">
         {previewFile && broken ? (
           // Distinct from "not rendered yet": that one is an empty icon because
           // nothing was made; this says the file that WAS made is gone.
@@ -273,7 +279,7 @@ export function ProjectGridCard({
           >
             <video
               key={previewKey}
-              src={window.noey.media.urlFor(job.project.uid, previewFile)}
+              src={inView ? window.noey.media.urlFor(job.project.uid, previewFile) : undefined}
               className="absolute inset-0 h-full w-full object-cover"
               muted
               playsInline
@@ -291,7 +297,13 @@ export function ProjectGridCard({
                   window.setTimeout(() => setPreviewNonce((n) => n + 1), 600)
                   return
                 }
-                setBrokenKey(previewKey)
+                // Second failure: ask whether the file is actually gone before
+                // saying so. Under load the request times out and comes back
+                // here looking identical to a 404.
+                void probeRenderedFile(job.project.uid, previewFile).then((there) => {
+                  if (there) window.setTimeout(() => setPreviewNonce((n) => n + 1), 2000)
+                  else setBrokenKey(previewKey)
+                })
               }}
             />
             <span className="absolute inset-0 flex items-center justify-center bg-[rgb(23_22_20_/_0.35)] opacity-0 transition-opacity duration-state ease-out group-hover:opacity-100">
