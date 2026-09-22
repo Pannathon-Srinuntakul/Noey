@@ -681,12 +681,14 @@ html[data-auth="in"] .auth-out {
 }
 
 /*
- * The prototype used minmax(220px) here, which drops Studio alone onto a
- * second row at desktop widths; 200px keeps all five plans in one row from
- * ~1150px up (the home strip already fits five at 210px).
+ * The prototype's minmax(220px), kept on purpose: at 200px all five full
+ * cards fit one row, but their feature lines got so narrow that Chrome broke
+ * Thai loanwords mid-word ("โปรเจ|กต์") and pushed Studio's "บาท / เดือน"
+ * under its price (checked against the design, 2026-09-22). Studio wrapping
+ * to a second row at ~1180px is what the design does.
  */
 .price-grid--full {
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
 }
 
 .price-card {

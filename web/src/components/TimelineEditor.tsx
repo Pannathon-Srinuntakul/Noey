@@ -139,12 +139,31 @@ interface Props {
   onSaved: () => void
 }
 
-/** Stable empty list — a fresh `[]` per render would restart the extraction. */
 /** Caption style steps closer together than this are one edit — see
  * changeCaptionStyle. */
 const CAPTION_STYLE_BURST_MS = 400
 
+/** Stable empty list — a fresh `[]` per render would restart the extraction. */
 const EMPTY_FILMSTRIP_CLIPS: { id: string; file: string }[] = []
+
+/**
+ * A click must not leave keyboard focus on a button or a scene block. The next
+ * key (Space to play, an arrow to nudge) then drew the global gold focus ring
+ * around it, and Space could press a focused button (owner, 2026-09-22:
+ * "ไม่ว่าจะกดอะไรฉันก็ไม่ต้องการให้มันขึ้นโฟกัสแบบนี้"). Preventing the
+ * mousedown default keeps focus where it was without cancelling the click or
+ * dnd-kit's pointer events; a text box that had focus is blurred, which commits
+ * it, so the next Space plays instead of typing. Text fields, sliders and
+ * dialogs keep the default — they need focus to work.
+ */
+function keepFocusOffControls(e: React.MouseEvent): void {
+  const target = e.target as HTMLElement
+  if (target.closest('input, textarea, select, [contenteditable="true"], [role="dialog"]')) return
+  if (!target.closest('button, a, [role="button"], [data-cut-block]')) return
+  e.preventDefault()
+  const active = document.activeElement
+  if (active instanceof HTMLElement && active !== document.body) active.blur()
+}
 
 /**
  * Memoized: its route re-renders on every jobs-store publish — each draft save
@@ -1619,7 +1638,10 @@ export const VideoTimelineEditor = memo(function VideoTimelineEditor({
 
   return (
     <TimelineViewportContext.Provider value={viewportStore}>
-      <div className="fixed inset-0 z-100 flex flex-col bg-ground text-ink">
+      <div
+        className="fixed inset-0 z-100 flex flex-col bg-ground text-ink"
+        onMouseDownCapture={keepFocusOffControls}
+      >
         <EditorHeader
           projectName={projectName}
           isDub={isDub}

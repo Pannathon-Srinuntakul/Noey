@@ -129,6 +129,10 @@ export const EditedCutBlock = memo(function EditedCutBlock({
       className="relative h-full shrink-0 list-none"
       {...attributes}
       {...listeners}
+      // The selected block already wears a gold border; the global focus ring
+      // drawn on top of it after a key press read as a second selection
+      // (owner, 2026-09-22).
+      data-focus-ring="none"
       // Selected on PRESS, like any editor — and before dnd-kit sees the
       // pointer, so a block picked up to reorder is the selected one. It was
       // on click, i.e. on release.
