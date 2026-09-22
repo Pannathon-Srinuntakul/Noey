@@ -70,17 +70,28 @@ async def get_job(
     # connection. The cache is written by the worker right after the row is
     # committed, so a hit is never ahead of the row.
     cached = await job_cache.get(job_id)
-    if cached is not None and int(cached.get("tenant_id", -1)) == auth.tenant_id:
-        fresh_enough = _is_fresh(cached.get("status"), cached.get("updated_at"))
-        if fresh_enough:
-            return JobOut(
-                id=str(cached.get("id") or job_id),
-                type=str(cached.get("type") or ""),
-                status=str(cached.get("status") or ""),
-                progress=int(cached.get("progress") or 0),
-                result=cached.get("result"),
-                error=cached.get("error"),
+    if cached is not None:
+        try:
+            same_tenant = int(cached.get("tenant_id", -1)) == auth.tenant_id
+            fresh = same_tenant and _is_fresh(cached.get("status"), cached.get("updated_at"))
+            out = (
+                JobOut(
+                    id=str(cached.get("id") or job_id),
+                    type=str(cached.get("type") or ""),
+                    status=str(cached.get("status") or ""),
+                    progress=int(cached.get("progress") or 0),
+                    result=cached.get("result"),
+                    error=cached.get("error"),
+                )
+                if fresh
+                else None
             )
+        except (TypeError, ValueError):
+            # A cache entry that does not parse is a cache miss, never a 500:
+            # the row below is the source of truth and always available.
+            out = None
+        if out is not None:
+            return out
 
     job = (
         await session.execute(select(Job).where(Job.id == job_id))

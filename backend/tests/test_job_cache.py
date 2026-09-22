@@ -280,3 +280,11 @@ async def test_cancelling_a_job_drops_its_cache(monkeypatch):
     monkeypatch.setattr("packages.db.session.get_sessionmaker", fake_sessionmaker)
     await videos._mark_job_cancelled(JOB_ID)
     assert dropped == [JOB_ID]
+
+
+async def test_a_corrupt_cache_entry_is_a_miss_not_a_500(api, monkeypatch):
+    # Anything unparseable must fall through to the row, which is always there.
+    _serve(monkeypatch, {"tenant_id": "not-a-number", "status": "done"})
+    async with api as client:
+        with pytest.raises(AssertionError):
+            await client.get(f"/jobs/{JOB_ID}")
