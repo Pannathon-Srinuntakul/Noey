@@ -97,6 +97,12 @@ html[data-theme="dark"] {
   --color-accent-400: #d9a441;
   --color-accent-600: #c08f33;
   --color-accent-700: #dcb05a;
+  /* Tints used as chip backgrounds (.tag-accent) — the light theme's pale cream
+     read as a glowing sticker on the dark page. */
+  --color-accent-100: #3a2e19;
+  --color-accent-200: #4a3a1e;
+  --color-accent-800: #f0c274;
+  --color-accent-900: #f6d9a3;
   --color-danger: #f0a095;
   --color-success: #9fd08f;
 }
@@ -123,6 +129,12 @@ html[data-theme="dark"] {
     --color-accent-400: #d9a441;
     --color-accent-600: #c08f33;
     --color-accent-700: #dcb05a;
+  /* Tints used as chip backgrounds (.tag-accent) — the light theme's pale cream
+     read as a glowing sticker on the dark page. */
+  --color-accent-100: #3a2e19;
+  --color-accent-200: #4a3a1e;
+  --color-accent-800: #f0c274;
+  --color-accent-900: #f6d9a3;
     --color-danger: #f0a095;
     --color-success: #9fd08f;
   }
