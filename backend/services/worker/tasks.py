@@ -203,14 +203,12 @@ async def _write_job(
             # expires the instance, and touching an attribute afterwards would
             # re-SELECT the row — in a context that has no greenlet, so it does
             # not merely cost a query, it raises.
-            snapshot = {
-                "tenant_id": int(job.tenant_id),
-                "job_type": str(job.type),
-                "status": str(job.status),
-                "progress": int(job.progress),
-                "result": job.result,
-                "error": job.error,
-            }
+            cached_tenant_id = int(job.tenant_id)
+            cached_type = str(job.type)
+            cached_status = str(job.status)
+            cached_progress = int(job.progress)
+            cached_result = job.result
+            cached_error = job.error
             await session.commit()
             # Mirror into Redis so polling clients do not each take a database
             # connection (packages/db/job_cache.py). `updated_at` is stamped
@@ -221,8 +219,13 @@ async def _write_job(
 
             await job_cache.put(
                 job_id,
+                tenant_id=cached_tenant_id,
+                job_type=cached_type,
+                status=cached_status,
+                progress=cached_progress,
+                result=cached_result,
+                error=cached_error,
                 updated_at=datetime.now(timezone.utc).isoformat(),
-                **snapshot,
             )
     finally:
         if owned:
