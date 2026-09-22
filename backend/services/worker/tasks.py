@@ -229,6 +229,25 @@ async def _write_job(
             await session.close()
 
 
+async def _release_connection(session: AsyncSession) -> None:
+    """Give the pooled connection back before a long wait.
+
+    A task keeps one session open for its whole run, and the AI calls in the
+    middle take a minute or more. Without this, WORKER_MAX_JOBS concurrent jobs
+    pin that many Postgres connections while doing nothing but waiting on a
+    network reply — which is what made the pool, not the CPU, the ceiling in
+    the 2026-09-22 load test.
+
+    Committing ends the transaction, and SQLAlchemy checks the connection back
+    in at that point; the next statement checks one out again. The sessionmaker
+    uses ``expire_on_commit=False``, so everything already loaded stays usable.
+
+    It does commit whatever is pending — which here is progress and status the
+    user should keep seeing anyway, never a half-written result.
+    """
+    await session.commit()
+
+
 # ── video helpers ─────────────────────────────────────────────────────────────
 
 async def _get_video_project(session: AsyncSession, uid: str):  # type: ignore[return]
@@ -1949,6 +1968,7 @@ async def analyze_dub_video_local(
         # travel as a pair — see select_video_edit_prompts.
         edit_system, edit_default_prose = select_video_edit_prompts(proj.mode == "highlight")
 
+        await _release_connection(session)
         edit_script = await generate_dub_edit_script_video(
             clip_videos,
             brief=proj.brief or "",
@@ -2146,6 +2166,7 @@ async def plan_effects_local(
                     previous_doc = None
 
         await _video_progress(job_id, 74, "effects", "กำลังเลือกและวางเอฟเฟกต์…")
+        await _release_connection(session)
         doc = await generate_effects_placement(
             proxy,
             brief=proj.brief or "",
@@ -2380,6 +2401,7 @@ async def reedit_dub_scenes_local(
                 result={"step": "analyze", "message": "กำลังแก้ไขตามคำสั่ง…", "thinking": excerpt},
             )
 
+        await _release_connection(session)
         new_segments = await generate_dub_reedit_script_video(
             clip_videos,
             (preview_path, media_duration(preview_path)),
