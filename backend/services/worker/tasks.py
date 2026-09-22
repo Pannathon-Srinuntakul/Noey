@@ -2252,6 +2252,9 @@ async def distill_style_local(ctx: dict[str, Any], *, job_id: str, style_uid: st
                 result={"step": "style", "message": "กำลังวิเคราะห์สไตล์…", "thinking": excerpt},
             )
 
+        # `style` is loaded and expire_on_commit is off, so it survives this.
+        await _release_connection(session)
+
         if style.kind == "cut":
             from packages.video.cut_style import distill_cut_style_prompt
 
@@ -2756,11 +2759,15 @@ async def plan_speech_local(ctx: dict[str, Any], *, job_id: str, project_uid: st
         await _video_progress(job_id, 55, "select", "AI กำลังเลือกช่วงเด่นจากคำพูด…")
 
         if proj.mode == "speech_scenes":
+            # Read the style out of the database BEFORE handing the connection
+            # back, or the argument itself would take one out again.
+            style_prompt = await _load_cut_style_prompt(session, style_uid, project_uid)
+            await _release_connection(session)
             picks = await select_scenes(
                 segments,
                 brief=proj.brief or "",
                 target_duration_sec=proj.target_duration_sec,
-                style_prompt=await _load_cut_style_prompt(session, style_uid, project_uid),
+                style_prompt=style_prompt,
                 project_uid=project_uid,
             )
             cuts = picks_to_cuts(picks, segments, source_duration=total_duration)
@@ -2810,6 +2817,7 @@ async def plan_speech_local(ctx: dict[str, Any], *, job_id: str, project_uid: st
         # each WAV starts at zero, and mapping cut -> file per edge buys
         # nothing here (this mode is one long recording by definition).
         edge_wav = str(audio_files[0]) if len(audio_files) == 1 else None
+        await _release_connection(session)
         picks = await select_highlights(
             segments,
             brief=proj.brief or "",
