@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { join, normalize } from 'path'
+import { join, normalize, sep } from 'path'
 import { mediaPathForUrl } from './mediaPath'
 
 const ROOT = normalize(join('C:', 'users', 'x', 'projects'))
@@ -21,8 +21,10 @@ describe('mediaPathForUrl', () => {
     // → single segment (uid without file) → rejected.
     expect(mediaPathForUrl('media://project/abc/../../secret.txt', ROOT)).toBeNull()
     // %2E%2E also collapses during URL parsing → lands confined under ROOT.
+    // `sep`, not a literal backslash: this file builds Windows-shaped paths but
+    // the suite also runs on macOS, where normalize() leaves forward slashes.
     const collapsed = mediaPathForUrl('media://project/%2E%2E/%2E%2E/etc/passwd', ROOT)
-    expect(collapsed === null || collapsed.startsWith(ROOT + '\\')).toBe(true)
+    expect(collapsed === null || collapsed.startsWith(ROOT + sep)).toBe(true)
     // Backslash-encoded traversal survives URL parsing — must be rejected.
     expect(mediaPathForUrl('media://project/abc/..%5C..%5Csecret.txt', ROOT)).toBeNull()
     expect(mediaPathForUrl('media://project/abc', ROOT)).toBeNull() // uid without file

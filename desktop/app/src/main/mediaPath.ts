@@ -25,6 +25,11 @@ export function mediaPathForUrl(url: string, root: string, inboxDir?: string): s
   }
   if (parsed.protocol !== 'media:') return null
   const rel = decodeURIComponent(parsed.pathname).replace(/^\/+/, '')
+  // A backslash is a separator on Windows and an ordinary filename character
+  // everywhere else, so `normalize` collapses `..\..\` only on Windows — the
+  // containment check below would pass a traversal on macOS and fail it on
+  // Windows. Refuse it outright instead of letting the platform decide.
+  if (rel.includes('\\')) return null
 
   if (parsed.host === 'inbox') {
     if (!inboxDir || !rel || rel.includes('/') || rel.includes('\\')) return null
