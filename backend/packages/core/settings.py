@@ -344,14 +344,21 @@ class Settings(BaseSettings):
     #: Read from the project's AI Studio rate-limit page on 2026-09-23 (Tier 1,
     #: "Default Gemini Project"): Flash 1,000 RPM / 2M TPM / 10,000 requests a
     #: DAY, Pro 25 RPM / 2M TPM / 250 a day. The daily caps are the real
-    #: ceiling for the product (a cut uses ~4-5 Flash calls) and are NOT
-    #: enforced here yet — see docs/load-test-2026-09-22.md.
+    #: ceiling for the product — a cut uses ~4-5 Flash calls — so they are
+    #: enforced alongside the per-minute ones in packages/billing/vendor_limits.py.
     gemini_rpm_flash: int = 1_000
     gemini_tpm_flash: int = 2_000_000
+    gemini_rpd_flash: int = 10_000
     #: 25, not 150: Pro's Tier 1 request limit is tiny, and a guard set above
     #: the real quota just turns into 429s from the vendor.
     gemini_rpm_pro: int = 25
     gemini_tpm_pro: int = 2_000_000
+    gemini_rpd_pro: int = 250
+    #: Warn in the logs once a day, per model family, when the day's requests
+    #: pass this share of the daily quota. The point is lead time: the daily cap
+    #: does not clear until midnight Pacific, so noticing at 100% is noticing
+    #: too late to do anything but wait.
+    gemini_rpd_alert_ratio: float = 0.8
     elevenlabs_max_concurrency: int = 5
     #: How long a call may wait for a vendor slot before failing (retryable).
     vendor_wait_max_sec: int = 300

@@ -85,3 +85,55 @@ async def test_non_gemini_models_and_a_dead_redis_pass_straight_through(monkeypa
         await vendor_limits.acquire_gemini("ollama/llama3", 1)
         async with vendor_limits.elevenlabs_slot():
             pass
+
+
+async def test_the_daily_quota_fails_fast_instead_of_waiting(monkeypatch, redis):
+    """A spent DAILY quota must not hold the caller for vendor_wait_max_sec.
+
+    The per-minute window clears in a minute; the daily one clears at midnight
+    Pacific. Waiting the full 300 s and then failing would cost every queued job
+    five minutes for nothing.
+    """
+    _limits(monkeypatch, GEMINI_RPM_FLASH=0, GEMINI_TPM_FLASH=0, GEMINI_RPD_FLASH=2, VENDOR_WAIT_MAX_SEC=300)
+    await vendor_limits.acquire_gemini("gemini-3.7-flash", 1, client=redis)
+    await vendor_limits.acquire_gemini("gemini-3.7-flash", 1, client=redis)
+    t0 = time.monotonic()
+    with pytest.raises(vendor_limits.VendorDailyLimit):
+        await vendor_limits.acquire_gemini("gemini-3.7-flash", 1, client=redis)
+    assert time.monotonic() - t0 < 1.0
+    # Pro has its own daily counter and is untouched.
+    _limits(monkeypatch, GEMINI_RPM_PRO=0, GEMINI_TPM_PRO=0, GEMINI_RPD_PRO=1)
+    await vendor_limits.acquire_gemini("gemini-3.1-pro-preview", 1, client=redis)
+
+
+async def test_the_daily_counter_only_counts_admitted_calls(monkeypatch, redis):
+    # A call turned away by the per-minute window has not been sent to the
+    # vendor, so it must not spend a day's request either.
+    _limits(monkeypatch, GEMINI_RPM_FLASH=1, GEMINI_TPM_FLASH=0, GEMINI_RPD_FLASH=100, VENDOR_WAIT_MAX_SEC=0)
+    await vendor_limits.acquire_gemini("gemini-3.7-flash", 1, client=redis)
+    with pytest.raises(vendor_limits.VendorBusy):
+        await vendor_limits.acquire_gemini("gemini-3.7-flash", 1, client=redis)
+    key = f"{vendor_limits.PREFIX}:gemini:flash:rpd:{vendor_limits.quota_day()}"
+    assert int(await redis.get(key)) == 1
+
+
+async def test_the_high_water_warning_fires_once_a_day(monkeypatch, redis, caplog):
+    _limits(monkeypatch, GEMINI_RPM_FLASH=0, GEMINI_TPM_FLASH=0, GEMINI_RPD_FLASH=10, VENDOR_WAIT_MAX_SEC=0)
+    monkeypatch.setattr(vendor_limits, "_alerted", set())
+    warnings = []
+    monkeypatch.setattr(
+        vendor_limits.log, "warning", lambda event, **kw: warnings.append((event, kw))
+    )
+    for _ in range(10):
+        await vendor_limits.acquire_gemini("gemini-3.7-flash", 1, client=redis)
+    high = [w for w in warnings if w[0] == "vendor_daily_quota_high"]
+    assert len(high) == 1                      # not one per call past the line
+    assert high[0][1]["used"] == 8             # the 80% call, not the first one
+    assert high[0][1]["limit"] == 10
+
+
+def test_the_quota_day_follows_the_vendors_reset_timezone():
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    assert vendor_limits.quota_day() == datetime.now(ZoneInfo("America/Los_Angeles")).strftime("%Y%m%d")

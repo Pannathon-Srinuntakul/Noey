@@ -672,6 +672,20 @@ async def _fx_view(db: AsyncSession) -> dict[str, Any]:
     }
 
 
+@router.get("/vendor-quota")
+async def vendor_quota(admin: CurrentAdmin) -> dict[str, Any]:
+    """Today's AI request count against the vendor's daily quota.
+
+    The daily cap is the product's real ceiling and it does not clear until the
+    vendor's midnight, so seeing it at 80% is the only way to act before it
+    stops the service. Nothing here names the vendor — it is the same
+    flash/pro split the rest of the admin surface uses.
+    """
+    from packages.billing import vendor_limits
+
+    return await vendor_limits.daily_usage()
+
+
 @router.get("/fx")
 async def get_fx(admin: CurrentAdmin, db: CoreSession) -> dict[str, Any]:
     """The USD→THB rate vendor cost is priced with, where it came from, 30 days of history."""

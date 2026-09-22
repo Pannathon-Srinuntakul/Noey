@@ -35,6 +35,9 @@ log = get_logger(__name__)
 PREFIX = "noey:vl"
 WINDOW_MS = 60_000
 STT_LEASE_SEC = 120
+#: The daily counter outlives its day by a margin, so a clock skew between
+#: processes cannot resurrect a fresh counter mid-day.
+_DAY_TTL_SEC = 36 * 60 * 60
 _POLL_MIN_SEC = 0.25
 _POLL_MAX_SEC = 2.0
 
@@ -42,14 +45,28 @@ _POLL_MAX_SEC = 2.0
 class VendorBusy(Exception):
     """Waited ``vendor_wait_max_sec`` for a vendor slot and got none."""
 
-    def __init__(self, vendor: str) -> None:
+    def __init__(self, vendor: str, message: str | None = None) -> None:
         self.vendor = vendor
-        super().__init__("ระบบ AI มีคิวหนาแน่น กรุณาลองใหม่อีกครั้ง")
+        super().__init__(message or "ระบบ AI มีคิวหนาแน่น กรุณาลองใหม่อีกครั้ง")
 
 
-# KEYS[1] request zset, KEYS[2] token zset
-# ARGV: now_ms, window_ms, rpm, tpm, tokens, id
-# Returns 0 when admitted, else the ms to wait before retrying.
+class VendorDailyLimit(VendorBusy):
+    """The vendor's requests-per-DAY quota is spent.
+
+    Separate from VendorBusy because waiting is pointless: the quota resets at
+    midnight Pacific, not in the next minute, so the caller must fail now rather
+    than hold a job for ``vendor_wait_max_sec`` first.
+    """
+
+    def __init__(self, vendor: str) -> None:
+        super().__init__(vendor, "โควตา AI ของวันนี้เต็มแล้ว ระบบจะกลับมาใช้ได้พรุ่งนี้")
+
+
+# KEYS[1] request zset, KEYS[2] token zset, KEYS[3] today's request counter
+# ARGV: now_ms, window_ms, rpm, tpm, tokens, id, rpd, day_ttl_sec
+# Returns {wait_ms, requests_used_today}. wait_ms is 0 when admitted, -1 when
+# the DAILY quota is gone (which no amount of waiting fixes before midnight
+# Pacific), and otherwise the ms to wait before retrying.
 _GEMINI_LUA = """
 local now = tonumber(ARGV[1])
 local window = tonumber(ARGV[2])
@@ -57,6 +74,12 @@ local rpm = tonumber(ARGV[3])
 local tpm = tonumber(ARGV[4])
 local tokens = tonumber(ARGV[5])
 local id = ARGV[6]
+local rpd = tonumber(ARGV[7])
+local day_ttl = tonumber(ARGV[8])
+local day_used = tonumber(redis.call('GET', KEYS[3]) or '0')
+if rpd > 0 and day_used >= rpd then
+  return {-1, day_used}
+end
 redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', now - window)
 redis.call('ZREMRANGEBYSCORE', KEYS[2], '-inf', now - window)
 local reqs = redis.call('ZCARD', KEYS[1])
@@ -70,13 +93,15 @@ if over_rpm or over_tpm then
   local oldest = redis.call('ZRANGE', KEYS[1], 0, 0, 'WITHSCORES')
   local wait = 250
   if oldest[2] then wait = math.max(50, tonumber(oldest[2]) + window - now) end
-  return wait
+  return {wait, day_used}
 end
 redis.call('ZADD', KEYS[1], now, id)
 redis.call('ZADD', KEYS[2], now, id .. ':' .. tokens)
 redis.call('PEXPIRE', KEYS[1], window * 2)
 redis.call('PEXPIRE', KEYS[2], window * 2)
-return 0
+day_used = redis.call('INCR', KEYS[3])
+redis.call('EXPIRE', KEYS[3], day_ttl)
+return {0, day_used}
 """
 
 # KEYS[1] lease zset. ARGV: now_ms, lease_ms, max, id. Returns 1 / 0.
@@ -104,15 +129,54 @@ def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
-def gemini_limits(model: str | None) -> tuple[str, int, int]:
-    """(family, rpm, tpm) for a model id; 0 disables that limit."""
+def gemini_limits(model: str | None) -> tuple[str, int, int, int]:
+    """(family, rpm, tpm, rpd) for a model id; 0 disables that limit."""
     from packages.core.settings import get_settings
 
     s = get_settings()
     family = rate_card.family_for(model)
     if family == "flash":
-        return family, int(s.gemini_rpm_flash), int(s.gemini_tpm_flash)
-    return family, int(s.gemini_rpm_pro), int(s.gemini_tpm_pro)
+        return family, int(s.gemini_rpm_flash), int(s.gemini_tpm_flash), int(s.gemini_rpd_flash)
+    return family, int(s.gemini_rpm_pro), int(s.gemini_tpm_pro), int(s.gemini_rpd_pro)
+
+
+def quota_day() -> str:
+    """Today's key suffix, in the timezone the vendor resets on.
+
+    Google's daily quotas roll over at midnight Pacific. Counting by UTC or by
+    the server's local day would open a window where the counter has reset but
+    the vendor's has not — exactly when a burst would hit 429s.
+    """
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    return datetime.now(ZoneInfo("America/Los_Angeles")).strftime("%Y%m%d")
+
+
+#: (family, day) pairs already warned about, so one warning a day, not one per call.
+_alerted: set[tuple[str, str]] = set()
+
+
+def _maybe_alert(family: str, day: str, used: int, rpd: int) -> None:
+    from packages.core.settings import get_settings
+
+    if rpd <= 0:
+        return
+    ratio = float(get_settings().gemini_rpd_alert_ratio)
+    if ratio <= 0 or used < rpd * ratio:
+        return
+    if (family, day) in _alerted:
+        return
+    _alerted.add((family, day))
+    log.warning(
+        "vendor_daily_quota_high",
+        vendor="gemini",
+        family=family,
+        used=used,
+        limit=rpd,
+        percent=round(used * 100 / rpd, 1),
+        day=day,
+    )
 
 
 async def acquire_gemini(model: str | None, tokens: int, *, client: Any = None) -> None:
@@ -122,8 +186,8 @@ async def acquire_gemini(model: str | None, tokens: int, *, client: Any = None) 
     """
     if "gemini" not in (model or "").lower():
         return
-    family, rpm, tpm = gemini_limits(model)
-    if rpm <= 0 and tpm <= 0:
+    family, rpm, tpm, rpd = gemini_limits(model)
+    if rpm <= 0 and tpm <= 0 and rpd <= 0:
         return
     from packages.core.settings import get_settings
 
@@ -135,20 +199,44 @@ async def acquire_gemini(model: str | None, tokens: int, *, client: Any = None) 
         log.warning("vendor_limit_unavailable", vendor="gemini", error=str(exc)[:200], fail_open=True)
         return
     member = uuid.uuid4().hex
-    keys = [f"{PREFIX}:gemini:{family}:req", f"{PREFIX}:gemini:{family}:tok"]
+    day = quota_day()
+    keys = [
+        f"{PREFIX}:gemini:{family}:req",
+        f"{PREFIX}:gemini:{family}:tok",
+        f"{PREFIX}:gemini:{family}:rpd:{day}",
+    ]
     waited = False
     try:
         while True:
             try:
-                wait_ms = int(
-                    await redis.eval(_GEMINI_LUA, 2, *keys, _now_ms(), WINDOW_MS, rpm, tpm, max(0, int(tokens)), member)
+                wait_ms, day_used = (
+                    int(v)
+                    for v in await redis.eval(
+                        _GEMINI_LUA,
+                        3,
+                        *keys,
+                        _now_ms(),
+                        WINDOW_MS,
+                        rpm,
+                        tpm,
+                        max(0, int(tokens)),
+                        member,
+                        rpd,
+                        _DAY_TTL_SEC,
+                    )
                 )
             except Exception as exc:  # noqa: BLE001 — fail open
                 log.warning("vendor_limit_unavailable", vendor="gemini", error=str(exc)[:200], fail_open=True)
                 return
-            if wait_ms <= 0:
+            if wait_ms < 0:
+                log.warning(
+                    "vendor_daily_quota_exhausted", vendor="gemini", family=family, used=day_used, limit=rpd, day=day
+                )
+                raise VendorDailyLimit("gemini")
+            if wait_ms == 0:
                 if waited:
                     log.info("vendor_limit_admitted", vendor="gemini", family=family)
+                _maybe_alert(family, day, day_used, rpd)
                 return
             if time.monotonic() >= deadline:
                 log.warning("vendor_limit_timeout", vendor="gemini", family=family)
@@ -215,3 +303,54 @@ async def elevenlabs_slot(*, client: Any = None) -> AsyncIterator[None]:
                 await redis.aclose()
             except Exception as exc:  # noqa: BLE001 — closing must not mask the result
                 log.debug("vendor_limit_close_failed", error=str(exc)[:200])
+
+
+async def daily_usage(*, client: Any = None) -> dict[str, Any]:
+    """Today's Gemini request count against the vendor's daily quota.
+
+    Read-only, for the admin dashboard. Returns zeros rather than failing when
+    Redis is unreachable: this is a view, and losing it must never take the
+    dashboard down with it.
+    """
+    from packages.core.settings import get_settings
+
+    day = quota_day()
+    ratio = float(get_settings().gemini_rpd_alert_ratio)
+    families = {
+        "flash": int(get_settings().gemini_rpd_flash),
+        "pro": int(get_settings().gemini_rpd_pro),
+    }
+    counts: dict[str, int] = {name: 0 for name in families}
+    reachable = True
+    own = client is None
+    redis: Any = None
+    try:
+        redis = client or await _client()
+        values = await redis.mget([f"{PREFIX}:gemini:{name}:rpd:{day}" for name in families])
+        counts = {name: int(v or 0) for name, v in zip(families, values, strict=True)}
+    except Exception as exc:  # noqa: BLE001 — a view, never a failure
+        reachable = False
+        log.debug("vendor_daily_usage_unavailable", error=str(exc)[:200])
+    finally:
+        if own and redis is not None:
+            try:
+                await redis.aclose()
+            except Exception as exc:  # noqa: BLE001
+                log.debug("vendor_limit_close_failed", error=str(exc)[:200])
+
+    return {
+        "day": day,
+        "timezone": "America/Los_Angeles",
+        "redis_reachable": reachable,
+        "alert_ratio": ratio,
+        "families": [
+            {
+                "family": name,
+                "used": counts[name],
+                "limit": limit,
+                "percent": round(counts[name] * 100 / limit, 1) if limit > 0 else None,
+                "alerting": limit > 0 and ratio > 0 and counts[name] >= limit * ratio,
+            }
+            for name, limit in families.items()
+        ],
+    }
