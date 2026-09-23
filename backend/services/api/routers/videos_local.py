@@ -380,7 +380,15 @@ async def create_local_project(
         origin="local",
         brief=body.brief or None,
         user_script=body.user_script or None,
-        target_duration_sec=body.target_duration_sec,
+        # speech_highlights has no target length: a highlight that stands on its
+        # own ends where the thought ends, so a number fixed before the clip is
+        # read leaves the selector only bad options — pad past the ending or cut
+        # before it (owner, 2026-09-23). Dropped HERE rather than only in the
+        # web UI, because a client that still sends one — a desktop build from
+        # before the change — must get the same cut.
+        target_duration_sec=(
+            None if body.mode == "speech_highlights" else body.target_duration_sec
+        ),
         # duration_mode only ever mattered for talking_head's now-removed highlight
         # mode; dub_first's own target_duration_sec (script length) is independent
         # of this column. Always "full" — see plan_core.build_talking_head_timeline.
