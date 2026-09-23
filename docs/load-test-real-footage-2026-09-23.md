@@ -83,16 +83,48 @@ curl's own `time_total` for the PUT.
 |---|---|---|---|---|---|---|
 | 5 | 10 | 0 | 5.27 GB | 43 s | **117 MB/s** | 18.9 / 20.7 / 22.8 s |
 | 20 | 40 | 0 | 21.1 GB | 191 s | **105 MB/s** | 90.0 / 97.5 / 97.9 s |
+| 40 | 76 | **4 (500)** | 40.1 GB | 329 s | 116 MB/s | 154.4 / 168.8 / 168.9 s |
+| 80 | 90 | **70 (500)** | 47.4 GB | 709 s | **64 MB/s** | 342.8 / 352.9 / 353.2 s |
 
 The second row is the finding. Four times the uploaders did not move a byte
 more per second: per-connection throughput fell from ~28 MB/s to ~5.8 MB/s and
 each file took 91 seconds instead of 19, while the aggregate stayed at roughly
 105–117 MB/s. Nothing failed — all forty uploads returned 200.
 
-That is a saturated pipe, not a broken service, and it makes the arithmetic for
-a busy day straightforward: **a 527 MB clip costs about 5 seconds of the whole
+Up to 40 that is a saturated pipe, not a broken service, and it makes the
+arithmetic for a busy day straightforward: **a 527 MB clip costs about 5 seconds of the whole
 system's upload capacity**, whoever is uploading. Twenty at once is 91 seconds
 each; six hundred at once would be about 45 minutes each.
+
+#### Where it actually broke, and why
+
+At 80 the shape changes: 44% of uploads returned **HTTP 500** and aggregate
+throughput FELL to 64 MB/s. More uploaders moving fewer bytes is a stampede,
+not a queue.
+
+Every failure landed at ~305 s, against `packages/video/s3.py`'s
+`read_timeout=300`. The cause is upstream of that number. `push_output_file`
+runs `boto3.upload_file` **inside the request**, and boto3's defaults are tuned
+for a script uploading one file:
+
+| | Default | 527 MB clip | × 80 concurrent |
+|---|---|---|---|
+| Threads per upload | 10 | 10 | up to 800 |
+| Part size | 8 MB | 63 parts | — |
+| Queued parts held in memory | 100 | up to 800 MB | gigabytes |
+
+So eighty requests each asked for ten threads and a hundred 8 MB chunks, every
+transfer slowed every other one, and the ones that crossed 300 s were killed by
+the client's own read timeout and surfaced as a 500.
+
+Fixed in `c410154`: fewer and larger parts (`S3_MULTIPART_CHUNK_MB`,
+`S3_TRANSFER_CONCURRENCY`) and a process-wide gate on concurrent uploads
+(`S3_MAX_CONCURRENT_UPLOADS`). That does not make the wire faster — it stops a
+queue from being mistaken for a failure.
+
+**And the client never learns.** `useProjectPipeline.syncToServer` catches the
+error and writes `sync skipped` to a log file. A user whose footage did not
+reach the server finds out when they try to open the project somewhere else.
 
 **Whose ceiling is 110 MB/s, though?** That is 0.88 Gbit/s — close enough to a
 1 Gbit link to be suspicious, and the last thing that looked like a product
