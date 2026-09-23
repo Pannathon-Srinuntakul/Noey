@@ -359,6 +359,15 @@ class Settings(BaseSettings):
     #: does not clear until midnight Pacific, so noticing at 100% is noticing
     #: too late to do anything but wait.
     gemini_rpd_alert_ratio: float = 0.8
+    #: Object-storage upload shaping (packages/video/s3.py). boto3's defaults
+    #: give every upload 10 threads, 8 MB parts and a 100-deep queue — so a
+    #: 527 MB clip is 63 parts and eighty concurrent uploads can ask for 800
+    #: threads and gigabytes of buffered chunks. Measured 2026-09-23: at 80
+    #: concurrent real uploads 44% returned 500 and throughput fell from
+    #: 116 MB/s to 64. These bound it.
+    s3_max_concurrent_uploads: int = 8
+    s3_transfer_concurrency: int = 4
+    s3_multipart_chunk_mb: int = 16
     elevenlabs_max_concurrency: int = 5
     #: How long a call may wait for a vendor slot before failing (retryable).
     vendor_wait_max_sec: int = 300

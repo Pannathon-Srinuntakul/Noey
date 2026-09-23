@@ -12,12 +12,8 @@ from __future__ import annotations
 import asyncio
 import pathlib
 from functools import lru_cache
-from typing import TYPE_CHECKING
 
 from packages.core.logging import get_logger
-
-if TYPE_CHECKING:
-    pass
 
 log = get_logger(__name__)
 
@@ -30,6 +26,7 @@ def _prefix(project_uid: str, folder: str) -> str:
 def _client():
     import boto3
     from botocore.config import Config
+
     from packages.core.settings import get_settings
     s = get_settings()
     # Railway Buckets require virtual-hosted-style URLs (not path-style).
@@ -88,7 +85,7 @@ def _sync_upload_dir(local_dir: pathlib.Path, prefix: str) -> int:
         if f.name.startswith("."):
             continue
         key = prefix + str(f.relative_to(local_dir)).replace("\\", "/")
-        client.upload_file(str(f), bucket, key)
+        client.upload_file(str(f), bucket, key, Config=_transfer_config())
         count += 1
     return count
 
@@ -237,8 +234,47 @@ async def delete_output_file(project_uid: str, relative_path: str) -> None:
         log.info("s3_delete_output_file", project_uid=project_uid, key=key)
 
 
+@lru_cache(maxsize=1)
+def _transfer_config():
+    """How one upload is allowed to use the machine.
+
+    boto3's defaults are tuned for a script uploading one file: 10 threads,
+    8 MB parts, a 100-deep queue of those parts. A 527 MB clip is 63 parts, and
+    eighty concurrent uploads then ask for up to 800 threads and gigabytes of
+    buffered chunks. Measured 2026-09-23: at 80 concurrent uploads 44% of them
+    returned 500 and aggregate throughput FELL from 116 MB/s to 64.
+
+    Fewer, larger parts and a short queue: the same bytes, a bounded cost.
+    """
+    from boto3.s3.transfer import TransferConfig
+
+    from packages.core.settings import get_settings
+
+    s = get_settings()
+    chunk = max(5, int(s.s3_multipart_chunk_mb)) * 1024 * 1024  # 5 MB is S3's floor
+    return TransferConfig(
+        multipart_threshold=chunk,
+        multipart_chunksize=chunk,
+        max_concurrency=max(1, int(s.s3_transfer_concurrency)),
+        max_io_queue=10,
+    )
+
+
+@lru_cache(maxsize=1)
+def _upload_gate() -> asyncio.Semaphore:
+    """How many uploads may be in flight in this process at once.
+
+    Without it every concurrent request starts its own multipart transfer, and
+    they finish together — slowly — instead of one after another, quickly. The
+    read timeout above is what turns "slowly" into a 500.
+    """
+    from packages.core.settings import get_settings
+
+    return asyncio.Semaphore(max(1, int(get_settings().s3_max_concurrent_uploads)))
+
+
 def _sync_upload_one(local_path: pathlib.Path, key: str) -> None:
-    _client().upload_file(str(local_path), _bucket(), key)
+    _client().upload_file(str(local_path), _bucket(), key, Config=_transfer_config())
 
 
 async def push_output_file(project_uid: str, relative_path: str, local_path: pathlib.Path) -> None:
@@ -252,7 +288,8 @@ async def push_output_file(project_uid: str, relative_path: str, local_path: pat
     if not _s3_enabled() or not local_path.is_file():
         return
     rel = relative_path.replace("\\", "/").lstrip("/")
-    await asyncio.to_thread(_sync_upload_one, local_path, f"videos/{project_uid}/outputs/{rel}")
+    async with _upload_gate():
+        await asyncio.to_thread(_sync_upload_one, local_path, f"videos/{project_uid}/outputs/{rel}")
 
 
 def _sync_list_outputs(project_uid: str) -> list[tuple[str, int]]:
@@ -340,6 +377,7 @@ async def output_presigned_url(project_uid: str, filename: str, expires: int = 3
 async def ensure_local_output(project_uid: str, filename: str) -> pathlib.Path:
     """Return local path to an output file, downloading from S3 when missing on disk."""
     from botocore.exceptions import ClientError
+
     from packages.video.storage import output_dir
 
     local = output_dir(project_uid) / filename
