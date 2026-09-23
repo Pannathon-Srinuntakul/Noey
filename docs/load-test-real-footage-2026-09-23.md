@@ -63,6 +63,18 @@ _(filled in as the stages land)_
 
 ### Track A — real 527 MB clip, `runner/upload_probe.sh`
 
+**Read this before the numbers.** Track A measures a path the user never waits
+on. `useProjectPipeline.syncToServer` pushes `normalized/` fire-and-forget and
+says so in its own comment — "never blocks the UI on a slow upload" — and what
+the user actually waits for, `analyzeVideo`, carries only the proxy: 5.4 MB
+against 527 MB, 98 times smaller. So the per-file seconds below are the cost of
+**background portability**, not of anyone's spinner. The user-facing wait is
+Track B's.
+
+Worth keeping in proportion too: 527 MB over a 50 Mbit/s home uplink is 84
+seconds with nobody else on the wire. A creator's own connection is slower than
+anything measured here.
+
 Each worker creates a project, PUTs the clip to
 `/videos/{uid}/files/normalized/clip0.mp4`, and deletes the project. Timing is
 curl's own `time_total` for the PUT.
