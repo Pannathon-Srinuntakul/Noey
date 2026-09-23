@@ -61,10 +61,15 @@ broke first when the footage became realistic.**
 
 _(filled in as the stages land)_
 
-### Track A — real 532 MB clip
+### Track A — real 527 MB clip, `runner/upload_probe.sh`
 
-| Users | Sessions | Jobs done | Jobs lost | Uploaded | HTTP p50 / p95 | `PUT files/*` p50 / p95 | Errors |
-|---|---|---|---|---|---|---|---|
+Each worker creates a project, PUTs the clip to
+`/videos/{uid}/files/normalized/clip0.mp4`, and deletes the project. Timing is
+curl's own `time_total` for the PUT.
+
+| Parallel | Uploads | Failed | Total sent | Wall clock | Aggregate | Upload p50 / p95 / max |
+|---|---|---|---|---|---|---|
+| 5 | 10 | 0 | 5.27 GB | 43 s | **117 MB/s** | 18.9 / 20.7 / 22.8 s |
 
 ### Track B — 5.4 MB proxy, no normalized push
 
