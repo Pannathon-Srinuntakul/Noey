@@ -66,8 +66,33 @@ const TARGETS = (__ENV.RAMP || '3')
   .map((s) => parseInt(s.trim(), 10))
   .filter((n) => n > 0)
 
-const CLIP_SEC = 8
-const CLIP = open('../fixtures/clip0.mp4', 'b')
+/**
+ * Which footage a virtual user carries.
+ *
+ * `small` is the 8-second 270x480 fixture the first runs used: enough to drive
+ * every endpoint, far too small to say anything about the upload path.
+ * `real` is a phone's portrait clip — 1080x1920, 7 minutes, ~530 MB — with the
+ * proxy the product would actually derive from it (480 high, 12 fps, no audio).
+ *
+ * PUSH_NORMALIZED=0 skips sending the normalized clip and sends only the proxy.
+ * That is not a shortcut: at high virtual-user counts the half-gigabyte push is
+ * larger than any load generator can hold in memory or push down a wire, so the
+ * two questions — "how does the upload path behave" and "where is the API's
+ * concurrency ceiling" — have to be asked in separate runs.
+ */
+const PROFILES = {
+  small: { clip: '../fixtures/clip0.mp4', proxy: '../fixtures/clip0.mp4', sec: 8, w: 270, h: 480, fps: 30 },
+  real: { clip: '../fixtures/clip_long.mp4', proxy: '../fixtures/proxy_long.mp4', sec: 420, w: 1080, h: 1920, fps: 30 }
+}
+const PROFILE = PROFILES[__ENV.CLIP_PROFILE || 'small']
+if (!PROFILE) throw new Error(`CLIP_PROFILE must be one of ${Object.keys(PROFILES).join(', ')}`)
+const PUSH_NORMALIZED = (__ENV.PUSH_NORMALIZED || '1') !== '0'
+
+const CLIP_SEC = PROFILE.sec
+// Only opened when it is going to be sent: `open()` costs its whole size in
+// memory, per virtual user, whether the bytes are used or not.
+const CLIP = PUSH_NORMALIZED ? open(PROFILE.clip, 'b') : null
+const PROXY = PROFILE.proxy === PROFILE.clip && CLIP ? CLIP : open(PROFILE.proxy, 'b')
 
 // ── credentials ──────────────────────────────────────────────────────────────
 function loadJson(b64Var, fileVar) {
@@ -243,7 +268,7 @@ export default function () {
     target_duration_sec: null,
     engine: ENGINE,
     precision: PRECISION,
-    clips: [{ id: 'clip0', durationSec: CLIP_SEC, width: 270, height: 480, fps: 30 }]
+    clips: [{ id: 'clip0', durationSec: CLIP_SEC, width: PROFILE.w, height: PROFILE.h, fps: PROFILE.fps }]
   })
   const created = api('POST', '/videos/local', body, 'POST /videos/local', { headers })
   if (created.status !== 201) {
@@ -256,7 +281,9 @@ export default function () {
   api('GET', `/videos/${uid}/files`, null, 'GET /videos/{uid}/files')
   const projectJson = JSON.stringify({ uid: `lt-${uid}`, mode: 'dub_first', step: 'analyzing', clips: [{ id: 'clip0', file: 'clip0.mp4', durationSec: CLIP_SEC }] })
   api('PUT', `/videos/${uid}/files/project.json`, { file: http.file(projectJson, 'project.json', 'application/json') }, 'PUT /videos/{uid}/files/*')
-  api('PUT', `/videos/${uid}/files/normalized/clip0.mp4`, { file: http.file(CLIP, 'clip0.mp4', 'video/mp4') }, 'PUT /videos/{uid}/files/*')
+  if (PUSH_NORMALIZED) {
+    api('PUT', `/videos/${uid}/files/normalized/clip0.mp4`, { file: http.file(CLIP, 'clip0.mp4', 'video/mp4') }, 'PUT /videos/{uid}/files/*')
+  }
 
   // Analyze: proxy upload + manifest → job id.
   const startedAt = Date.now()
@@ -267,7 +294,7 @@ export default function () {
       manifest: JSON.stringify([{ clip_id: 'clip0', file: 'clip0.mp4', durationSec: CLIP_SEC, order: 0 }]),
       engine: ENGINE,
       precision: PRECISION,
-      files: http.file(CLIP, 'clip0.mp4', 'video/mp4')
+      files: http.file(PROXY, 'clip0.mp4', 'video/mp4')
     },
     'POST /videos/{uid}/analyze-video',
     { ok: [202] }
@@ -375,6 +402,14 @@ export function handleSummary(data) {
   }
   const summary = {
     base_url: BASE,
+    // Which footage this run carried. Without it two summaries are
+    // indistinguishable, and comparing a 5 MB run against a 530 MB one as if
+    // they were the same test is the easiest way to draw a wrong conclusion.
+    clip_profile: __ENV.CLIP_PROFILE || 'small',
+    clip_sec: CLIP_SEC,
+    clip_bytes: CLIP ? CLIP.byteLength : 0,
+    proxy_bytes: PROXY.byteLength,
+    push_normalized: PUSH_NORMALIZED,
     ramp: TARGETS,
     ramp_sec: RAMP_SEC,
     hold_sec: HOLD_SEC,

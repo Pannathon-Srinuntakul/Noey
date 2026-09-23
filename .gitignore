@@ -98,3 +98,9 @@ desktop/sidecar/build/
 desktop/sidecar/dist/
 desktop/sidecar/__pycache__/
 desktop/_removed/
+
+# Load-test fixtures that are GENERATED, not authored: the realistic clip is
+# ~530 MB and the runner's Dockerfile encodes both of them at build time
+# (loadtest/runner/Dockerfile). Only the small 8-second one is committed.
+loadtest/fixtures/clip_long.mp4
+loadtest/fixtures/proxy_long.mp4
