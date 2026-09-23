@@ -111,7 +111,39 @@ failure), and per-endpoint request counts, error rate and p50/p90/p95/p99.
 The summary is one line on stdout: `LOADTEST_SUMMARY {…}` (plus `SUMMARY_FILE`
 if set), so it can be read out of Railway logs.
 
-Regenerate the fixture clip (already committed-in-place, ~100 KB):
+## 4. Which footage, and which tool
+
+`CLIP_PROFILE` picks what a virtual user carries:
+
+| Profile | Normalized clip | Proxy sent to analyze |
+| --- | --- | --- |
+| `small` (default) | 270×480, 8 s, 106 KB | the same file |
+| `real` | 1080×1920, 7 min, 10 Mbit/s, ~530 MB | 270×480, 12 fps, CRF 28, ~5 MB |
+
+The `real` pair is encoded in the runner's image build (`runner/Dockerfile`),
+never committed and never uploaded from a laptop. Its proxy uses the product's
+own parameters — `desktop/sidecar/sidecar/proxy.py` scales to 480 high at
+12 fps, CRF 28 — so it is the size a real proxy is. Synthetic footage
+compresses better than a camera's, so treat that as a floor.
+
+**k6 cannot carry the real clip.** `open()` loads a file into memory once per
+virtual user and the multipart body is copied again per in-flight request, so
+five users × 530 MB killed the runner before it printed anything (measured
+2026-09-23). Two consequences:
+
+* `PUSH_NORMALIZED=0` sends only the proxy. Use it for the concurrency runs —
+  hundreds of users, ~5 MB each.
+* `MODE=upload` runs `runner/upload_probe.sh` instead of k6: the same session
+  (create project → PUT the clip → delete) driven by curl, which streams from
+  disk. `PARALLEL` × `ROUNDS` uploads, one line each, ending in
+  `UPLOAD_SUMMARY {…}`. This is the only way to ask what a real upload costs.
+
+Both tools refresh the access token before they start. Seeded ACCESS tokens are
+short-lived and `tokens.json` is usually hours old by the time it is used, so
+without a refresh every request is a 401 — which looks exactly like a broken
+test.
+
+Regenerate the small fixture clip (committed-in-place, ~100 KB):
 
 ```bash
 cd loadtest/fixtures
