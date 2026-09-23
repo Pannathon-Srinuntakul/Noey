@@ -65,3 +65,19 @@ async def test_speech_scenes_keeps_its_length():
         r = await _create(c, token, "speech_scenes", 45)
     assert r.status_code == 201
     assert await _target_of(r.json()["uid"]) == 45
+
+
+def test_the_prompt_says_there_is_no_preferred_length():
+    """The selector must be TOLD there is no length, not left to guess.
+
+    Sending nothing and hoping the model infers "any length" is how a prompt
+    quietly keeps its old default. The branch already existed; this run is the
+    first that always takes it, so it is worth pinning.
+    """
+    import inspect
+
+    from packages.video import speech_select
+
+    src = inspect.getsource(speech_select.select_highlights)
+    assert "No preferred length" in src
+    assert "Preferred highlight length" in src  # still used by other callers
