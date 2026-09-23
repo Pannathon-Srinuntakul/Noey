@@ -405,3 +405,32 @@ describe('project name', () => {
     expect(resolvedProjectName(state, files)).toBe('ชื่อเดียว')
   })
 })
+
+describe('ตัดไฮไลต์จากคลิปยาว has no length to choose', () => {
+  // Owner decision 2026-09-23: a number picked before the clip is read forces
+  // the selector to pad or truncate a highlight, which is what breaks the cut.
+  const longform = (patch: Partial<WizardState> = {}): WizardState =>
+    stateWith({ uiMode: 'longform', files: [fileOf('a', 600)], ...patch })
+
+  it('lets the step through with no duration chosen at all', () => {
+    expect(outcomeStepGate(longform({ duration: '' })).ok).toBe(true)
+  })
+
+  it('sends no target length, whatever the state carries', () => {
+    expect(buildSubmission(longform({ duration: '' })).targetDurationSec).toBeUndefined()
+    // A value left over from another mode must not travel either.
+    expect(buildSubmission(longform({ duration: '60' })).targetDurationSec).toBeUndefined()
+    expect(
+      buildSubmission(longform({ duration: 'custom', customSec: '45' })).targetDurationSec
+    ).toBeUndefined()
+  })
+
+  it('is still the speech_highlights mode', () => {
+    expect(buildSubmission(longform()).mode).toBe('speech_highlights')
+  })
+
+  it('does not print a length in the review summary', () => {
+    const row = summaryRows(longform({ duration: '60' }), null).find((r) => r.key === 'outcome')
+    expect(row?.value).not.toMatch(/วินาที|ความยาว/)
+  })
+})

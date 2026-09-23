@@ -80,6 +80,8 @@ has app.log — weaker need).
 | Background rendering while the tab is suspended | web | No web API keeps a page working once the browser suspends it — not a Worker, not a PWA, not a service worker. |
 
 
+| ตัดไฮไลต์จากคลิปยาว: the "ความยาวไฮไลต์" chooser removed — length is always the AI's (`WizardStepOutcome` longform branch, `outcomeStepGate`, `buildSubmission`, `summaryRows`) | web | desktop | 2026-09-23, owner decision: a length picked before the clip is read forces the selector to pad or truncate a highlight. Desktop's wizard files are not in this partial tree; port with the rest of it. |
+
 ## 2026-09-23 — a gap that was not a gap
 
 Several rows above said a desktop twin was "missing from this partial tree".

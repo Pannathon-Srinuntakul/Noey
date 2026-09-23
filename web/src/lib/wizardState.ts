@@ -252,11 +252,14 @@ export function fileStepGate(state: WizardState): Gate {
 
 export function outcomeStepGate(state: WizardState): Gate {
   if (state.uiMode === 'silence') return { ok: true }
+  // ตัดไฮไลต์จากคลิปยาว has no length to pick: a highlight that ends where the
+  // thought ends is the whole point, and a number chosen before the clip is
+  // read forces the selector to pad or truncate one (owner, 2026-09-23).
+  if (state.uiMode === 'longform') return { ok: true }
   if (!state.duration) return { ok: false, reason: 'เลือกความยาวก่อน' }
   if (state.duration === 'custom' && !state.customSec) {
     return { ok: false, reason: 'ใส่ความยาวเป็นวินาที' }
   }
-  if (state.uiMode === 'longform') return { ok: true }
   if (state.voiceover === 'own' && !state.userScript.trim()) {
     return { ok: false, reason: 'พิมพ์สคริปต์ที่จะพากย์ก่อน' }
   }
@@ -357,10 +360,14 @@ export function buildSubmission(state: WizardState): WizardSubmission {
     // receives duration as a real field instead.
     brief: isCut ? (buildDubBrief(state.duration, state.customSec, state.note) ?? '') : state.note.trim(),
     userScript: state.voiceover === 'own' && mode === 'dub_first' ? state.userScript.trim() : '',
+    // speech_highlights decides each highlight's length from the content, so it
+    // sends none at all — see outcomeStepGate. Every other paid mode still does.
     targetDurationSec:
-      isCut || isSpeech
-        ? (dubTargetDurationSec(state.duration, state.customSec, musicLen) ?? undefined)
-        : undefined,
+      mode === 'speech_highlights'
+        ? undefined
+        : isCut || isSpeech
+          ? (dubTargetDurationSec(state.duration, state.customSec, musicLen) ?? undefined)
+          : undefined,
     // speech_scenes keeps the saved cut style; speech_highlights uses none.
     cutStyleUid:
       (isCut || mode === 'speech_scenes') && state.cutStyleUid ? state.cutStyleUid : undefined,
@@ -397,7 +404,8 @@ export function summaryRows(state: WizardState, cutStyleName: string | null): Su
     state.uiMode === 'silence'
       ? UI_MODE_LABEL.silence
       : state.uiMode === 'longform'
-        ? `${UI_MODE_LABEL.longform} · ${durationLabel}`
+        ? // No length in this row: the mode has no length to choose.
+          UI_MODE_LABEL.longform
         : `${UI_MODE_LABEL.highlight} · ${VOICEOVER_LABEL[state.voiceover]} · ${durationLabel}`
 
   const count = projectCount(state)

@@ -63,6 +63,7 @@ const VOICEOVER_CHOICES: VoiceoverChoice[] = canUseOriginalVoice
 const LONGFORM_MODE_NOTES = [
   'ถอดเสียงทั้งคลิปแล้วอ่านว่าพูดเรื่องอะไรบ้าง',
   'เลือกช่วงที่ดูจบได้ในตัวเอง ตัดเป็นคลิปแยกทีละช่วง',
+  'ความยาวแต่ละคลิปตัดตามเนื้อหา ไม่ได้ตั้งไว้ล่วงหน้า',
   'จำนวนคลิปขึ้นกับเนื้อหา — ช่วงที่ไม่ถึงเกณฑ์จะไม่ถูกนับ'
 ]
 
@@ -511,54 +512,7 @@ export function WizardStepOutcome({
           </>
         ) : isLongform ? (
           <>
-            <Row label="ความยาวไฮไลต์" first>
-              <div className="flex flex-wrap items-center gap-3">
-                <Segmented
-                  ariaLabel="ความยาวไฮไลต์"
-                  value={state.duration}
-                  onChange={(duration) => patch({ duration })}
-                  options={[
-                    { value: '30', label: '30 วิ', numeric: true },
-                    { value: '60', label: '60 วิ', numeric: true },
-                    { value: '90', label: '90 วิ', numeric: true },
-                    { value: 'custom', label: 'กำหนดเอง' }
-                  ]}
-                />
-                {state.duration === 'custom' ? (
-                  <input
-                    type="number"
-                    min={15}
-                    max={600}
-                    aria-label="ความยาวไฮไลต์เป็นวินาที"
-                    value={state.customSec}
-                    onChange={(e) => patch({ customSec: e.target.value })}
-                    placeholder="วินาที"
-                    className="h-[34px] w-24 rounded-md border border-border bg-transparent px-2.5 text-sm tabular-nums text-ink transition-colors duration-state ease-out"
-                  />
-                ) : null}
-                {/* R14.5 shape: "let the system decide" sits outside the rail.
-                    No "ตามความยาวเพลง" here — this mode has no music at all. */}
-                <div className="flex items-center gap-3">
-                  <span aria-hidden className="mx-0.5 h-5 w-px bg-border-faint" />
-                  <button
-                    type="button"
-                    aria-pressed={state.duration === 'auto'}
-                    onClick={() => patch({ duration: 'auto' })}
-                    className={cn(
-                      'flex h-[34px] items-center rounded-md border px-[13px] text-sm transition-colors duration-state ease-out',
-                      state.duration === 'auto'
-                        ? 'border-accent bg-accent-tint font-semibold text-accent'
-                        : 'border-border-faint text-ink-2 hover:border-border-strong hover:bg-[rgb(243_242_242_/_0.06)]'
-                    )}
-                  >
-                    ให้ AI เลือก
-                  </button>
-                  <span className="text-[13px] text-muted">ความยาวต่อไฮไลต์หนึ่งคลิป</span>
-                </div>
-              </div>
-            </Row>
-
-            <Row label="โหมดนี้ทำอะไร" align="top">
+            <Row label="โหมดนี้ทำอะไร" align="top" first>
               <div className="flex flex-col gap-[7px] text-sm leading-[1.6] text-muted">
                 {LONGFORM_MODE_NOTES.map((note) => (
                   <span key={note} className="flex gap-[9px]">
