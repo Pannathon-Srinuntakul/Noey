@@ -35,14 +35,32 @@ rm -rf "$OUT"; mkdir -p "$OUT"
 
 one() {   # one <worker-index> <round>
   idx="$1"; round="$2"
-  tok=$(jq -r ".[$(( (idx + round * PARALLEL) % ACCOUNTS ))].access" "$TOKENS_FILE")
-  auth="Authorization: Bearer $tok"
+  slot=$(( (idx + round * PARALLEL) % ACCOUNTS ))
+  # seed_loadtest.py writes {email, access_token, refresh_token}; accept the
+  # short spelling too so a hand-made token file also works.
+  acc=$(jq -r ".[$slot] | .access_token // .access" "$TOKENS_FILE")
+  ref=$(jq -r ".[$slot] | .refresh_token // .refresh // empty" "$TOKENS_FILE")
+
+  # Seeded ACCESS tokens are short-lived and the file is usually hours old, so
+  # every request 401s. Trade the refresh token for a fresh one first — this is
+  # what k6's session does at the top of each iteration.
+  if [ -n "$ref" ]; then
+    fresh=$(curl -sS -X POST "$BASE/auth/refresh" -H "Authorization: Bearer $ref" \
+      | jq -r '.access_token // .access // empty')
+    [ -n "$fresh" ] && acc="$fresh"
+  fi
+  auth="Authorization: Bearer $acc"
 
   uid=$(curl -sS -X POST "$BASE/videos/local" -H "$auth" -H 'Content-Type: application/json' \
     -d "{\"mode\":\"dub_first\",\"clips\":[{\"id\":\"clip0\",\"durationSec\":$CLIP_SEC,\"width\":1080,\"height\":1920,\"fps\":30}]}" \
     | jq -r '.uid // empty')
   if [ -z "$uid" ]; then
-    echo "CREATE_FAILED worker=$idx round=$round"
+    # Print WHY. A bare "failed" sent the first run round in circles: the token
+    # field was misspelled and every response said so in its body.
+    why=$(curl -sS -o /dev/stdout -w ' http=%{http_code}' -X POST "$BASE/videos/local" -H "$auth" \
+      -H 'Content-Type: application/json' \
+      -d "{\"mode\":\"dub_first\",\"clips\":[{\"id\":\"clip0\",\"durationSec\":$CLIP_SEC,\"width\":1080,\"height\":1920,\"fps\":30}]}" | head -c 300)
+    echo "CREATE_FAILED worker=$idx round=$round $why"
     echo "create" >> "$OUT/failures"
     return
   fi
