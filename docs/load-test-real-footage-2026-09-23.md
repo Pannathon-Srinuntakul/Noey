@@ -82,6 +82,14 @@ a busy day straightforward: **a 527 MB clip costs about 5 seconds of the whole
 system's upload capacity**, whoever is uploading. Twenty at once is 91 seconds
 each; six hundred at once would be about 45 minutes each.
 
+**Whose ceiling is 110 MB/s, though?** That is 0.88 Gbit/s — close enough to a
+1 Gbit link to be suspicious, and the last thing that looked like a product
+limit in this run turned out to be the load generator. Until a second runner
+uploads at the same time and the aggregate either doubles or does not, the
+honest statement is "one runner cannot push more than ~110 MB/s at this clip
+size", not "the API cannot ingest more". Recorded as an open question rather
+than a conclusion.
+
 ### Track B — 5.4 MB proxy, no normalized push
 
 | Users | Sessions | Jobs done | Jobs lost | HTTP req/s | HTTP p50 / p95 | Queue wait p50 | Errors |
