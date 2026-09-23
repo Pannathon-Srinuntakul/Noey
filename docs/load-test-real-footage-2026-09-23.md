@@ -70,15 +70,15 @@ curl's own `time_total` for the PUT.
 | Parallel | Uploads | Failed | Total sent | Wall clock | Aggregate | Upload p50 / p95 / max |
 |---|---|---|---|---|---|---|
 | 5 | 10 | 0 | 5.27 GB | 43 s | **117 MB/s** | 18.9 / 20.7 / 22.8 s |
-| 20 | 40 | 0 | 21.1 GB | _(running)_ | ~115 MB/s | ~91 s each |
+| 20 | 40 | 0 | 21.1 GB | 191 s | **105 MB/s** | 90.0 / 97.5 / 97.9 s |
 
 The second row is the finding. Four times the uploaders did not move a byte
 more per second: per-connection throughput fell from ~28 MB/s to ~5.8 MB/s and
 each file took 91 seconds instead of 19, while the aggregate stayed at roughly
-115 MB/s. Nothing failed — every upload returned 200.
+105–117 MB/s. Nothing failed — all forty uploads returned 200.
 
 That is a saturated pipe, not a broken service, and it makes the arithmetic for
-a busy day straightforward: **a 527 MB clip costs about 4.6 seconds of the whole
+a busy day straightforward: **a 527 MB clip costs about 5 seconds of the whole
 system's upload capacity**, whoever is uploading. Twenty at once is 91 seconds
 each; six hundred at once would be about 45 minutes each.
 
