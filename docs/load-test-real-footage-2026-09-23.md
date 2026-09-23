@@ -36,6 +36,27 @@ Both run against `http://lt-api.railway.internal:8080` — Railway's private
 network, so there is no egress bill and no edge in the way. That also means the
 numbers exclude Railway's edge and TLS, which real users do go through.
 
+## A result before the results: k6 cannot carry a real clip
+
+The first attempt ran the normal k6 session with the 532 MB fixture at **five**
+virtual users. Five sessions started, and then the runner died with no summary
+line and a single `Starting Container` in its log — Railway reported it
+`Crashed`.
+
+The cause is k6's own contract: `open()` loads the file into memory **once per
+virtual user**, and the multipart body is copied again per in-flight request.
+Five users is 2.7 GB of fixture before a byte is sent, and roughly double that
+while the uploads are in flight — past the container's limit.
+
+So the upload track is measured with `runner/upload_probe.sh`: the same session
+(create project → PUT the clip → delete) driven by curl, which streams from
+disk. N parallel uploads cost N sockets and almost no memory. k6 still drives
+the API-concurrency track, where each virtual user carries only the 5.4 MB
+proxy.
+
+This is worth stating plainly: **the load generator, not the product, is what
+broke first when the footage became realistic.**
+
 ## Results
 
 _(filled in as the stages land)_
