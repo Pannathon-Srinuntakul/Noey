@@ -45,10 +45,15 @@ FROM grafana/k6:latest
 
 USER root
 WORKDIR /loadtest
+# curl + jq are for the upload probe (runner/upload_probe.sh), which asks the
+# one question k6 cannot: k6 holds an opened file in memory once per virtual
+# user, so a 532 MB clip kills the container before it reports anything.
+RUN apk add --no-cache curl jq
 COPY k6/ ./k6/
 COPY fixtures/ ./fixtures/
+COPY runner/upload_probe.sh /loadtest/upload_probe.sh
 COPY --from=fixtures /out/clip_long.mp4 /out/proxy_long.mp4 ./fixtures/
-RUN chown -R k6:k6 /loadtest
+RUN chmod +x /loadtest/upload_probe.sh && chown -R k6:k6 /loadtest
 USER k6
 
 ENV RAMP=10,50,100,200,500 \
@@ -59,6 +64,10 @@ ENV RAMP=10,50,100,200,500 \
     JOB_TIMEOUT_SEC=900 \
     K6_NO_USAGE_REPORT=true
 
+# MODE=upload runs the curl upload probe instead of k6. Both print one summary
+# line on stdout — LOADTEST_SUMMARY or UPLOAD_SUMMARY — so either can be read
+# straight out of the Railway logs.
+#
 # --quiet: the progress bar is noise in a log stream; the summary line is the
-# output that matters. Any flag can still be appended on the command line.
-ENTRYPOINT ["k6", "run", "--quiet", "/loadtest/k6/editor.js"]
+# output that matters.
+ENTRYPOINT ["sh", "-c", "if [ \"${MODE:-k6}\" = upload ]; then exec /loadtest/upload_probe.sh; else exec k6 run --quiet /loadtest/k6/editor.js; fi"]
