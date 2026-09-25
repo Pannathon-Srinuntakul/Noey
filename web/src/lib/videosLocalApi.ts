@@ -13,6 +13,12 @@ import {
   type EstimateRequest,
   type UsageEstimate
 } from './usageLimits'
+import {
+  parseResumeOutcome,
+  parseResumeState,
+  type ResumeOutcome,
+  type ResumeState
+} from './resume'
 
 export interface ApiSession {
   baseUrl: string
@@ -294,12 +300,58 @@ export function patchLocalStatus(
   session: ApiSession,
   remoteUid: string,
   status: 'processing' | 'waiting_vo' | 'done' | 'error',
-  errorMsg?: string
-): Promise<{ uid: string; status: string }> {
+  errorMsg?: string,
+  /** The pipeline BOUNDARY the client just finished ('render_silent',
+   * 'voiceover', 'render_final', …). It only moves the project forward, and
+   * reporting a stage at or past a paused one retires the resume ticket — so a
+   * later resume cannot charge for work this machine already did. Omitted, the
+   * server infers the boundary from the artifacts it holds, which is correct
+   * but coarser. */
+  stage?: string
+): Promise<{ uid: string; status: string; stage?: string | null }> {
   return request(session, `/videos/${remoteUid}/local-status`, {
     method: 'PATCH',
-    body: JSON.stringify({ status, error_msg: errorMsg ?? null })
+    body: JSON.stringify({
+      status,
+      error_msg: errorMsg ?? null,
+      ...(stage ? { stage } : {})
+    })
   })
+}
+
+/**
+ * `GET /videos/{uid}/resume` — where this project's work got to, according to
+ * the SERVER.
+ *
+ * Answers for any local project, paused or not, which is what makes a pause
+ * survive a reload, a different tab and a logout: nothing about it is held in
+ * this browser. Read-only and free.
+ */
+export async function getResumeState(session: ApiSession, remoteUid: string): Promise<ResumeState> {
+  return parseResumeState(await request<unknown>(session, `/videos/${remoteUid}/resume`))
+}
+
+/**
+ * `POST /videos/{uid}/resume` — continue from the boundary that was
+ * interrupted, charging only that boundary.
+ *
+ * `allowWallet` is consent to spend the top-up balance once the plan's windows
+ * are full; send it when the quota answer said `fits === 'wallet'`. Safe to
+ * call twice — the server locks the project row and answers `already_running`
+ * rather than starting a second billed copy. There is no "still out of quota"
+ * error: the run opens and parks again, which the quota answer said up front.
+ */
+export async function postResume(
+  session: ApiSession,
+  remoteUid: string,
+  allowWallet = false
+): Promise<ResumeOutcome> {
+  return parseResumeOutcome(
+    await request<unknown>(session, `/videos/${remoteUid}/resume`, {
+      method: 'POST',
+      body: JSON.stringify(allowWallet ? { allow_wallet: true } : {})
+    })
+  )
 }
 
 /** talking_head: upload the locally-extracted speech WAVs → {job_id}.

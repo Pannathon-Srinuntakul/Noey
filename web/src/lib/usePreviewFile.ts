@@ -132,16 +132,18 @@ const lastRenderedByUid = new Map<string, string>()
  * the person was looking at a second ago, so hold it (the file's own comment
  * called the source-clip fallback wrong on 2026-08-13; owner 2026-09-26).
  *
- * The hold is scoped to BUSY steps. A terminal step with no candidates is a
- * real "nothing to show" — `speech_highlights` whose index came back empty —
- * and must not be answered with a file from before.
+ * The hold is scoped to BUSY steps — and to `paused`, which is a busy step the
+ * server stopped part-way: the previous render is still on disk, still what
+ * the person was looking at, and the run is meant to continue. A terminal step
+ * with no candidates is a real "nothing to show" — `speech_highlights` whose
+ * index came back empty — and must not be answered with a file from before.
  */
 export function previewWhileBusy(
   step: ProjectStep,
   lastRendered: string | null,
   fallbackClipFile?: string
 ): string | null {
-  if (isBusy(step) && lastRendered) return lastRendered
+  if ((isBusy(step) || step === 'paused') && lastRendered) return lastRendered
   return fallbackClipFile ?? null
 }
 

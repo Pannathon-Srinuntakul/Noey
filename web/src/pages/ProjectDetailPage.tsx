@@ -35,6 +35,7 @@ import { VideoPlayer } from '../components/ui/VideoPlayer'
 import { PageHeader } from '../components/shell/PageHeader'
 import ExportVideoModal from '../components/ExportVideoModal'
 import { ShotSwapReview } from '../components/projects/ShotSwapReview'
+import { PausedPanel } from '../components/projects/PausedPanel'
 
 /** Vertical action row that may be disabled with a reason. Branching on the
  * whole element (rather than spreading props) is required by Button's
@@ -236,6 +237,10 @@ export default function ProjectDetailPage({ uid }: { uid: string }): React.JSX.E
 
   const swapQuestions = countShotsWithAlternates(job.editScript)
   const running = isBusy(step)
+  // Stopped by the plan's quota, not broken: the work so far is kept and the
+  // way forward is "ทำต่อ". Everything the panel shows is read live from the
+  // server, so it is still right after a reload or a login on another day.
+  const paused = step === 'paused'
   // Inline script editing (dub modes only — the other panels show transcripts,
   // which live on the timeline, not the edit script). Debounced per line so
   // typing does not write on every keystroke; blur is covered because the
@@ -406,6 +411,8 @@ export default function ProjectDetailPage({ uid }: { uid: string }): React.JSX.E
             </button>
           ) : null}
 
+          {paused ? <PausedPanel job={job} /> : null}
+
           <div className="rounded-md border border-divider px-5 py-4">
             {/* Status on the left, how long it took on the right (R1 / the
                 prototype's detail state) — one row, not two stacked lines. */}
@@ -417,13 +424,15 @@ export default function ProjectDetailPage({ uid }: { uid: string }): React.JSX.E
                     ? 'กำลังทำงาน'
                     : step === 'error'
                       ? (job.error ?? 'ทำงานไม่สำเร็จ')
-                      : awaitingVoiceover
-                        ? 'คลิปพร้อมใช้ — ภาพอย่างเดียว นำไปพากย์เสียงเองได้'
-                        : ready && job.mode === 'speech_highlights' && highlightItems.length > 0
-                          ? `ไฮไลต์พร้อมใช้ ${highlightItems.length} คลิป`
-                          : ready
-                            ? 'คลิปพร้อมใช้'
-                            : 'ยังไม่เริ่ม'
+                      : paused
+                        ? 'หยุดไว้ชั่วคราว — โควตารอบนี้หมด'
+                        : awaitingVoiceover
+                          ? 'คลิปพร้อมใช้ — ภาพอย่างเดียว นำไปพากย์เสียงเองได้'
+                          : ready && job.mode === 'speech_highlights' && highlightItems.length > 0
+                            ? `ไฮไลต์พร้อมใช้ ${highlightItems.length} คลิป`
+                            : ready
+                              ? 'คลิปพร้อมใช้'
+                              : 'ยังไม่เริ่ม'
                 }
               />
               {job.project.lastRunSeconds ? (
@@ -551,17 +560,19 @@ export default function ProjectDetailPage({ uid }: { uid: string }): React.JSX.E
             ) : (
               <ActionButton
                 reason={
-                  job.mode === 'speech_highlights'
-                    ? 'โหมดนี้ยังแก้ไทม์ไลน์ทีละไฮไลต์ไม่ได้'
-                    : running
-                      ? 'รอจนกว่างานจะเสร็จ'
-                      : !ready
-                        ? 'ต้องเรนเดอร์คลิปก่อน'
-                        : job.editScript ||
-                            job.mode === 'talking_head' ||
-                            job.mode === 'speech_scenes'
-                          ? null
-                          : 'ยังไม่มีสคริปต์ให้แก้ไข'
+                  paused
+                    ? 'งานหยุดไว้ชั่วคราว — กดทำต่อก่อน'
+                    : job.mode === 'speech_highlights'
+                      ? 'โหมดนี้ยังแก้ไทม์ไลน์ทีละไฮไลต์ไม่ได้'
+                      : running
+                        ? 'รอจนกว่างานจะเสร็จ'
+                        : !ready
+                          ? 'ต้องเรนเดอร์คลิปก่อน'
+                          : job.editScript ||
+                              job.mode === 'talking_head' ||
+                              job.mode === 'speech_scenes'
+                            ? null
+                            : 'ยังไม่มีสคริปต์ให้แก้ไข'
                 }
                 icon={<Pencil size={17} className="text-accent" />}
                 onClick={() => navigate({ name: 'timeline', uid })}
@@ -584,13 +595,15 @@ export default function ProjectDetailPage({ uid }: { uid: string }): React.JSX.E
             {job.mode === 'dub_first' || job.mode === 'highlight' ? (
               <ActionButton
                 reason={
-                  running
-                    ? 'รอรอบปัจจุบันเสร็จก่อน'
-                    : !ready
-                      ? 'ต้องเรนเดอร์คลิปก่อน'
-                      : swapQuestions === 0
-                        ? 'คลิปนี้ไม่มีมุมสำรองให้เลือก — คลิปต้นฉบับสั้นไปหรือมุมซ้ำกับช็อตเดิมเกินไป'
-                        : null
+                  paused
+                    ? 'งานหยุดไว้ชั่วคราว — กดทำต่อก่อน'
+                    : running
+                      ? 'รอรอบปัจจุบันเสร็จก่อน'
+                      : !ready
+                        ? 'ต้องเรนเดอร์คลิปก่อน'
+                        : swapQuestions === 0
+                          ? 'คลิปนี้ไม่มีมุมสำรองให้เลือก — คลิปต้นฉบับสั้นไปหรือมุมซ้ำกับช็อตเดิมเกินไป'
+                          : null
                 }
                 icon={<ArrowLeftRight size={17} className="text-accent" />}
                 onClick={() => setSwapOpen(true)}
@@ -612,13 +625,15 @@ export default function ProjectDetailPage({ uid }: { uid: string }): React.JSX.E
             {canUseZoomEffects ? (
               <ActionButton
                 reason={
-                  job.mode === 'speech_highlights'
-                    ? 'โหมดนี้ยังแก้ไทม์ไลน์ทีละไฮไลต์ไม่ได้'
-                    : running
-                      ? 'รอจนกว่างานจะเสร็จ'
-                      : ready
-                        ? null
-                        : 'ต้องเรนเดอร์คลิปก่อน'
+                  paused
+                    ? 'งานหยุดไว้ชั่วคราว — กดทำต่อก่อน'
+                    : job.mode === 'speech_highlights'
+                      ? 'โหมดนี้ยังแก้ไทม์ไลน์ทีละไฮไลต์ไม่ได้'
+                      : running
+                        ? 'รอจนกว่างานจะเสร็จ'
+                        : ready
+                          ? null
+                          : 'ต้องเรนเดอร์คลิปก่อน'
                 }
                 icon={<ZoomIn size={17} className="text-accent" />}
                 onClick={() => navigate({ name: 'effectsClip', uid })}

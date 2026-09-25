@@ -7,6 +7,7 @@ import {
   retimeTimelineForSwap,
   scriptTotalSec,
   segmentAlternates,
+  segmentIndexForCutId,
   segmentSwappedFrom,
   segmentWindow,
   swapCandidates,
@@ -335,5 +336,25 @@ describe('swapCandidates', () => {
     const back = swapSegment(twice, segmentSwappedFrom(twice)!, 'free')!
     expect(back.swappedFrom).toBeUndefined()
     expect(back).toMatchObject({ sourceIn: 10, sourceOut: 12.6 })
+  })
+})
+
+describe('segmentIndexForCutId', () => {
+  it('reads the shot number out of a timeline-editor cut id', () => {
+    // Enter on the selected scene has to open ปรับช็อต at THAT shot, and the
+    // id is the only thing the editor hands over.
+    expect(segmentIndexForCutId('cut0')).toBe(0)
+    expect(segmentIndexForCutId('cut12')).toBe(12)
+    expect(segmentIndexForCutId(' cut3 ')).toBe(3)
+  })
+
+  it('refuses to guess at anything else', () => {
+    // The caller opens at the start instead — better than landing on a shot
+    // picked by a coincidence of string parsing.
+    expect(segmentIndexForCutId('scene2')).toBeNull()
+    expect(segmentIndexForCutId('cut')).toBeNull()
+    expect(segmentIndexForCutId('cut-1')).toBeNull()
+    expect(segmentIndexForCutId('')).toBeNull()
+    expect(segmentIndexForCutId(null)).toBeNull()
   })
 })

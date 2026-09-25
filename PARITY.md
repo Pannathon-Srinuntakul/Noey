@@ -81,6 +81,9 @@ has app.log — weaker need).
 
 
 | ตัดไฮไลต์จากคลิปยาว: the "ความยาวไฮไลต์" chooser removed — length is always the AI's (`WizardStepOutcome` longform branch, `outcomeStepGate`, `buildSubmission`, `summaryRows`) | web | desktop | 2026-09-23, owner decision: a length picked before the clip is read forces the selector to pad or truncate a highlight. Desktop's wizard files are not in this partial tree; port with the rest of it. |
+| Quota pause + resume: a run that exhausts the plan pauses in `paused_quota` and continues from the boundary it stopped at (`GET/POST /videos/{uid}/resume`, `PausedPanel`, `useProjectPipeline` resume path) | web | desktop | 2026-09-26. Backend is shared, so desktop gets the pause for free — but nothing there reads `/resume` or offers to continue, so a desktop user sees a stopped project with no way back. Desktop's pipeline files are not in this checkout. |
+| ปรับช็อต walks every shot including ones with no alternative, and the shot strip no longer crops the frames (`ShotSwapReview`) | web | desktop | 2026-09-26, owner-reported. Desktop's `ShotSwapModal.tsx` is not in this checkout. |
+| Timeline interaction pass: playhead revealed after every jump, Up/Down between cut boundaries, edits reveal + flash + toast, scene chips carry their own state, J/K/L and Enter-opens-shot-swap (`components/timeline/**`) | web | desktop | 2026-09-26. The whole `components/timeline/` tree is missing from this checkout. |
 
 ## 2026-09-23 — a gap that was not a gap
 

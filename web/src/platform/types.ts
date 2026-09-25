@@ -64,6 +64,8 @@ export interface LocalProject {
     | 'transcribing'
     | 'selecting'
     | 'rendering'
+    /** The server parked this run for quota (`paused_quota`). */
+    | 'paused'
     | 'done'
     | 'error'
   createdAt: string
@@ -119,9 +121,15 @@ export interface LocalProject {
    * on a limit error). Sent as `allow_wallet` and cleared once a start is
    * accepted — consent is per run, never standing. */
   allowWallet?: boolean
+  /** The busy step the project was on when the server parked it for quota, so
+   * a resume that only clears the pause (no server job) can put the card back
+   * where it was. Written with `step: 'paused'`, cleared when the pause is. */
+  pausedFrom?: LocalProject['step']
   /** Why the last run was refused or stopped by the plan's limits (or a
    * paused service), for the error card's reset time and wallet action.
-   * Written with `error`; meaningful only while step is 'error'. */
+   * Written with `error`; meaningful only while step is 'error' or 'paused' —
+   * and while 'paused' it is only a first paint: what a paused project shows
+   * comes from `GET /videos/{uid}/resume`, which is recomputed live. */
   billingStop?: {
     code: 'limit_reached' | 'free_tier_limited' | 'service_paused' | 'limit_stop'
     window: 'five_hour' | 'weekly' | 'monthly' | null

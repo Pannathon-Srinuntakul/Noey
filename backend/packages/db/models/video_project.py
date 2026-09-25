@@ -23,6 +23,97 @@ VIDEO_STATUS = (
 # Valid mode values
 VIDEO_MODE = ("talking_head", "dub_first", "highlight")
 
+# ── pipeline stages ──────────────────────────────────────────────────────────
+#
+# The boundaries a local-render run passes through. ``video_projects.stage``
+# holds the furthest one the project has COMPLETED, so the server — not a
+# project.json that lives in one browser's OPFS — knows where a paused run
+# stopped and what it already has.
+#
+# Boundaries the SERVER does the work at (and therefore charges for) are
+# ``analyze`` and ``transcribe``, plus the synchronous ``plan``. The rest is
+# work the client does on the user's own machine and nothing is billed for.
+#
+# Client step names (web/src/lib/projectFlow.ts) map on as:
+#   imported→imported  proxy→analyzing(before upload)  analyze→analyzing
+#   render_silent→silent_rendering  voiceover→waiting_vo  plan→planning
+#   render_final→final_rendering/rendering  extract_audio→extracting_audio
+#   transcribe→transcribing  select→selecting  done→done
+PIPELINE_STAGES = (
+    "imported",
+    "proxy",
+    "analyze",
+    "render_silent",
+    "voiceover",
+    "plan",
+    "render_final",
+    "extract_audio",
+    "transcribe",
+    "select",
+    "done",
+)
+
+#: Per-mode order. Anything not listed (a mode added later) follows dub_first's.
+STAGE_ORDER: dict[str, tuple[str, ...]] = {
+    "dub_first": (
+        "imported", "proxy", "analyze", "render_silent", "voiceover", "plan",
+        "render_final", "done",
+    ),
+    # No voiceover: the silent cut IS the result.
+    "highlight": ("imported", "proxy", "analyze", "render_silent", "done"),
+    "talking_head": ("imported", "extract_audio", "transcribe", "render_final", "done"),
+    "speech_highlights": (
+        "imported", "extract_audio", "transcribe", "select", "render_final", "done",
+    ),
+    "speech_scenes": (
+        "imported", "extract_audio", "transcribe", "select", "render_final", "done",
+    ),
+}
+
+#: Stages that are a paid AI call, and therefore the only ones a run can pause
+#: at. ``reedit`` / ``effects`` are paid too but sit OUTSIDE the linear
+#: pipeline — they re-do an existing boundary rather than advance it, so they
+#: never move ``stage`` forward.
+PAID_STAGES = ("analyze", "transcribe", "select", "plan")
+SIDE_STAGES = ("reedit", "effects")
+
+
+def stage_order(mode: str | None) -> tuple[str, ...]:
+    return STAGE_ORDER.get(mode or "", STAGE_ORDER["dub_first"])
+
+
+def stage_index(mode: str | None, stage: str | None) -> int:
+    """Position of ``stage`` in ``mode``'s order, or -1 when it has none."""
+    order = stage_order(mode)
+    try:
+        return order.index(stage or "")
+    except ValueError:
+        return -1
+
+
+def next_stage(mode: str | None, stage: str | None) -> str | None:
+    """The boundary that comes after ``stage``. None at (or past) the end."""
+    order = stage_order(mode)
+    idx = stage_index(mode, stage)
+    if idx < 0:
+        return order[0] if stage is None else None
+    return order[idx + 1] if idx + 1 < len(order) else None
+
+
+def advance_stage(current: str | None, candidate: str | None, mode: str | None) -> str | None:
+    """``current`` moved to ``candidate``, but only ever FORWARD.
+
+    Stage means "the furthest boundary this project reached", so a late report
+    from a client that is repeating an earlier step — an AI re-cut, a second
+    local render — must not drag it backwards and make a resume redo work the
+    project already has.
+    """
+    if candidate is None or candidate not in PIPELINE_STAGES:
+        return current
+    if stage_index(mode, candidate) < 0:
+        return current
+    return candidate if stage_index(mode, candidate) > stage_index(mode, current) else current
+
 
 class VideoProject(Base):
     __tablename__ = "video_projects"
@@ -86,6 +177,21 @@ class VideoProject(Base):
     music_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     # detect_beats() output: {"tempo": float, "beats": [float, ...], "durationSec": float}
     music_beats: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
+    # ── resume (docs: the contract in services/api/routers/videos_local.py) ──
+    #
+    # The furthest pipeline boundary this project has COMPLETED (PIPELINE_STAGES
+    # above). NULL = a project from before resume existed; the resume endpoint
+    # then infers the boundary from the artifacts the server holds instead.
+    # It lives on the row rather than in the client's project.json because a
+    # paused run must be resumable from any browser, on any device.
+    stage: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    # The ticket for the stage currently being ATTEMPTED: which worker task and
+    # kwargs would redo it, what it costs to price the remainder, and — once it
+    # pauses — which window ran out and when it rolls. Written when a paid stage
+    # starts, cleared when it succeeds, so a paused project carries exactly what
+    # POST /videos/{uid}/resume needs and nothing that outlives it.
+    resume_state: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

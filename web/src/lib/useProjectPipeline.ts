@@ -9,9 +9,11 @@ import {
   getEditScript,
   getLocalTimeline,
   getRemoteStatus,
+  getResumeState,
   patchLocalStatus,
   planDub,
   pollJob,
+  postResume,
   putLocalEditScript,
   putLocalTimeline,
   reeditDubScenes,
@@ -41,6 +43,7 @@ import {
 } from './captionEdits'
 import type { TimedWord } from './timelineMath'
 import { isEditorOpen, keptMusicPaths, whenEditorClosed } from './editorHistory'
+import { stageStep, stepAfterResume, type ResumeOutcome, type ResumeState } from './resume'
 
 /** talking_head + the R17 speech modes all run the audio chain
  * (extract → transcribe → render locally); everything else runs the
@@ -251,6 +254,18 @@ export interface ProjectPipeline {
   /** Retry a run the plan's limit refused, paying the difference from the
    * top-up balance (the card's "ใช้ยอดเงินคงเหลือทำต่อ"). */
   continueOnWallet: () => Promise<void>
+  /** The SERVER's account of where a paused project stopped — which window ran
+   * out, when it resets, what continuing would do and what it costs. Null
+   * until the first read lands, or on a project with no server row. */
+  resumeState: ResumeState | null
+  /** A resume POST is in flight. */
+  resumeBusy: boolean
+  /** Re-read `GET /videos/{uid}/resume` and reconcile the local step with it. */
+  refreshResume: () => Promise<void>
+  /** "ทำต่อ" — continue from the interrupted boundary, charging only that
+   * boundary. `allowWallet` is consent to spend the top-up balance, sent when
+   * the quota answer said `fits === 'wallet'`. */
+  resumeRun: (opts?: { allowWallet?: boolean }) => Promise<void>
   /** Re-run the cut with the same settings plus a comment on what to change. */
   recut: (text: string) => Promise<void>
   /** Put the render kept before the last recut back, discarding the new one. */
@@ -333,6 +348,17 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
   const [mediaKey, setMediaKey] = useState(0)
   const [showEditor, setShowEditor] = useState(false)
   const [stopping, setStopping] = useState(false)
+  /**
+   * What the SERVER says about a paused project — the window that ran out,
+   * when it resets, what continuing costs and what it would do.
+   *
+   * Never derived from `project.json`: a pause is a fact about the account's
+   * quota and the server's own row, so it has to survive a reload, another
+   * tab, another browser and a logout. Null until the first read lands (or on
+   * a project that has no server row at all).
+   */
+  const [resumeState, setResumeState] = useState<ResumeState | null>(null)
+  const [resumeBusy, setResumeBusy] = useState(false)
   const abortRef = useRef<AbortController | null>(null)
   const stoppedRef = useRef(false)
   /**
@@ -375,6 +401,10 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
   const spendWalletOptIn = async (): Promise<void> => {
     if (projectRef.current.allowWallet) await patchProject({ allowWallet: undefined })
   }
+  /** A resume POST is in flight. The button is safe to mash (the server
+   * serialises it), but a second POST from this tab would still cost a round
+   * trip and could race the step patch that follows the first. */
+  const resumeBusyRef = useRef(false)
   const stoppingRef = useRef(false)
   const disposedRef = useRef(false)
   const pipelineRef = useRef<Promise<void> | null>(null)
@@ -560,7 +590,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
   const dropStalePreviewArtifacts = async (): Promise<void> => {
     await Promise.all([
       dropServerArtifact('final_fx.mp4'),
-      dropServerArtifact('final_silent_music.mp4'),
+      dropServerArtifact('final_silent_music.mp4')
     ])
   }
 
@@ -676,14 +706,57 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     await resetAfterStop()
   }
 
+  /**
+   * A quota stop is not a failure — park the project instead of breaking it.
+   *
+   * The server keeps every boundary that finished, holds the frames/proxies
+   * the stage had already uploaded, and records a ticket for the one that was
+   * interrupted; continuing re-runs only that boundary. Writing 'error' here
+   * would tell the person their work failed, and `patchLocalStatus('error')`
+   * would overwrite the `paused_quota` row that holds the ticket.
+   *
+   * Whether this run was parked is the SERVER's answer, not a guess from the
+   * refusal code: only its row can tell a park from a refusal that left the
+   * project alone. Returns true when the project is now parked.
+   */
+  const adoptServerPause = async (refusal?: NonNullable<ApiError['refusal']>): Promise<boolean> => {
+    const remoteUid = projectRef.current.remote?.uid
+    if (!remoteUid) return false
+    const state = await getResumeState(session, remoteUid).catch(() => null)
+    if (!state?.paused) return false
+    const busyStep = projectRef.current.step as ProjectStep
+    void window.noey.log.write(
+      'useProjectPipeline',
+      `paused for quota uid=${project.uid} from=${busyStep} stage=${state.stage ?? '-'} next=${state.nextStage ?? '-'}`
+    )
+    await patchProject({
+      step: 'paused',
+      pausedFrom: isBusy(busyStep) ? busyStep : projectRef.current.pausedFrom,
+      error: undefined,
+      ...(refusal ? { billingStop: refusal } : {})
+    })
+    if (!disposedRef.current) {
+      setError(null)
+      setResumeState(state)
+      setProgressMsg('')
+      setThinking('')
+    }
+    // Deliberately no patchLocalStatus: the server's row already says
+    // paused_quota, and any status written over it retires the resume ticket.
+    // The files go up so another browser can see the pause for what it is.
+    syncToServer('paused')
+    return true
+  }
+
   const fail = async (exc: unknown): Promise<void> => {
     const message = exc instanceof ApiError ? exc.detail : String((exc as Error).message ?? exc)
     void window.noey.log.write('useProjectPipeline', `fail uid=${project.uid}: ${message}`)
-    if (!disposedRef.current) setError(message)
     // A limit / paused-service refusal rides along so the card can offer the
     // matching way out (reset time, continue with the balance) — written with
     // the error every time, so a later ordinary failure clears it.
     const refusal = exc instanceof ApiError ? exc.refusal : null
+    if (refusal && (await adoptServerPause(refusal))) return
+    if (!disposedRef.current) setError(message)
     // Persisted unconditionally — see handlePipelineError.
     await patchProject({ step: 'error', error: message, billingStop: refusal ?? undefined })
     const remoteUid = project.remote?.uid
@@ -913,6 +986,11 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
       await resumeFromJobPoll('analyzing')
       return
     }
+    // The server may be holding this project paused for quota — a project
+    // opened in another browser (or reloaded mid-run) has no local record of
+    // that. Starting the stage again would re-upload the proxies and buy a
+    // boundary the server already has a ticket for.
+    if (existingRemote && (await adoptServerPause())) return
     setError(null)
     setThinking('')
     markRunStarted()
@@ -1078,9 +1156,17 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
    * The local step is what the UI reads; the server copy only serves other
    * devices, so it is retried in the background instead.
    */
-  const reportLocalStatus = (remoteUid: string, status: 'waiting_vo' | 'done'): void => {
+  const reportLocalStatus = (
+    remoteUid: string,
+    status: 'waiting_vo' | 'done',
+    /** The pipeline BOUNDARY this machine just finished. Reporting it retires
+     * any resume ticket at or behind it, so a later resume cannot charge for
+     * work that has already been done here. Without it the server infers the
+     * boundary from the artifacts it holds — correct, but coarser. */
+    stage?: string
+  ): void => {
     const attempt = (n: number): void => {
-      patchLocalStatus(session, remoteUid, status).catch((exc: unknown) => {
+      patchLocalStatus(session, remoteUid, status, undefined, stage).catch((exc: unknown) => {
         void window.noey.log.write(
           'useProjectPipeline',
           `patchLocalStatus ${status} uid=${remoteUid} failed (try ${n}): ${String(exc)}`
@@ -1367,7 +1453,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     if (mode === 'highlight') {
       // No voiceover step at all — the silent cut IS the final output,
       // mirrors talking_head's runRenderTimeline going straight to done.
-      reportLocalStatus(remoteUid, 'done')
+      reportLocalStatus(remoteUid, 'done', 'render_silent')
       await patchProject({
         step: 'done',
         clipDurationsSec,
@@ -1392,7 +1478,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
       // they probe for the preview, and probing under the OLD key caches a
       // placeholder-era answer for the new render.
       setMediaKey((k) => k + 1)
-      reportLocalStatus(remoteUid, 'waiting_vo')
+      reportLocalStatus(remoteUid, 'waiting_vo', 'render_silent')
       await patchProject({
         step: 'waiting_vo',
         clipDurationsSec,
@@ -1447,6 +1533,12 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
       if (!voDuration || voDuration <= 0) throw new Error('อ่านความยาวไฟล์เสียงไม่ได้')
 
       await patchProject({ step: 'planning', voiceoverPath })
+      // The voiceover boundary is done the moment a file is attached, and it
+      // is one only this machine can reach. Reporting it means a resume that
+      // comes later starts at the planning call, not back at the recording.
+      patchLocalStatus(session, remoteUid, 'processing', undefined, 'voiceover').catch(
+        () => undefined
+      )
       setProgressMsg('AI กำลังวางแผน timeline ตามเสียงพากย์…')
       // plan-dub reads the SERVER's edit script: every queued write of it
       // (drafts, a save, a revert) has to land first.
@@ -1540,7 +1632,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
       }
 
       setMediaKey((k) => k + 1)
-      reportLocalStatus(remoteUid, 'done')
+      reportLocalStatus(remoteUid, 'done', 'render_final')
       await patchProject({ step: 'done', lastRunSeconds: runSeconds() })
       syncToServer('final-render')
       setProgressMsg('')
@@ -1570,6 +1662,8 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
       await resumeFromJobPoll('transcribing')
       return
     }
+    // Same rule again: a parked project resumes, it does not re-buy the stage.
+    if (existingRemote && (await adoptServerPause())) return
     setError(null)
     setThinking('')
     markRunStarted()
@@ -1687,7 +1781,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
       unsub()
     }
     setMediaKey((k) => k + 1)
-    reportLocalStatus(remoteUid, 'done')
+    reportLocalStatus(remoteUid, 'done', 'render_final')
     await patchProject({ step: 'done', lastRunSeconds: runSeconds() })
     syncToServer('highlights')
     setProgressMsg('')
@@ -1710,7 +1804,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     } finally {
       unsub()
     }
-    reportLocalStatus(remoteUid, 'done')
+    reportLocalStatus(remoteUid, 'done', 'render_final')
     await patchProject({ step: 'done', lastRunSeconds: runSeconds() })
     await dropStalePreviewArtifacts()
     setMediaKey((k) => k + 1)
@@ -1726,6 +1820,9 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     const jobId =
       (remoteUid ? await findRunningJob(remoteUid) : null) ?? projectRef.current.remote?.jobId
     if (!remoteUid || !jobId) {
+      // No running job can also mean the server parked this project for quota
+      // — `runAnalyze`/`runTalkingHead` check that before starting, so the
+      // fall-through below never re-buys a boundary that already has a ticket.
       if (kind === 'analyzing') await runAnalyze()
       else await runTalkingHead()
       return
@@ -1943,6 +2040,25 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step])
 
+  /**
+   * A paused project reads its state from the SERVER, on every load.
+   *
+   * This is what makes the pause survive a refresh, a second tab, a logout and
+   * a different browser: the window that ran out, when it resets and whether
+   * the balance covers finishing are all recomputed server-side, and none of
+   * them is safe to remember here (a reset time goes stale by the minute).
+   *
+   * An `error` step carrying a billing stop is included because a project
+   * parked by an OLDER build of this client is sitting on one — the read is
+   * what turns it into a pause.
+   */
+  useEffect(() => {
+    if (!project.remote?.uid) return
+    if (step !== 'paused' && !(step === 'error' && project.billingStop)) return
+    void refreshResume()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, project.remote?.uid])
+
   // Kick pipeline on mount and whenever a busy step has no in-flight work
   // (covers Vite HMR preserving step=analyzing but dropping the async chain).
   useEffect(() => {
@@ -2055,6 +2171,205 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     if (pipelineRef.current) return
     await patchProject({ allowWallet: true })
     await retry()
+  }
+
+  // ── pause / resume ────────────────────────────────────────────────────────
+
+  /** Claim the pipeline slot for a chain started outside bootstrap, so the
+   * busy-step effect does not boot a second one underneath it. */
+  const runPipeline = async (fn: () => Promise<void>): Promise<void> => {
+    if (pipelineRef.current) return
+    const run = fn()
+    pipelineRef.current = run.finally(() => {
+      pipelineRef.current = null
+    })
+    await pipelineRef.current
+  }
+
+  /**
+   * Re-read the server's account of where this project stopped.
+   *
+   * Also RECONCILES: the server is the authority on a pause, so a project it
+   * calls paused is parked here even if this browser never saw the stop (a
+   * reload mid-run, another tab, another machine), and one it no longer calls
+   * paused is let go even if this browser still shows the pause (someone
+   * resumed it elsewhere).
+   */
+  const refreshResume = async (): Promise<void> => {
+    const remoteUid = projectRef.current.remote?.uid
+    if (!remoteUid) return
+    const state = await getResumeState(session, remoteUid).catch(() => null)
+    if (!state || disposedRef.current) return
+    setResumeState(state)
+    const localStep = projectRef.current.step as ProjectStep
+    if (state.paused && localStep !== 'paused') {
+      await patchProject({
+        step: 'paused',
+        pausedFrom: isBusy(localStep) ? localStep : projectRef.current.pausedFrom,
+        error: undefined
+      })
+      setError(null)
+      return
+    }
+    if (!state.paused && localStep === 'paused') {
+      // Someone continued this project — from another tab, another machine, or
+      // a window that rolled while a job was already queued. `stepAfterResume`
+      // lands on the running stage when the row says `processing`, which is
+      // what makes the busy-step effect pick up the poll from here.
+      await clearPause(state)
+    }
+  }
+
+  /** Where a project sits once its pause is over — decided by the SERVER's
+   * status, because a project paused on one machine and resumed on another has
+   * no local step worth trusting. */
+  const clearPause = async (state: ResumeState): Promise<void> => {
+    const stashed = projectRef.current.pausedFrom as ProjectStep | undefined
+    const fallback = stashed && !isBusy(stashed) ? stashed : 'imported'
+    await patchProject({
+      step: stepAfterResume(state, mode, fallback),
+      error: undefined,
+      billingStop: undefined,
+      pausedFrom: undefined
+    })
+    if (!disposedRef.current) setError(null)
+  }
+
+  /**
+   * Continue a paused project from the boundary that was interrupted.
+   *
+   * Nothing is re-uploaded and nothing behind the pause is re-priced: the
+   * server re-runs one stage against files it already holds. Safe to press
+   * twice — the server serialises it and answers `already_running` with the
+   * job that is already going.
+   */
+  const resumeRun = async (opts: { allowWallet?: boolean } = {}): Promise<void> => {
+    const remoteUid = projectRef.current.remote?.uid
+    if (!remoteUid) {
+      if (!disposedRef.current) {
+        setError('โปรเจกต์นี้ยังไม่มีข้อมูลบนเซิร์ฟเวอร์ — ทำต่อไม่ได้')
+      }
+      return
+    }
+    if (resumeBusyRef.current || pipelineRef.current) return
+    resumeBusyRef.current = true
+    if (!disposedRef.current) {
+      setResumeBusy(true)
+      setError(null)
+    }
+    let outcome: ResumeOutcome
+    try {
+      outcome = await postResume(session, remoteUid, opts.allowWallet === true)
+    } catch (exc) {
+      // A failed resume must not cost the pause. The project is still parked
+      // on the server with its ticket intact, and writing 'error' over it here
+      // would hide both the ticket and the way back to it — the person would
+      // be looking at "ทำงานไม่สำเร็จ" on a run that never restarted. Say what
+      // happened, on the paused panel, and re-read the row.
+      const message = exc instanceof ApiError ? exc.detail : String((exc as Error)?.message ?? exc)
+      void window.noey.log.write(
+        'useProjectPipeline',
+        `resume failed uid=${project.uid}: ${message}`
+      )
+      if (!disposedRef.current) setError(message)
+      await refreshResume()
+      return
+    } finally {
+      resumeBusyRef.current = false
+      if (!disposedRef.current) setResumeBusy(false)
+    }
+    if (!disposedRef.current) setResumeState(outcome)
+    void window.noey.log.write(
+      'useProjectPipeline',
+      `resume uid=${project.uid} action=${outcome.action} next=${outcome.nextStage ?? '-'} job=${outcome.jobId ?? '-'}`
+    )
+
+    if (outcome.action === 'nothing_to_resume') {
+      await clearPause(outcome)
+      return
+    }
+
+    // `already_running` hands back the SAME job as `server_job` — a double
+    // press is one run, followed twice.
+    if (outcome.action === 'server_job' || outcome.action === 'already_running') {
+      // An unknown stage still means "the server is working on it", so the
+      // honest response is to follow its job rather than guess a local step.
+      const busy = stageStep(outcome.nextStage, mode)
+      const step = busy && isBusy(busy) ? busy : isSpeechMode(mode) ? 'transcribing' : 'analyzing'
+      await patchProject({
+        step,
+        error: undefined,
+        billingStop: undefined,
+        pausedFrom: undefined,
+        ...(outcome.jobId ? { remote: { uid: remoteUid, jobId: outcome.jobId } } : {})
+      })
+      markRunStarted()
+      await runPipeline(() =>
+        resumeFromJobPoll(step === 'analyzing' ? 'analyzing' : 'transcribing')
+      )
+      return
+    }
+
+    // client_step: the server has nothing to do. The pause is already cleared
+    // on its side, so clear it here and carry on with the local stage.
+    //
+    // The consent travels with it: a `plan` step is the CLIENT calling a paid
+    // route, which the server treats as its own start — without this the
+    // person agrees to spend the balance and the very next call is refused.
+    if (opts.allowWallet) await patchProject({ allowWallet: true })
+    await clearPause(outcome)
+    await runPipeline(() => continueLocally(outcome))
+  }
+
+  /**
+   * The local half of a resume: the stages that run on this machine and cost
+   * nothing. Each one is the SAME call the pipeline would have made, so
+   * nothing here duplicates a stage's logic.
+   */
+  const continueLocally = async (outcome: ResumeOutcome): Promise<void> => {
+    const cur = projectRef.current
+    const remoteUid = cur.remote?.uid
+    const next = outcome.nextStage
+    try {
+      if (next === 'plan' || next === 'render_final') {
+        const vo = cur.voiceoverPath
+        // A dub run with no voiceover on this machine rests at waiting_vo
+        // until one is recorded — not something a resume can do for it.
+        if (!vo) return
+        if (cur.timeline) {
+          await renderFinalFromPlannedTimeline(cur.timeline as unknown as DubTimeline)
+        } else {
+          await runFinalWithAudioInner(vo)
+        }
+        return
+      }
+      if (next === 'render_silent' && remoteUid) {
+        const stored = cur.editScript as unknown as DubEditScript | undefined
+        const script = stored?.segments?.length
+          ? stored
+          : await getEditScript(session, remoteUid).catch(() => null)
+        if (script?.segments?.length) {
+          markRunStarted()
+          await runRenderSilent(script, remoteUid)
+          return
+        }
+        await fail(new Error('ไม่พบ edit script บนเซิร์ฟเวอร์ — ลองวิเคราะห์ใหม่'))
+        return
+      }
+      if (next === 'extract_audio' || next === 'transcribe' || next === 'select') {
+        await runTalkingHead()
+        return
+      }
+      if (next === 'imported' || next === 'proxy' || next === 'analyze') {
+        if (isSpeechMode(mode)) await runTalkingHead()
+        else await runAnalyze()
+        return
+      }
+      // 'voiceover', 'done' and anything else: the project is back at rest and
+      // the screen already says what is left to do.
+    } catch (exc) {
+      await handlePipelineError(exc)
+    }
   }
 
   /**
@@ -2548,7 +2863,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
       } finally {
         unsub()
       }
-      reportLocalStatus(remoteUid, 'done')
+      reportLocalStatus(remoteUid, 'done', 'render_final')
       // Re-cut clips → the stored per-clip durations describe the old render.
       await patchProject({
         step: 'done',
@@ -2761,6 +3076,10 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     removeMusic,
     retry,
     continueOnWallet,
+    resumeState,
+    resumeBusy,
+    refreshResume,
+    resumeRun,
     recut,
     revertRecut,
     applyShotSwap,

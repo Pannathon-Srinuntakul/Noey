@@ -5,7 +5,16 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApiError } from './api'
-import { analyzeVideo, estimateUsage, planDub, pollJob, type ApiSession } from './videosLocalApi'
+import {
+  analyzeVideo,
+  estimateUsage,
+  getResumeState,
+  patchLocalStatus,
+  planDub,
+  pollJob,
+  postResume,
+  type ApiSession
+} from './videosLocalApi'
 
 type FetchJob = {
   url: string
@@ -152,5 +161,74 @@ describe('start routes', () => {
     expect(est.fits).toBe('plan')
     expect(fetchMock.mock.calls[0][0].url).toBe('http://api/usage/estimate')
     expect(JSON.parse(fetchMock.mock.calls[0][0].jsonBody ?? '{}')).toEqual(body)
+  })
+})
+
+describe('resume', () => {
+  const payload = {
+    uid: 'uid',
+    status: 'paused_quota',
+    mode: 'dub_first',
+    paused: true,
+    reason: 'quota',
+    stage: 'proxy',
+    next_stage: 'analyze',
+    stages: ['imported', 'proxy', 'analyze', 'render_silent', 'done'],
+    runs_on: 'server',
+    client_step: null,
+    paused_at: '2026-09-26T09:04:57.743684Z',
+    window: 'five_hour',
+    window_resets_at: '2026-09-26T11:48:00Z',
+    message: 'โควตารอบนี้หมด',
+    resumable: true,
+    charges: true,
+    estimate_source: 'ticket',
+    quota: {
+      fits: 'plan',
+      pct: { five_hour: 13.7 },
+      wallet_satang: 0,
+      balance_satang: 0,
+      binding: null,
+      resets_at: null,
+      unlimited: false
+    }
+  }
+
+  it('reads where the work stopped from the server, not from the client', async () => {
+    fetchMock.mockResolvedValue(reply(200, payload))
+    const state = await getResumeState(session, 'uid')
+    expect(fetchMock.mock.calls[0][0].url).toBe('http://api/videos/uid/resume')
+    expect(fetchMock.mock.calls[0][0].method).toBeUndefined()
+    expect(state.paused).toBe(true)
+    expect(state.nextStage).toBe('analyze')
+  })
+
+  it('sends allow_wallet only with consent', async () => {
+    fetchMock.mockResolvedValue(
+      reply(200, { ...payload, action: 'server_job', job_id: 'vlocal_1', resumed: true })
+    )
+    await postResume(session, 'uid')
+    expect(JSON.parse(fetchMock.mock.calls[0][0].jsonBody ?? '{}')).toEqual({})
+
+    const out = await postResume(session, 'uid', true)
+    expect(JSON.parse(fetchMock.mock.calls[1][0].jsonBody ?? '{}').allow_wallet).toBe(true)
+    expect(out.action).toBe('server_job')
+    expect(out.jobId).toBe('vlocal_1')
+  })
+
+  it('reports the boundary this machine finished, and omits it when there is none', async () => {
+    fetchMock.mockResolvedValue(reply(200, { uid: 'uid', status: 'waiting_vo' }))
+    await patchLocalStatus(session, 'uid', 'waiting_vo', undefined, 'render_silent')
+    expect(JSON.parse(fetchMock.mock.calls[0][0].jsonBody ?? '{}')).toEqual({
+      status: 'waiting_vo',
+      error_msg: null,
+      stage: 'render_silent'
+    })
+
+    await patchLocalStatus(session, 'uid', 'error', 'พัง')
+    expect(JSON.parse(fetchMock.mock.calls[1][0].jsonBody ?? '{}')).toEqual({
+      status: 'error',
+      error_msg: 'พัง'
+    })
   })
 })

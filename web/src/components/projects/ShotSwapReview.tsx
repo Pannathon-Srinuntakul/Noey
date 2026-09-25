@@ -355,10 +355,17 @@ interface Option {
 
 export function ShotSwapReview({
   job,
-  onClose
+  onClose,
+  startAt
 }: {
   job: ProjectPipeline
   onClose: () => void
+  /** Which shot to open on, as an index into the cut. The entry button on the
+   * project page opens at the start; Enter in the timeline editor opens at the
+   * scene the user had selected, which is the whole point of that key. Out of
+   * range is clamped, so a stale id lands on the last shot rather than on
+   * nothing. */
+  startAt?: number
 }): React.JSX.Element | null {
   const confirm = useConfirm()
   const { navigate } = useRouter()
@@ -377,7 +384,7 @@ export function ShotSwapReview({
    * ticks describe an invisible queue — see the file header. */
   const shotCount = segments.length
 
-  const [cursor, setCursor] = useState(0)
+  const [cursor, setCursor] = useState(() => Math.max(0, Math.trunc(startAt ?? 0)))
   /** segIndex → chosen candidate; absent = keep the shot in use. */
   const [picks, setPicks] = useState<ReadonlyMap<number, number>>(new Map())
   const [browsing, setBrowsing] = useState(false)

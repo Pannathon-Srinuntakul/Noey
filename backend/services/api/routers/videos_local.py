@@ -26,6 +26,34 @@ PUT   /videos/{uid}/local-edit-script  — sync locally-edited edit_script.json 
 POST  /videos/{uid}/reedit-dub-scenes  — dub: upload live-editor preview + instruction → arq reedit_dub_scenes_local → {job_id}
 POST  /videos/{uid}/music              — dub: upload music/video → extract audio + librosa beat detection (sync)
 DELETE /videos/{uid}/music             — dub: clear the attached music track
+GET   /videos/{uid}/resume             — where the project stands + what finishing costs
+POST  /videos/{uid}/resume             — continue a paused run from the boundary it stopped at
+
+Resume (2026-09-26)
+-------------------
+A run that exhausts the plan's quota pauses (``status = "paused_quota"``) and
+keeps everything it produced. Starting again used to re-run the whole pipeline,
+so the user paid twice for work they already had. Two columns fix that, both on
+the project row rather than in the client's project.json — which lives in ONE
+browser's OPFS and cannot answer for a project opened anywhere else:
+
+* ``stage`` — the furthest boundary the project COMPLETED
+  (packages/db/models/video_project.py: PIPELINE_STAGES). The server sets it
+  where it knows (a start route proves the client's local step ran; a worker
+  task proves its own); the client reports its local boundaries through
+  ``PATCH /local-status``. It only ever moves forward.
+* ``resume_state`` — the ticket for the boundary being ATTEMPTED: the worker
+  task + kwargs that would redo it (or, for the synchronous ``plan`` call, the
+  request body to repeat), and the estimate kind that prices THAT STAGE ALONE.
+  Written when a paid stage starts, stamped with the window/reset when it
+  pauses, and dropped the moment it succeeds.
+
+``POST /resume`` therefore re-enqueues exactly the interrupted task against
+files that are already on the server (only a successful stage purges them), on
+a run priced on that stage. It locks the project row for the whole decision, so
+a double click answers ``already_running`` instead of starting a second, billed
+copy. If the window still has not rolled, the resumed run simply pauses again —
+that is the designed outcome, not an error.
 """
 
 from __future__ import annotations
@@ -49,7 +77,14 @@ from packages.core.errors import format_exception_message
 from packages.core.logging import get_logger
 from packages.core.settings import get_settings
 from packages.db.models.core_auth import Job, User
-from packages.db.models.video_project import VideoProject
+from packages.db.models.video_project import (
+    PIPELINE_STAGES,
+    VideoProject,
+    advance_stage,
+    next_stage,
+    stage_index,
+    stage_order,
+)
 from packages.db.session import bind_tenant_search_path
 from packages.llm.usage import UsageCtx, reset_usage_ctx, set_usage_ctx
 from packages.video.quality import normalize_engine, normalize_precision
@@ -69,6 +104,7 @@ from packages.video.storage import data_root
 from packages.video.timeline import cuts_duration, normalize_dub_edit_script
 from packages.billing import estimate as estimator
 from packages.billing import plan_features
+from packages.billing import resume as resume_mod
 from packages.billing import runs
 from services.api.billing_start import load_run, release_on_error, settle_run, start_paid_run
 from services.api.deps import CurrentUser, db_session
@@ -195,6 +231,20 @@ class ReeditManifestIn(BaseModel):
 class LocalStatusIn(BaseModel):
     status: str
     error_msg: str | None = None
+    #: The pipeline boundary the client has just finished
+    #: (packages/db/models/video_project.py: PIPELINE_STAGES). Optional, and
+    #: only ever moves the project FORWARD. Without it the server would know
+    #: nothing about the steps that run on the user's own machine — the silent
+    #: render, the voiceover, the final render — and a resume would have to
+    #: guess which of them still has to happen.
+    stage: str | None = None
+
+
+class ResumeIn(BaseModel):
+    #: Continue on the top-up balance when the plan's windows are still empty.
+    #: Same consent flag every start route takes; without it a resume that does
+    #: not fit simply pauses again.
+    allow_wallet: bool = False
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -376,6 +426,121 @@ def enforce_feature(user: User, feature: plan_features.Feature) -> None:
         raise HTTPException(403, refusal)
 
 
+# ── resume (see the "resume" block in the module docstring) ──────────────────
+
+def _open_stage(
+    proj: VideoProject,
+    *,
+    stage: str,
+    est: estimator.Estimate,
+    done_stage: str | None = None,
+    task: str | None = None,
+    task_kwargs: dict | None = None,
+    job_id: str | None = None,
+    frame_count: int | None = None,
+    client_step: dict | None = None,
+) -> None:
+    """Record on the project row the paid stage that is about to start.
+
+    ``done_stage`` is the boundary this request PROVES is behind the project
+    (uploading proxies proves the proxy pass ran), so the row knows where the
+    work got to without asking the browser that happens to be open. The ticket
+    itself carries what would redo ``stage`` and nothing more — resuming must
+    charge for the interrupted stage only.
+
+    The caller commits.
+    """
+    if done_stage:
+        proj.stage = advance_stage(proj.stage, done_stage, proj.mode)
+    proj.resume_state = resume_mod.ticket(
+        stage=stage, kind=est.kind, media_sec=est.media_sec, frame_count=frame_count,
+        task=task, kwargs=task_kwargs, job_id=job_id, client_step=client_step,
+    )
+
+
+async def _pause_project(
+    session: AsyncSession, proj: VideoProject, exc: object, *, run_id: str | None = None
+) -> None:
+    """Park a project on ``QuotaExhausted`` raised in the API's own process.
+
+    The worker's equivalent is ``services/worker/tasks.py:_mark_stopped``; both
+    must leave the same row behind, because the client reads one shape.
+    """
+    payload = exc.payload() if hasattr(exc, "payload") else {}  # type: ignore[attr-defined]
+    message = str(payload.get("message") or exc)
+    proj.status = "paused_quota"
+    proj.error_msg = message
+    proj.resume_state = resume_mod.mark_paused(
+        proj.resume_state,
+        window=payload.get("window"),
+        resets_at=getattr(exc, "resets_at", None),
+        wallet_can_cover=bool(payload.get("wallet_can_cover")),
+        wallet_satang=int(payload.get("wallet_satang") or 0),
+        run_id=run_id,
+        message=message,
+    )
+    await session.commit()
+
+
+#: The estimate kind each paid boundary is priced at, for a project whose
+#: ticket is missing (paused by a build from before tickets existed). Only a
+#: display figure — an actual resume always reprices from the ticket.
+_STAGE_KIND = {
+    "analyze": "analyze_video",
+    "transcribe": "transcribe_audio",
+    "select": "transcribe_audio",
+    "plan": "plan_dub",
+    "reedit": "reedit",
+    "effects": "plan_effects",
+}
+
+
+def _reached_stage(proj: VideoProject) -> str | None:
+    """The furthest boundary the SERVER can vouch for.
+
+    ``video_projects.stage`` is the record, but a project started before this
+    column existed has none — so the artifacts the server is holding are read
+    as evidence. They only ever move the answer forward.
+    """
+    order = stage_order(proj.mode)
+    proven: str | None = None
+    if proj.mode in ("dub_first", "highlight"):
+        if proj.edit_script_path:
+            proven = "analyze"
+        if proj.timeline_path and "plan" in order:
+            proven = "plan"
+    else:
+        if proj.transcript_path:
+            proven = "transcribe"
+        if proj.timeline_path:
+            proven = "select" if "select" in order else "transcribe"
+    return advance_stage(proj.stage, proven, proj.mode) if proven else proj.stage
+
+
+def _resume_plan(proj: VideoProject) -> tuple[dict | None, str | None, str | None]:
+    """``(ticket, reached, next)`` — what a resume of this project would do.
+
+    ``next`` is the stage the run was interrupted at when there is a ticket for
+    it, otherwise the boundary that follows what the project already has.
+    """
+    state = proj.resume_state if resume_mod.is_current(proj.resume_state) else None
+    reached = _reached_stage(proj)
+    pending = str((state or {}).get("stage") or "") or None
+    return state, reached, pending or next_stage(proj.mode, reached)
+
+
+def _resting_status(proj: VideoProject) -> str:
+    """The status a project should wear while nothing is running.
+
+    Used when a resume hands the work back to the client: leaving the row on
+    ``paused_quota`` would keep every screen saying "out of quota" for a step
+    that costs nothing.
+    """
+    if proj.mode in ("dub_first", "highlight") and proj.edit_script_path:
+        return "waiting_vo"
+    return "pending"
+
+
 # ── endpoints ─────────────────────────────────────────────────────────────────
 
 @router.post("/local", response_model=LocalProjectOut, status_code=201)
@@ -416,6 +581,9 @@ async def create_local_project(
         # mode; dub_first's own target_duration_sec (script length) is independent
         # of this column. Always "full" — see plan_core.build_talking_head_timeline.
         duration_mode="full",
+        # The clips are on the user's machine by the time this row is created,
+        # so the first boundary is already behind us.
+        stage="imported",
         local_meta={"clips": [c.model_dump() for c in body.clips]},
         caption_style=body.caption_style.model_dump() if body.caption_style else None,
         engine=normalize_engine(body.engine) if body.engine else None,
@@ -471,12 +639,12 @@ async def analyze_frames(
     # Reserve BEFORE anything is stored (docs/token-billing-design.md §6.1),
     # priced on the frames this request actually carries — each is one image
     # to the model — not on clip lengths the client stated.
+    est = estimator.estimate_run(
+        kind="analyze_frames", engine=proj.engine, precision=proj.precision,
+        frame_count=len(files),
+    )
     run_id = await start_paid_run(
-        auth, request,
-        estimator.estimate_run(
-            kind="analyze_frames", engine=proj.engine, precision=proj.precision,
-            frame_count=len(files),
-        ),
+        auth, request, est,
         allow_wallet=allow_wallet, job_id=f"vlocal_{uid[:8]}", reference_id=uid,
         mode=proj.mode, engine=proj.engine, precision=proj.precision,
     )
@@ -517,6 +685,11 @@ async def analyze_frames(
         await bind_tenant_search_path(session, auth.tenant_slug)
         proj.status = "processing"
         proj.job_id = job_id
+        _open_stage(
+            proj, stage="analyze", est=est, done_stage="proxy", frame_count=len(files),
+            task="analyze_dub_local", job_id=job_id,
+            task_kwargs={"project_uid": uid, "tenant_slug": auth.tenant_slug, **music_window},
+        )
         await session.commit()
 
         await _enqueue(
@@ -637,13 +810,13 @@ async def analyze_video(
     # nothing behind — docs/token-billing-design.md §6.1).
     root = data_root()
     staging = await _stage_proxies(uid, [(by_file[f.filename or ""], f) for f in files])
+    est = estimator.estimate_run(
+        kind="analyze_video", engine=proj.engine, precision=proj.precision,
+        clip_secs=[rec["measuredSec"] for rec in staging.records],
+    )
     try:
         run_id = await start_paid_run(
-            auth, request,
-            estimator.estimate_run(
-                kind="analyze_video", engine=proj.engine, precision=proj.precision,
-                clip_secs=[rec["measuredSec"] for rec in staging.records],
-            ),
+            auth, request, est,
             allow_wallet=allow_wallet, job_id=f"vlocal_{uid[:8]}", reference_id=uid,
             mode=proj.mode, engine=proj.engine, precision=proj.precision,
         )
@@ -679,6 +852,14 @@ async def analyze_video(
         await bind_tenant_search_path(session, auth.tenant_slug)
         proj.status = "processing"
         proj.job_id = job_id
+        _open_stage(
+            proj, stage="analyze", est=est, done_stage="proxy",
+            task="analyze_dub_video_local", job_id=job_id,
+            task_kwargs={
+                "project_uid": uid, "tenant_slug": auth.tenant_slug,
+                "style_uid": chosen_style_uid, **music_window,
+            },
+        )
         await session.commit()
 
         # style_uid travels with the job; the worker resolves the prose from the
@@ -721,8 +902,19 @@ async def plan_dub(
 
     # The only route that calls a model itself: it reserves, meters and
     # settles inline instead of in a worker (docs/token-billing-design.md §6.1).
+    est = estimator.estimate_run(kind="plan_dub", engine=proj.engine, precision=proj.precision)
+    # The ticket goes in BEFORE the call, and carries this request body: the
+    # numbers it needs — how long the voiceover turned out, how long each clip
+    # is — exist only on the user's machine, so a pause that did not keep them
+    # could not be resumed from another browser. There is no worker task to
+    # re-enqueue here, so the ticket names the call to repeat instead.
+    _open_stage(
+        proj, stage="plan", est=est, done_stage="voiceover",
+        client_step={"method": "POST", "path": f"/videos/{uid}/plan-dub", "body": body.model_dump()},
+    )
+    await session.commit()
     run_id = await start_paid_run(
-        auth, request, estimator.estimate_run(kind="plan_dub", engine=proj.engine, precision=proj.precision),
+        auth, request, est,
         allow_wallet=body.allow_wallet, job_id=None, reference_id=uid,
         mode=proj.mode, engine=proj.engine, precision=proj.precision,
     )
@@ -752,8 +944,11 @@ async def plan_dub(
         outcome = "ok"
     except guard.QuotaExhausted as exc:
         # The plan ran out, not the run's own ceiling. Same body the worker
-        # writes onto a paused job, so the client renders one thing either way.
+        # writes onto a paused job, so the client renders one thing either way
+        # — and the project pauses here exactly as it would in a worker, so the
+        # analyze and the voiceover behind it are never paid for twice.
         outcome = "limit_stop"
+        await _pause_project(session, proj, exc, run_id=run_id)
         raise HTTPException(402, exc.payload()) from exc
     except guard.RunBudgetExceeded as exc:
         outcome = "limit_stop"
@@ -811,6 +1006,13 @@ async def plan_dub(
     timeline_path = output_dir / "timeline.json"
     timeline_path.write_text(json.dumps(timeline, ensure_ascii=False, indent=2), encoding="utf-8")
     proj.timeline_path = str(timeline_path.relative_to(root))
+    proj.stage = advance_stage(proj.stage, "plan", proj.mode)
+    proj.resume_state = None
+    if proj.status == "paused_quota":
+        # A resumed plan that went through: back to the resting status the
+        # analyze task leaves behind, so the project stops reading as paused.
+        proj.status = "waiting_vo"
+        proj.error_msg = None
     await session.commit()
     await push_project_files(uid)
 
@@ -1405,12 +1607,12 @@ async def transcribe_audio(
             dest = staging / str(f.filename)
             dest.write_bytes(await f.read())
             audio_secs.append(await _measure_upload(dest, label="เสียง"))
+        est = estimator.estimate_run(
+            kind="transcribe_audio", engine=proj.engine, precision=proj.precision,
+            clip_secs=audio_secs,
+        )
         run_id = await start_paid_run(
-            auth, request,
-            estimator.estimate_run(
-                kind="transcribe_audio", engine=proj.engine, precision=proj.precision,
-                clip_secs=audio_secs,
-            ),
+            auth, request, est,
             allow_wallet=allow_wallet, job_id=f"vlocal_{uid[:8]}", reference_id=uid,
             mode=proj.mode, engine=proj.engine, precision=proj.precision,
         )
@@ -1452,6 +1654,22 @@ async def transcribe_audio(
         await bind_tenant_search_path(session, auth.tenant_slug)
         proj.status = "processing"
         proj.job_id = job_id
+        # talking_head stops at `transcribe`; the speech modes carry on into the
+        # selection pass inside the SAME task, so their boundary is `select`.
+        _open_stage(
+            proj,
+            stage="transcribe" if proj.mode == "talking_head" else "select",
+            est=est, done_stage="extract_audio", job_id=job_id,
+            task="plan_talking_local" if proj.mode == "talking_head" else "plan_speech_local",
+            task_kwargs=(
+                {"project_uid": uid, "tenant_slug": auth.tenant_slug}
+                if proj.mode == "talking_head"
+                else {
+                    "project_uid": uid, "tenant_slug": auth.tenant_slug,
+                    "style_uid": style_uid.strip(),
+                }
+            ),
+        )
         await session.commit()
 
         if proj.mode == "talking_head":
@@ -1507,6 +1725,10 @@ async def put_local_timeline(
     timeline_path = output_dir / "timeline.json"
     timeline_path.write_text(json.dumps(body, ensure_ascii=False, indent=2), encoding="utf-8")
     proj.timeline_path = str(timeline_path.relative_to(root))
+    # A timeline exists, whoever wrote it: the planning boundary is behind us.
+    proj.stage = advance_stage(
+        proj.stage, "select" if "select" in stage_order(proj.mode) else "plan", proj.mode
+    )
     await session.commit()
     # Only the file that changed. `push_project_files` re-uploads the whole
     # project (20 files, ~1 min measured 2026-09-21), and the editor's draft
@@ -1524,12 +1746,256 @@ async def patch_local_status(
 ) -> dict:
     if body.status not in LOCAL_STATUSES:
         raise HTTPException(422, f"status ต้องเป็นหนึ่งใน {LOCAL_STATUSES}")
+    if body.stage is not None and body.stage not in PIPELINE_STAGES:
+        raise HTTPException(422, f"stage ต้องเป็นหนึ่งใน {PIPELINE_STAGES}")
     proj = await _get_local_project(session, uid, auth.user_id)
     proj.status = body.status
     proj.error_msg = body.error_msg if body.status == "error" else None
+    if body.stage is not None:
+        proj.stage = advance_stage(proj.stage, body.stage, proj.mode)
+    if body.status == "done":
+        proj.stage = advance_stage(proj.stage, "done", proj.mode)
+    pending = str((proj.resume_state or {}).get("stage") or "") if resume_mod.is_current(
+        proj.resume_state
+    ) else ""
+    if pending and (
+        body.status == "done"
+        or (body.stage and stage_index(proj.mode, body.stage) >= stage_index(proj.mode, pending))
+    ):
+        # The client has reached the ticket's own stage by itself, so there is
+        # nothing left to resume. A ticket left behind here would let a later
+        # resume pay again for work the project already has.
+        proj.resume_state = None
     await session.commit()
-    log.info("local_status_updated", uid=uid, status=body.status)
-    return {"uid": uid, "status": body.status}
+    log.info("local_status_updated", uid=uid, status=body.status, stage=proj.stage)
+    return {"uid": uid, "status": body.status, "stage": proj.stage}
+
+
+# ── resume a run the plan's window paused ────────────────────────────────────
+
+async def _resume_quota(
+    session: AsyncSession,
+    auth: CurrentUser,
+    proj: VideoProject,
+    state: dict | None,
+    next_st: str | None,
+) -> tuple[dict, estimator.Estimate | None, str]:
+    """``(quota view, estimate, source)`` for FINISHING this project.
+
+    The estimate comes from the ticket, so it covers the interrupted stage and
+    not a byte more. A project paused by a build from before tickets existed
+    falls back to the clip lengths it declared at creation — a display figure
+    only, flagged as ``declared``; an actual resume always reprices from the
+    ticket it will act on. A next stage that runs on the user's own machine
+    costs nothing and gets no estimate at all.
+    """
+    est = resume_mod.estimate_for(state, engine=proj.engine, precision=proj.precision)
+    source = "ticket"
+    if est is None:
+        kind = _STAGE_KIND.get(next_st or "")
+        if kind is None:
+            return (
+                {
+                    "fits": "plan", "pct": {}, "wallet_satang": 0, "balance_satang": 0,
+                    "binding": None, "resets_at": None, "unlimited": False,
+                },
+                None,
+                "free",
+            )
+        source = "declared"
+        est = estimator.estimate_run(
+            kind=kind, engine=proj.engine, precision=proj.precision,
+            clip_secs=estimator.clip_seconds_from_meta(proj.local_meta),
+        )
+    await session.execute(text("SET search_path TO core, public"))
+    try:
+        view = await resume_mod.quota_view(session, auth.user, est)
+    finally:
+        await bind_tenant_search_path(session, auth.tenant_slug)
+    return view, est, source
+
+
+def _resume_view(proj: VideoProject, state: dict | None, reached: str | None, next_st: str | None) -> dict:
+    """The part of the answer that is the same for GET and POST."""
+    server_side = bool(state and state.get("task")) or (next_st in resume_mod.SERVER_STAGES)
+    return {
+        "uid": proj.uid,
+        "status": proj.status,
+        "mode": proj.mode,
+        "paused": proj.status == "paused_quota",
+        "reason": (state or {}).get("reason") if proj.status == "paused_quota" else None,
+        "stage": reached,
+        "next_stage": next_st,
+        "stages": list(stage_order(proj.mode)),
+        "runs_on": ("server" if server_side else "client") if next_st else None,
+        "client_step": (state or {}).get("client_step") if not server_side else None,
+        "paused_at": (state or {}).get("paused_at"),
+        "window": (state or {}).get("window"),
+        "window_resets_at": (state or {}).get("resets_at"),
+        "message": proj.error_msg if proj.status == "paused_quota" else None,
+    }
+
+
+@router.get("/{uid}/resume")
+async def get_resume(
+    uid: str,
+    auth: CurrentUser,
+    session: AsyncSession = Depends(db_session),
+) -> dict:
+    """Where this project stands and what finishing it would cost.
+
+    Read-only, and answerable for ANY local project — not only a paused one —
+    so a client that has just opened a project on a second device can ask the
+    server where the work got to instead of trusting a project.json that only
+    the first device has.
+    """
+    proj = await _get_local_project(session, uid, auth.user_id)
+    state, reached, next_st = _resume_plan(proj)
+    quota, est, source = await _resume_quota(session, auth, proj, state, next_st)
+    view = _resume_view(proj, state, reached, next_st)
+    view.update({
+        "resumable": bool(next_st) and proj.status != "processing",
+        "charges": est is not None,
+        "estimate_source": source,
+        "quota": quota,
+    })
+    return view
+
+
+@router.post("/{uid}/resume")
+async def resume_project(
+    uid: str,
+    auth: CurrentUser,
+    request: Request,
+    body: ResumeIn | None = None,
+    session: AsyncSession = Depends(db_session),
+) -> dict:
+    """Continue a paused project from the boundary it stopped at.
+
+    Safe to call twice. The project row is locked for the whole decision, so a
+    double click serialises: the first call opens the run and flips the project
+    to ``processing``, the second sees that and answers ``already_running`` with
+    the same ``job_id`` instead of starting a second, billed, copy of the work.
+
+    Nothing is re-uploaded and nothing already finished is re-run: the frames,
+    proxies or WAVs the interrupted stage needs are still on the server (only a
+    SUCCESSFUL stage purges them), and the run this opens is priced on that one
+    stage. If the window is still empty, the resumed run simply pauses again —
+    that is not an error, and the answer says so through ``quota.fits``.
+    """
+    allow_wallet = bool(body.allow_wallet) if body is not None else False
+    # FOR UPDATE, and held until this request commits: the lock is what makes a
+    # second click wait for the first one's answer instead of racing it.
+    proj = (
+        await session.execute(
+            select(VideoProject)
+            .where(VideoProject.uid == uid, VideoProject.user_id == auth.user_id)
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if proj is None:
+        raise HTTPException(404, "ไม่พบโปรเจกต์นี้")
+    if proj.origin != "local":
+        raise HTTPException(400, "endpoint นี้ใช้ได้เฉพาะโปรเจกต์ local-render")
+
+    state, reached, next_st = _resume_plan(proj)
+
+    if proj.status == "processing" and proj.job_id:
+        quota, est, source = await _resume_quota(session, auth, proj, state, next_st)
+        view = _resume_view(proj, state, reached, next_st)
+        view.update({
+            "action": "already_running", "job_id": proj.job_id, "run_id": None,
+            "resumed": False, "charges": est is not None, "estimate_source": source,
+            "quota": quota,
+            "detail": "งานนี้กำลังทำอยู่แล้ว",
+        })
+        return view
+
+    paused = proj.status == "paused_quota"
+    task = str((state or {}).get("task") or "") if paused else ""
+
+    if task:
+        est = resume_mod.estimate_for(state, engine=proj.engine, precision=proj.precision)
+        if est is None:  # pragma: no cover — is_current() already vouched for it
+            raise HTTPException(409, "ข้อมูลการทำต่อไม่ครบ — กรุณาเริ่มขั้นตอนนี้ใหม่")
+        job_id = str((state or {}).get("job_id") or f"vlocal_{uid[:8]}")
+        run_id = await start_paid_run(
+            auth, request, est,
+            allow_wallet=allow_wallet, job_id=job_id, reference_id=uid,
+            mode=proj.mode, engine=proj.engine, precision=proj.precision,
+        )
+        async with release_on_error(run_id):
+            queued = {"step": "queued", "message": "ทำงานต่อจากจุดที่หยุดไว้…", "resumed": True}
+            await session.execute(text("SET search_path TO core, public"))
+            existing = await session.get(Job, job_id)
+            if existing:
+                existing.status = "queued"
+                existing.progress = 2
+                existing.result = queued
+                existing.error = None
+            else:
+                session.add(Job(
+                    id=job_id, tenant_id=auth.tenant_id, type="video_edit",
+                    status="queued", progress=2, result=queued,
+                ))
+            await bind_tenant_search_path(session, auth.tenant_slug)
+            proj.status = "processing"
+            proj.job_id = job_id
+            proj.error_msg = None
+            # The ticket stays: this stage is being attempted again, and if the
+            # window is still empty the worker will stamp the same ticket paused
+            # once more. ``resumes`` is what tells a support question apart from
+            # a loop.
+            proj.resume_state = {
+                **(state or {}),
+                "paused": False,
+                "job_id": job_id,
+                "resumes": int((state or {}).get("resumes") or 0) + 1,
+                "resumed_run_id": run_id,
+            }
+            await session.commit()
+            await _enqueue(
+                job_id, task, run_id=run_id, user=auth.user, **dict((state or {}).get("kwargs") or {}),
+            )
+        quota, _, source = await _resume_quota(session, auth, proj, state, next_st)
+        view = _resume_view(proj, proj.resume_state, reached, next_st)
+        view.update({
+            "action": "server_job", "job_id": job_id, "run_id": run_id, "resumed": True,
+            "charges": True, "estimate_source": source, "quota": quota,
+            "detail": None,
+        })
+        log.info("local_resume_enqueued", uid=uid, stage=next_st, task=task, run_id=run_id)
+        return view
+
+    if next_st is None or proj.status == "done":
+        quota, est, source = await _resume_quota(session, auth, proj, state, next_st)
+        view = _resume_view(proj, state, reached, next_st)
+        view.update({
+            "action": "nothing_to_resume", "job_id": None, "run_id": None, "resumed": False,
+            "charges": est is not None, "estimate_source": source, "quota": quota,
+            "detail": "ไม่มีขั้นตอนค้างอยู่",
+        })
+        return view
+
+    # The next boundary belongs to the client — the local renders, the
+    # voiceover, and the one paid call the client drives itself (plan-dub,
+    # whose numbers exist only on the user's machine). There is nothing for the
+    # server to enqueue, so it hands back the step and stops saying "paused":
+    # a project left on paused_quota for a step that costs nothing would show
+    # "out of quota" on every screen forever.
+    if paused:
+        proj.status = _resting_status(proj)
+        proj.error_msg = None
+        await session.commit()
+    quota, est, source = await _resume_quota(session, auth, proj, state, next_st)
+    view = _resume_view(proj, state, reached, next_st)
+    view.update({
+        "action": "client_step", "job_id": None, "run_id": None, "resumed": True,
+        "charges": est is not None, "estimate_source": source, "quota": quota,
+        "detail": None,
+    })
+    log.info("local_resume_client_step", uid=uid, stage=next_st, status=proj.status)
+    return view
 
 
 @router.put("/{uid}/local-edit-script")
@@ -1555,6 +2021,7 @@ async def put_local_edit_script(
         json.dumps(edit_script, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     proj.edit_script_path = str(edit_script_path.relative_to(root))
+    proj.stage = advance_stage(proj.stage, "analyze", proj.mode)
     await session.commit()
     # Only the file that changed — see put_local_timeline. Re-uploading the
     # whole project made every draft save take about a minute, which the web
@@ -1772,14 +2239,14 @@ async def reedit_dub_scenes(
         output_dir.mkdir(parents=True, exist_ok=True)
         preview_stage.write_bytes(await preview.read())
         preview_sec = await _measure_upload(preview_stage, label="พรีวิว", max_short_side=PROXY_MAX_SHORT_SIDE)
+        est = estimator.estimate_run(
+            # The re-edit call samples every file at the provider default,
+            # whatever the project's precision.
+            kind="reedit", engine=proj.engine, precision="standard",
+            clip_secs=[*proxy_secs, preview_sec],
+        )
         run_id = await start_paid_run(
-            auth, request,
-            estimator.estimate_run(
-                # The re-edit call samples every file at the provider default,
-                # whatever the project's precision.
-                kind="reedit", engine=proj.engine, precision="standard",
-                clip_secs=[*proxy_secs, preview_sec],
-            ),
+            auth, request, est,
             allow_wallet=allow_wallet, job_id=f"vlocal_{uid[:8]}", reference_id=uid,
             mode=proj.mode, engine=proj.engine, precision=proj.precision,
         )
@@ -1826,6 +2293,16 @@ async def reedit_dub_scenes(
         await bind_tenant_search_path(session, auth.tenant_slug)
         proj.status = "processing"
         proj.job_id = job_id
+        # A re-cut redoes the analyze boundary, so it never advances `stage`;
+        # it still gets a ticket, so a pause here is resumable like any other.
+        _open_stage(
+            proj, stage="reedit", est=est, job_id=job_id,
+            task="reedit_dub_scenes_local",
+            task_kwargs={
+                "project_uid": uid, "tenant_slug": auth.tenant_slug,
+                "style_uid": chosen_style_uid, **music_window,
+            },
+        )
         await session.commit()
 
         # style_uid travels with the job; the worker resolves the prose from the

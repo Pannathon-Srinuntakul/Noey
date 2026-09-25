@@ -1,9 +1,11 @@
 # Token billing & usage limits — implementation plan
 
-Status: **built** (2026-09-22; owner-approved decisions of the same day). How it maps onto the
+Status: **built** (2026-09-22; owner-approved decisions of the same day), **revised 2026-09-26**
+— nothing is reserved up front any more: a run is charged per vendor request as it works and
+pauses instead of failing when the plan's window runs out (§4.1, §9). How it maps onto the
 code, every deviation and the API contracts: `docs/token-billing-design.md` (§18–§22). Not built
-yet: the §8 plan-feature enforcement (a follow-up after the website redesign), the noey-frontend
-account pages, and the owner's console steps (live Stripe keys, vendor-side spend caps).
+yet: the noey-frontend account pages and the owner's console steps (live Stripe keys,
+vendor-side spend caps).
 
 ## 1. The unit
 
@@ -42,7 +44,14 @@ so FX or vendor price moves change only our margin, never how fast a user's limi
 | Max | 6,990 | 35x | 28M | Weekly + 5-hour | 5 |
 
 - Weekly = monthly ÷ 4.33. 5-hour = 40% of weekly. Windows start at first use (rolling).
-- Limits are checked at job START; a started job finishes (bounded by the per-job ceiling below).
+- **Nothing is held up front** (owner, 2026-09-26): a run is charged per vendor request as it
+  works, not against an estimate of what it might use. A run that outgrows a window it started
+  inside still finishes, and the overshoot counts (>100% is allowed).
+- The only thing refused before starting is the impossible: a run bigger than the plan's
+  LARGEST enforced window even when that window is empty, and footage longer than a single
+  model request can carry (§9). Neither waiting for a reset nor topping up would help.
+- A run that empties the window mid-way **pauses**, it does not fail: the project keeps
+  everything it produced and the user resumes it when the window rolls or with their balance.
 - Extra jobs beyond the concurrency cap wait in a queue instead of failing.
 - Tokens are refunded when a job fails because of us; the vendor cost stays on our books.
 
@@ -65,18 +74,28 @@ billed seconds. Gaps to close:
 
 ## 4. Three guard layers
 
-1. **Pre-flight estimate + reservation.** In the wizard, as soon as files are chosen
-   (duration known client-side): estimate from mode, precision and duration (video ≈ 100 tok/s
-   standard, 300 high, × rate; STT seconds × 51.75; + prompt + max output). Show
-   "uses about 18% of your Weekly limit"; block before upload when it does not fit.
-   On start, atomically reserve the estimate (DB row lock / Redis Lua) so parallel jobs cannot
-   overspend. On finish, settle to actual and release the difference.
+1. **Pre-flight estimate, then charge as the work happens.** In the wizard, as soon as files
+   are chosen, the server estimates from mode, precision and duration (video ≈ 100 tok/s
+   standard, 300 high, × rate; STT seconds × 51.75; + prompt + max output) and shows
+   "uses about 18% of your Weekly limit". That figure is advice and the run's ceiling — it is
+   **not** a gate on the plan's quota (owner, 2026-09-26: the reservation held ~104k where a
+   real cut spends ~70k, so a user with 90k left was refused a job they could afford).
+   Refused at start, both about impossibility rather than about having enough left: footage
+   longer than one model request can carry, and a run bigger than the plan's largest enforced
+   window even when empty. Every recorded vendor request then charges its own rate-card tokens
+   under the per-user row lock — on the windows up to their headroom, then, only with the
+   user's consent given at start, on the top-up balance — in the same transaction as the usage
+   row, so parallel jobs cannot spend the same headroom twice. The end of the run settles the
+   difference between what the outcome says the user owes and what the run already paid.
 2. **Per-call guard in the gateway.** Before each AI call: `spent_in_job + this_call_max`
    (input counted before sending, output bounded by `max_output_tokens` + thinking budget,
-   STT known from audio length) must stay within the job ceiling = reservation × 1.2.
-   Otherwise do not send; stop the job ("stopped: limit reached") and cancel its remaining
-   worker steps. A sent call cannot be stopped midway, so the maximum overshoot is one call.
-   If this fires, charge the user only the reservation; log estimate vs actual.
+   STT known from audio length) must stay within BOTH the job ceiling (= estimate × 1.2) and
+   what is left of the plan's window. Otherwise do not send. Past the job ceiling the run
+   stops ("stopped: limit reached"), its remaining worker steps are cancelled and the user is
+   charged at most the estimate. Out of plan quota the run **pauses** instead: the project
+   keeps everything it produced, carries which window ran out, when it resets and whether the
+   balance would cover finishing, and the user resumes it from the same stage. A sent call
+   cannot be stopped midway, so the maximum overshoot is one call; log estimate vs actual.
 3. **System-wide circuit breaker.** Daily total spend cap (admin-configurable) checked in the
    gateway; when hit, refuse new jobs and alert the admin. Plus vendor-side caps: Google Cloud
    budget alerts / API key quotas, ElevenLabs prepaid balance without auto top-up.
@@ -87,7 +106,10 @@ billed seconds. Gaps to close:
 - Web editor + desktop: follow **docs/design/editor-limits.md** (owner design 2026-09-22 — Thai labels
   `โควตารายเดือน` / `โควตารายสัปดาห์` / `โควตารอบ 5 ชั่วโมง`, usage card, near-limit banner, quota-exhausted
   modal, one-line notices, plans list with change-plan + confirm/consent modal) plus the wizard estimate.
-  Desktop uses the same backend (enforced automatically); its UI gap goes in `PARITY.md`.
+  Since 2026-09-26 the quota-exhausted modal is reached from a project the run PAUSED, not from a
+  refused start: it names the window, its reset time and the balance option, and its action is
+  "resume", never "start over". Desktop uses the same backend (enforced automatically); its UI gap
+  goes in `PARITY.md`.
 - noey-frontend account pages: the same meters.
 - Admin: real tokens + ฿ cost per user/job; cost per 1M and margin per 1M; editable
   rate-card reference (฿50) and sell price (฿250); correct default vendor prices
@@ -126,8 +148,11 @@ billed seconds. Gaps to close:
 
 ## 7. Tests
 
-Rate-card conversion, window math (rolling start, resets), reservation races, per-call guard
-stop, refunds, concurrency queue, circuit breaker, and admin/user endpoint security.
+Rate-card conversion, window math (rolling start, resets), parallel charges never spending the
+same headroom twice, the start refusals (`run_too_large`, footage over what one request holds),
+per-call guard stop, the quota pause and the project it leaves resumable, settle trueing up
+what the run already paid, refunds, concurrency queue, circuit breaker, and admin/user endpoint
+security.
 
 ## 8. Plan features promised by the website (source of truth: noey-frontend `lib/plans.ts`)
 
@@ -154,3 +179,35 @@ control with an upgrade hint, block uploads over the footage/project limit befor
 Over-limit accounts when enforcement starts (owner, 2026-09-22): existing projects stay openable
 and editable; creating a NEW project is blocked until the user deletes down below the limit.
 Nothing is ever deleted automatically.
+
+The "footage per project" row is the PLAN's cap. For the modes that send the whole project to
+the model in one video request (dub_first, highlight) a second, lower cap applies on top of it —
+1 hour at Standard, ~44 minutes at High (§9). The paid plans' 2 h therefore only ever applies to
+the modes that send audio per clip.
+
+## 9. Owner decisions added 2026-09-26
+
+- **Nothing is reserved at start.** A start used to hold the whole server-side estimate against
+  the plan's windows, which refused work that would have fitted: the estimate holds ~104k where
+  a real cut spends ~70k, so a user with 90k left was refused a job they could afford. The run
+  now opens holding nothing and is charged per vendor request as it goes; the end of the run
+  settles the difference. The estimate keeps its two other jobs — the wizard percentage and the
+  run's own ceiling (× 1.2) — and the admin still stores estimate vs actual per run.
+- **One pre-flight check survives, and it is about impossibility.** A run bigger than the plan's
+  largest enforced window even when that window is completely empty is refused (`run_too_large`,
+  422): waiting for the reset or topping up cannot make it work. A window SMALLER than the run
+  never governs it — Pro's 5-hour window is 40% of its weekly one, so an hour of footage
+  outgrows it however empty it is — so the check measures against the biggest window only, and
+  such a run is allowed to overshoot the small window while it runs.
+- **Running out of quota is a pause, not an error.** The project goes to `paused_quota` carrying
+  which window ran out, when it resets and whether the balance would cover finishing. Everything
+  the run produced is kept and the user resumes from the stage it stopped at. It is the one
+  status that must always be restartable.
+- **Footage cap for the single-request video modes: 1 hour.** Those modes (dub_first, highlight)
+  send the whole project to the model in ONE video request, so the cap is derived from the
+  model's input context divided by the per-second video token cost rather than typed in twice:
+  80% of a 1M-token context ÷ 100 tokens/s = 8,000 s at Standard, cut to the owner's 1-hour rule;
+  ÷ 300 tokens/s = ~44 minutes at High, where the context binds first. The hour is a product
+  decision, so an unlimited account is exempt from it like any other plan rule; the context
+  ceiling is not a decision at all and binds even there. `GET /usage/me` reports both numbers so
+  a client can refuse over-long footage before uploading anything.

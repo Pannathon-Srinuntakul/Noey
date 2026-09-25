@@ -61,7 +61,9 @@ function PipelineHost({
     mediaKey,
     stopping,
     editScript,
-    showEditor
+    showEditor,
+    resumeState,
+    resumeBusy
   } = pipeline
   const updatedAt = pipeline.project.updatedAt
 
@@ -95,6 +97,8 @@ function PipelineHost({
     stopping,
     editScript,
     showEditor,
+    resumeState,
+    resumeBusy,
     updatedAt,
     publish
   ])
@@ -281,6 +285,10 @@ export function JobsProvider({
     (pipeline: ProjectPipeline, previousStep: ProjectStep) => {
       const name = pipeline.project.name
       const failed = pipeline.step === 'error'
+      // A quota pause reaches this path like any other resting state, but it
+      // is neither a success nor a failure: nothing broke, and nothing is
+      // finished. Its own wording, and no "งานเสร็จแล้ว" notification.
+      const paused = pipeline.step === 'paused'
       // Named after the state REACHED, not the one that was running: a dub run
       // now finishes out of 'silent_rendering', and keying off that produced
       // "กำลังตัดวิดีโอ (เงียบ) เสร็จแล้ว".
@@ -292,10 +300,12 @@ export function JobsProvider({
       showToast(
         failed
           ? { text: 'ทำงานไม่สำเร็จ', detail: `${name} · ${body}` }
-          : { text: reached, detail: name, variant: 'ok' }
+          : paused
+            ? { text: 'หยุดไว้ชั่วคราว — โควตาหมด', detail: `${name} · กดทำต่อได้ในหน้าโปรเจกต์` }
+            : { text: reached, detail: name, variant: 'ok' }
       )
       void window.noey.notify.show({
-        title: failed ? 'ทำงานไม่สำเร็จ' : 'งานเสร็จแล้ว',
+        title: failed ? 'ทำงานไม่สำเร็จ' : paused ? 'หยุดไว้ชั่วคราว' : 'งานเสร็จแล้ว',
         body: `${name} · ${body}`,
         projectUid: pipeline.project.uid
       })

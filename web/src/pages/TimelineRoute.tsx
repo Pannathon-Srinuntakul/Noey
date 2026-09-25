@@ -1,8 +1,10 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useJobs } from '../lib/jobs'
 import { useRouter } from '../lib/router'
 import { useStableCallback } from '../lib/useStableCallback'
+import { countShotsWithAlternates, segmentIndexForCutId } from '../lib/shotSwap'
 import { VideoTimelineEditor } from '../components/TimelineEditor'
+import { ShotSwapReview } from '../components/projects/ShotSwapReview'
 
 /**
  * Route that owns the timeline editor mount.
@@ -15,6 +17,11 @@ import { VideoTimelineEditor } from '../components/TimelineEditor'
  * with the edit target, script/timeline, caption lines and music callbacks.
  * Calling it here rather than at the button press means landing on this route
  * by any path (back/forward, a future deep link) is still configured.
+ *
+ * It also owns ปรับช็อต: the shot-swap screen lives OUTSIDE the editor (it is
+ * the same screen the project page's button opens, over the same project
+ * pipeline), so the editor can only offer the key — this route is what can act
+ * on it.
  */
 export default function TimelineRoute({ uid }: { uid: string }): React.JSX.Element {
   const { jobFor } = useJobs()
@@ -27,6 +34,8 @@ export default function TimelineRoute({ uid }: { uid: string }): React.JSX.Eleme
    * skipped the reconfigure — the editor then edited B's cuts and saved them
    * into A. The uid, not a boolean, is what says "already configured". */
   const configuredFor = useRef<string | null>(null)
+  /** The cut Enter was pressed on, or null while the swap screen is closed. */
+  const [swapCutId, setSwapCutId] = useState<string | null>(null)
 
   useEffect(() => {
     if (!job) return
@@ -44,6 +53,13 @@ export default function TimelineRoute({ uid }: { uid: string }): React.JSX.Eleme
     navigate({ name: 'detail', uid })
   })
 
+  // Same stability, same reason. Offered only when the cut actually has a
+  // backup shot somewhere — exactly the condition that enables the project
+  // page's ปรับช็อต button, so the key is never a press that leads nowhere.
+  const openShotSwap = useStableCallback((cutId: string): void => {
+    setSwapCutId(cutId)
+  })
+
   if (!job) {
     return (
       <div className="flex flex-1 items-center justify-center">
@@ -59,13 +75,29 @@ export default function TimelineRoute({ uid }: { uid: string }): React.JSX.Eleme
     )
   }
 
+  const canShotSwap =
+    (job.mode === 'dub_first' || job.mode === 'highlight') &&
+    countShotsWithAlternates(job.editScript) > 0
+
   return (
-    <VideoTimelineEditor
-      uid={uid}
-      mode={job.mode}
-      projectName={job.project.name}
-      onClose={close}
-      onSaved={close}
-    />
+    <>
+      <VideoTimelineEditor
+        uid={uid}
+        mode={job.mode}
+        projectName={job.project.name}
+        onClose={close}
+        onSaved={close}
+        onOpenShotSwap={canShotSwap ? openShotSwap : undefined}
+      />
+      {swapCutId ? (
+        <ShotSwapReview
+          job={job}
+          // A cut id the script does not explain (a scene added in the editor)
+          // opens the review at the start rather than at a guessed shot.
+          startAt={segmentIndexForCutId(swapCutId) ?? 0}
+          onClose={() => setSwapCutId(null)}
+        />
+      ) : null}
+    </>
   )
 }

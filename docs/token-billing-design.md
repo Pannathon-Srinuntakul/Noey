@@ -1,6 +1,9 @@
 # Token billing — implementation design
 
-Status: **built** (2026-09-22) — CORE-A §18, CORE-B §19, admin §20, editor §21, review fixes §22. Maps `docs/token-billing-plan.md` (owner-approved, the
+Status: **built** (2026-09-22) — CORE-A §18, CORE-B §19, admin §20, editor §21, review fixes §22 —
+and **revised 2026-09-26**: the start-time reservation is gone, a run is charged per vendor request
+as it goes, and a run that empties the plan's window pauses instead of failing (§6.1, plan §9).
+Maps `docs/token-billing-plan.md` (owner-approved, the
 source of every number below) onto this codebase. Implementers: read the plan first, then this.
 If you must deviate, edit this file and say why in §15 "Deviations log".
 
@@ -17,7 +20,7 @@ reads, which must keep working).
 
 | Area | Today | Change |
 |---|---|---|
-| Limit | `check_limit` in `packages/llm/usage.py`: raw vendor tokens per **UTC day**, `settings.plan_token_limit`, checked before **every** call | Rate-card tokens, rolling 5h/weekly/monthly windows, checked at **job start** with a reservation; per-call guard is a job-ceiling check only |
+| Limit | `check_limit` in `packages/llm/usage.py`: raw vendor tokens per **UTC day**, `settings.plan_token_limit`, checked before **every** call | Rate-card tokens, rolling 5h/weekly/monthly windows, **charged per vendor request as the run goes** (nothing held at start, 2026-09-26); the per-call guard holds both the job ceiling and what is left of the window |
 | Recording | `record_usage` via `asyncio.ensure_future` (fire-and-forget, errors swallowed); only successful calls | Awaited, retried, Redis outbox fallback; every attempt that reached the vendor, with `status` |
 | STT | `_record_stt(transcript)` once per run after the whole batch (`services/worker/tasks.py:86`) | One row per clip as soon as it is billed, `keyterms` flag |
 | Job identity | `core.jobs.id` is deterministic and **reused** per project (`vlocal_<uid[:8]>`) | New `core.ai_runs` row per paid run (`run_id`); usage rows carry both `run_id` and `job_id` |
@@ -42,10 +45,10 @@ called from `transcribe_video`, `plan_talking_local`, `plan_speech_local`.
 | `packages/billing/vendor_cost.py` (new) | `cost_thb_for_llm/stt` from admin `cost_config` + FX (cached 60 s) |
 | `packages/billing/fx.py` (new) | Fetch + store + resolve the USD→THB rate |
 | `packages/billing/metering.py` (new) | Durable usage-row writes, outbox, `run.actual_tokens` accrual |
-| `packages/billing/runs.py` (new) | Reserve / start (slot) / settle / refund / stop; window math; row locks |
+| `packages/billing/runs.py` (new) | Open / charge as spent / start (slot) / settle / refund / stop; window math; the quota snapshot a task is stopped by; row locks |
 | `packages/billing/guard.py` (new) | Per-call guard (`before_llm_call`, `before_stt_clip`), stop flags, circuit breaker |
 | `packages/billing/vendor_limits.py` (new) | Redis Lua token buckets (Gemini RPM/TPM) + lease semaphore (ElevenLabs) |
-| `packages/billing/wallet.py` (new) | Lots, ledger, top-up credit, reserve/debit/refund, expiry |
+| `packages/billing/wallet.py` (new) | Lots, ledger, top-up credit, debit/refund (nothing is reserved), expiry |
 | `packages/billing/plan_change.py` (new) | Stripe-independent upgrade / downgrade / cancel / payment-failed / grace |
 | `packages/billing/free_tier.py` (new) | Per-IP / per-device free-tier limits (Redis, fail-open) |
 | `packages/billing/topup.py` (new) | Stripe Checkout one-time (PromptPay/card) + mock path |
@@ -59,7 +62,7 @@ called from `transcribe_video`, `plan_talking_local`, `plan_speech_local`.
 | `services/api/routers/wallet.py` (new) | `/wallet/me`, `/wallet/checkout`, mock complete |
 | `services/api/routers/admin.py` | Window reset, reconciliation, accuracy, FX, billing config, breaker |
 | `services/api/routers/billing.py` + `packages/billing/webhooks.py` | Top-up events (`mode=payment`) |
-| `services/api/billing_start.py` (new) | `start_paid_run(...)` helper every AI route calls (reserve + free-tier + breaker) |
+| `services/api/billing_start.py` (new) | `start_paid_run(...)` helper every AI route calls (footage cap + `run_too_large` + breaker + free-tier, then open the run row) |
 | `services/worker/tasks.py` | `run_id` kwarg on every AI task; slot acquire; settle in `finally`; per-clip STT; new crons |
 
 ---
@@ -107,7 +110,7 @@ Index `(user_id, created_at)` and `(run_id)`. Legacy rows: `tokens`/`cost_thb` n
 
 Add `run_id`, `job_id`, `status`, `tokens`, `rate_version`, `cost_thb`, `fx_rate`, `idem_key` (as above) + `keyterms` Boolean default false + `clip_index` Integer null. `audio_sec` becomes per clip.
 
-### 3.3 `ai_runs` (new) — one paid run = reservation + estimate vs actual
+### 3.3 `ai_runs` (new) — one paid run = estimate vs what it actually spent
 
 | Column | Type | Notes |
 |---|---|---|
@@ -118,13 +121,13 @@ Add `run_id`, `job_id`, `status`, `tokens`, `rate_version`, `cost_thb`, `fx_rate
 | `kind` | String(32) | `analyze_video`, `analyze_frames`, `transcribe_audio`, `plan_dub`, `reedit`, `plan_effects`, `distill_style`, `server_pipeline`, `voiceover` |
 | `mode`, `engine`, `precision` | String(32) null | estimator inputs |
 | `media_sec` | Float default 0 | seconds the estimate used |
-| `estimate_tokens` | BigInteger | |
-| `reserved_tokens` | BigInteger | part held against plan windows |
-| `reserved_wallet_satang` | BigInteger default 0 | part held against wallet |
+| `estimate_tokens` | BigInteger | the ceiling's base and the `limit_stop` charge cap; nothing is held against it |
+| `reserved_tokens` | BigInteger | legacy — always 0 since 2026-09-26 (nothing is held) |
+| `reserved_wallet_satang` | BigInteger default 0 | satang this run is ALLOWED to take from the balance (the user's consent at start), not satang held |
 | `ceiling_tokens` | BigInteger | `ceil(estimate × 1.2)` |
 | `actual_tokens` | BigInteger default 0 | accrued per recorded row (same txn) |
-| `charged_tokens` | BigInteger null | set at settle (windows part) |
-| `charged_wallet_satang` | BigInteger null | set at settle |
+| `charged_tokens` | BigInteger null | windows part, accrued per charged request and trued up at settle |
+| `charged_wallet_satang` | BigInteger null | balance part, same |
 | `status` | String(16) | `queued` → `running` → `settled` / `stopped` / `refunded` / `cancelled` / `released` |
 | `outcome` | String(48) null | `ok`, `limit_stop`, `our_failure`, `user_cancel`, `user_error`, `orphaned` |
 | `unlimited` | Boolean | admin/internal: nothing held, nothing charged, still recorded |
@@ -141,9 +144,9 @@ Indexes: `(user_id, status)`, `(created_at)`.
 | `five_hour_started_at`, `five_hour_used` | timestamptz null, BigInteger 0 | |
 | `weekly_started_at`, `weekly_used` | same | |
 | `monthly_started_at`, `monthly_used` | same | Free only is *enforced*; always tracked |
-| `reserved_tokens` | BigInteger 0 | sum of open reservations |
+| `reserved_tokens` | BigInteger 0 | legacy — always 0 since 2026-09-26; `open_run` zeroes a hold left by an older run so it cannot shrink the headroom forever |
 | `wallet_balance_satang` | BigInteger 0 | cache of Σ lot remaining (not expired) |
-| `wallet_reserved_satang` | BigInteger 0 | |
+| `wallet_reserved_satang` | BigInteger 0 | legacy, zeroed the same way |
 | `pending_plan`, `pending_plan_at` | String(32) null, timestamptz null | downgrade / cancel scheduled |
 | `grace_until` | timestamptz null | payment-failed grace |
 | `updated_at` | timestamptz | |
@@ -197,18 +200,42 @@ PLAN_LIMITS = {
 - Unknown plan → free. `enterprise` or `user.is_admin` → `is_unlimited` (no windows, no concurrency cap beyond 5 for vendor safety, storage unlimited, breaker does not block).
 - `settings.plan_*_monthly_tokens`/`plan_token_limit` removed; `settings.plan_*_storage_bytes` defaults changed to 1/3/5/10/30/60/100 GB and `plan_storage_limit` reads `PLAN_LIMITS` unless an env override is set (keep env hook). Payment-failed grace / pending plan resolution happens in `effective_plan(user, account, now)`.
 
+### Footage one model request can carry (`limits.py`, 2026-09-26)
+
+`VIDEO_CALL_MODES = {dub_first, highlight}` send the WHOLE project to the model in one video
+request, so their footage cap is derived from two constants instead of typed in twice:
+
+```
+MODEL_INPUT_CONTEXT_TOKENS = 1_000_000      # the model's input context, vendor tokens
+FOOTAGE_CONTEXT_SHARE = 0.8                 # the prompt/transcript/answer/thinking need the rest
+VIDEO_CALL_FOOTAGE_CAP_SEC = 3600           # the owner's 1-hour rule (2026-09-26)
+footage_context_ceiling_sec(p) = 1_000_000 × 0.8 // VIDEO_TOKENS_PER_SEC[p]   # 8,000 s / 2,666 s
+video_call_footage_sec(p, unlimited) = ceiling if unlimited else min(3600, ceiling)
+```
+
+So: **1 hour at Standard** (the owner's rule binds), **~44 minutes at High** (the context binds).
+The hour is a product decision and an unlimited account is exempt from it like any other plan
+rule; the context ceiling is not a decision at all — no plan can make a 2-hour request fit a 1M
+context — so it binds even there. The speech modes send audio per clip and keep the plan's own
+`footage_sec` only. Both numbers reach the clients in `GET /usage/me.features`
+(`video_call_footage_sec`, `video_call_modes`) so a client refuses over-long footage before it
+uploads anything.
+
 ### Window math (`runs.py`)
 
-- Window *w* is **active** iff `started_at is not None and now < started_at + length(w)`. Inactive → treated as `used = 0`; it (re)starts at the next reservation (`started_at = now`, `used = 0`).
-- `headroom(w) = limit(w) − used(w) − reserved_tokens` (reservations count against every enforced window).
+- Window *w* is **active** iff `started_at is not None and now < started_at + length(w)`. Inactive → treated as `used = 0`; it (re)starts at the next charge (`started_at = now`, `used = 0`).
+- `headroom(w) = limit(w) − used(w)`. `WindowView.reserved` is still summed for the legacy column but is always 0 (nothing is held since 2026-09-26).
 - `resets_at(w) = started_at + length(w)` when active, else null (UI: "resets 5 h after next use").
-- Charges at settle go to all tracked windows (5h, weekly, monthly), starting any that are inactive.
+- Every charge — per vendor request as the run goes, and the true-up at settle — goes to all tracked windows (5h, weekly, monthly), starting any that are inactive.
+- `windows_for_run(views, estimate)` drops a window SMALLER than the run itself: Pro's 5-hour window is 40 % of its weekly one, so an hour of footage outgrows it however empty it is, and letting it stop the run would make the run unstartable forever. The next window up governs; a run too big for EVERY window never starts (`plan_features.check_run_size`). The same set decides where a charge lands, so a window too small to hold the run does not push its cost onto the user's baht either.
 
 ---
 
 ## 5. Estimator (`packages/billing/estimate.py`)
 
-Runs **server-side only**. The wizard calls `POST /usage/estimate` with durations; every start route recomputes from server-known durations (`ProxyManifestEntry.durationSec`, `local_meta.clips[].durationSec`, `PlanDubIn.clipDurations`, WAV `media_duration`) — the client number is never trusted for the reservation.
+Runs **server-side only**. The wizard calls `POST /usage/estimate` with durations; every start route recomputes from what the server measured on the files it received (§15, 2026-09-22 REVIEW) — a client-stated length is never trusted.
+
+Since 2026-09-26 the estimate no longer holds anything. It has three jobs left: the wizard's "uses about 18 % of your Weekly limit", the run's own `ceiling_tokens` (`ceil(estimate × 1.2)`, which the per-call guard enforces and `limit_stop` charges against), and the `run_too_large` impossibility check at start. Nothing about the plan's remaining quota is decided from it.
 
 ```
 video_in   = Σ clip_sec × (100 if precision=="standard" else 300)       # plan §4.1
@@ -248,38 +275,44 @@ the only real usage so far; re-measure on production and bump `ESTIMATOR_VERSION
 plan_dub, voiceover 8,000 / 4,000 / 1; transcribe_audio, server_pipeline 4,000 + 15 tok per audio second /
 4,000 / 2 (+ STT); plan_effects 4,000 / 2,000 / 1 (effects model); distill_style 3,000 / 1,500 / 1 (effects model).
 `max_output` is above p90 everywhere but deliberately NOT the dub p99 (24.9k = runaway thinking), which would
-reserve ~5× a typical run. The dub system prompt alone is ~4.8k tokens. Frames: (`scene.dub_sample_frame_budget`
+put the ceiling at ~5× a typical run. The dub system prompt alone is ~4.8k tokens. Frames: (`scene.dub_sample_frame_budget`
 + 2 edge frames) × 258 per clip. Video: 100 / 300 tokens per second (plan figures; quality.py measured ~84 / ~348).
 
 ---
 
 ## 6. Guards
 
-### 6.1 Layer 1 — reservation at start (Postgres row lock)
+### 6.1 Layer 1 — start checks, then charge as the run goes (Postgres row lock)
 
 **Choice: Postgres `SELECT … FOR UPDATE` on `usage_accounts`**, not Redis Lua.
-Why: reservations, settle, refunds, wallet debits and the usage-row accrual must be transactional with each other and with durable rows; contention is per user (≤5 concurrent runs), so a row lock costs nothing; the existing Redis layer is deliberately fail-open (`ratelimit.py`), which is wrong for money; one source of truth survives a Redis flush.
+Why: the charge, settle, refunds, wallet debits and the usage-row accrual must be transactional with each other and with durable rows; contention is per user (≤5 concurrent runs), so a row lock costs nothing; the existing Redis layer is deliberately fail-open (`ratelimit.py`), which is wrong for money; one source of truth survives a Redis flush.
 
-`start_paid_run(session, user, kind, estimate, *, allow_wallet, job_id, reference_id, ip, device) -> AiRun` (`services/api/billing_start.py`, logic in `runs.reserve`):
-1. `guard.breaker_open()` → 503 `{"code":"service_paused"}` (Thai detail) unless unlimited.
-2. Free plan → `free_tier.check_start(ip, device, user)` → 429 `{"code":"free_tier_limited"}`.
-3. Lock account row; roll expired windows; resolve effective plan.
-4. `fit = min(headroom(w) for enforced w)`. If `estimate ≤ fit` → hold all on windows. Else overflow = `estimate − max(fit,0)`; wallet need = `ceil(overflow × 35_000 / 1e6)` satang; if `allow_wallet` and available ≥ need → split hold; else 402 `{"code":"limit_reached","window":"weekly","resets_at":ISO,"wallet_can_cover":bool}`.
-5. Insert `ai_runs(status="queued")`, bump `reserved_tokens` / `wallet_reserved_satang`, commit **before** enqueue. If enqueue fails → `runs.release(run_id)`.
+**Nothing is reserved** (owner, 2026-09-26). Holding the whole estimate at start refused work that would have fitted — it holds ~104 k where a real cut spends ~70 k, so a user with 90 k left was refused a job they could afford. `runs.reserve` became `runs.open_run` and `LimitReached` is gone.
+
+`start_paid_run(auth, request, estimate, *, allow_wallet, job_id, reference_id, mode, engine, precision) -> run_id` (`services/api/billing_start.py`, logic in `runs.open_run`):
+1. Footage kinds (`analyze_video` / `transcribe_audio` / `analyze_frames` / `server_pipeline`) → `plan_features.check_footage(user, measured_sec, mode=, precision=)` against the plan's cap and, for a `VIDEO_CALL_MODES` mode, what one request holds at that precision → 422 `{"code":"footage_over_limit", …, "by_precision":bool}`.
+2. `plan_features.check_run_size(user, estimate.tokens)` → 422 `{"code":"run_too_large","window":…}` when the run does not fit the plan's LARGEST enforced window even empty. This is the only quota check left before starting, and it is about impossibility: waiting for the reset or topping up cannot make it work, so it is a 422 (the request's shape), not a 402 (the balance).
+3. `guard.breaker_open()` → 503 `{"code":"service_paused"}` (Thai detail) unless unlimited.
+4. Free plan → `free_tier.check_start(user_id=, ip=, device=)` → 429 `{"code":"free_tier_limited"}`; counted (`count_run`) only after the row is opened.
+5. Lock account row; roll expired windows; zero any hold a pre-2026-09-26 run left behind; insert `ai_runs(status="queued", reserved_tokens=0, reserved_wallet_satang=<consent>)` and commit **before** enqueue. `allow_wallet` records the user's consent as `reserved_wallet_satang` = the balance available now: satang this run MAY spend once its windows are full, not satang held. If enqueue fails → `runs.release(run_id)` (nothing charged).
 6. Pass `run_id=` to the arq task kwargs.
 
-Called in each route in `ai_gate.AI_ROUTES` after request validation and **before files are written**; a later exception in the route releases. `ai_gate.py`'s docstring gains: "every AI route must also call `start_paid_run`"; `tests/test_email_flows.py`-style test asserts each AI route calls it.
+Called in each route in `ai_gate.AI_ROUTES` after request validation and before any upload is moved into place — uploads are staged in `.incoming-*` and MEASURED first (§15, 2026-09-22 REVIEW), so a refused start stores nothing; a later exception in the route releases. `ai_gate.py`'s docstring gains: "every AI route must also call `start_paid_run`"; `tests/test_billing_start.py` asserts each AI route calls it.
 
-Settle `runs.settle(run_id, outcome)` (worker `finally`, sync `plan-dub` inline):
+**Charged as spent.** Every recorded vendor request charges its own rate-card tokens in the SAME transaction as its usage row (`metering._insert` → `runs.apply_spend`, account and run already locked — the money and the evidence for it land together or not at all). `runs.apply_charge` puts the tokens on the governing window up to its headroom, then — only up to the run's remaining wallet allowance, and only when there is real balance — on the top-up lots, and anything still left back on the windows (a started run finishes; the overshoot counts, >100 % allowed). A usage row replayed from the outbox after the run settled accrues on `actual_tokens` but charges nothing (`run_charge_after_settle`), so it cannot undo a refund already decided.
 
-| outcome | charged |
+**Out of quota mid-run** is a pause, not a failure — see §6.2.
+
+Settle `runs.settle(run_id, outcome)` (worker `finally`, sync `plan-dub` inline) charges the DIFFERENCE between what the outcome says the user owes and what the run already paid as it went, and refunds the rest:
+
+| outcome | owed |
 |---|---|
 | `ok`, `user_cancel`, `user_error` | `min(actual, ceiling)` |
-| `limit_stop` (layer 2 fired) | the reservation only (`estimate`) |
+| `limit_stop` (layer 2 fired, ceiling or quota) | `min(actual, estimate)` |
 | `our_failure` (vendor error, bug, timeout, crash, breaker hard stop) | 0 — refund (usage rows keep the vendor cost) |
 | `orphaned` (sweeper; worker died) | 0 |
 
-Distribution: windows take `min(charge, reserved_tokens + max(0, headroom_now))`; remainder from wallet (up to held + balance); anything still left goes onto the windows (overshoot counts, >100 % allowed). Release unused holds. Log `run_settled` with estimate vs actual. `user_error` = new `UserInputError` exception class raised for bad input (missing uploads, bad manifest) in tasks; everything else is `our_failure`.
+`paid = charged_tokens + tokens_for_satang(charged_wallet_satang)`. `owed > paid` → one more `apply_charge`; `owed < paid` → refund, and when nothing at all is owed the baht go back to the lots they came from FIRST (`wallet.refund`), so the windows are only asked for what is left — they never gave the balance's share and must not repay it. Refund cap unchanged: the first `settings.billing_free_refunds_per_day` `our_failure` runs of a UTC day that burned vendor tokens are refunded in full, later ones are charged `min(actual, ceiling)` (status `settled`, outcome still `our_failure`). Log `run_settled` with estimate vs actual. `user_error` = `packages.core.errors.UserInputError` raised for bad input (missing uploads, bad manifest, a content-filter refusal of the user's footage); everything else is `our_failure`.
 
 Sweeper (worker cron, every 10 min): runs `queued`/`running` with `lease_until < now − 10 min` or `created_at < now − job_timeout` → settle `orphaned`.
 
@@ -298,7 +331,14 @@ Sweeper (worker cron, every 10 min): runs `queued`/`running` with `lease_until <
 
 STT: `run_transcription(before_clip=guard.before_stt_clip, on_clip_billed=metering.record_stt_clip)`; `before_stt_clip(sec)` uses `media_duration(wav) × 51.75` the same way; `vendor_limits.elevenlabs_slot()` wraps `_post_stt`.
 
-Stop propagation: `RunBudgetExceeded`/`ServicePaused` propagate out of the task body → task `except` writes job `error` with `result={"step":"stopped","code":"limit_stop","message":"หยุดแล้ว: ถึงขีดจำกัดการใช้งาน"}` and project `status="error"`; `finally` settles. The server chain (`ingest → transcribe → plan_edit → render`) only enqueues the next step on success, so later steps never run; `_abort_if_cancelled` also returns True when the run is `stopped`, covering steps already queued. `RunBudgetExceeded` is not retryable in `_is_retryable`.
+**The plan's window is held here too** (2026-09-26), since it is no longer held at start. The task reads `runs.quota_snapshot(run_id)` once when it begins — the governing window's headroom, its `resets_at`, the spendable balance and this run's allowance — and the meter decrements it locally as the run spends, so the mid-run check costs no query per call. `guard.admit` refuses the call that would go past it and raises `QuotaExhausted` (an OPTIONAL call is skipped instead, exactly as for the ceiling). A snapshot can go stale — a parallel run of the same user spending at the same time — which only means the pause comes one call late; the windows themselves are charged under the account lock and can never be double-spent.
+
+Stop propagation:
+
+- `RunBudgetExceeded` / `ServicePaused` propagate out of the task body → task `except` writes job `error` with `result={"step":"stopped","paused":false,"code":"limit_stop"|"service_paused","message":…}` and project `status="error"`; `finally` settles (`limit_stop` / `our_failure`).
+- `QuotaExhausted` (a subclass, `code="limit_reached"`) is a **pause**: the same job row, with `"paused":true` plus `window` / `label` / `resets_at` / `wallet_can_cover` / `wallet_satang`, and the project goes to `status="paused_quota"` with everything it produced intact. It settles as `limit_stop`. `paused_quota` is in `RESTARTABLE_STATUSES`, so the user resumes from the stage it stopped at — running out of quota must not be worse than crashing.
+- The server chain (`ingest → transcribe → plan_edit → render`) only enqueues the next step on success, so later steps never run; `_abort_if_cancelled` also returns True when the run is `stopped`, covering steps already queued. `RunBudgetExceeded` is not retryable in `_is_retryable`.
+- The synchronous `POST /videos/{uid}/plan-dub` reports the same bodies as 402 (`guard.QuotaExhausted.payload()` for the pause, `limit_stop` otherwise), so the client renders one thing either way.
 
 ### 6.3 Layer 3 — circuit breaker
 
@@ -367,7 +407,7 @@ FX (`packages/billing/fx.py`):
   "usage_pct": 42.0, "period_start": "…", "reset_at": "…"
 }
 ```
-- `used_pct` includes open reservations. `blocked` null when any start is possible. `wallet` null when never purchased.
+- `used_pct` is what has been CHARGED (nothing is reserved since 2026-09-26; it may exceed 100 — a started run finishes). `blocked` = the fullest enforced window has no headroom left; since a start is no longer refused on quota, it means "a run started now pauses unless the balance carries it", not "you cannot start". `wallet` null when never purchased.
 - `usage_pct`/`period_start`/`reset_at`/`by_task[].pct` are **compat fields for `noey-frontend`** (reads `plan, period_start, usage_pct, unlimited, reset_at, by_task`): `usage_pct` = max over enforced windows, `period_start` = binding window start, `reset_at` = its `resets_at`. `by_task[].total_tokens` is **removed** — the frontend agent must stop reading it.
 - `GET /usage/stt` removed (exposes minutes/credits); web/desktop stop calling it.
 
@@ -376,9 +416,11 @@ FX (`packages/billing/fx.py`):
 In: `{"kind": "analyze_video", "mode": "dub_first", "engine": "pro", "precision": "standard", "clips": [{"duration_sec": 34.2, "has_audio": true}], "audio_sec": null}`
 Out: `{"fits": "plan" | "wallet" | "none", "pct": {"weekly": 18.2, "five_hour": 45.5}, "wallet_satang": 0, "binding": "five_hour", "resets_at": "…", "unlimited": false}`. Never tokens. Rate-limited per account (60/min).
 
+Since 2026-09-26 `fits` is **advice, not a verdict**: `"none"` no longer means the start will be refused, it means the run is expected to run the window out and pause part-way unless the balance carries it. The wizard shows it and offers "continue with my balance"; it does not disable the start button on `fits` alone. The refusals that really do stop a start are `run_too_large` and `footage_over_limit` (§9.3), and those are about the run's shape, not its remaining quota.
+
 ### 9.3 Start routes
 
-Every `AI_ROUTES` route accepts optional `allow_wallet` (form field or JSON, default false). Errors (JSON `detail`): 402 `limit_reached` (`window`, `resets_at`, `wallet_can_cover`), 429 `free_tier_limited`, 503 `service_paused`, 403 email (unchanged). Response unchanged (`job_id`); job result gains `step:"waiting_slot"` while queued behind the concurrency cap and `step:"stopped", code:"limit_stop"` on a guard stop.
+Every `AI_ROUTES` route accepts optional `allow_wallet` (form field or JSON, default false — the user's consent for this one run to spend their balance once the windows are full). Errors (JSON `detail`): 422 `run_too_large` (`window`, `plan`), 422 `footage_over_limit` (`limit_sec`, `total_sec`, `by_precision`), 429 `free_tier_limited`, 503 `service_paused`, 403 email (unchanged). **There is no 402 at start any more**: quota is not checked there. Response unchanged (`job_id`); job result gains `step:"waiting_slot"` while queued behind the concurrency cap, and on a stop `step:"stopped"` with `paused:false, code:"limit_stop"|"service_paused"` (a failure) or `paused:true, code:"limit_reached"` plus the window facts (a pause the user resumes).
 
 ### 9.4 Wallet
 
@@ -388,13 +430,13 @@ Every `AI_ROUTES` route accepts optional `allow_wallet` (form field or JSON, def
 | `POST /wallet/checkout` | in `{pack_satang, method}` → `{url}`. Stripe: Checkout `mode=payment`, `currency=thb`, inline `price_data` (product "Noey extra usage"), `payment_method_types=[method]`, metadata `{noey_topup: pack, user_id}`, success/cancel → `settings.frontend_url + "/settings?tab=usage&topup=…"`. Stripe unset **and** `is_local_deployment(settings.postgres_host)` (the same "real deployment" test `assert_production_secrets` uses) → credits a `mock` lot immediately and returns the success URL. Stripe unset on a real deployment → 503. |
 | Webhook | `checkout.session.completed` (`payment_status=paid`) and `checkout.session.async_payment_succeeded` with `mode=payment` + `noey_topup` → `wallet.credit(session_id)` idempotent via unique `stripe_session_id`. The existing `mode != "subscription"` early return in `webhooks.handle_event` branches here instead. |
 
-Consumption rules: only after windows are exhausted (§6.1); refunds on `our_failure` return baht to the lot they came from (or a `refund` lot with that lot's expiry); daily cron `expire_wallet_lots` writes `expire` entries. `ceil` to whole satang per run at settle.
+Consumption rules: only after the governing window is exhausted, only up to the run's allowance (`allow_wallet` consent at start), and debited per charged request as the run goes (§6.1) — not held and not deferred to settle. `reserved_satang` in the body is the legacy column and reads 0. Refunds on `our_failure` return baht to the lot they came from (or a `refund` lot with that lot's expiry); daily cron `expire_wallet_lots` writes `expire` entries. `ceil` to whole satang per charge.
 
 ### 9.5 Admin (`/admin/*`, admin session guard, every write audited)
 
 | Route | Purpose |
 |---|---|
-| `GET /admin/users/{id}` (extended) | windows with real tokens/limits/reserved, wallet, last 50 runs (estimate, actual, charged, outcome, cost_thb) |
+| `GET /admin/users/{id}` (extended) | windows with real tokens/limits, wallet, last 50 runs (estimate, actual, charged, outcome, cost_thb) |
 | `POST /admin/users/{id}/window-reset` `{window}` | reset `five_hour`/`weekly`/`monthly` (audit `window_reset`). Old `/quota-reset` = all windows (kept as alias) |
 | `POST /admin/users/{id}/wallet-adjust` `{amount_satang, note}` | admin credit/debit (audit) |
 | `GET /admin/reconciliation?month=YYYY-MM` | per vendor: Σ vendor units, Σ `cost_thb` (attributed vs unattributed rows with null `user_id`/`run_id`), invoice amount, gap %, `warn` when > 5 % |
@@ -414,7 +456,7 @@ Consumption rules: only after windows are exhausted (§6.1); refunds on `our_fai
 **Vendor limits (Redis, cross-process, `vendor_limits.py`):**
 - Gemini: Lua sliding-window per model family: `noey:vl:gemini:<family>:rpm` and `:tpm` (ZSET of `(ts, id)` + token sum); acquire loops with jittered sleep (max wait `settings.vendor_wait_max_sec=300`, then raise retryable). Settings `gemini_rpm_flash`, `gemini_tpm_flash`, `gemini_rpm_pro`, `gemini_tpm_pro` (defaults = current AI Studio tier limits, env-set).
 - ElevenLabs: lease semaphore ZSET `noey:vl:elevenlabs` (score = lease expiry, 120 s) with `settings.elevenlabs_max_concurrency` (default 5); release in `finally`.
-- Redis down → fail open with a warning (same policy as `ratelimit.py`); the per-user reservation still holds.
+- Redis down → fail open with a warning (same policy as `ratelimit.py`); the per-user charge still lands in Postgres under the account lock, so nothing about the money depends on Redis.
 
 ---
 
@@ -462,11 +504,11 @@ Pure functions over `(session, user, account)`, Stripe-independent, each audited
 | `components/settings/WalletCard.tsx` (new) | balance "เหลือ ฿xx.xx", packs ฿100/300/500/1,000, PromptPay first, history |
 | `pages/SettingsPage.tsx` | UsageTab uses the two above; handles `?topup=` return; no token numbers |
 | `components/settings/TaskBreakdown.tsx` | pct only |
-| `components/wizard/UsageEstimate.tsx` (new) | debounced `POST /usage/estimate` when files/mode/precision change; "ใช้ประมาณ 18% ของ Weekly limit"; blocked state + "ใช้ยอดเงินคงเหลือ" toggle |
-| `components/wizard/WizardStepFiles.tsx`, `WizardStepReview.tsx`, `pages/WizardPage.tsx`, `lib/wizardState.ts` | mount estimate; disable start when `fits=="none"`; carry `allowWallet` |
-| `lib/videosLocalApi.ts`, `lib/useProjectPipeline.ts` | send `allow_wallet`; map 402/429/503 codes |
+| `components/wizard/UsageEstimate.tsx` (new) | debounced `POST /usage/estimate` when files/mode/precision change; "ใช้ประมาณ 18% ของ Weekly limit"; near/over-limit warning + "ใช้ยอดเงินคงเหลือ" toggle |
+| `components/wizard/WizardStepFiles.tsx`, `WizardStepReview.tsx`, `pages/WizardPage.tsx`, `lib/wizardState.ts` | mount estimate; carry `allowWallet`. Since 2026-09-26 `fits=="none"` warns, it no longer disables the start — only the footage/project caps block before upload |
+| `lib/videosLocalApi.ts`, `lib/useProjectPipeline.ts` | send `allow_wallet`; map the 422 (`run_too_large`, `footage_over_limit`) / 429 / 503 refusals, and the paused job row (`paused:true`, `limit_reached`) into "resume", not "error" |
 | `lib/apiError.ts` | parse `detail.code` → Thai messages with reset time |
-| `pages/JobProgressPage.tsx` | `waiting_slot` and `stopped/limit_stop` states |
+| `pages/JobProgressPage.tsx` | `waiting_slot`, `stopped/limit_stop`, and the `stopped/limit_reached` PAUSE (window, reset time, "continue with my balance", resume) |
 | `platform/noey-web.ts` / `lib/authedFetch.ts` | send `X-Noey-Device` |
 
 ### Desktop (`desktop/app/src/renderer/src`, files present on this machine)
@@ -506,7 +548,7 @@ Pure functions over `(session, user, account)`, Stripe-independent, each audited
 | 2026-09-22 (CORE-B) | `/usage/me` also returns `grace_until`, a `label` per limit, and `by_feature: []` | `by_feature` is iterated by the current web/desktop settings screens; always empty so they render "no requests" instead of crashing until the client phase moves them to `limits` |
 | 2026-09-22 (CORE-B) | A multi-task server chain is ONE run: `ingest_video` (and `transcribe_video`, called inline) hand `run_id` on; only the terminal step (`plan_edit` / `analyze_dub_first`) settles; a handing-over step holds the slot 30 min | Settling per step would charge/refund halves of one job. `_abort_if_cancelled` is unchanged: instead every step asks `acquire_slot`, which answers `gone` for a closed run |
 | 2026-09-22 (CORE-B) | `check_limit` → `check_ai_access` (verified-email gate only); `UsageLimitExceeded`, `_period_start`, `sum_tokens_since`, `MODEL_PRICES`, `estimate_cost_usd`, `GET /usage/stt`, `settings.plan_*_monthly_tokens` removed | Limits are checked once at start (reservation) + per call against the run ceiling; nothing counts raw vendor tokens per UTC day any more |
-| 2026-09-22 (CORE-B) | `POST /videos` dub_first reserves as `analyze_frames` (the server chain's `analyze_dub_first` reads sampled frames); talking_head as `server_pipeline` | Matches what the server chain actually sends |
+| 2026-09-22 (CORE-B) | `POST /videos` dub_first is priced as `analyze_frames` (the server chain's `analyze_dub_first` reads sampled frames); talking_head as `server_pipeline` | Matches what the server chain actually sends |
 | 2026-09-22 (ADMIN-UI) | `GET /admin/dashboard` users gain `topup_satang` / `topups` (paid lots — source `stripe`/`mock` — bought in the period, gross) and `wallet_spent_satang` (run debits net of their refunds) — `packages/admin/metrics.py:_wallet_by_user`, test in `test_admin_billing.py` | The admin must show top-up revenue and CORE-B exposed only the balance cache. Admin credits (`adjust`) and refund lots are not revenue; payment fees are not deducted (not tracked per lot) — the admin labels the figure "before the payment fee" |
 | 2026-09-22 (ADMIN-UI) | Admin money: revenue = subscription + top-ups bought in the period (cash basis); profit, break-even and the monthly projection use it. Margin per 1M uses `billing_config.sell_thb_per_1m` (display value), falling back to the rate card's | The owner edits the display sell price in the admin; users are still charged the code constant, which the Pricing tab shows read-only |
 | 2026-09-22 (EDITOR-UI) | The editor names the windows in THAI (`โควตารายเดือน` / `โควตารายสัปดาห์` / `โควตารอบ 5 ชั่วโมง`, `lib/usageLimits.ts` `LIMIT_LABELS`), not the English `label` the API sends | The owner's editor design (docs/design/editor-limits.md, 2026-09-22) and plan §5 supersede the earlier "English limit labels" note; the English labels stay the marketing site's pricing copy. One constant to change if the owner reverses it |
@@ -518,7 +560,7 @@ Pure functions over `(session, user, account)`, Stripe-independent, each audited
 | 2026-09-22 (REVIEW) | **Supersedes CORE-B's "no `billing_input_tokens` at the call sites".** Video call sites pass `billing_video_sec` (Σ seconds of EVERY video file the request attaches, measured on disk: source proxies + reedit preview; cut + video reference; style reference) and `billing_video_precision`; the guard prices them with `estimate.video_input_tokens`. The run-level `media_input_tokens` stays only as the fallback for a call that sends video without saying how much | The run total added once per call missed the reedit preview and the effects reference entirely |
 | 2026-09-22 (REVIEW) | **Supersedes CORE-B's "the gateway does NOT force `max_tokens`".** For a request with no `max_tokens` of its own the guard returns the output the run can still afford — `floor((ceiling − spent − in_flight − input×rate_in) / rate_out)` — and the gateway sends it; it is ≥ the profile's `max_output` whenever the call was admitted. An answer cut off there (`finish_reason == "length"`) is a `limit_stop` (`guard.output_truncated`; an optional call is skipped instead). Parallel calls are each capped at what was left when THEY were admitted | Nothing bounded output, so one admitted call could write ~57k tokens past its budget while the charge stays capped at the ceiling. Runs whose thinking runs away (the measured dub p99, 24.9k output) now stop as `limit_stop` instead of finishing at our cost — re-measure on production |
 | 2026-09-22 (REVIEW) | `UserInputError` moved to `packages/core/errors.py` (the worker re-exports it). A content-filter refusal of the user's footage (`dub_ai`) and a speech-to-text 400/413/415/422 on a file (`ElevenLabsInputRejected`) raise it → `user_error` (charged what was used). Refund cap: a user's first `settings.billing_free_refunds_per_day` (3) `our_failure` runs of a UTC day that burned vendor tokens are refunded; later ones are charged `min(actual, ceiling)` (status `settled`, outcome still `our_failure`). `GET /admin/users/{id}` adds `failed_runs_30d` | Vendor-billed failures caused by the user's input were refunded in full and repeatable until the global breaker paused everyone |
-| 2026-09-22 (REVIEW) | Output model resolution: one resolver per call site (`quality.reedit_model / speech_model / effects_model / cut_style_model`, `llm.config.vision_model / text_model`), used by the call site AND `estimate.model_for`. `MODE_PROFILES`: analyze_frames → vision, reedit → reedit, plan_dub / voiceover → text. Distill-style reserves at the style kind's model | analyze_frames was priced at the Flash engine while the frame path calls the Pro vision model: the guard stopped every such run before its first request |
+| 2026-09-22 (REVIEW) | Output model resolution: one resolver per call site (`quality.reedit_model / speech_model / effects_model / cut_style_model`, `llm.config.vision_model / text_model`), used by the call site AND `estimate.model_for`. `MODE_PROFILES`: analyze_frames → vision, reedit → reedit, plan_dub / voiceover → text. Distill-style is priced at the style kind's model | analyze_frames was priced at the Flash engine while the frame path calls the Pro vision model: the guard stopped every such run before its first request |
 | 2026-09-22 (REVIEW) | Gateway: an attempt cancelled mid-flight (`asyncio.CancelledError` — worker SIGTERM, arq job timeout) is recorded (`status="cancelled"`, streamed usage or the admitted input estimate) before re-raising; a timed-out attempt with no reported usage charges its input estimate to the run meter so retries count against the ceiling | Cancelled attempts were billed by the vendor but never recorded; timed-out retries were each admitted at the full budget |
 | 2026-09-22 (REVIEW) | STT per-file guard: an unmeasurable WAV is priced from its size ÷ 8,000 B/s (an upper bound), never 0 s | Fail-open |
 | 2026-09-22 (REVIEW) | Mock top-up needs `WALLET_MOCK_TOPUP=1` AND a loopback database host (`is_loopback_host`); `assert_production_secrets` refuses the flag on a real deployment. The local `.env` sets it | `is_local_deployment` also matched docker-compose names (`postgres`/`db`), so a compose deployment without Stripe keys minted free balance |
@@ -526,6 +568,11 @@ Pure functions over `(session, user, account)`, Stripe-independent, each audited
 | 2026-09-22 (REVIEW) | Free tier: `check_start` only READS the IP/device day counter; `count_run` increments it after `runs.reserve` succeeded | A 402 refusal spent the daily free runs every account behind the same NAT shares |
 | 2026-09-22 (REVIEW) | A queued run renews `lease_until` on every slot wait; `sweep_orphans` orphans a queued run only when it is older than `QUEUED_MAX_AGE` AND its lease lapsed. A task that arrives for a closed run whose job is still `waiting_slot` ends the job and its project (or style) in `error` ("งานรอคิวนานเกินไป กรุณาเริ่มใหม่") | Swept waiting runs left the job on "รอคิว" forever and the project stuck in processing |
 | 2026-09-22 (REVIEW) | `reference_max_sec` (1,200 s) now caps every style reference (cut AND effects kinds) and the plan-effects reference | Every second is billed video input; only cut styles had a cap |
+| 2026-09-26 | **Supersedes every "reserve at start" row above** (CORE-B's reservation rows, the REVIEW staging row's "THEN the run is reserved", the free-tier row's "after `runs.reserve` succeeded"). `runs.reserve` → `runs.open_run`, which holds nothing; `LimitReached` is gone; `ai_runs.reserved_tokens`, `usage_accounts.reserved_tokens` and `wallet_reserved_satang` are legacy zeros, and `open_run` clears a hold left by a run that started before this change. Everything else those rows describe (measure on the server, stage in `.incoming-*`, count the free-tier run only after the row exists) is unchanged | The estimate holds ~104 k where a real cut spends ~70 k, so a user with 90 k left was refused a job they could afford (owner, 2026-09-26). A pre-flight guess is the wrong place to decide something the real spend answers exactly |
+| 2026-09-26 | **Supersedes CORE-B's "the wallet is debited only at settle" and "limits are checked once at start".** Windows and balance are charged per recorded vendor request, in the same transaction as its usage row (`metering._insert` → `runs.apply_spend` → `apply_charge`); `settle` charges or refunds only the difference between `charge_for(outcome)` and what the run already paid. A refund with nothing owed returns the baht to their lots FIRST and asks the windows only for the rest. A usage row replayed from the outbox after settle accrues but does not charge (`run_charge_after_settle`) | Charging where the spend happens is the only way to stop at the right moment without holding money the run will not use. Refunding the windows for the wallet's share would have paid the user twice |
+| 2026-09-26 | The plan's window is enforced in the per-call guard: the task reads `runs.quota_snapshot` once at start and `guard.admit` raises `QuotaExhausted` (`code="limit_reached"`, a `RunBudgetExceeded` subclass) before the call that would pass it. The worker writes `paused:true` + window facts on the job row and puts the project in `paused_quota` (one of `videos_local.RESTARTABLE_STATUSES`); the run settles `limit_stop`. A stale snapshot only delays the pause by one call | With no hold at start, the window has to be held where the spending happens. Running out of quota must not destroy work the user already paid for — a pause with a resume is worth more than a correct-looking error |
+| 2026-09-26 | The one surviving pre-flight quota check is `plan_features.check_run_size` → 422 `run_too_large`, measured against the plan's BIGGEST enforced window. `runs.windows_for_run` leaves a window smaller than the run out of both the stop and the charge | Pro's 5-hour window is 40 % of its weekly one, so an hour of footage outgrows it however empty it is; stopping on it would make the run unstartable forever, and the plan's own answer (§2) is to let a started run finish and count the overshoot. A run past EVERY window is impossible, and no reset or top-up changes that — hence 422, not 402 |
+| 2026-09-26 | Footage cap for `limits.VIDEO_CALL_MODES` (dub_first, highlight) = `min(VIDEO_CALL_FOOTAGE_CAP_SEC, MODEL_INPUT_CONTEXT_TOKENS × FOOTAGE_CONTEXT_SHARE ÷ VIDEO_TOKENS_PER_SEC[precision])` → 1 h Standard, ~44 min High; unlimited accounts skip the owner's hour but not the context ceiling. `check_footage` returns `by_precision` so the Thai message names the knob that actually moves the cap | The owner asked for "1 hour on dub_first", and one number cannot be right for both precisions: an hour is 360 k tokens at Standard but 1.08 M at High, past the model's input context. Deriving it from the two constants keeps them from drifting apart |
 
 ---
 
@@ -538,8 +585,10 @@ Pure functions over `(session, user, account)`, Stripe-independent, each audited
 | `test_vendor_cost.py`, `test_fx.py` | dated schedule switch at 2027-01-01, long tier, keyterms cost, fetch primary→fallback→last→default, sanity band, override wins (httpx mocked) |
 | `test_metering.py` | row + `actual_tokens` in one txn, retry then outbox, drain idempotent, failed attempt rows, cached tokens extracted |
 | `test_gateway_billing.py` | guard blocks before send, one-call overshoot max, retries re-checked, stop flag, breaker hard stop, limiter called, no `ensure_future` |
-| `test_windows.py` | rolling start on first use, expiry, resets_at, reservations count, overshoot >100 % |
-| `test_runs.py` | reserve/settle/refund/limit_stop/orphaned charge table, wallet split, **race**: N concurrent reserves on one user never exceed headroom (real Postgres, `asyncio.gather`) |
+| `test_windows.py` | rolling start on first use, expiry, resets_at, a window too small to govern the run, overshoot >100 % |
+| `test_runs.py` | opening a run holds nothing, each recorded request charges itself, settle trues up (charge table: ok / limit_stop / our_failure / orphaned), the wallet only with consent and only past the windows, a full window no longer refuses the start, **race**: N concurrent charges on one user never spend the same headroom twice (real Postgres, `asyncio.gather`) |
+| `test_plan_features.py` | the video-call cap derived from the two real constants, video modes only, an hour still starts on Pro, a run too big for every window refused whatever is left, even an admin cannot exceed the model's context |
+| `test_billing_start.py` | every AI route opens a run, a used-up window no longer refuses the start, `run_too_large` and footage-by-precision refusals, wallet consent recorded, a failed enqueue closes the row |
 | `test_concurrency_slots.py` | cap per plan, re-enqueue with defer, lease expiry frees slot |
 | `test_vendor_limits.py` | Lua RPM/TPM + semaphore with fakeredis/real Redis, fail-open |
 | `test_wallet.py` | credit idempotency, FIFO by expiry, refund to lot, expiry cron, satang ceil |
@@ -549,7 +598,7 @@ Pure functions over `(session, user, account)`, Stripe-independent, each audited
 | `test_storage_quota.py` | new GB values, admin unlimited, transfer/upload paths |
 | `test_usage_api.py` | `/usage/me` shape: no token keys anywhere (recursive key scan), compat fields, estimate endpoint, auth |
 | `test_admin_billing.py` | window reset audited, reconciliation 5 % warn, accuracy aggregates, non-admin 401/403 on every new route |
-| `test_worker_billing.py` | per-clip STT rows, settle in `finally` per task, `limit_stop` job result, chain not continued |
+| `test_worker_billing.py` | per-clip STT rows, settle in `finally` per task, `limit_stop` job result, running out of quota pauses the project instead of failing it, chain not continued |
 | web `lib/usageLimits.test.ts`, `components/wizard/UsageEstimate` logic test, `noLeaks.test.ts` extended (no "token" in UI strings); admin `money.test.ts`; desktop `lib/usageLimits.test.ts` |
 
 Keep green: existing suite (5 known failures: `test_dub_render.py` ×3, `test_llm_config.py` ×2). Update tests that pin the old daily quota (`grep -rl "plan_token_limit\|_period_start\|usage_pct" backend/tests`).
@@ -557,6 +606,9 @@ Keep green: existing suite (5 known failures: `test_dub_render.py` ×3, `test_ll
 ---
 
 ## 17. Task split (sequential)
+
+The original build order (2026-09-22), kept as history. Where it says "reservation", read §6.1:
+that layer was rebuilt on 2026-09-26 as open-then-charge-as-spent.
 
 ### CORE-A — rate card, cost recording, estimator, FX
 1. `rate_card.py` + tests.
@@ -613,8 +665,9 @@ Hooks left for CORE-B:
 ## 19. CORE-B status (2026-09-22) — contracts for the client phase
 
 Built: `usage_accounts` / `wallet_lots` / `wallet_ledger` / `users.signup_*` (migration `798eb04b7fef`,
-autogenerated, drift removed, no backfill); `accounts.py` (the row lock), `runs.py` (window math, reserve,
-settle, release, slots, sweeper, admin reset), `guard.py` (per-call ceiling + circuit breaker + alert),
+autogenerated, drift removed, no backfill); `accounts.py` (the row lock), `runs.py` (window math, open,
+charge as spent, settle, release, slots, sweeper, admin reset — the reservation this section originally
+described was removed on 2026-09-26, see §6.1), `guard.py` (per-call ceiling + plan window + circuit breaker + alert),
 `vendor_limits.py` (Gemini RPM/TPM Lua window, ElevenLabs lease semaphore, fail-open), `wallet.py`,
 `topup.py`, `plan_change.py`, `free_tier.py`; `services/api/billing_start.py` wired into every
 `AI_ROUTES` route; worker `billed_task` on every AI task + crons `sweep_runs` (10 min),
@@ -645,9 +698,11 @@ All times are UTC ISO-8601 with `Z`; the browser formats them in the viewer's ti
 }
 ```
 `limits[]` = the plan's ENFORCED windows (Free: monthly; Lite/Starter: weekly; Pro+: weekly + five_hour),
-`used_pct` includes open reservations and may exceed 100. An inactive window has `active:false`,
-`resets_at:null` ("starts at next use"). `blocked` = `{"key","resets_at"}` when the fullest window has no
-headroom (a start then needs `allow_wallet`), else null. `wallet` null until the first purchase/credit.
+`used_pct` is what has been charged and may exceed 100 (a started run finishes). An inactive window has
+`active:false`, `resets_at:null` ("starts at next use"). `blocked` = `{"key","resets_at"}` when the fullest
+window has no headroom left, else null — since 2026-09-26 that no longer refuses a start, it means a run
+started now will PAUSE part-way unless `allow_wallet` and the balance carry it. `wallet` null until the
+first purchase/credit.
 Unlimited (admin / enterprise): `limits: []`, `usage_pct: null`, `storage.quota_bytes: 0`.
 
 ### `POST /usage/estimate`
@@ -656,19 +711,25 @@ In: `{"kind"?: str, "mode"?: "dub_first"|"highlight"|"talking_head"|"speech_scen
 "audio_sec"?: float}` →
 `{"fits": "plan"|"wallet"|"none", "pct": {"weekly": 18.2, "five_hour": 45.5}, "wallet_satang": 0,
 "binding": "five_hour"|null, "resets_at": ISO|null, "unlimited": false}`. `pct` = this run's share of each
-limit; `fits` counts what is already used + reserved; `wallet` = fits only with "continue with my balance"
-(it would pay `wallet_satang`). 422 unknown mode, 429 over 60/min.
+limit; `fits` counts what is already used; `wallet` = fits only with "continue with my balance"
+(it would pay `wallet_satang`). Since 2026-09-26 `fits:"none"` is a warning ("this will run out part-way
+and pause"), not a refusal — the start is not blocked on it. 422 unknown mode, 429 over 60/min.
 
 ### Start routes (every `AI_ROUTES` entry)
 New optional field `allow_wallet` (multipart form field `"true"`/`"false"`; JSON `allow_wallet` on
-`POST /videos/{uid}/plan-dub`). Refusals (JSON `detail` object):
-- 402 `{"code":"limit_reached","window":"weekly","label":"Weekly limit","resets_at":ISO|null,"wallet_can_cover":bool,"wallet_satang":int,"message":"ใช้งานครบ Weekly limit แล้ว[ — ใช้ยอดเงินคงเหลือทำงานนี้ต่อได้]"}`
+`POST /videos/{uid}/plan-dub`) — consent for this one run to spend the balance once its windows are full.
+Refusals (JSON `detail` object); **none of them is about how much quota is left** (2026-09-26):
+- 422 `{"code":"run_too_large","window":"weekly","plan":"lite","message":…}` — bigger than the plan's largest enforced window even when empty.
+- 422 `{"code":"footage_over_limit","limit_sec":int,"total_sec":float,"plan":str,"by_precision":bool,"message":…}` — over the plan's per-project footage cap, or (`by_precision:true`) over what one video request holds at this ความละเอียด.
 - 429 `{"code":"free_tier_limited","message":…}` · 503 `{"code":"service_paused","message":…}` · 507 storage full (string detail, `POST /videos`)
-- `POST /videos/{uid}/plan-dub` only: 402 `{"code":"limit_stop","message":"หยุดแล้ว: ถึงขีดจำกัดการใช้งานของงานนี้"}` when the guard stops the synchronous call.
+- `POST /videos/{uid}/plan-dub` only (it calls the model synchronously): 402 `{"code":"limit_stop","message":"หยุดแล้ว: ถึงขีดจำกัดการใช้งานของงานนี้"}` when the guard stops it on the run's ceiling, and 402 with the pause body below when the plan's window runs out.
 Job rows (`GET /jobs/{id}` → `result`): `{"step":"waiting_slot","message":"รอคิว — มีงานอื่นกำลังทำอยู่"}` while
-queued behind the concurrency cap (status `queued`); `{"step":"stopped","code":"limit_stop"|"service_paused","message":…}`
-(status `error`) when a run is stopped. Header `X-Noey-Device` (random id per install) is read by
-`/auth/register` and every start route (free-tier limits).
+queued behind the concurrency cap (status `queued`); when a run is stopped (status `error`), either
+`{"step":"stopped","paused":false,"code":"limit_stop"|"service_paused","message":…}` — a failure — or the
+PAUSE `{"step":"stopped","paused":true,"code":"limit_reached","window":"weekly","label":"Weekly limit",
+"resets_at":ISO|null,"wallet_can_cover":bool,"wallet_satang":int,"message":"พักงานไว้ก่อน: โควตาหมดระหว่างทำงาน …"}`,
+whose project is left in `paused_quota` with its work intact and is restarted from the same stage. Header
+`X-Noey-Device` (random id per install) is read by `/auth/register` and every start route (free-tier limits).
 
 ### Wallet
 - `GET /wallet/me` → `{"balance_satang":int,"reserved_satang":int,"lots":[{"remaining_satang":int,"expires_at":ISO}],
@@ -680,7 +741,7 @@ queued behind the concurrency cap (status `queued`); `{"step":"stopped","code":"
   deployment: 503. 422 unknown pack/method.
 
 ### Admin (all behind the admin session; writes audited)
-- `GET /admin/users/{id}` adds `limits` (`effective_plan, unlimited, windows:[{key,limit_tokens,used_tokens,reserved_tokens,used_pct,active,resets_at}], quota_window, quota_limit_tokens, quota_used_tokens, quota_used_pct, wallet_balance_satang, pending_plan, grace_until`), `wallet` (the `/wallet/me` body), `runs` (last 50: `id, kind, mode, engine, precision, reference_id, status, outcome, unlimited, media_sec, estimate_tokens, ceiling_tokens, actual_tokens, charged_tokens, charged_wallet_satang, cost_thb, created_at, settled_at`), `estimate_accuracy` (90 days).
+- `GET /admin/users/{id}` adds `limits` (`effective_plan, unlimited, windows:[{key,limit_tokens,used_tokens,reserved_tokens,used_pct,active,resets_at}], quota_window, quota_limit_tokens, quota_used_tokens, quota_used_pct, wallet_balance_satang, pending_plan, grace_until` — `reserved_tokens` is kept in the shape and reads 0 since 2026-09-26), `wallet` (the `/wallet/me` body), `runs` (last 50: `id, kind, mode, engine, precision, reference_id, status, outcome, unlimited, media_sec, estimate_tokens, ceiling_tokens, actual_tokens, charged_tokens, charged_wallet_satang, cost_thb, created_at, settled_at`), `estimate_accuracy` (90 days).
 - `GET /admin/dashboard`: each user also carries the `limits` fields above (flattened); plus `billing_config`, `circuit_breaker`, `estimate_accuracy` for the period.
 - `POST /admin/users/{id}/window-reset` `{"window":"five_hour"|"weekly"|"monthly"}` → the user's `limits` facts (audit `window_reset`). `POST …/quota-reset` = all three (audit `quota_reset`).
 - `POST /admin/users/{id}/wallet-adjust` `{"amount_satang": ±int, "note": str(1–200)}` → `/wallet/me` body (audit `wallet_adjust`).
@@ -690,7 +751,8 @@ queued behind the concurrency cap (status `queued`); `{"step":"stopped","code":"
 
 Hooks left for the client phase: web/desktop `lib/api.ts` still type `/usage/me` with the old token fields and
 `getSttUsage` (now 404) — move them to the shapes above; send `allow_wallet` and `X-Noey-Device`; map the
-402/429/503 codes and the `waiting_slot` / `stopped` job steps (§14).
+422/429/503 refusals and the `waiting_slot` / `stopped` job steps, including the 2026-09-26 pause
+(`paused:true`, `code:"limit_reached"`, project `paused_quota`), which is a resume and not an error (§14).
 
 ---
 
@@ -764,8 +826,10 @@ Built after the workflow (docs/design/editor-limits.md §2–§6; docs/token-bil
   `transcode`, `queue_lead_sec` (values = noey-frontend `lib/plans.ts`); `packages/billing/plan_features.py`
   (checks + refusal bodies + `features_payload`). Enforced: `POST /videos/local` + `POST /videos`
   (`videos_local.enforce_new_project`: 403 `project_limit` on NEW projects only, 422 `footage_over_limit` on the
-  declared length); every footage start route re-checks the MEASURED length in `billing_start.start_paid_run`
-  (kinds `analyze_video` / `transcribe_audio` / `analyze_frames` / `server_pipeline`, +5 s tolerance);
+  declared length, with the project's mode and precision so a dub_first/highlight project is measured against
+  the single-request cap too); every footage start route re-checks the MEASURED length in
+  `billing_start.start_paid_run` (kinds `analyze_video` / `transcribe_audio` / `analyze_frames` /
+  `server_pipeline`, +5 s tolerance, same two caps — §4 "Footage one model request can carry");
   `POST /videos/{uid}/music` and `POST /videos/transcode` → 403 `plan_feature`; queue priority through
   `routers/videos.py:queue_priority_kwargs` (arq score set `queue_lead_sec` in the past: Pro 120 s "ahead",
   Studio+ and unlimited 600 s "first"; the slot re-queue in the worker does not keep the lead). Admin / enterprise

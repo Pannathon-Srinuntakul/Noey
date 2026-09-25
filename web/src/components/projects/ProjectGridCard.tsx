@@ -33,6 +33,10 @@ function statusFor(
   // A failed card says WHY on the card (R1 screen 2) — "ทำงานไม่สำเร็จ" alone
   // makes the user open the project just to read the reason.
   if (step === 'error') return { status: 'error', label: error?.trim() || 'ทำงานไม่สำเร็จ' }
+  // Stopped by the plan's quota. Not an error treatment: nothing failed, and
+  // the work done so far is kept — the card says so and the detail page
+  // explains what continuing costs before anything is spent.
+  if (step === 'paused') return { status: 'idle', label: 'หยุดไว้ชั่วคราว — โควตาหมด' }
   if (step === 'done' && highlightCount) {
     return { status: 'ok', label: `ไฮไลต์พร้อมใช้ ${highlightCount} คลิป` }
   }
@@ -443,6 +447,13 @@ export function ProjectGridCard({
           ) : step === 'error' ? (
             <Button variant="secondary" className="w-full" onClick={() => void job.retry()}>
               ลองใหม่
+            </Button>
+          ) : step === 'paused' ? (
+            // Opens the project rather than resuming from here: continuing can
+            // cost quota or balance, and the detail panel is where the amount,
+            // the window and its reset time are shown before anything is spent.
+            <Button variant="primary" className="w-full" onClick={onOpen}>
+              ดูงานที่หยุดไว้
             </Button>
           ) : step === 'imported' || step === 'importing' ? (
             // Nothing has been rendered yet: this is a run that never started

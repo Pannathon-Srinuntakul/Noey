@@ -28,6 +28,7 @@ AI_ROUTES: frozenset[tuple[str, str]] = frozenset({
     ("POST", "/videos/{uid}/plan-dub"),               # synchronous model call
     ("POST", "/videos/{uid}/transcribe-audio"),       # STT + planning (speech modes)
     ("POST", "/videos/{uid}/reedit-dub-scenes"),      # re-edit pass
+    ("POST", "/videos/{uid}/resume"),                 # re-runs the paused stage
     ("POST", "/videos/{uid}/plan-effects"),           # effects placement pass
     ("POST", "/effect-styles"),                       # style distillation
     ("POST", "/effect-styles/{uid}/regenerate"),      # style distillation

@@ -69,6 +69,17 @@ describe('previewWhileBusy', () => {
     expect(previewWhileBusy('analyzing', null, undefined)).toBeNull()
   })
 
+  it('holds the previous render across a quota pause', () => {
+    // A pause is a run stopped part-way, not a finished project: the render
+    // the person was looking at is still on disk and the run is meant to
+    // continue, so swapping to uncut source footage would be a downgrade
+    // nobody asked for.
+    expect(previewWhileBusy('paused', 'final.mp4', 'normalized/norm_000.mp4')).toBe('final.mp4')
+    expect(previewWhileBusy('paused', null, 'normalized/norm_000.mp4')).toBe(
+      'normalized/norm_000.mp4'
+    )
+  })
+
   it('never answers a terminal step with a file from before', () => {
     // `done` with nothing rendered is speech_highlights whose index came back
     // empty — a real "nothing to show", not a render in flight.

@@ -4,6 +4,7 @@ import {
   STEP_ORDER,
   TH_STEP_ORDER,
   isBusy,
+  isPaused,
   isTerminal,
   progressPercent,
   progressStagesFor,
@@ -23,6 +24,22 @@ describe('projectFlow', () => {
     expect(isBusy('final_rendering')).toBe(true)
     expect(isBusy('waiting_vo')).toBe(false)
     expect(isBusy('imported')).toBe(false)
+  })
+
+  it('a quota pause rests like a finished step, and is not an error', () => {
+    // Resting: nothing may auto-restart it, or the pipeline would re-buy the
+    // boundary the server is already holding a ticket for.
+    expect(isTerminal('paused')).toBe(true)
+    expect(isBusy('paused')).toBe(false)
+    expect(isPaused('paused')).toBe(true)
+    expect(isPaused('error')).toBe(false)
+    // Not a stage either: no mode's order contains it.
+    for (const mode of ['dub_first', 'talking_head', 'highlight', 'speech_scenes'] as const) {
+      expect(stepOrderFor(mode)).not.toContain('paused')
+      expect(progressStagesFor(mode)).not.toContain('paused')
+    }
+    // And nothing sends it back into a run on its own.
+    expect(resumeStep('paused')).toBe('paused')
   })
 
   it('interrupted background steps resume from a safe checkpoint', () => {

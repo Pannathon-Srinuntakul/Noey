@@ -26,6 +26,12 @@ export type ProjectStep =
   /** R17 speech modes: the LLM reading the transcript and picking ranges. */
   | 'selecting'
   | 'rendering'
+  /** The SERVER parked this run because the plan's quota ran out
+   * (`paused_quota`). Not an error and not a stage: the work up to here is
+   * kept, and continuing re-runs only the boundary that was interrupted. What
+   * is true about the pause — which window, when it resets, what the next step
+   * costs — is read from `GET /videos/{uid}/resume`, never from here. */
+  | 'paused'
   | 'done'
   | 'error'
 
@@ -90,6 +96,7 @@ export const STEP_LABELS: Record<ProjectStep, string> = {
   transcribing: 'กำลังถอดเสียง',
   selecting: 'AI กำลังเลือกช่วงเด่น',
   rendering: 'กำลัง render วิดีโอ',
+  paused: 'หยุดไว้ชั่วคราว — โควตาหมด',
   done: 'เสร็จแล้ว',
   error: 'เกิดข้อผิดพลาด'
 }
@@ -110,6 +117,7 @@ export const SHORT_STEP_LABELS: Record<ProjectStep, string> = {
   transcribing: 'ถอดเสียง',
   selecting: 'เลือกช่วงเด่น',
   rendering: 'เรนเดอร์',
+  paused: 'หยุดไว้',
   done: 'เสร็จแล้ว',
   error: 'ผิดพลาด'
 }
@@ -124,7 +132,11 @@ export const SHORT_STEP_LABELS: Record<ProjectStep, string> = {
  */
 export const TERMINAL_LABELS: Partial<Record<ProjectStep, string>> = {
   done: 'เสร็จแล้ว',
-  waiting_vo: 'ตัดคลิปเสร็จแล้ว — ได้คลิปภาพอย่างเดียว นำไปพากย์เสียงเองได้เลย'
+  waiting_vo: 'ตัดคลิปเสร็จแล้ว — ได้คลิปภาพอย่างเดียว นำไปพากย์เสียงเองได้เลย',
+  // A pause is a resting state like the two above, so a run that ends in it
+  // reaches the same completion path — but it is not an achievement, and
+  // "หยุดไว้ชั่วคราว เสร็จแล้ว" would be exactly the wrong sentence.
+  paused: 'หยุดไว้ชั่วคราว — โควตารอบนี้หมด กดทำต่อได้เมื่อโควตากลับมา'
 }
 
 /**
@@ -217,7 +229,17 @@ const RESUME_CHECKPOINT: Partial<Record<ProjectStep, ProjectStep>> = {
  * step machine catching up.
  */
 export function isTerminal(step: ProjectStep): boolean {
-  return step === 'done' || step === 'error' || step === 'waiting_vo'
+  return step === 'done' || step === 'error' || step === 'waiting_vo' || step === 'paused'
+}
+
+/**
+ * The server stopped this run for quota and kept the work. Distinct from
+ * `error` on purpose: nothing failed, nothing is lost, and the way out is
+ * "ทำต่อ" rather than "ลองใหม่" — a restart would re-buy the boundaries that
+ * already succeeded.
+ */
+export function isPaused(step: ProjectStep): boolean {
+  return step === 'paused'
 }
 
 export function isBusy(step: ProjectStep): boolean {

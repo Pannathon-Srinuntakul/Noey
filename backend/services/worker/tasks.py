@@ -268,6 +268,31 @@ async def _update_video(session: AsyncSession, uid: str, **kwargs: Any) -> None:
     await session.commit()
 
 
+async def _finish_stage(
+    session: AsyncSession, uid: str, stage: str | None, **kwargs: Any
+) -> None:
+    """``_update_video`` for a paid stage that just SUCCEEDED.
+
+    Moves ``video_projects.stage`` forward to the boundary that is now behind
+    the project and drops the resume ticket the route wrote when the stage
+    started. Nothing left to resume from means nothing can charge for this
+    stage twice. ``stage=None`` is a paid step that re-does an existing
+    boundary (an AI re-cut, an effects pass) rather than advancing one: the
+    ticket still goes, the boundary does not move.
+    """
+    from packages.db.models.video_project import advance_stage
+
+    proj = await _get_video_project(session, uid)
+    if proj is None:
+        return  # project deleted — skip update
+    for k, v in kwargs.items():
+        setattr(proj, k, v)
+    if stage is not None:
+        proj.stage = advance_stage(proj.stage, stage, proj.mode)
+    proj.resume_state = None
+    await session.commit()
+
+
 async def _video_progress(
     job_id: str,
     progress: int,
@@ -472,6 +497,7 @@ async def _mark_stopped(
     *,
     kwargs: dict[str, Any] | None = None,
     paused: bool = False,
+    run_id: str | None = None,
 ) -> None:
     """End a job the guard stopped.
 
@@ -482,6 +508,12 @@ async def _mark_stopped(
     have to cover, so the editor can offer the top-up instead of showing an
     error (web/src/lib/usageLimits.ts reads exactly these keys off the job
     row's ``result``).
+
+    The pause is also stamped onto the project's own ``resume_state`` ticket —
+    the route wrote it when this stage started — so ``GET/POST
+    /videos/{uid}/resume`` can answer from the SERVER alone. The client's
+    project.json lives in one browser's OPFS; a paused run has to be resumable
+    from any of them.
     """
     payload = exc.payload() if hasattr(exc, "payload") else {"code": getattr(exc, "code", "limit_stop")}
     message = str(payload.get("message") or exc)
@@ -507,8 +539,19 @@ async def _mark_stopped(
             and proj.status in ("processing", "error")
             and (not job_id or proj.job_id == job_id)
         ):
+            from packages.billing import resume as resume_mod
+
             proj.status = "paused_quota"
             proj.error_msg = message
+            proj.resume_state = resume_mod.mark_paused(
+                proj.resume_state,
+                window=payload.get("window"),
+                resets_at=getattr(exc, "resets_at", None),
+                wallet_can_cover=bool(payload.get("wallet_can_cover")),
+                wallet_satang=int(payload.get("wallet_satang") or 0),
+                run_id=run_id,
+                message=message,
+            )
             await ts.commit()
     finally:
         await ts.close()
@@ -630,7 +673,7 @@ def billed_task(*, terminal: bool = True) -> Any:
                 # Out of plan quota: paused, not failed — the project stays
                 # resumable from the stage it reached.
                 outcome = "limit_stop"
-                await _mark_stopped(job_id, exc, kwargs=kwargs, paused=True)
+                await _mark_stopped(job_id, exc, kwargs=kwargs, paused=True, run_id=run_id)
                 return {"stopped": True, "paused": True, "code": exc.code}
             except guard.RunBudgetExceeded as exc:
                 outcome = "limit_stop"
@@ -1769,7 +1812,9 @@ async def analyze_dub_local(
         )
         rel = str(edit_script_path.relative_to(root))
         # Desktop app renders locally from here; server-side status parks at waiting_vo.
-        await _update_video(session, project_uid, edit_script_path=rel, status="waiting_vo")
+        await _finish_stage(
+            session, project_uid, "analyze", edit_script_path=rel, status="waiting_vo"
+        )
         await _push_project_files(project_uid, tenant_slug)
 
         segments = len(edit_script.get("segments", []))
@@ -2058,7 +2103,9 @@ async def analyze_dub_video_local(
         )
         rel = str(edit_script_path.relative_to(root))
         # Desktop app renders locally from here; server-side status parks at waiting_vo.
-        await _update_video(session, project_uid, edit_script_path=rel, status="waiting_vo")
+        await _finish_stage(
+            session, project_uid, "analyze", edit_script_path=rel, status="waiting_vo"
+        )
         await _push_project_files(project_uid, tenant_slug)
 
         segments = len(edit_script.get("segments", []))
@@ -2484,7 +2531,10 @@ async def reedit_dub_scenes_local(
             json.dumps(merged, ensure_ascii=False, indent=2), encoding="utf-8"
         )
         rel = str(edit_script_path.relative_to(root))
-        await _update_video(session, project_uid, edit_script_path=rel, status="waiting_vo")
+        # A re-cut REPLACES the analyze boundary rather than advancing one.
+        await _finish_stage(
+            session, project_uid, None, edit_script_path=rel, status="waiting_vo"
+        )
         await _push_project_files(project_uid, tenant_slug)
 
         segments = merged.get("segments", [])
@@ -2623,7 +2673,10 @@ async def plan_talking_local(ctx: dict[str, Any], *, job_id: str, project_uid: s
 
         timeline_path = output_dir / "timeline.json"
         timeline_path.write_text(json.dumps(timeline, ensure_ascii=False, indent=2), encoding="utf-8")
-        await _update_video(session, project_uid, timeline_path=str(timeline_path.relative_to(root)))
+        await _finish_stage(
+            session, project_uid, "transcribe",
+            timeline_path=str(timeline_path.relative_to(root)),
+        )
         await _push_project_files(project_uid, tenant_slug)
 
         # Same retirement as the other two speech tasks (they purge at their
@@ -2852,7 +2905,10 @@ async def plan_speech_local(ctx: dict[str, Any], *, job_id: str, project_uid: st
             }
             timeline_path = output_dir / "timeline.json"
             timeline_path.write_text(json.dumps(timeline, ensure_ascii=False, indent=2), encoding="utf-8")
-            await _update_video(session, project_uid, timeline_path=str(timeline_path.relative_to(root)))
+            await _finish_stage(
+                session, project_uid, "select",
+                timeline_path=str(timeline_path.relative_to(root)),
+            )
             await _push_project_files(project_uid, tenant_slug)
             count = len(render_cuts)
             await _update_job(
@@ -2935,7 +2991,9 @@ async def plan_speech_local(ctx: dict[str, Any], *, job_id: str, project_uid: st
         index = {"mode": "speech_highlights", "count": len(items), "items": items}
         index_path = hl_dir / "index.json"
         index_path.write_text(json.dumps(index, ensure_ascii=False, indent=2), encoding="utf-8")
-        await _update_video(session, project_uid, timeline_path=str(index_path.relative_to(root)))
+        await _finish_stage(
+            session, project_uid, "select", timeline_path=str(index_path.relative_to(root))
+        )
         await _push_project_files(project_uid, tenant_slug)
 
         await _update_job(

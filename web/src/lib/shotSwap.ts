@@ -74,6 +74,23 @@ export function countShotsWithAlternates(script: DubEditScript | null): number {
   return (script?.segments ?? []).filter((s) => segmentAlternates(s).length > 0).length
 }
 
+/**
+ * Which shot of the cut a timeline-editor cut id names.
+ *
+ * The editor builds its ids from the edit script's own order
+ * (`editCutsFromDubSegments`: `cut0`, `cut1`, …), so the number IS the segment
+ * index — which is what lets Enter on a selected scene open ปรับช็อต at THAT
+ * shot instead of at the start. Null for anything that is not one of those
+ * ids (a scene the user added in the editor, a future id scheme); the caller
+ * then opens at the beginning rather than at a shot it guessed.
+ */
+export function segmentIndexForCutId(cutId: string | null | undefined): number | null {
+  const m = /^cut(\d+)$/.exec((cutId ?? '').trim())
+  if (!m) return null
+  const n = Number(m[1])
+  return Number.isSafeInteger(n) && n >= 0 ? n : null
+}
+
 /** Does this shot pose a question at all? The review screen walks EVERY shot
  * (the position has to match the real cut, so the user can tell where they are
  * in their own video), so it needs to know which ones have something to choose
