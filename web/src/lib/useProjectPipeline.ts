@@ -536,17 +536,32 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     }
   }
 
-  /** The zoom bake belongs to the render it was baked ON. Local jobs delete it
-   * (engine/jobs/renderSilent.ts) but top-level names are never swept, so the
-   * server's copy must go explicitly or the preview cascade — which prefers
-   * final_fx.mp4 — resurrects last round's bake over the new cut. */
-  const dropServerFxBake = (): void => {
+  /** Drop a stale top-level artifact from the SERVER copy of the project.
+   *
+   * Local jobs delete these when they re-render (engine/jobs/renderSilent.ts),
+   * but `projectSync` only ever sweeps the folders it walks — top-level names
+   * are never swept — so the server keeps last round's file. The preview
+   * cascade (usePreviewFile.previewCandidates) asks for `final_fx.mp4` first,
+   * the service worker falls through to the server when the local copy is
+   * gone, and the user watches the PREVIOUS render after making a new one.
+   *
+   * Awaited on purpose, and awaited BEFORE the media key changes: it used to
+   * be fire-and-forget, so the new probe raced the DELETE and usually won
+   * (reported live 2026-09-25 — "กดทำคลิปใหม่ แล้วคลิปยังเป็นอันเดิม").
+   */
+  const dropServerArtifact = async (name: string): Promise<void> => {
     const remoteUid = projectRef.current.remote?.uid
     if (!remoteUid) return
-    void (async () => {
-      const { deleteProjectFile } = await import('./projectSync')
-      await deleteProjectFile(session, remoteUid, 'final_fx.mp4').catch(() => undefined)
-    })()
+    const { deleteProjectFile } = await import('./projectSync')
+    await deleteProjectFile(session, remoteUid, name).catch(() => undefined)
+  }
+
+  /** Every top-level name the preview cascade can resurrect. */
+  const dropStalePreviewArtifacts = async (): Promise<void> => {
+    await Promise.all([
+      dropServerArtifact('final_fx.mp4'),
+      dropServerArtifact('final_silent_music.mp4'),
+    ])
   }
 
   const resetAfterStop = async (): Promise<void> => {
@@ -1358,7 +1373,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
         clipDurationsSec,
         lastRunSeconds: runSeconds()
       })
-      dropServerFxBake()
+      await dropStalePreviewArtifacts()
       syncToServer('render')
     } else if (opts?.continueToFinal) {
       // The locked shot-swap runs silent -> final as ONE job. Passing through
@@ -1367,6 +1382,12 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
       // a whole-project sync that raced the final render's own.
       await patchProject({ clipDurationsSec })
     } else {
+      // Stale server artifacts go BEFORE the key bumps: the moment the key
+      // changes, consumers probe, and the cascade asks for final_fx.mp4 first.
+      // This branch never dropped them at all, which is why a dub project —
+      // the common case on web — kept showing the previous cut for good, not
+      // just until the next navigation (2026-09-25).
+      await dropStalePreviewArtifacts()
       // Key first, terminal step second: the moment consumers see waiting_vo
       // they probe for the preview, and probing under the OLD key caches a
       // placeholder-era answer for the new render.
@@ -1689,10 +1710,10 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     } finally {
       unsub()
     }
-    setMediaKey((k) => k + 1)
     reportLocalStatus(remoteUid, 'done')
     await patchProject({ step: 'done', lastRunSeconds: runSeconds() })
-    dropServerFxBake()
+    await dropStalePreviewArtifacts()
+    setMediaKey((k) => k + 1)
     syncToServer('timeline')
     setProgressMsg('')
   }
@@ -2221,8 +2242,8 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
       lastRunSeconds: runSeconds(),
       ...(finalClipDurations?.length ? { clipDurationsSec: finalClipDurations } : {})
     })
+    await dropStalePreviewArtifacts()
     setMediaKey((k) => k + 1)
-    dropServerFxBake()
     syncToServer('re-render')
     setProgressMsg('')
   }
@@ -2534,8 +2555,8 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
         lastRunSeconds: runSeconds(),
         ...(finalClipDurations?.length ? { clipDurationsSec: finalClipDurations } : {})
       })
+      await dropStalePreviewArtifacts()
       setMediaKey((k) => k + 1)
-      dropServerFxBake()
       syncToServer('reassemble')
       setProgressMsg('')
     }

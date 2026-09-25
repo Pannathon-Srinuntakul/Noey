@@ -1,3 +1,4 @@
+import { canUseZoomEffects } from './platformFeatures'
 import { useEffect, useState } from 'react'
 import type { ProjectMode, ProjectStep } from './projectFlow'
 
@@ -95,12 +96,18 @@ async function probeOnce(uid: string, rel: string): Promise<boolean> {
 export function previewCandidates(step: ProjectStep, mode: ProjectMode): string[] | null {
   // Handled by `settled` — the mode has no final.mp4, only highlights/hNN.mp4.
   if (mode === 'speech_highlights') return null
+  // A build that cannot BAKE zoom effects can never produce final_fx.mp4, so
+  // asking for it first costs a network probe on every preview — and, worse,
+  // that probe can find the SERVER's copy from a previous render and play it
+  // instead of the cut just made (2026-09-25). Only the builds that can make
+  // the file should look for it.
+  const fx = canUseZoomEffects ? ['final_fx.mp4'] : []
   // Voiceover is optional, and `highlight` never runs the VO mux, so for both
   // of these the silent cut is the end of the line.
   if (step === 'waiting_vo' || (step === 'done' && mode === 'highlight')) {
-    return ['final_fx.mp4', 'final_silent_music.mp4', 'final_silent.mp4']
+    return [...fx, 'final_silent_music.mp4', 'final_silent.mp4']
   }
-  if (step === 'done') return ['final_fx.mp4', 'final.mp4']
+  if (step === 'done') return [...fx, 'final.mp4']
   return null
 }
 
