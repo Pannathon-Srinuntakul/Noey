@@ -51,6 +51,8 @@ export const ScriptTab = memo(function ScriptTab({
   onScriptChange: (lineId: number, script: string) => void
   onBeginEdit: () => void
   onCommitEdit: () => void
+  /** An angle thumbnail is a "show me this one" control, not a handle to
+   * grab — so it seeks and reveals, unlike a click on a timeline block. */
   onSelectCut: (cut: WorkingCut) => void
   onAddAngle: () => void
 }): React.JSX.Element {

@@ -53,6 +53,7 @@ export const ImageLane = memo(function ImageLane({
   getSnapContext,
   onLaneBackgroundPointerDown,
   onSelectCut,
+  onOpenCut,
   onUpdateCut,
   onTrimCut,
   onBlockEditStart,
@@ -73,6 +74,8 @@ export const ImageLane = memo(function ImageLane({
   getSnapContext: () => TrimSnapContext
   onLaneBackgroundPointerDown: (e: React.PointerEvent) => void
   onSelectCut: (cut: WorkingCut) => void
+  /** Double-click on a block — see EditedCutBlock's onOpen. */
+  onOpenCut: (cut: WorkingCut) => void
   onUpdateCut: (id: string, patch: Partial<WorkingCut>) => void
   onTrimCut: (cut: WorkingCut, edge: TrimEdge, patch: Partial<WorkingCut>, prevIn: number) => void
   onBlockEditStart: () => void
@@ -113,8 +116,10 @@ export const ImageLane = memo(function ImageLane({
                 strip={strips[c.source] ?? null}
                 pending={filmstripPending}
                 sourceDurationSec={sourceDurationById.get(c.source) ?? 0}
+                sourceMissing={!sourceDurationById.has(c.source)}
                 pxPerSec={pxPerSec}
                 onSelect={onSelectCut}
+                onOpen={onOpenCut}
                 onChange={onUpdateCut}
                 onTrim={onTrimCut}
                 onDragStart={onBlockEditStart}

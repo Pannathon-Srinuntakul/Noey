@@ -12,8 +12,14 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from packages.db.base import Base
 
-# Valid status values
-VIDEO_STATUS = ("pending", "processing", "waiting_vo", "done", "error", "cancelled")
+# Valid status values. ``paused_quota`` is NOT an error: the plan's window ran
+# out mid-run (services/worker/tasks.py:_mark_stopped), everything the run
+# produced is kept, and the project resumes from the stage it stopped at once
+# the window rolls or the user spends their top-up balance. It must therefore
+# be restartable wherever ``error`` is (routers/videos_local.py).
+VIDEO_STATUS = (
+    "pending", "processing", "waiting_vo", "done", "error", "paused_quota", "cancelled",
+)
 # Valid mode values
 VIDEO_MODE = ("talking_head", "dub_first", "highlight")
 

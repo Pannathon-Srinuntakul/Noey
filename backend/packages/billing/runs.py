@@ -1,34 +1,44 @@
-"""Paid runs: rolling windows, reservation at start, settle at end, slots.
+"""Paid runs: rolling windows, charge as spent, settle at end, slots.
 
 Guard layer 1 of docs/token-billing-plan.md §4, and the state behind
 ``GET /usage/me`` (docs/token-billing-design.md §4, §6.1, §10).
 
 Windows (``core.usage_accounts``). A window is ACTIVE while
 ``now < started_at + length`` (5 h / 7 d / 30 d); an inactive window reads as
-unused and restarts — ``started_at = now`` — at the next reservation, so a
-window starts at first use (rolling), never on a calendar boundary. A plan
-ENFORCES some windows (limits.PLAN_LIMITS) but all three are TRACKED: every
-settle charges all of them.
+unused and restarts — ``started_at = now`` — at the next charge, so a window
+starts at first use (rolling), never on a calendar boundary. A plan ENFORCES
+some windows (limits.PLAN_LIMITS) but all three are TRACKED: every charge
+adds to all of them.
 
-Reservation. A route that starts AI work reserves the server-side estimate
-first (``reserve``), under the account row lock, so N parallel starts of one
-user can never together spend more headroom than there is:
+**No reservation (owner, 2026-09-26).** A start used to hold the whole
+server-side estimate up front, which refused work that would have fitted: the
+estimate reserves ~104 k where a real cut spends ~70 k, so a user with 90 k
+left was refused a job they could afford. Nothing is held any more.
+``open_run`` only opens the row; the ONE thing still checked before starting
+is impossibility — a run that cannot fit an enforced window even when that
+window is empty (``plan_features.check_run_size``), or footage longer than a
+single request can carry (``limits.video_call_footage_sec``). Neither waiting
+for a reset nor topping up would make those work.
 
-    headroom(w) = limit(w) − used(w) − reserved_tokens    (every enforced w)
-    fit         = min headroom
-    estimate ≤ fit                 → hold it all on the windows
-    else, allow_wallet and the balance covers the overflow at ฿350/1M
-                                   → hold fit on the windows + the rest in baht
-    else                           → LimitReached (402 at the route)
+Charged as spent. Every recorded vendor request charges its own rate-card
+tokens, in the transaction that writes the usage row
+(``packages/billing/metering.py`` → ``charge_as_spent``): on the windows up
+to the headroom, then — only with the user's consent at start — on the top-up
+balance. The run carries what it may take from the balance in
+``ai_runs.reserved_wallet_satang``: with nothing reserved any more, that
+column now means "satang this run is allowed to spend", not "satang held".
 
-Settle (``settle``) charges by outcome, releases the holds, and puts the
-charge on the windows first (up to the headroom), then the wallet (only for a
-run that held wallet money), then — anything left — on the windows anyway:
-a started run finishes, and its overshoot counts, even past 100 %.
+Out of quota mid-run. ``guard`` carries a ``QuotaSnapshot`` taken when the
+task starts and stops the run before the call that would go past it
+(``QuotaExhausted``) — a PAUSE, not a crash: the project keeps everything it
+has produced and resumes from the same stage once the window rolls or the
+balance is used.
+
+Settle (``settle``) charges the DIFFERENCE between what the outcome says the
+user owes and what the run already paid as it went, and refunds the rest:
 
     ok / user_cancel / user_error   min(actual, ceiling)
-    limit_stop (guard layer 2)      min(actual, estimate) — never more than
-                                    was reserved
+    limit_stop (guard layer 2)      min(actual, estimate)
     our_failure / orphaned          0 — the vendor cost stays on our books
 
 Refund cap: a user's first ``settings.billing_free_refunds_per_day``
@@ -41,8 +51,8 @@ global circuit breaker pauses the service for everyone. Every refund is
 logged (``run_refunded``) with what it cost us, and the admin sees the 30-day
 per-user total (packages/admin/accuracy.py:refunded_summary).
 
-Unlimited accounts (admin / enterprise) reserve nothing and are charged
-nothing; their runs and usage rows are still recorded.
+Unlimited accounts (admin / enterprise) are charged nothing; their runs and
+usage rows are still recorded.
 
 Concurrency. A worker task takes a SLOT before its first model call
 (``acquire_slot``): at most ``limits.concurrency_for`` runs per user are
@@ -106,22 +116,10 @@ def iso(value: datetime | None) -> str | None:
     return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
-class LimitReached(Exception):
-    """The run does not fit the plan's windows (nor, if allowed, the wallet)."""
-
-    def __init__(
-        self,
-        *,
-        window: str | None,
-        resets_at: datetime | None,
-        wallet_can_cover: bool,
-        wallet_need_satang: int,
-    ) -> None:
-        self.window = window
-        self.resets_at = resets_at
-        self.wallet_can_cover = wallet_can_cover
-        self.wallet_need_satang = wallet_need_satang
-        super().__init__(f"limit reached ({window})")
+# A start used to raise ``LimitReached`` here when the estimate did not fit.
+# Nothing reserves any more, so nothing refuses a start on quota: the run is
+# stopped mid-way instead, by ``guard.QuotaExhausted``, which carries the same
+# window / reset time / wallet figures.
 
 
 # ── window math ──────────────────────────────────────────────────────────────
@@ -226,13 +224,87 @@ def enforced_windows(plan: str, account: UsageAccount | None, now: datetime) -> 
 
 
 def binding_window(views: list[WindowView]) -> WindowView | None:
-    """The window with the least headroom (the one a start would hit first)."""
+    """The window with the least headroom (the one a charge fills first)."""
     return min(views, key=lambda v: v.headroom) if views else None
 
 
-# ── reserve / release / settle ───────────────────────────────────────────────
+def windows_for_run(views: list[WindowView], estimate_tokens: int) -> list[WindowView]:
+    """The windows that may govern a run of this size.
 
-async def reserve(
+    A window SMALLER than the run itself can never contain it — Pro's 5-hour
+    window is 40 % of its weekly one, so an hour of footage costs more than a
+    5-hour window holds however empty it is. Letting that window stop the run
+    would make it unstartable forever, and waiting would not help. The plan's
+    own answer to a started run that outgrows a window is to let it finish and
+    count the overshoot (docs/token-billing-plan.md §2), so such a window is
+    left out here and the next one up governs. A run too big for EVERY window
+    never starts at all (plan_features.check_run_size).
+    """
+    if estimate_tokens <= 0 or not views:
+        return views
+    fit = [v for v in views if v.limit >= estimate_tokens]
+    return fit or [max(views, key=lambda v: v.limit)]
+
+
+@dataclass(frozen=True)
+class QuotaSnapshot:
+    """What a run may still spend, read once when its task starts.
+
+    The worker decrements it locally as the run spends (guard.RunMeter), so
+    the mid-run check costs no query per call. A snapshot can go stale — a
+    parallel run of the same user spending at the same time — which only means
+    the pause comes one call late; the windows themselves are charged under
+    the account lock and can never be double-spent.
+    """
+
+    window: str | None
+    headroom: int
+    resets_at: datetime | None
+    #: Spendable top-up balance, in satang.
+    wallet_satang: int
+    #: Satang this run is allowed to take from it (0 = no consent given).
+    wallet_allowance: int
+    unlimited: bool = False
+
+    @property
+    def budget(self) -> int:
+        """Rate-card tokens the run may still spend, balance included."""
+        allowed = min(self.wallet_satang, self.wallet_allowance)
+        return max(0, self.headroom) + wallet.tokens_for_satang(allowed)
+
+
+async def quota_snapshot(
+    session: AsyncSession, run_id: str, now: datetime | None = None
+) -> QuotaSnapshot | None:
+    """``run_id``'s remaining quota right now. None when there is nothing to
+    stop at (unlimited account, or the run is gone)."""
+    at = now or _now()
+    run = await session.get(AiRun, run_id)
+    if run is None:
+        return None
+    if run.unlimited:
+        return QuotaSnapshot(
+            window=None, headroom=0, resets_at=None, wallet_satang=0,
+            wallet_allowance=0, unlimited=True,
+        )
+    account = await get_account(session, int(run.user_id))
+    user = await session.get(User, int(run.user_id))
+    views = enforced_windows(effective_plan(user, account, at), account, at)
+    tightest = binding_window(windows_for_run(views, int(run.estimate_tokens or 0)))
+    # No account row yet = nothing used yet; the balance is then 0 too.
+    spare = await wallet.available(session, account, at) if account is not None else 0
+    return QuotaSnapshot(
+        window=tightest.key if tightest else None,
+        headroom=tightest.headroom if tightest else 0,
+        resets_at=tightest.resets_at if tightest else None,
+        wallet_satang=spare,
+        wallet_allowance=int(run.reserved_wallet_satang or 0),
+    )
+
+
+# ── open / release / settle ──────────────────────────────────────────────────
+
+async def open_run(
     session: AsyncSession,
     *,
     user: User,
@@ -246,39 +318,25 @@ async def reserve(
     precision: str | None = None,
     now: datetime | None = None,
 ) -> AiRun:
-    """Hold ``estimate`` against the user's windows (and, if allowed, wallet).
+    """Open the run row. Nothing is held (see the module docstring).
 
-    Flushes the run; the CALLER commits (before enqueueing the worker task).
-    Raises ``LimitReached`` without touching anything.
+    ``allow_wallet`` records the user's consent as the run's wallet allowance
+    — the balance it may spend once its windows are full. Flushes the run; the
+    CALLER commits (before enqueueing the worker task).
     """
     at = now or _now()
     account = await lock_account(session, int(user.id))
     roll_windows(account, at)
     unlimited = limits_mod.is_unlimited(user)
-    hold_tokens = hold_satang = 0
-
-    if not unlimited:
-        plan = effective_plan(user, account, at)
-        views = enforced_windows(plan, account, at)
-        tightest = binding_window(views)
-        fit = tightest.headroom if tightest is not None else estimate.tokens
-        if estimate.tokens <= fit:
-            hold_tokens = estimate.tokens
-        else:
-            hold_tokens = max(0, fit)
-            need = wallet.satang_for_tokens(estimate.tokens - hold_tokens)
-            spare = await wallet.available(session, account, at)
-            if not (allow_wallet and spare >= need):
-                raise LimitReached(
-                    window=tightest.key if tightest else None,
-                    resets_at=tightest.resets_at if tightest else None,
-                    wallet_can_cover=spare >= need,
-                    wallet_need_satang=need,
-                )
-            hold_satang = need
-        start_windows(account, at)
-        account.reserved_tokens = int(account.reserved_tokens or 0) + hold_tokens
-        account.wallet_reserved_satang = int(account.wallet_reserved_satang or 0) + hold_satang
+    allowance = 0
+    if allow_wallet and not unlimited:
+        allowance = await wallet.available(session, account, at)
+    if account.reserved_tokens or account.wallet_reserved_satang:
+        # Nothing reserves any more: a hold left by a run that started before
+        # this change would otherwise shrink this user's headroom — and make
+        # their own balance unspendable — forever.
+        account.reserved_tokens = 0
+        account.wallet_reserved_satang = 0
 
     run = AiRun(
         id=uuid.uuid4().hex,
@@ -292,8 +350,8 @@ async def reserve(
         precision=precision,
         media_sec=float(estimate.media_sec),
         estimate_tokens=int(estimate.tokens),
-        reserved_tokens=hold_tokens,
-        reserved_wallet_satang=hold_satang,
+        reserved_tokens=0,
+        reserved_wallet_satang=allowance,
         ceiling_tokens=int(estimate.ceiling),
         actual_tokens=0,
         status="queued",
@@ -305,13 +363,13 @@ async def reserve(
     session.add(run)
     await session.flush()
     log.info(
-        "run_reserved", run_id=run.id, user_id=int(user.id), kind=estimate.kind, estimate=estimate.tokens,
-        hold_tokens=hold_tokens, hold_satang=hold_satang, unlimited=unlimited,
+        "run_opened", run_id=run.id, user_id=int(user.id), kind=estimate.kind,
+        estimate=estimate.tokens, wallet_allowance=allowance, unlimited=unlimited,
     )
     return run
 
 
-async def _lock_run(session: AsyncSession, run_id: str) -> tuple[UsageAccount, AiRun] | None:
+async def lock_run(session: AsyncSession, run_id: str) -> tuple[UsageAccount, AiRun] | None:
     """Account first, then the run — the one lock order (see accounts.py)."""
     user_id = (await session.execute(select(AiRun.user_id).where(AiRun.id == run_id))).scalar_one_or_none()
     if user_id is None:
@@ -326,16 +384,14 @@ async def _lock_run(session: AsyncSession, run_id: str) -> tuple[UsageAccount, A
 
 
 def _drop_holds(account: UsageAccount, run: AiRun) -> None:
+    """Give back a hold made before 2026-09-26 (nothing reserves any more)."""
     account.reserved_tokens = max(0, int(account.reserved_tokens or 0) - int(run.reserved_tokens or 0))
-    account.wallet_reserved_satang = max(
-        0, int(account.wallet_reserved_satang or 0) - int(run.reserved_wallet_satang or 0)
-    )
 
 
 async def release(session: AsyncSession, run_id: str, now: datetime | None = None) -> None:
     """Drop a run that never got to work (enqueue failed, the route errored
-    after reserving). Nothing is charged. Idempotent."""
-    locked = await _lock_run(session, run_id)
+    after opening it). Nothing is charged. Idempotent."""
+    locked = await lock_run(session, run_id)
     if locked is None:
         return
     account, run = locked
@@ -362,15 +418,109 @@ def charge_for(run: AiRun, outcome: str) -> int:
     return 0  # our_failure / orphaned
 
 
+# ── charging, as the run spends ──────────────────────────────────────────────
+
+async def apply_charge(
+    session: AsyncSession, account: UsageAccount, run: AiRun, tokens: int, now: datetime
+) -> tuple[int, int]:
+    """Put ``tokens`` on the windows up to their headroom, the rest on the
+    balance when the run is allowed to use it, and anything still left back on
+    the windows — a started run finishes and its overshoot counts (plan §2).
+
+    The caller holds ``account``'s lock. Returns (window tokens, satang).
+    """
+    if tokens <= 0 or run.unlimited:
+        return 0, 0
+    roll_windows(account, now)
+    user = await session.get(User, int(run.user_id))
+    views = enforced_windows(effective_plan(user, account, now), account, now)
+    # The same windows the run is allowed to be stopped by: a window too small
+    # to hold it must not push its cost onto the user's baht either.
+    tightest = binding_window(windows_for_run(views, int(run.estimate_tokens or 0)))
+    room = tightest.headroom if tightest is not None else tokens
+    to_windows = min(tokens, max(0, room))
+    rest = tokens - to_windows
+    to_wallet_satang = 0
+    allowance = max(0, int(run.reserved_wallet_satang or 0) - int(run.charged_wallet_satang or 0))
+    if rest > 0 and allowance > 0:
+        need = wallet.satang_for_tokens(rest)
+        spare = min(allowance, await wallet.available(session, account, now))
+        to_wallet_satang = await wallet.debit(session, account, min(need, spare), run_id=run.id, now=now)
+        covered = rest if to_wallet_satang >= need else wallet.tokens_for_satang(to_wallet_satang)
+        rest -= covered
+    to_windows += max(0, rest)
+    start_windows(account, now)
+    for key in limits_mod.TRACKED_WINDOWS:
+        setattr(account, f"{key}_used", _used_raw(account, key) + to_windows)
+    run.charged_tokens = int(run.charged_tokens or 0) + to_windows
+    run.charged_wallet_satang = int(run.charged_wallet_satang or 0) + to_wallet_satang
+    return to_windows, to_wallet_satang
+
+
+def _refund_windows(account: UsageAccount, run: AiRun, tokens: int, now: datetime) -> int:
+    """Take ``tokens`` back off the windows (a run charged more as it went
+    than its outcome says it owes). Never below zero."""
+    if tokens <= 0:
+        return 0
+    roll_windows(account, now)
+    for key in limits_mod.TRACKED_WINDOWS:
+        setattr(account, f"{key}_used", max(0, _used_raw(account, key) - tokens))
+    run.charged_tokens = max(0, int(run.charged_tokens or 0) - tokens)
+    return tokens
+
+
+async def apply_spend(
+    session: AsyncSession, account: UsageAccount, run: AiRun, tokens: int, now: datetime | None = None
+) -> int:
+    """One recorded vendor request: accrue it on the run and charge it.
+
+    Called by ``metering`` inside the same transaction as the usage row, with
+    the account and run already locked — the money and the evidence for it
+    land together or not at all.
+    """
+    at = now or _now()
+    run.actual_tokens = int(run.actual_tokens or 0) + max(0, int(tokens))
+    if run.status not in OPEN_STATUSES:
+        # A usage row replayed from the outbox after the run settled: the
+        # evidence is kept, but charging it now would undo the refund settle
+        # already decided (and nothing would ever true it up again).
+        log.warning("run_charge_after_settle", run_id=run.id, status=run.status, tokens=int(tokens))
+        await session.flush()
+        return 0
+    if run.unlimited or tokens <= 0:
+        await session.flush()
+        return 0
+    to_windows, to_wallet = await apply_charge(session, account, run, int(tokens), at)
+    await session.flush()
+    log.debug(
+        "run_charged_as_spent", run_id=run.id, tokens=int(tokens),
+        to_windows=to_windows, to_wallet_satang=to_wallet,
+    )
+    return to_windows
+
+
+async def charge_as_spent(
+    session: AsyncSession, run_id: str, tokens: int, now: datetime | None = None
+) -> int:
+    """``apply_spend`` for a caller that has not locked anything yet."""
+    locked = await lock_run(session, run_id)
+    if locked is None:
+        return 0
+    account, run = locked
+    return await apply_spend(session, account, run, tokens, now)
+
+
 async def settle(
     session: AsyncSession, run_id: str, outcome: str, now: datetime | None = None
 ) -> AiRun | None:
-    """Charge the run by ``outcome``, release its holds, close it. Idempotent:
-    a run already closed is returned untouched. Flushes; the caller commits."""
+    """Close the run and true up what it paid as it went against what
+    ``outcome`` says it owes — charging the difference, or refunding it.
+    Idempotent: a run already closed is returned untouched. Flushes; the
+    caller commits."""
     if outcome not in OUTCOMES:
         raise ValueError(f"unknown outcome: {outcome}")
     at = now or _now()
-    locked = await _lock_run(session, run_id)
+    locked = await lock_run(session, run_id)
     if locked is None:
         log.warning("run_settle_missing", run_id=run_id)
         return None
@@ -397,32 +547,25 @@ async def settle(
                 "run_refunded", run_id=run.id, user_id=int(run.user_id), kind=run.kind,
                 actual=int(run.actual_tokens or 0), refunded_today=refunded_today + 1,
             )
-    to_windows = to_wallet_satang = 0
+    # What the run already paid per call as it ran (charge_as_spent) — on the
+    # windows AND, at the rate card, in baht.
+    paid = int(run.charged_tokens or 0) + wallet.tokens_for_satang(int(run.charged_wallet_satang or 0))
+    refunded = 0
+    if charge > paid:
+        await apply_charge(session, account, run, charge - paid, at)
+    elif charge < paid:
+        owed_back = paid - charge
+        if charge == 0 and int(run.charged_wallet_satang or 0) > 0:
+            # Nothing is owed: the baht go back to the lots they came from
+            # FIRST, so the windows are only asked for what is left — they
+            # never gave the wallet's share and must not repay it.
+            back = await wallet.refund(session, account, run.id, now=at)
+            run.charged_wallet_satang = max(0, int(run.charged_wallet_satang or 0) - back)
+            owed_back -= wallet.tokens_for_satang(back)
+        refunded = _refund_windows(account, run, min(int(run.charged_tokens or 0), owed_back), at)
 
-    if charge > 0:
-        roll_windows(account, at)
-        user = await session.get(User, int(run.user_id))
-        plan = effective_plan(user, account, at)
-        tightest = binding_window(enforced_windows(plan, account, at))
-        room = max(int(run.reserved_tokens or 0), tightest.headroom if tightest else charge)
-        to_windows = min(charge, max(0, room))
-        rest = charge - to_windows
-        if rest > 0 and int(run.reserved_wallet_satang or 0) > 0:
-            need = wallet.satang_for_tokens(rest)
-            spare = await wallet.available(session, account, at)
-            to_wallet_satang = await wallet.debit(
-                session, account, min(need, spare), run_id=run.id, now=at
-            )
-            covered = rest if to_wallet_satang >= need else wallet.tokens_for_satang(to_wallet_satang)
-            rest -= covered
-        # A started run finishes and its overshoot counts (plan §2).
-        to_windows += rest
-        start_windows(account, at)
-        for key in limits_mod.TRACKED_WINDOWS:
-            setattr(account, f"{key}_used", _used_raw(account, key) + to_windows)
-
-    run.charged_tokens = to_windows
-    run.charged_wallet_satang = to_wallet_satang
+    run.charged_tokens = int(run.charged_tokens or 0)
+    run.charged_wallet_satang = int(run.charged_wallet_satang or 0)
     run.status = "settled" if refund_capped else _STATUS_FOR[outcome]
     run.outcome = outcome
     run.settled_at = at
@@ -430,8 +573,9 @@ async def settle(
     await session.flush()
     log.info(
         "run_settled", run_id=run.id, outcome=outcome, kind=run.kind, estimate=int(run.estimate_tokens or 0),
-        actual=int(run.actual_tokens or 0), ceiling=int(run.ceiling_tokens or 0), charged_tokens=to_windows,
-        charged_wallet_satang=to_wallet_satang, unlimited=bool(run.unlimited),
+        actual=int(run.actual_tokens or 0), ceiling=int(run.ceiling_tokens or 0),
+        charged_tokens=run.charged_tokens, charged_wallet_satang=run.charged_wallet_satang,
+        refunded_tokens=refunded, unlimited=bool(run.unlimited),
     )
     return run
 
@@ -463,7 +607,7 @@ async def acquire_slot(session: AsyncSession, run_id: str, now: datetime | None 
     already runs their plan's maximum — re-enqueue later. ``gone``: the run is
     closed or unknown — the task must not do paid work."""
     at = now or _now()
-    locked = await _lock_run(session, run_id)
+    locked = await lock_run(session, run_id)
     if locked is None:
         return "gone"
     account, run = locked

@@ -69,6 +69,17 @@ export default function JobProgressPage({ uid }: { uid: string }): React.JSX.Ele
    * A job that FINISHES while this page is open has nothing left to show — send
    * the user on rather than leaving a dead 100% bar.
    *
+   * On to the PROJECT that just finished, not the projects list: landing on the
+   * list takes the person away from the very thing they were watching, which is
+   * half of why a finished render reads as "it did not update" (owner
+   * 2026-09-26). The detail page is where the new cut plays, and it is also
+   * where an `error` explains itself.
+   *
+   * No toast is raised here on purpose — `JobsProvider.onFinished` already
+   * shows one for every job that reaches a terminal step, and the toast slot
+   * holds a single toast, so a second one would only replace a more
+   * informative message with a vaguer one.
+   *
    * The trigger is the transition, not the state. As a plain predicate it also
    * fired on arrival: the voiceover screen navigates here and only then awaits
    * an ffprobe IPC round-trip before the step leaves `waiting_vo` (which is not
@@ -81,8 +92,8 @@ export default function JobProgressPage({ uid }: { uid: string }): React.JSX.Ele
       wasBusy.current = true
       return
     }
-    if (job && step && wasBusy.current) navigate({ name: 'projects' })
-  }, [job, step, busy, navigate])
+    if (job && step && wasBusy.current) navigate({ name: 'detail', uid })
+  }, [job, step, busy, navigate, uid])
 
   if (!job) {
     return (

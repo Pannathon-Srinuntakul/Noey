@@ -79,7 +79,7 @@ export const EditorHeader = memo(function EditorHeader({
           </Button>
         )}
         {canRedo ? (
-          <Button icon={<Redo2 size={15} />} onClick={onRedo} title={withShortcut('ทำซ้ำ', 'undo')}>
+          <Button icon={<Redo2 size={15} />} onClick={onRedo} title={withShortcut('ทำซ้ำ', 'redo')}>
             ทำซ้ำ
           </Button>
         ) : (

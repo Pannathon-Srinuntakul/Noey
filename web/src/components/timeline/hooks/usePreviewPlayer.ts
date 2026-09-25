@@ -49,6 +49,18 @@ export interface PreviewPlayerApi {
   selectCut: (cut: WorkingCut) => void
   showCutFrame: (cut: WorkingCut, localSec: number) => void
   applyScrubTime: (sec: number, seekVideo: boolean) => void
+  /** A jump a button or a key made: seek AND bring the playhead back on
+   * screen. See jumpTo. */
+  jumpTo: (sec: number) => void
+  /** Put the playhead on a scene's first frame and select it — a double-click
+   * on the block, an angle thumbnail, a voiceover line. */
+  goToCutStart: (cut: WorkingCut) => void
+  /** L / K / J: play–faster, stop, one second back. */
+  shuttleFaster: () => void
+  shuttleStop: () => void
+  shuttleBack: () => void
+  /** The shuttle's current speed — the music track has to follow it. */
+  playbackRateRef: RefObject<number>
   pauseForScrub: () => void
   resumeAfterScrub: () => void
   onRulerPointerDown: (e: React.PointerEvent) => void
@@ -85,6 +97,10 @@ export interface PreviewPlayerApi {
  */
 /** `HTMLMediaElement.src` reads back as an absolute URL. Resolve a relative
  * one the same way before comparing, or equal sources never compare equal. */
+/** The speeds L steps through. No 4x: the music track is a plain <audio> that
+ * has to keep up, and past 2x it audibly gives up. */
+const SHUTTLE_RATES = [1, 1.5, 2]
+
 function absoluteUrl(src: string): string {
   try {
     return new URL(src, document.baseURI).href
@@ -529,6 +545,92 @@ export function usePreviewPlayer({
     paintTime(t)
     if (seekVideo) seekActiveTime(t)
     syncMusicAudio(t, false)
+  }
+
+  /**
+   * Move the playhead the way a BUTTON or a KEY does, as opposed to a drag:
+   * seek, then bring the playhead back on screen if the jump took it out of
+   * the view (revealPlayhead nudges — it never recentres).
+   *
+   * Every user-initiated jump goes through here. revealPlayhead used to be
+   * called from exactly one place, the view switch, so Home/End, a caption
+   * jump, the seek bar and the cut jumps all moved the playhead while the
+   * timeline sat perfectly still — which reads as a button that did nothing.
+   */
+  function jumpTo(sec: number): void {
+    applyScrubTime(sec, true)
+    // After the clamp, not the asked-for value.
+    revealPlayhead(currentTimeRef.current)
+  }
+
+  /**
+   * Put the playhead on a scene's first frame and select it — what a
+   * double-click on a block, an angle thumbnail or a voiceover line means:
+   * "show me this one". A single click still only selects (see selectCut).
+   */
+  function goToCutStart(cut: WorkingCut): void {
+    setSelectedId(cut.id)
+    if (viewModeRef.current === 'edited') {
+      const t = editedInById.get(cut.id)
+      if (t === undefined) return
+      jumpTo(t)
+      return
+    }
+    if (previewSource !== cut.source) {
+      // Another file: the load lands on the frame and paints the clock itself.
+      showCutFrame(cut, cut.in)
+      revealPlayhead(cut.in)
+      return
+    }
+    jumpTo(cut.in)
+  }
+
+  // ---- shuttle (J K L) -------------------------------------------------------
+  // Forward speeds only: a <video> has no reverse — a negative playbackRate is
+  // ignored by every browser we ship on — so J steps BACK instead of playing
+  // backwards.
+  const playbackRateRef = useRef(1)
+
+  function isPlayingNow(): boolean {
+    // Mid-load the element is paused on purpose; what it owes is the truth.
+    if (isSourceSwapPendingRef.current) return resumePlaybackRef.current
+    const v = activeVideo()
+    return !!v && !v.paused
+  }
+
+  function setPlaybackRate(rate: number): void {
+    playbackRateRef.current = rate
+    for (const el of [videoARef.current, videoBRef.current]) {
+      if (!el) continue
+      // defaultPlaybackRate too: loading another file resets playbackRate to
+      // it, and the edited view loads one per change of source.
+      el.defaultPlaybackRate = rate
+      el.playbackRate = rate
+    }
+  }
+
+  /** L — play, then step the speed up on each further press. */
+  function shuttleFaster(): void {
+    if (!isPlayingNow()) {
+      setPlaybackRate(1)
+      togglePlay()
+      return
+    }
+    const idx = SHUTTLE_RATES.indexOf(playbackRateRef.current)
+    setPlaybackRate(SHUTTLE_RATES[idx + 1] ?? SHUTTLE_RATES[SHUTTLE_RATES.length - 1])
+  }
+
+  /** K — stop, and drop back to normal speed. */
+  function shuttleStop(): void {
+    setPlaybackRate(1)
+    if (isPlayingNow()) togglePlay()
+  }
+
+  /** J — one second back, stopped. */
+  function shuttleBack(): void {
+    setPlaybackRate(1)
+    if (isPlayingNow()) togglePlay()
+    jumpTo(currentTimeRef.current - 1)
   }
 
   function pauseForScrub() {
@@ -1013,6 +1115,12 @@ export function usePreviewPlayer({
     selectCut,
     showCutFrame,
     applyScrubTime,
+    jumpTo,
+    goToCutStart,
+    shuttleFaster,
+    shuttleStop,
+    shuttleBack,
+    playbackRateRef,
     pauseForScrub,
     resumeAfterScrub,
     onRulerPointerDown,

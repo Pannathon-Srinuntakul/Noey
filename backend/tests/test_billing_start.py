@@ -8,6 +8,7 @@ end to end (the worker enqueue is captured, nothing is sent anywhere).
 import inspect
 import json
 import shutil
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
@@ -108,7 +109,9 @@ async def _open_runs(user_id: int) -> list[tuple]:
     )]
 
 
-async def test_a_start_reserves_and_hands_the_run_to_the_worker(captured):
+async def test_a_start_opens_the_run_and_hands_it_to_the_worker(captured):
+    """Nothing is held any more (owner, 2026-09-26): the row is opened with a
+    zero reservation and the run is charged per call as it goes."""
     uid_user = await make_user(email("start"), plan="pro")
     token = await user_token(uid_user)
     async with client() as c:
@@ -121,14 +124,17 @@ async def test_a_start_reserves_and_hands_the_run_to_the_worker(captured):
     [call] = captured
     runs = await _open_runs(uid_user)
     assert call["fn"] == "analyze_dub_video_local" and len(call["run_id"]) == 32
-    assert runs == [("analyze_video", "queued", runs[0][2], runs[0][2], f"vlocal_{project[:8]}")]
+    assert runs == [("analyze_video", "queued", runs[0][2], 0, f"vlocal_{project[:8]}")]
+    held = await db("SELECT reserved_tokens FROM core.usage_accounts WHERE user_id = :u", u=uid_user)
+    assert held == [] or held[0][0] == 0
 
 
-async def test_a_run_that_does_not_fit_is_402_before_anything_is_stored(captured):
+async def test_a_used_up_window_no_longer_refuses_the_start(captured):
+    """The estimate reserved more than a real run spends, so a used-up window
+    refused work that would have fitted. The start goes ahead now; the run
+    pauses mid-way if the quota really does run out."""
     uid_user = await make_user(email("start"), plan="free")
     token = await user_token(uid_user)
-    # A Free month already used up — footage within the plan's 5-minute cap
-    # (longer footage is refused as footage_over_limit before any reservation).
     await db(
         "INSERT INTO core.usage_accounts (user_id, monthly_started_at, monthly_used, reserved_tokens) "
         "VALUES (:u, now(), :m, 0)",
@@ -138,20 +144,58 @@ async def test_a_run_that_does_not_fit_is_402_before_anything_is_stored(captured
         project = await _project(c, token, 10)
         try:
             r = await _analyze(c, token, project, seconds=60)
+        finally:
+            _cleanup(project)
+    assert r.status_code == 202, r.text
+    assert [(k, s) for k, s, *_ in await _open_runs(uid_user)] == [("analyze_video", "queued")]
+
+
+async def test_a_run_too_big_for_the_whole_window_is_refused_up_front(captured):
+    """The one pre-flight check left: not "is there enough left" but "could
+    this ever fit". 5 minutes of footage at Precision high prices well past
+    Free's whole monthly limit, so nothing would make it work."""
+    uid_user = await make_user(email("start"), plan="free")
+    token = await user_token(uid_user)
+    async with client() as c:
+        r = await c.post(
+            "/videos/local",
+            json={"mode": "dub_first", "clips": [{"id": "c1", "durationSec": 290}],
+                  "engine": "pro", "precision": "high"},
+            headers=bearer(token),
+        )
+        project = r.json()["uid"]
+        try:
+            refused = await _analyze(c, token, project, seconds=290)
             stored = (data_root() / "video_outputs" / project / "proxy").exists()
             status = (await c.get(f"/videos/{project}", headers=bearer(token))).json()["status"]
         finally:
             _cleanup(project)
-    assert r.status_code == 402
-    detail = r.json()["detail"]
-    assert detail["code"] == "limit_reached" and detail["window"] == "monthly"
-    assert detail["label"] == limits.WINDOW_LABELS["monthly"] and detail["wallet_can_cover"] is False
+    assert refused.status_code == 422, refused.text
+    detail = refused.json()["detail"]
+    assert detail["code"] == "run_too_large" and detail["window"] == "monthly"
     assert not any("token" in k for k in detail)
     assert not stored and status == "pending" and captured == []
     assert await _open_runs(uid_user) == []
 
 
-async def test_a_failed_enqueue_gives_the_reservation_back(monkeypatch, captured):
+async def test_footage_longer_than_one_request_is_refused_by_precision(captured):
+    """1 hour fits a Standard request but not a High one (1.08 M tokens past
+    a 1 M context) — the cap follows ความละเอียด, and the message says so."""
+    from packages.billing import plan_features
+
+    user = SimpleNamespace(plan="max", is_admin=False)
+    assert plan_features.check_footage(user, 3_000, mode="dub_first", precision="standard") is None
+    refusal = plan_features.check_footage(user, 3_000, mode="dub_first", precision="high")
+    assert refusal is not None and refusal["by_precision"] is True
+    assert refusal["limit_sec"] == limits.video_call_footage_sec("high") == 2_666
+    assert "Standard" in refusal["message"]
+    # An hour is the owner's cap at Standard; the context ceiling is higher.
+    assert limits.video_call_footage_sec("standard") == 3_600
+    # A speech mode sends audio per clip, not one video request: plan cap only.
+    assert plan_features.check_footage(user, 3_000, mode="talking_head", precision="high") is None
+
+
+async def test_a_failed_enqueue_closes_the_run_row(monkeypatch, captured):
     async def broken(*a, **k):
         raise HTTPException(503, "Redis unavailable")
 
@@ -196,7 +240,10 @@ async def test_the_circuit_breaker_and_the_free_tier_refuse_at_start(monkeypatch
     assert free.status_code == 429 and free.json()["detail"]["code"] == "free_tier_limited"
 
 
-async def test_the_wallet_carries_a_run_the_windows_cannot(captured):
+async def test_consenting_to_the_wallet_records_what_the_run_may_spend(captured):
+    """``allow_wallet`` no longer holds baht — it records how much of the
+    balance the run may take once its windows are full. The account's own
+    money stays spendable while the run works."""
     from packages.billing import wallet as wallet_mod
     from packages.db.session import get_sessionmaker
 
@@ -207,7 +254,6 @@ async def test_the_wallet_carries_a_run_the_windows_cannot(captured):
         await s.execute(text("SET search_path TO core, public"))
         await wallet_mod.credit(s, uid_user, 100_000, source="mock")
         await s.commit()
-    # The Free month used up; the footage stays within the 5-minute cap.
     await db(
         "INSERT INTO core.usage_accounts (user_id, monthly_started_at, monthly_used, reserved_tokens) "
         "VALUES (:u, now(), :m, 0) ON CONFLICT (user_id) DO UPDATE SET monthly_used = :m, "
@@ -216,16 +262,22 @@ async def test_the_wallet_carries_a_run_the_windows_cannot(captured):
     )
     token = await user_token(uid_user)
     async with client() as c:
-        project = await _project(c, token, 60)
+        # A separate project each: a started one is `processing` and the
+        # route rightly refuses to start it twice.
+        first, second = await _project(c, token, 60), await _project(c, token, 60)
         try:
-            refused = await _analyze(c, token, project, seconds=60)
-            allowed = await _analyze(c, token, project, seconds=60, allow_wallet="true")
+            plain = await _analyze(c, token, first, seconds=60)
+            allowed = await _analyze(c, token, second, seconds=60, allow_wallet="true")
         finally:
-            _cleanup(project)
-    assert refused.status_code == 402 and refused.json()["detail"]["wallet_can_cover"] is True
-    assert allowed.status_code == 202
+            _cleanup(first)
+            _cleanup(second)
+    assert plain.status_code == 202 and allowed.status_code == 202
+    rows = await db(
+        "SELECT reserved_wallet_satang FROM core.ai_runs WHERE user_id = :u ORDER BY created_at", u=uid_user
+    )
+    assert [r[0] for r in rows] == [0, 100_000]
     held = await db("SELECT wallet_reserved_satang FROM core.usage_accounts WHERE user_id = :u", u=uid_user)
-    assert held[0][0] > 0
+    assert held[0][0] == 0  # nothing is held: the balance stays spendable
 
 
 async def _true() -> bool:
@@ -416,29 +468,31 @@ async def test_transcribe_audio_prices_the_measured_wavs(captured):
 
 
 async def test_a_refused_free_start_does_not_spend_the_networks_daily_runs(captured, monkeypatch):
-    """402 on the account's own limit must not count against the IP's free
-    runs (every free account behind the same NAT shares them)."""
+    """A start refused on the request's own shape must not count against the
+    IP's free runs (every free account behind the same NAT shares them)."""
     monkeypatch.setenv("FREE_RUNS_PER_IP_DAY", "2")
     get_settings.cache_clear()
     blocked = await make_user(email("start"), plan="free")
     other = await make_user(email("start"), plan="free")
-    await db(
-        "INSERT INTO core.usage_accounts (user_id, monthly_started_at, monthly_used) VALUES (:u, now(), 10000000) "
-        "ON CONFLICT (user_id) DO UPDATE SET monthly_started_at = now(), monthly_used = 10000000",
-        u=blocked,
-    )
     t_blocked, t_other = await user_token(blocked), await user_token(other)
     async with client() as c:
-        p1 = await _project(c, t_blocked, 10)
+        # Too big for Free's whole month however empty it is → 422, every time.
+        r = await c.post(
+            "/videos/local",
+            json={"mode": "dub_first", "clips": [{"id": "c1", "durationSec": 290}],
+                  "engine": "pro", "precision": "high"},
+            headers=bearer(t_blocked),
+        )
+        p1 = r.json()["uid"]
         mine = [await _project(c, t_other, 10) for _ in range(3)]  # one start each
         try:
-            refused = [(await _analyze(c, t_blocked, p1)).status_code for _ in range(3)]
+            refused = [(await _analyze(c, t_blocked, p1, seconds=290)).status_code for _ in range(3)]
             fine = [(await _analyze(c, t_other, p)).status_code for p in mine[:2]]
             third = await _analyze(c, t_other, mine[2])
         finally:
             for p in (p1, *mine):
                 _cleanup(p)
-    assert refused == [402, 402, 402]
+    assert refused == [422, 422, 422]
     assert fine == [202, 202]
     assert third.status_code == 429 and third.json()["detail"]["code"] == "free_tier_limited"
 

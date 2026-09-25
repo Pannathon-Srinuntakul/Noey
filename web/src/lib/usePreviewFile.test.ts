@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { previewCandidates } from './usePreviewFile'
+import { previewCandidates, previewWhileBusy } from './usePreviewFile'
 
 /**
  * Two regressions live here.
@@ -45,5 +45,36 @@ describe('previewCandidates', () => {
     expect(previewCandidates('importing', 'dub_first')).toBeNull()
     expect(previewCandidates('analyzing', 'dub_first')).toBeNull()
     expect(previewCandidates('silent_rendering', 'dub_first')).toBeNull()
+  })
+})
+
+/**
+ * A busy step has no candidates of its own, and the hook used to answer it with
+ * the source clip — so starting a re-render swapped a finished project's
+ * picture back to UNCUT footage until the render landed (2026-08-13, fixed
+ * 2026-09-26).
+ */
+describe('previewWhileBusy', () => {
+  it('holds the previous render while a new one runs', () => {
+    expect(previewWhileBusy('silent_rendering', 'final.mp4', 'normalized/norm_000.mp4')).toBe(
+      'final.mp4'
+    )
+    expect(previewWhileBusy('final_rendering', 'final.mp4', undefined)).toBe('final.mp4')
+  })
+
+  it('shows the source clip on a first run, which has no render yet', () => {
+    expect(previewWhileBusy('importing', null, 'normalized/norm_000.mp4')).toBe(
+      'normalized/norm_000.mp4'
+    )
+    expect(previewWhileBusy('analyzing', null, undefined)).toBeNull()
+  })
+
+  it('never answers a terminal step with a file from before', () => {
+    // `done` with nothing rendered is speech_highlights whose index came back
+    // empty — a real "nothing to show", not a render in flight.
+    expect(previewWhileBusy('done', 'highlights/h01.mp4', 'normalized/norm_000.mp4')).toBe(
+      'normalized/norm_000.mp4'
+    )
+    expect(previewWhileBusy('error', 'final.mp4', undefined)).toBeNull()
   })
 })

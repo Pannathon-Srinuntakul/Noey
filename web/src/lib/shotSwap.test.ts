@@ -3,6 +3,7 @@ import type { DubEditScript, DubTimeline } from './videosLocalApi'
 import {
   applySwapsToScript,
   countShotsWithAlternates,
+  hasSwapOptions,
   retimeTimelineForSwap,
   scriptTotalSec,
   segmentAlternates,
@@ -89,6 +90,27 @@ describe('countShotsWithAlternates', () => {
     expect(
       countShotsWithAlternates({ segments: [seg(10, 13, { alternates: [{ note: 'x' }] })] })
     ).toBe(0)
+  })
+})
+
+describe('hasSwapOptions', () => {
+  // The review screen walks EVERY shot of the cut so its counter matches the
+  // real edit; this is what tells a shot that asks a question from one that can
+  // only say "nothing to swap here".
+  it('is false for a shot the AI returned no backup for', () => {
+    expect(hasSwapOptions(seg(10, 13))).toBe(false)
+    expect(hasSwapOptions(seg(10, 13, { alternates: [] }))).toBe(false)
+  })
+
+  it('is true while a backup is on offer', () => {
+    expect(hasSwapOptions(seg(10, 13, { alternates: [alt(30, 33)] }))).toBe(true)
+  })
+
+  it("stays true once the only backup is in use, because the AI's shot is now the offer", () => {
+    const s = seg(10, 12.6, { alternates: [alt(30, 33)] })
+    const swapped = swapSegment(s, toWindow(alt(30, 33)), 'free')!
+    expect(segmentAlternates(swapped).every((a) => a.sourceIn === 30)).toBe(true)
+    expect(hasSwapOptions(swapped)).toBe(true)
   })
 })
 

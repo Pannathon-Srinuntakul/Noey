@@ -76,6 +76,53 @@ PLAN_LIMITS: dict[str, PlanLimits] = {
     "max": PlanLimits(28_000_000, ("weekly", "five_hour"), 5, 100, queue_lead_sec=QUEUE_LEAD_FIRST_SEC),
 }
 
+# ── how much footage ONE model request can carry ─────────────────────────────
+#
+# Two different ceilings, and the owner asked for "1 hour on dub_first"
+# (2026-09-26). One number cannot be right for both precisions: footage is
+# priced at ``estimate.VIDEO_TOKENS_PER_SEC`` — 100 tokens/s at Standard,
+# 300 at High — so an hour is 360 k tokens at Standard but 1.08 M at High,
+# which is already past the model's input context. The cap is therefore
+# DERIVED from those two constants instead of typed in twice.
+
+#: The model's input context, in vendor tokens. A request larger than this
+#: cannot succeed however much quota the user has — it is refused, not paused.
+MODEL_INPUT_CONTEXT_TOKENS = 1_000_000
+#: Share of that context the footage itself may fill. The prompt, the
+#: transcript, the answer and the thinking need the rest; 80 % leaves ~200 k,
+#: far above the ~14 k the dub prompt + script actually use.
+FOOTAGE_CONTEXT_SHARE = 0.8
+#: The owner's ceiling for one video-call project (2026-09-26). It binds at
+#: Standard; at High the context ceiling binds first.
+VIDEO_CALL_FOOTAGE_CAP_SEC = 3600
+
+
+def footage_context_ceiling_sec(precision: str | None) -> int:
+    """Longest footage that still FITS one request at ``precision``."""
+    from packages.billing.estimate import VIDEO_TOKENS_PER_SEC
+
+    per_sec = VIDEO_TOKENS_PER_SEC.get(precision or "standard", VIDEO_TOKENS_PER_SEC["standard"])
+    return int(MODEL_INPUT_CONTEXT_TOKENS * FOOTAGE_CONTEXT_SHARE // per_sec)
+
+
+def video_call_footage_sec(precision: str | None, *, unlimited: bool = False) -> int:
+    """Footage cap for a mode that sends the WHOLE project to the model in one
+    video request (dub_first / highlight): 1 h at Standard, ~44 min at High.
+
+    Two different kinds of limit meet here, and only one of them is ours.
+    ``VIDEO_CALL_FOOTAGE_CAP_SEC`` is a product decision (owner, 2026-09-26) and
+    an unlimited account is exempt from it like any other plan rule. The context
+    ceiling is not a decision at all — a request larger than the model's input
+    window cannot be answered by anyone — so it binds even there.
+    """
+    ceiling = footage_context_ceiling_sec(precision)
+    return ceiling if unlimited else min(VIDEO_CALL_FOOTAGE_CAP_SEC, ceiling)
+
+
+#: Modes whose footage all travels in a single video request — the only ones
+#: the cap above applies to. The speech modes send audio per clip instead.
+VIDEO_CALL_MODES: frozenset[str] = frozenset({"dub_first", "highlight"})
+
 UNLIMITED_PLANS = frozenset({"enterprise"})
 #: Unlimited accounts still run at most this many AI jobs at once — a vendor
 #: safety cap, not a plan limit.

@@ -466,11 +466,52 @@ async def _outcome_from_job(job_id: str | None) -> str:
     return "user_cancel" if step == "cancelled" else "our_failure"
 
 
-async def _mark_stopped(job_id: str | None, code: str, message: str) -> None:
+async def _mark_stopped(
+    job_id: str | None,
+    exc: Any,
+    *,
+    kwargs: dict[str, Any] | None = None,
+    paused: bool = False,
+) -> None:
+    """End a job the guard stopped.
+
+    ``paused`` — the plan's window ran out (``guard.QuotaExhausted``), not a
+    crash: the project keeps everything it has produced and goes to
+    ``paused_quota``, which the user resumes from the stage it stopped at.
+    The payload carries the window, its reset time and what the balance would
+    have to cover, so the editor can offer the top-up instead of showing an
+    error (web/src/lib/usageLimits.ts reads exactly these keys off the job
+    row's ``result``).
+    """
+    payload = exc.payload() if hasattr(exc, "payload") else {"code": getattr(exc, "code", "limit_stop")}
+    message = str(payload.get("message") or exc)
     if job_id:
         await _update_job(
-            job_id, "error", 0, result={"step": "stopped", "code": code, "message": message}, error=message,
+            job_id, "error", 0,
+            result={"step": "stopped", "paused": paused, **payload, "message": message},
+            error=message,
         )
+    if not paused:
+        return
+    project_uid, tenant_slug = (kwargs or {}).get("project_uid"), (kwargs or {}).get("tenant_slug")
+    if not (project_uid and tenant_slug):
+        return
+    ts = await _tenant_session(str(tenant_slug))
+    try:
+        proj = await _get_video_project(ts, str(project_uid))
+        # "error" here is what the task's OWN handler just wrote for this same
+        # exception on its way out; a project the user cancelled meanwhile
+        # keeps its own ending.
+        if (
+            proj is not None
+            and proj.status in ("processing", "error")
+            and (not job_id or proj.job_id == job_id)
+        ):
+            proj.status = "paused_quota"
+            proj.error_msg = message
+            await ts.commit()
+    finally:
+        await ts.close()
 
 
 WAIT_EXPIRED_MESSAGE = "งานรอคิวนานเกินไป กรุณาเริ่มใหม่"
@@ -570,7 +611,11 @@ def billed_task(*, terminal: bool = True) -> Any:
                 return {"waiting_slot": True}
 
             run = await _run_db(_load_run, run_id)
-            meter_token = guard.set_meter(guard.meter_for_run(run))
+            # What is left of the plan's window right now — nothing is
+            # reserved at start any more, so this is what stops the run
+            # (packages/billing/runs.py, owner 2026-09-26).
+            quota = await _run_db(runs.quota_snapshot, run_id)
+            meter_token = guard.set_meter(guard.meter_for_run(run, quota))
             run_token = _current_run.set(run_id)
             heartbeat = asyncio.create_task(_lease_heartbeat(run_id))
             outcome: str | None = None
@@ -581,13 +626,19 @@ def billed_task(*, terminal: bool = True) -> Any:
                 elif terminal:
                     outcome = await _outcome_from_job(job_id)
                 return result
+            except guard.QuotaExhausted as exc:
+                # Out of plan quota: paused, not failed — the project stays
+                # resumable from the stage it reached.
+                outcome = "limit_stop"
+                await _mark_stopped(job_id, exc, kwargs=kwargs, paused=True)
+                return {"stopped": True, "paused": True, "code": exc.code}
             except guard.RunBudgetExceeded as exc:
                 outcome = "limit_stop"
-                await _mark_stopped(job_id, exc.code, str(exc))
+                await _mark_stopped(job_id, exc, kwargs=kwargs)
                 return {"stopped": True, "code": exc.code}
             except guard.ServicePaused as exc:
                 outcome = "our_failure"
-                await _mark_stopped(job_id, exc.code, str(exc))
+                await _mark_stopped(job_id, exc, kwargs=kwargs)
                 return {"stopped": True, "code": exc.code}
             except UserInputError:
                 outcome = "user_error"
@@ -2930,9 +2981,62 @@ async def plan_speech_local(ctx: dict[str, Any], *, job_id: str, project_uid: st
 #     kept for good.
 # A daily sweep with a generous TTL is the backstop. 24 h is far beyond any
 # legitimate poll, and 30 days of job rows is far beyond any debugging need.
+# The third is a project stuck in `processing` — see _sweep_stuck_projects.
 
 TRANSCODE_SCRATCH_TTL_SEC = 24 * 60 * 60
 JOB_ROW_TTL_DAYS = 30
+
+#: A project left in ``processing`` with nothing running is stuck: the tab that
+#: started it died before the job row was written, or the job ended without
+#: reaching the project row. ``processing`` is not restartable
+#: (routers/videos_local.py:RESTARTABLE_STATUSES) and nothing on the server
+#: used to clear it, so the project was unstartable FOREVER. Long enough to be
+#: past any real AI job (arq's own job_timeout is 3 h, but a job that long has
+#: a live, moving job row, which is what actually decides below).
+STUCK_PROCESSING_TTL_SEC = 2 * 60 * 60
+STUCK_PROCESSING_MESSAGE = "งานก่อนหน้าหยุดกลางคัน — กดเริ่มใหม่ได้เลย"
+
+
+async def _sweep_stuck_projects(now: Any) -> int:
+    """Free projects parked in ``processing`` whose job is not running.
+
+    A project is only freed when its job row says nothing is happening —
+    missing, finished, or last touched before the cutoff — so a genuinely slow
+    job is never interrupted. Freed as ``error`` (restartable today) with a
+    message that says what to do.
+    """
+    from datetime import timedelta
+
+    from packages.db.tenancy import SHARED_DATA_SCHEMA
+
+    cutoff = now - timedelta(seconds=STUCK_PROCESSING_TTL_SEC)
+    session = await _core_session()
+    try:
+        rows = (
+            await session.execute(
+                text(
+                    f'SELECT p.uid FROM "{SHARED_DATA_SCHEMA}".video_projects p '
+                    "LEFT JOIN core.jobs j ON j.id = p.job_id "
+                    "WHERE p.status = 'processing' AND p.updated_at < :cutoff "
+                    "  AND (j.id IS NULL OR j.status IN ('ok', 'error', 'cancelled') "
+                    "       OR j.updated_at < :cutoff)"
+                ),
+                {"cutoff": cutoff},
+            )
+        ).scalars().all()
+        if rows:
+            await session.execute(
+                text(
+                    f'UPDATE "{SHARED_DATA_SCHEMA}".video_projects '
+                    "SET status = 'error', error_msg = :msg WHERE uid = ANY(:uids)"
+                ),
+                {"msg": STUCK_PROCESSING_MESSAGE, "uids": list(rows)},
+            )
+            await session.commit()
+            log.warning("stuck_projects_freed", count=len(rows), uids=list(rows)[:20])
+        return len(rows)
+    finally:
+        await session.close()
 
 
 async def sweep_housekeeping(ctx: dict[str, Any]) -> dict:
@@ -3012,13 +3116,21 @@ async def sweep_housekeeping(ctx: dict[str, Any]) -> dict:
     finally:
         await session.close()
 
+    freed_projects = await _sweep_stuck_projects(datetime.now(timezone.utc))
+
     log.info(
         "housekeeping_swept",
         scratch_dirs=removed_dirs,
         scratch_objects=removed_objects,
         job_rows=removed_rows,
+        stuck_projects=freed_projects,
     )
-    return {"scratch_dirs": removed_dirs, "scratch_objects": removed_objects, "job_rows": removed_rows}
+    return {
+        "scratch_dirs": removed_dirs,
+        "scratch_objects": removed_objects,
+        "job_rows": removed_rows,
+        "stuck_projects": freed_projects,
+    }
 
 
 # ── WorkerSettings ────────────────────────────────────────────────────────────

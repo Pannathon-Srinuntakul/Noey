@@ -1,4 +1,4 @@
-"""Guard layer 1: rolling windows, reservation, settle, refunds, slots.
+"""Guard layer 1: rolling windows, charge as spent, settle, refunds, slots.
 
 Real local Postgres (packages/billing/runs.py locks ``usage_accounts`` rows,
 which only a real database can prove). Accounts use the admin-tests domain
@@ -45,18 +45,34 @@ async def _user(plan: str = "lite", **kw) -> tuple[User, int]:
     return user, int(tid)
 
 
-async def _reserve(user: User, tid: int, tokens: int, *, allow_wallet: bool = False, now: datetime = NOW) -> str:
+async def _open(user: User, tid: int, tokens: int, *, allow_wallet: bool = False, now: datetime = NOW) -> str:
     s = await _session()
     try:
-        run = await runs.reserve(s, user=user, tenant_id=tid, estimate=_est(tokens), allow_wallet=allow_wallet, now=now)
+        run = await runs.open_run(
+            s, user=user, tenant_id=tid, estimate=_est(tokens), allow_wallet=allow_wallet, now=now
+        )
         await s.commit()
         return str(run.id)
     finally:
         await s.close()
 
 
+async def _spend(run_id: str, tokens: int, *, now: datetime = NOW) -> int:
+    """One recorded vendor request — what metering does per usage row."""
+    s = await _session()
+    try:
+        charged = await runs.charge_as_spent(s, run_id, tokens, now=now)
+        await s.commit()
+        return charged
+    finally:
+        await s.close()
+
+
 async def _settle(run_id: str, outcome: str, *, actual: int, now: datetime = NOW) -> AiRun:
-    await db("UPDATE core.ai_runs SET actual_tokens = :a WHERE id = :r", a=actual, r=run_id)
+    """Spend ``actual`` the way a run really does — per recorded request — and
+    then settle it."""
+    if actual:
+        await _spend(run_id, actual, now=now)
     s = await _session()
     try:
         run = await runs.settle(s, run_id, outcome, now=now)
@@ -111,6 +127,22 @@ def test_reservations_count_against_every_enforced_window():
     assert runs.binding_window(views).key == "five_hour"
 
 
+def test_a_window_too_small_for_the_run_does_not_govern_it():
+    """Pro's 5-hour window is 40 % of its weekly one, so an hour of footage
+    costs more than it holds however empty it is. Stopping the run there would
+    make it unstartable forever — the weekly window governs instead."""
+    acct = UsageAccount(user_id=1, weekly_started_at=NOW, weekly_used=0, five_hour_started_at=NOW,
+                        five_hour_used=0, monthly_started_at=NOW, monthly_used=0, reserved_tokens=0)
+    views = runs.enforced_windows("pro", acct, NOW)
+    five, week = limits.window_limit("pro", "five_hour"), limits.window_limit("pro", "weekly")
+    small = runs.binding_window(runs.windows_for_run(views, five // 2))
+    big = runs.binding_window(runs.windows_for_run(views, five + 1))
+    assert small.key == "five_hour" and big.key == "weekly"
+    # Past every window, the biggest one still answers (the start refused it).
+    assert runs.binding_window(runs.windows_for_run(views, week * 10)).key == "weekly"
+    assert runs.windows_for_run(views, 0) == views
+
+
 def test_effective_plan_reads_due_changes_and_lapsed_grace():
     user = SimpleNamespace(plan="pro", is_admin=False)
     acct = UsageAccount(user_id=1, pending_plan="lite", pending_plan_at=NOW + timedelta(days=1))
@@ -133,26 +165,53 @@ def test_charge_table():
     assert runs.charge_for(small, "ok") == 100 and runs.charge_for(small, "limit_stop") == 100
 
 
-# ── reserve / settle (Postgres) ──────────────────────────────────────────────
+# ── open / charge as spent / settle (Postgres) ───────────────────────────────
 
-async def test_reserve_holds_the_estimate_and_settle_charges_actual():
+async def test_opening_a_run_holds_nothing_and_charges_nothing():
+    """The estimate is no longer reserved (owner, 2026-09-26): opening a run
+    leaves the windows exactly as they were."""
     user, tid = await _user("lite")
-    run_id = await _reserve(user, tid, 50_000)
+    run_id = await _open(user, tid, 50_000)
     acct = await _account(user.id)
-    assert acct.reserved_tokens == 50_000 and acct.weekly_started_at == NOW
+    assert acct.reserved_tokens == 0 and acct.weekly_used == 0
+    row = await db("SELECT reserved_tokens, status FROM core.ai_runs WHERE id = :r", r=run_id)
+    assert tuple(row[0]) == (0, "queued")
+
+
+async def test_each_recorded_request_charges_itself_as_the_run_goes():
+    """Charged per call, not at the end: a run that never settles (the worker
+    died) has still paid for what it burned."""
+    user, tid = await _user("lite")
+    run_id = await _open(user, tid, 50_000)
+    assert await _spend(run_id, 12_000) == 12_000
+    acct = await _account(user.id)
+    assert (acct.weekly_used, acct.five_hour_used, acct.monthly_used) == (12_000,) * 3
+    assert acct.weekly_started_at == NOW  # the window starts at the first charge
+    await _spend(run_id, 8_000)
+    acct = await _account(user.id)
+    assert acct.weekly_used == 20_000
+    row = await db("SELECT actual_tokens, charged_tokens FROM core.ai_runs WHERE id = :r", r=run_id)
+    assert tuple(row[0]) == (20_000, 20_000)
+
+
+async def test_settle_trues_up_what_the_run_already_paid():
+    user, tid = await _user("lite")
+    run_id = await _open(user, tid, 50_000)
     run = await _settle(run_id, "ok", actual=30_000)
     assert (run.status, run.charged_tokens) == ("settled", 30_000)
     acct = await _account(user.id)
-    assert acct.reserved_tokens == 0
-    assert (acct.weekly_used, acct.five_hour_used, acct.monthly_used) == (30_000, 30_000, 30_000)
-    # Idempotent: a second settle changes nothing.
+    assert (acct.weekly_used, acct.five_hour_used, acct.monthly_used) == (30_000,) * 3
+    # Idempotent: a second settle changes nothing — and a usage row that
+    # arrives after it (an outbox replay) is recorded but not charged again.
     await _settle(run_id, "our_failure", actual=30_000)
     assert (await _account(user.id)).weekly_used == 30_000
+    row = await db("SELECT actual_tokens, charged_tokens FROM core.ai_runs WHERE id = :r", r=run_id)
+    assert tuple(row[0]) == (60_000, 30_000)
 
 
 async def test_our_failure_refunds_everything_and_keeps_nothing_held():
     user, tid = await _user("lite")
-    run_id = await _reserve(user, tid, 40_000)
+    run_id = await _open(user, tid, 40_000)
     run = await _settle(run_id, "our_failure", actual=25_000)
     acct = await _account(user.id)
     assert (run.status, run.outcome, run.charged_tokens) == ("refunded", "our_failure", 0)
@@ -169,11 +228,11 @@ async def test_refunds_are_capped_per_day_then_failures_are_charged(monkeypatch)
     monkeypatch.setenv("BILLING_FREE_REFUNDS_PER_DAY", "2")
     get_settings.cache_clear()
     user, tid = await _user("pro")
-    free_fail = await _settle(await _reserve(user, tid, 10_000), "our_failure", actual=0)
-    first = [await _settle(await _reserve(user, tid, 10_000), "our_failure", actual=5_000) for _ in range(2)]
-    capped = await _settle(await _reserve(user, tid, 10_000), "our_failure", actual=50_000)
+    free_fail = await _settle(await _open(user, tid, 10_000), "our_failure", actual=0)
+    first = [await _settle(await _open(user, tid, 10_000), "our_failure", actual=5_000) for _ in range(2)]
+    capped = await _settle(await _open(user, tid, 10_000), "our_failure", actual=50_000)
     tomorrow = await _settle(
-        await _reserve(user, tid, 10_000, now=NOW + timedelta(days=1)), "our_failure", actual=5_000,
+        await _open(user, tid, 10_000, now=NOW + timedelta(days=1)), "our_failure", actual=5_000,
         now=NOW + timedelta(days=1),
     )
     assert free_fail.status == "refunded"
@@ -182,61 +241,84 @@ async def test_refunds_are_capped_per_day_then_failures_are_charged(monkeypatch)
     assert (tomorrow.status, tomorrow.charged_tokens) == ("refunded", 0)
 
 
-async def test_limit_stop_charges_at_most_the_reservation():
+async def test_limit_stop_charges_at_most_the_estimate_and_refunds_the_rest():
+    """A run the guard stopped pays what it burned up to the estimate — the
+    overshoot it already charged per call comes back off the windows."""
     user, tid = await _user("lite")
-    run_id = await _reserve(user, tid, 40_000)
+    run_id = await _open(user, tid, 40_000)
     run = await _settle(run_id, "limit_stop", actual=47_000)
     assert (run.status, run.charged_tokens) == ("stopped", 40_000)
     assert (await _account(user.id)).weekly_used == 40_000
 
 
-async def test_a_run_that_does_not_fit_is_refused_with_the_binding_window():
+async def test_a_full_window_no_longer_refuses_the_start():
+    """The reservation is gone: a start the estimate would have refused now
+    goes ahead, and the quota snapshot is what stops it mid-run."""
     user, tid = await _user("pro")
     five = limits.window_limit("pro", "five_hour")
-    first = await _reserve(user, tid, five - 1_000)
-    await _settle(first, "ok", actual=five - 1_000)
-    with pytest.raises(runs.LimitReached) as exc:
-        await _reserve(user, tid, 5_000, now=NOW + timedelta(minutes=1))
-    assert exc.value.window == "five_hour"
-    assert exc.value.resets_at == NOW + timedelta(hours=5)
-    assert exc.value.wallet_can_cover is False and exc.value.wallet_need_satang == wallet.satang_for_tokens(4_000)
-    # Five hours later the window has rolled: the same run fits.
-    await _reserve(user, tid, 5_000, now=NOW + timedelta(hours=5, seconds=1))
+    await _settle(await _open(user, tid, five - 1_000), "ok", actual=five - 1_000)
+    later = NOW + timedelta(minutes=1)
+    run_id = await _open(user, tid, 5_000, now=later)
+    s = await _session()
+    try:
+        snap = await runs.quota_snapshot(s, run_id, now=later)
+    finally:
+        await s.close()
+    assert snap.window == "five_hour" and snap.headroom == 1_000
+    assert snap.resets_at == NOW + timedelta(hours=5)
+    assert snap.budget == 1_000  # no balance, no consent
+    # Five hours later the window has rolled and the whole run fits again.
+    s = await _session()
+    try:
+        rolled = await runs.quota_snapshot(s, run_id, now=NOW + timedelta(hours=5, seconds=1))
+    finally:
+        await s.close()
+    assert rolled.headroom == five
+
+
+async def test_the_quota_snapshot_adds_the_balance_only_with_consent():
+    user, tid = await _user("free")
+    monthly = limits.window_limit("free", "monthly")
+    s = await _session()
+    await wallet.credit(s, user.id, 10_000, source="mock", now=NOW)
+    await s.commit()
+    await s.close()
+    await _settle(await _open(user, tid, monthly), "ok", actual=monthly)
+    plain = await _open(user, tid, 10_000, now=NOW + timedelta(minutes=1))
+    consented = await _open(user, tid, 10_000, allow_wallet=True, now=NOW + timedelta(minutes=1))
+    s = await _session()
+    try:
+        no_consent = await runs.quota_snapshot(s, plain, now=NOW + timedelta(minutes=1))
+        with_consent = await runs.quota_snapshot(s, consented, now=NOW + timedelta(minutes=1))
+    finally:
+        await s.close()
+    assert no_consent.budget == 0
+    assert with_consent.budget == wallet.tokens_for_satang(10_000) > 0
 
 
 async def test_overshoot_goes_past_100_percent():
     user, tid = await _user("lite")
     weekly = limits.window_limit("lite", "weekly")
-    run_id = await _reserve(user, tid, weekly - 10)
+    run_id = await _open(user, tid, weekly - 10)
     await _settle(run_id, "ok", actual=weekly + 5_000)  # within the ceiling (1.2 × estimate)
     acct = await _account(user.id)
     views = runs.enforced_windows("lite", acct, NOW)
     assert views[0].used == weekly + 5_000 and views[0].used_pct > 100
 
 
-async def test_parallel_reservations_never_spend_the_same_headroom():
-    """The race the row lock exists for: 10 starts at once on a Lite account
-    whose Weekly limit fits exactly three of them."""
+async def test_parallel_charges_never_spend_the_same_headroom_twice():
+    """The race the row lock exists for: 10 requests of one user recording at
+    once must add up to exactly what they spent, never less."""
     user, tid = await _user("lite")
     weekly = limits.window_limit("lite", "weekly")
-    each = weekly // 3 - 1
-
-    async def attempt() -> bool:
-        try:
-            await _reserve(user, tid, each)
-            return True
-        except runs.LimitReached:
-            return False
-
-    results = await asyncio.gather(*(attempt() for _ in range(10)))
+    each = weekly // 20
+    ids = [await _open(user, tid, each) for _ in range(10)]
+    await asyncio.gather(*(_spend(r, each) for r in ids))
     acct = await _account(user.id)
-    assert results.count(True) == 3
-    assert acct.reserved_tokens == 3 * each <= weekly
-    held = await db("SELECT count(*) FROM core.ai_runs WHERE user_id = :u AND status = 'queued'", u=user.id)
-    assert held[0][0] == 3
+    assert acct.weekly_used == 10 * each <= weekly
 
 
-async def test_the_wallet_covers_the_overflow_only_when_allowed():
+async def test_the_wallet_carries_the_overflow_only_when_allowed():
     user, tid = await _user("free")
     monthly = limits.window_limit("free", "monthly")
     s = await _session()
@@ -244,36 +326,44 @@ async def test_the_wallet_covers_the_overflow_only_when_allowed():
     await s.commit()
     await s.close()
     overflow = 30_000
-    with pytest.raises(runs.LimitReached) as exc:
-        await _reserve(user, tid, monthly + overflow)
-    assert exc.value.wallet_can_cover is True
-    run_id = await _reserve(user, tid, monthly + overflow, allow_wallet=True)
+    # No consent: the overflow lands on the windows (past 100 %), not on baht.
+    plain = await _open(user, tid, monthly + overflow)
+    await _settle(plain, "ok", actual=monthly + overflow)
     acct = await _account(user.id)
-    need = wallet.satang_for_tokens(overflow)
-    assert acct.reserved_tokens == monthly and acct.wallet_reserved_satang == need
+    assert acct.wallet_balance_satang == 10_000 and acct.monthly_used == monthly + overflow
+
+    user, tid = await _user("free")
+    s = await _session()
+    await wallet.credit(s, user.id, 10_000, source="mock", now=NOW)
+    await s.commit()
+    await s.close()
+    run_id = await _open(user, tid, monthly + overflow, allow_wallet=True)
     run = await _settle(run_id, "ok", actual=monthly + overflow)
+    need = wallet.satang_for_tokens(overflow)
     acct = await _account(user.id)
     assert run.charged_tokens == monthly and run.charged_wallet_satang == need
-    assert acct.wallet_reserved_satang == 0 and acct.wallet_balance_satang == 10_000 - need
+    assert acct.wallet_balance_satang == 10_000 - need and acct.monthly_used == monthly
     ledger = await db("SELECT kind, amount_satang, run_id FROM core.wallet_ledger WHERE user_id = :u ORDER BY id", u=user.id)
     assert [r[0] for r in ledger] == ["purchase", "debit"] and ledger[1][1] == -need and ledger[1][2] == run_id
 
 
-async def test_a_failed_wallet_run_takes_no_baht():
+async def test_a_failed_wallet_run_gives_the_baht_back():
     user, tid = await _user("free")
     s = await _session()
     await wallet.credit(s, user.id, 5_000, source="mock", now=NOW)
     await s.commit()
     await s.close()
-    run_id = await _reserve(user, tid, limits.window_limit("free", "monthly") + 10_000, allow_wallet=True)
+    run_id = await _open(user, tid, limits.window_limit("free", "monthly") + 10_000, allow_wallet=True)
     await _settle(run_id, "our_failure", actual=90_000)
     acct = await _account(user.id)
-    assert acct.wallet_balance_satang == 5_000 and acct.wallet_reserved_satang == 0 and acct.monthly_used == 0
+    assert acct.wallet_balance_satang == 5_000 and acct.monthly_used == 0
+    row = await db("SELECT charged_tokens, charged_wallet_satang FROM core.ai_runs WHERE id = :r", r=run_id)
+    assert tuple(row[0]) == (0, 0)
 
 
 async def test_unlimited_accounts_hold_and_pay_nothing():
     user, tid = await _user("free", admin=True)
-    run_id = await _reserve(user, tid, 10_000_000)
+    run_id = await _open(user, tid, 10_000_000)
     run = await _settle(run_id, "ok", actual=12_000_000)
     acct = await _account(user.id)
     assert run.unlimited is True and run.charged_tokens == 0
@@ -282,7 +372,7 @@ async def test_unlimited_accounts_hold_and_pay_nothing():
 
 async def test_release_gives_the_hold_back():
     user, tid = await _user("lite")
-    run_id = await _reserve(user, tid, 20_000)
+    run_id = await _open(user, tid, 20_000)
     s = await _session()
     await runs.release(s, run_id)
     await s.commit()
@@ -307,7 +397,7 @@ async def _slot(run_id: str, now: datetime = NOW) -> str:
 @pytest.mark.parametrize(("plan", "cap"), [("lite", 1), ("pro", 2)])
 async def test_the_plan_caps_concurrent_runs(plan, cap):
     user, tid = await _user(plan)
-    ids = [await _reserve(user, tid, 1_000) for _ in range(cap + 1)]
+    ids = [await _open(user, tid, 1_000) for _ in range(cap + 1)]
     got = [await _slot(r) for r in ids]
     assert got == ["run"] * cap + ["wait"]
     assert await _slot(ids[0]) == "run"  # the holder renews its lease
@@ -318,8 +408,8 @@ async def test_the_plan_caps_concurrent_runs(plan, cap):
 
 async def test_a_lapsed_lease_frees_the_slot_and_the_sweeper_settles_it():
     user, tid = await _user("lite")
-    a = await _reserve(user, tid, 1_000)
-    b = await _reserve(user, tid, 1_000)
+    a = await _open(user, tid, 1_000)
+    b = await _open(user, tid, 1_000)
     assert await _slot(a) == "run" and await _slot(b) == "wait"
     later = NOW + runs.LEASE + timedelta(seconds=1)
     assert await _slot(b, now=later) == "run"  # a's worker died
@@ -339,8 +429,8 @@ async def test_a_run_still_waiting_for_a_slot_is_not_swept():
     # database's own open runs.
     base = NOW - timedelta(days=3650)
     user, tid = await _user("lite")
-    busy = await _reserve(user, tid, 1_000, now=base)
-    waiting = await _reserve(user, tid, 1_000, now=base)
+    busy = await _open(user, tid, 1_000, now=base)
+    waiting = await _open(user, tid, 1_000, now=base)
     assert await _slot(busy, now=base) == "run"
     much_later = base + runs.QUEUED_MAX_AGE + timedelta(minutes=5)
     assert await _slot(busy, now=much_later) == "run"  # still working, lease renewed
@@ -362,7 +452,7 @@ async def test_a_run_still_waiting_for_a_slot_is_not_swept():
 
 async def test_admin_window_reset_clears_one_window():
     user, tid = await _user("pro")
-    run_id = await _reserve(user, tid, 10_000)
+    run_id = await _open(user, tid, 10_000)
     await _settle(run_id, "ok", actual=10_000)
     s = await _session()
     before = await runs.reset_windows(s, user.id, ("five_hour",))

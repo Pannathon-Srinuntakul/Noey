@@ -83,6 +83,33 @@ export function resolveEditedPosition(
 }
 
 /**
+ * The cut boundary before / after `t` — what ↑ and ↓ (and the transport's step
+ * buttons) jump to. `bounds` is sorted ascending, as cutBoundariesSec returns
+ * it. null when there is none that way, so the caller can stop at the ends
+ * rather than wrap.
+ *
+ * The tolerance keeps a second press moving: landing exactly ON a boundary
+ * would otherwise make that same boundary the nearest one in both directions.
+ */
+export function nextBoundary(
+  bounds: number[],
+  t: number,
+  dir: -1 | 1,
+  epsSec = 0.02
+): number | null {
+  if (dir < 0) {
+    for (let i = bounds.length - 1; i >= 0; i--) {
+      if (bounds[i] < t - epsSec) return bounds[i]
+    }
+    return null
+  }
+  for (const b of bounds) {
+    if (b > t + epsSec) return b
+  }
+  return null
+}
+
+/**
  * Follow-scroll, page by page: nothing while the playhead is on screen; once
  * it runs off either side, the view turns a page so it sits just inside the
  * left edge again. Returns the new scrollLeft, or null to leave it.

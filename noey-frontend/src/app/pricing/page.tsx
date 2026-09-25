@@ -18,6 +18,8 @@ import {
 import {
   PAID_TIERS,
   PLAN_COPY,
+  SCENE_FOOTAGE_HIGH,
+  SCENE_FOOTAGE_STANDARD,
   displayPrice,
   formatBaht,
   lowestPaidPrice,
@@ -141,6 +143,13 @@ export default async function PricingPage() {
             <li>
               <span className="num">งานหนัก</span>
               <span>ฟุตเทจยาวและโหมดพากย์ใหม่ใช้ปริมาณมากกว่างานปกติ เพราะต้องถอดเสียงและวางแผนมากขึ้น</span>
+            </li>
+            <li>
+              <span className="num">ตัดฉากเด่น</span>
+              <span>
+                โหมดนี้ให้ AI ดูฟุตเทจทั้งกองในรอบเดียว จึงรับได้ {SCENE_FOOTAGE_STANDARD}ต่อโปรเจกต์ ที่ความละเอียด Standard และ{" "}
+                {SCENE_FOOTAGE_HIGH} ที่ความละเอียด High แม้แพลนจะให้ฟุตเทจถึง 2 ชั่วโมง เพดานนี้เท่ากันทุกแพลน อัปเกรดแล้วไม่ขยาย
+              </span>
             </li>
           </ul>
         </div>

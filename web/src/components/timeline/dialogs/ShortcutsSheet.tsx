@@ -10,9 +10,12 @@ import {
 /** R3 sheet ข — two-column grouped shortcut sheet on the Dialog primitive. */
 export function ShortcutsSheet({
   isDub,
+  canShotSwap = false,
   onClose
 }: {
   isDub: boolean
+  /** The project has AI backup shots — see the shotSwapOnly entries. */
+  canShotSwap?: boolean
   onClose: () => void
 }): React.JSX.Element {
   const categories = Object.keys(SHORTCUT_CATEGORY_TITLES) as ShortcutCategory[]
@@ -20,7 +23,9 @@ export function ShortcutsSheet({
     <Dialog open onClose={onClose} title="แป้นพิมพ์ลัด" width={640}>
       <div className="grid grid-cols-2 gap-x-10 gap-y-6">
         {categories.map((cat) => {
-          const items = SHORTCUT_DISPLAY.filter((s) => s.category === cat && (!s.dubOnly || isDub))
+          const items = SHORTCUT_DISPLAY.filter(
+            (s) => s.category === cat && (!s.dubOnly || isDub) && (!s.shotSwapOnly || canShotSwap)
+          )
           if (items.length === 0) return null
           return (
             <section key={cat} className={cat === 'edit' ? 'row-span-2' : undefined}>

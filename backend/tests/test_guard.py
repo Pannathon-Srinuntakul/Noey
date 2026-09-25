@@ -6,16 +6,19 @@ below whatever the dev database already holds.
 """
 
 import types
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
 import packages.llm.gateway as gw
-from packages.billing import guard, rate_card
+from packages.billing import guard, rate_card, runs, wallet
 from packages.billing.estimate import MODE_PROFILES
 from packages.llm.usage import UsageCtx, reset_usage_ctx, set_usage_ctx
 from tests.admin_helpers import _admin_env, db  # noqa: F401  (fixture)
+
+RESETS = datetime(2026, 9, 27, 9, 0, tzinfo=UTC)
 
 
 def _meter(ceiling: int | None = 100_000, **kw) -> guard.RunMeter:
@@ -61,7 +64,7 @@ def test_video_and_image_parts_are_priced_from_the_run():
 def test_the_meter_uses_the_profile_the_estimate_used():
     run = types.SimpleNamespace(
         id="r", kind="analyze_video", unlimited=False, ceiling_tokens=90_000, actual_tokens=1_234,
-        media_sec=60.0, precision="high",
+        media_sec=60.0, precision="high", estimate_tokens=75_000,
     )
     meter = guard.meter_for_run(run)
     assert meter.default_max_output == MODE_PROFILES["analyze_video"].max_output
@@ -101,6 +104,79 @@ def test_an_optional_call_is_skipped_without_stopping_the_run():
 def test_unlimited_meters_never_stop():
     meter = _meter(ceiling=None, unlimited=True)
     guard.admit(meter, 10**12)
+
+
+# ── the plan's window, which nothing reserves any more ───────────────────────
+
+def _quota(headroom: int, **kw) -> runs.QuotaSnapshot:
+    fields = {
+        "window": "weekly", "headroom": headroom, "resets_at": RESETS,
+        "wallet_satang": 0, "wallet_allowance": 0,
+    }
+    return runs.QuotaSnapshot(**{**fields, **kw})
+
+
+def test_a_run_pauses_when_the_plans_window_runs_out_mid_run():
+    """The pause carries what the editor needs to offer the balance — without
+    it web/src/lib/usageLimits.ts can only say "error"."""
+    meter = _meter(ceiling=500_000, quota=_quota(10_000), estimate=40_000)
+    guard.admit(meter, 4_000)
+    guard.settle_call(meter, 4_000, 4_000)
+    with pytest.raises(guard.QuotaExhausted) as exc:
+        guard.admit(meter, 7_000)  # 4 000 spent + 7 000 > 10 000 left
+    payload = exc.value.payload()
+    assert payload["code"] == "limit_reached" and payload["window"] == "weekly"
+    assert payload["resets_at"] == runs.iso(RESETS)
+    assert payload["wallet_can_cover"] is False and payload["wallet_satang"] > 0
+    assert meter.stopped and "โควตาหมด" in payload["message"]
+    # Well inside this run's OWN ceiling: it is the plan that stopped it.
+    assert meter.ceiling == 500_000
+
+
+def test_the_pause_says_the_balance_can_carry_it_when_it_can():
+    meter = _meter(ceiling=500_000, quota=_quota(1_000, wallet_satang=100_000), estimate=20_000)
+    with pytest.raises(guard.QuotaExhausted) as exc:
+        guard.admit(meter, 5_000)
+    payload = exc.value.payload()
+    assert payload["wallet_can_cover"] is True
+    # Priced on finishing the run, not just the one call that did not fit.
+    assert payload["wallet_satang"] == wallet.satang_for_tokens(20_000 - 1_000)
+    assert payload["message"].endswith(guard.WALLET_HINT)
+
+
+def test_consent_lets_the_balance_extend_the_window():
+    quota = _quota(1_000, wallet_satang=100_000, wallet_allowance=100_000)
+    assert quota.budget == 1_000 + wallet.tokens_for_satang(100_000)
+    meter = _meter(ceiling=500_000, quota=quota, estimate=20_000)
+    guard.admit(meter, 5_000)  # the balance carries it: no pause
+    assert not meter.stopped
+
+
+def test_a_chain_step_counts_only_what_it_spends_itself():
+    """The snapshot is taken with earlier steps already charged, so the meter
+    measures from what it has spent since — not from the run's total."""
+    meter = _meter(ceiling=500_000, quota=_quota(10_000), spent=30_000, quota_baseline=30_000)
+    guard.admit(meter, 9_000)
+    guard.settle_call(meter, 9_000, 9_000)
+    with pytest.raises(guard.QuotaExhausted):
+        guard.admit(meter, 2_000)
+
+
+def test_an_optional_call_past_the_quota_is_skipped_not_paused():
+    meter = _meter(ceiling=500_000, quota=_quota(100), estimate=20_000)
+    with guard.optional_call(), pytest.raises(guard.OptionalCallSkipped):
+        guard.admit(meter, 5_000)
+    assert not meter.stopped
+
+
+def test_an_unlimited_run_carries_no_quota():
+    run = types.SimpleNamespace(
+        id="r", kind="analyze_video", unlimited=True, ceiling_tokens=0, actual_tokens=0,
+        media_sec=10.0, precision="standard", estimate_tokens=1_000,
+    )
+    meter = guard.meter_for_run(run, _quota(0))
+    assert meter.quota is None and meter.quota_left() is None
+    guard.admit(meter, 10**9)
 
 
 # ── the gateway asks before every attempt ────────────────────────────────────

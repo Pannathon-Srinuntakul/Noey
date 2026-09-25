@@ -8,7 +8,10 @@ Each check returns ``None`` when allowed, else the refusal body a route turns
 into an HTTP error — a dict with a stable ``code`` the clients branch on and a
 Thai ``message`` they can show as is:
 
-- ``footage_over_limit`` (422): total footage above the plan's per-project cap;
+- ``footage_over_limit`` (422): total footage above the plan's per-project cap
+  — or, for a mode that sends the whole project to the model in ONE video
+  request, above what that request can hold at the chosen ความละเอียด;
+- ``run_too_large`` (422): the run cannot fit an enforced window even empty;
 - ``project_limit`` (403): creating one more project than the plan keeps.
   Existing projects past the cap stay openable and editable — only a NEW one
   is refused, nothing is ever deleted (owner, 2026-09-22);
@@ -21,7 +24,13 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from packages.billing import catalog
-from packages.billing.limits import is_unlimited, plan_limits
+from packages.billing.limits import (
+    VIDEO_CALL_MODES,
+    is_unlimited,
+    plan_limits,
+    video_call_footage_sec,
+    window_limit,
+)
 
 Feature = Literal["music", "transcode"]
 
@@ -35,6 +44,13 @@ FOOTAGE_KINDS = frozenset({"analyze_video", "transcribe_audio", "analyze_frames"
 _FEATURE_TEXT: dict[str, str] = {
     "music": "เพลงประกอบ",
     "transcode": "การแปลงไฟล์ที่เบราว์เซอร์เปิดไม่ได้",
+}
+
+#: The editor's Thai window names (web/src/lib/usageLimits.ts LIMIT_LABELS).
+_WINDOW_TEXT: dict[str, str] = {
+    "five_hour": "โควตารอบ 5 ชั่วโมง",
+    "weekly": "โควตารายสัปดาห์",
+    "monthly": "โควตารายเดือน",
 }
 
 _PLAN_LABEL: dict[str, str] = {
@@ -66,22 +82,88 @@ def _fmt_minutes(sec: float) -> str:
     return f"{round(minutes, 1):g} นาที"
 
 
-def footage_limit_sec(user: Any) -> int | None:
-    return None if is_unlimited(user) else plan_limits(_plan(user)).footage_sec
+def footage_limit_sec(
+    user: Any, *, mode: str | None = None, precision: str | None = None
+) -> int | None:
+    """The shortest cap that applies: the plan's, and — for a mode that sends
+    the whole project to the model in one request — what that request can
+    hold at ``precision`` (limits.video_call_footage_sec).
+
+    An unlimited account skips the PLAN cap but not the request one: no plan
+    can make a 2-hour request fit a 1 M-token context.
+    """
+    unlimited = is_unlimited(user)
+    plan_cap = None if unlimited else plan_limits(_plan(user)).footage_sec
+    if mode not in VIDEO_CALL_MODES:
+        return plan_cap
+    call_cap = video_call_footage_sec(precision, unlimited=unlimited)
+    return call_cap if plan_cap is None else min(plan_cap, call_cap)
 
 
-def check_footage(user: Any, total_sec: float) -> dict[str, Any] | None:
-    limit = footage_limit_sec(user)
+def check_footage(
+    user: Any, total_sec: float, *, mode: str | None = None, precision: str | None = None
+) -> dict[str, Any] | None:
+    limit = footage_limit_sec(user, mode=mode, precision=precision)
     if limit is None or total_sec <= limit + FOOTAGE_TOLERANCE_SEC:
         return None
+    # Say which knob moves the cap. When the request — not the plan — is what
+    # binds, changing plan would not help; lowering ความละเอียด would.
+    plan_cap = None if is_unlimited(user) else plan_limits(_plan(user)).footage_sec
+    by_precision = mode in VIDEO_CALL_MODES and (plan_cap is None or limit < plan_cap)
+    if by_precision:
+        standard = video_call_footage_sec("standard")
+        advice = (
+            f"ลดความละเอียดเป็น Standard (รับได้ถึง {_fmt_minutes(standard)}) หรือตัดฟุตเทจให้สั้นลง"
+            if (precision or "standard") != "standard"
+            else "ตัดให้สั้นลงหรือแยกเป็นสองโปรเจกต์"
+        )
+        reason = " ที่ความละเอียดนี้"
+    else:
+        advice = "ตัดให้สั้นลงหรือแยกเป็นสองโปรเจกต์"
+        reason = "ของแผนนี้"
     return {
         "code": "footage_over_limit",
         "limit_sec": limit,
         "total_sec": round(float(total_sec), 1),
         "plan": _plan(user),
+        "by_precision": by_precision,
         "message": (
-            f"ฟุตเทจรวม {_fmt_minutes(total_sec)} เกินเพดาน {_fmt_minutes(limit)}ของแผนนี้ "
-            "ตัดให้สั้นลงหรือแยกเป็นสองโปรเจกต์"
+            f"ฟุตเทจรวม {_fmt_minutes(total_sec)} เกินเพดาน {_fmt_minutes(limit)}{reason} — {advice}"
+        ),
+    }
+
+
+def check_run_size(user: Any, tokens: int) -> dict[str, Any] | None:
+    """The ONE pre-flight quota check left (owner, 2026-09-26): refuse a run
+    that fits NO enforced window even when that window is completely empty.
+    Nothing else is checked before starting — a run that might fit is started
+    and charged as it goes (packages/billing/runs.py).
+
+    Measured against the BIGGEST window, not every one: Pro's 5-hour window is
+    40 % of its weekly one, so an hour of footage outgrows it however empty it
+    is, and a run is allowed to overshoot a window it cannot fit
+    (``runs.windows_for_run``). Only a run past them all is impossible.
+
+    Waiting for a reset or topping up cannot make this run work, so it is a
+    422 (the request's shape), not a 402 (the balance).
+    """
+    if is_unlimited(user) or tokens <= 0:
+        return None
+    plan = _plan(user)
+    windows = plan_limits(plan).windows
+    if not windows:
+        return None
+    key = max(windows, key=lambda w: window_limit(plan, w))
+    if tokens <= window_limit(plan, key):
+        return None
+    return {
+        "code": "run_too_large",
+        "window": key,
+        "plan": plan,
+        "message": (
+            f"งานนี้ใหญ่เกิน{_WINDOW_TEXT.get(key, 'โควตา')}ทั้งรอบของแผนนี้ "
+            "แม้โควตาจะยังไม่ได้ใช้เลยก็ทำไม่สำเร็จ — "
+            "ตัดฟุตเทจให้สั้นลง ลดความละเอียด หรือเปลี่ยนแผน"
         ),
     }
 
@@ -152,6 +234,14 @@ def features_payload(user: Any) -> dict[str, Any]:
     lead = QUEUE_LEAD_FIRST_SEC if unlimited else lim.queue_lead_sec
     return {
         "footage_sec": None if unlimited else lim.footage_sec,
+        # The single-video-request cap per ความละเอียด, so a client can refuse
+        # over-long footage before uploading anything (it is not a plan number:
+        # it binds unlimited accounts too).
+        "video_call_footage_sec": {
+            "standard": video_call_footage_sec("standard"),
+            "high": video_call_footage_sec("high"),
+        },
+        "video_call_modes": sorted(VIDEO_CALL_MODES),
         "max_projects": None if unlimited else lim.max_projects,
         "music": unlimited or lim.music,
         "transcode": unlimited or lim.transcode,

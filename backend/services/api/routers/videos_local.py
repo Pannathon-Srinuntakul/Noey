@@ -69,6 +69,7 @@ from packages.video.storage import data_root
 from packages.video.timeline import cuts_duration, normalize_dub_edit_script
 from packages.billing import estimate as estimator
 from packages.billing import plan_features
+from packages.billing import runs
 from services.api.billing_start import load_run, release_on_error, settle_run, start_paid_run
 from services.api.deps import CurrentUser, db_session
 from services.api.routers.videos import _enqueue, _get_project
@@ -78,7 +79,12 @@ from services.api.routers.videos import _enqueue, _get_project
 # unstartable — every retry got a 400 while the app sat on its last progress
 # message forever (live 2026-08-13). Only "processing" genuinely blocks a new
 # start; everything else is a finished or abandoned run.
-RESTARTABLE_STATUSES = ("pending", "error", "waiting_vo", "done", "cancelled")
+# "paused_quota" is a run the plan's window could not pay for: the work is
+# intact and waiting, so it is the one status that MUST be restartable —
+# leaving it out would make running out of quota worse than crashing.
+RESTARTABLE_STATUSES = (
+    "pending", "error", "waiting_vo", "done", "cancelled", "paused_quota",
+)
 
 router = APIRouter(prefix="/videos", tags=["videos-local"])
 log = get_logger(__name__)
@@ -328,7 +334,13 @@ async def _get_local_project(session: AsyncSession, uid: str, user_id: int) -> V
 
 
 async def enforce_new_project(
-    session: AsyncSession, user: User, *, declared_sec: float | None = None, adding: int = 1
+    session: AsyncSession,
+    user: User,
+    *,
+    declared_sec: float | None = None,
+    adding: int = 1,
+    mode: str | None = None,
+    precision: str | None = None,
 ) -> None:
     """A NEW project on this plan (docs/token-billing-plan.md §8): 403
     ``project_limit`` when the account already keeps the plan's maximum —
@@ -337,7 +349,12 @@ async def enforce_new_project(
     length is only an early refusal; every start route re-checks the footage
     it measures itself (services/api/billing_start.py)."""
     if declared_sec is not None:
-        refusal = plan_features.check_footage(user, float(declared_sec))
+        # mode + precision decide the cap for the modes that send the whole
+        # project to the model in one request — refuse here, before the upload,
+        # rather than after the user has waited for it.
+        refusal = plan_features.check_footage(
+            user, float(declared_sec), mode=mode, precision=precision
+        )
         if refusal is not None:
             raise HTTPException(422, refusal)
     if plan_features.project_limit(user) is None:
@@ -370,7 +387,13 @@ async def create_local_project(
     allowed = ("dub_first", "talking_head", "highlight", "speech_highlights", "speech_scenes")
     if body.mode not in allowed:
         raise HTTPException(400, f"local-render รองรับเฉพาะโหมด {', '.join(allowed)}")
-    await enforce_new_project(session, auth.user, declared_sec=sum(c.durationSec for c in body.clips))
+    await enforce_new_project(
+        session,
+        auth.user,
+        declared_sec=sum(c.durationSec for c in body.clips),
+        mode=body.mode,
+        precision=body.precision,
+    )
 
     proj = VideoProject(
         user_id=auth.user_id,
@@ -710,7 +733,12 @@ async def plan_dub(
         )
     )
     outcome = "our_failure"
-    meter_token = guard.set_meter(guard.meter_for_run(run) if run is not None else None)
+    # The snapshot is what lets this route PAUSE on quota instead of only
+    # stopping: without it the meter can see the run's own ceiling but not the
+    # plan window behind it, so a user out of quota gets a bare limit_stop with
+    # no reset time and no wallet offer.
+    quota = await runs.quota_snapshot(session, run_id) if run is not None else None
+    meter_token = guard.set_meter(guard.meter_for_run(run, quota) if run is not None else None)
     try:
         render_cuts = await plan_dub_timeline_cuts(
             edit_script,
@@ -722,6 +750,11 @@ async def plan_dub(
             music_trim_out_sec=body.musicTrimOutSec,
         )
         outcome = "ok"
+    except guard.QuotaExhausted as exc:
+        # The plan ran out, not the run's own ceiling. Same body the worker
+        # writes onto a paused job, so the client renders one thing either way.
+        outcome = "limit_stop"
+        raise HTTPException(402, exc.payload()) from exc
     except guard.RunBudgetExceeded as exc:
         outcome = "limit_stop"
         raise HTTPException(

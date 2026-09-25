@@ -26,8 +26,10 @@ export const VoiceoverLane = memo(function VoiceoverLane({
   pxPerSec: number
   contentW: number
   onLaneBackgroundPointerDown: (e: React.PointerEvent) => void
-  /** A line was clicked: select its first scene. */
-  onPickLine: (firstCutId: string) => void
+  /** A line was clicked: select its first scene and play from where the line
+   * starts. Clicking a line means "show me this one", so it seeks — unlike a
+   * click on a scene block, which only selects. */
+  onPickLine: (firstCutId: string, outStartSec: number) => void
 }): React.JSX.Element {
   return (
     <TrackRow
@@ -46,7 +48,7 @@ export const VoiceoverLane = memo(function VoiceoverLane({
             type="button"
             data-cut-block
             onPointerDown={(e) => e.stopPropagation()}
-            onClick={() => onPickLine(b.firstCutId)}
+            onClick={() => onPickLine(b.firstCutId, b.outStart)}
             title={b.script || `ประโยค ${b.lineId}`}
             className={`absolute inset-y-0.5 overflow-hidden rounded border px-2 text-left text-[13px] transition-colors duration-state ${
               isActive

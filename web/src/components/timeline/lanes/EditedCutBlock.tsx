@@ -1,5 +1,6 @@
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
+import { AlertTriangle, Repeat2, Sparkles, UserRoundPen } from 'lucide-react'
 import { memo } from 'react'
 import { bindTrimDrag, snapTrimToBeat, type TrimEdge } from '../../../lib/timelineMath'
 import type { FilmstripStrip } from '../../../lib/useFilmstripStrips'
@@ -11,6 +12,52 @@ import { TrimBar } from './TrimBar'
 /** Grabbable width for a scene block that is drawn narrower than this. It is an
  * overlay, never the block's own width — see EditedCutBlock. */
 const MIN_BLOCK_HIT_PX = 14
+
+/** Under this the block only has room for the problem marker. */
+const BADGE_ROOM_PX = 38
+
+interface SceneState {
+  /** R18b backup shots the AI returned with this scene. */
+  alternates: number
+  /** The user swapped this shot themselves (shotSwap keeps the AI's pick in
+   * `swappedFrom`). */
+  swapped: boolean
+  /** The AI picked this window — an edit-script segment, not a hand-made cut. */
+  fromAi: boolean
+}
+
+/**
+ * What the AI's per-shot data says about this scene (see EditCut.meta).
+ *
+ * Read here rather than handed down: it only ever changes when the cut object
+ * does, which is exactly when this memo()'d block renders anyway. Until now
+ * none of it was on screen at all — the alternates in particular were
+ * invisible until you opened ปรับช็อต, so nobody knew the feature was there.
+ */
+function sceneStateOf(cut: WorkingCut): SceneState {
+  const meta = cut.meta
+  return {
+    alternates: Array.isArray(meta?.alternates) ? meta.alternates.length : 0,
+    swapped: !!meta?.swappedFrom,
+    fromAi: meta?.matchedFrameTime !== undefined
+  }
+}
+
+/** Why this scene cannot render as it stands, in the user's words — or null. */
+function sceneProblem(
+  cut: WorkingCut,
+  sourceMissing: boolean,
+  sourceDurationSec: number
+): string | null {
+  if (sourceMissing) return 'ไม่พบไฟล์ต้นฉบับของฉากนี้'
+  if (cut.out - cut.in <= 0) return 'ฉากนี้ไม่มีความยาว'
+  // A hair of slack: probe durations round, and a cut that ends on the last
+  // frame is fine.
+  if (sourceDurationSec > 0 && cut.out > sourceDurationSec + 0.05) {
+    return 'ช่วงของฉากนี้ยาวเกินไฟล์ต้นฉบับ'
+  }
+  return null
+}
 
 /**
  * Concatenated "edited" view of a scene: a cropped window of its source's full
@@ -28,8 +75,10 @@ export const EditedCutBlock = memo(function EditedCutBlock({
   strip,
   pending = false,
   sourceDurationSec,
+  sourceMissing = false,
   pxPerSec,
   onSelect,
+  onOpen,
   onChange,
   onTrim,
   onDragStart,
@@ -43,8 +92,14 @@ export const EditedCutBlock = memo(function EditedCutBlock({
   playOrder: number
   strip: FilmstripStrip | null
   sourceDurationSec: number
+  /** This scene points at footage the project no longer lists. */
+  sourceMissing?: boolean
   pxPerSec: number
   onSelect: (cut: WorkingCut) => void
+  /** Double-click: seek to this scene and reveal it. Single click stays
+   * select-only on purpose (owner, 2026-09-21 — grabbing a trim handle used
+   * to jump the preview). */
+  onOpen?: (cut: WorkingCut) => void
   onChange: (id: string, patch: Partial<WorkingCut>) => void
   /** A trim-handle drag step: the cut as the drag found it, the edge, the
    * (snapped) patch, and the in-point before this step — the parent keeps
@@ -85,6 +140,9 @@ export const EditedCutBlock = memo(function EditedCutBlock({
   const hitPadPx = widthPx < MIN_BLOCK_HIT_PX ? MIN_BLOCK_HIT_PX : 0
 
   const maxOut = Math.max(sourceDurationSec, cut.out)
+  const state = sceneStateOf(cut)
+  const problem = sceneProblem(cut, sourceMissing, sourceDurationSec)
+  const roomForBadges = widthPx >= BADGE_ROOM_PX
 
   function onTrimDown(e: React.PointerEvent, edge: TrimEdge): void {
     onSelect(cut)
@@ -140,6 +198,7 @@ export const EditedCutBlock = memo(function EditedCutBlock({
         if (e.button === 0) onSelect(cut)
         listeners?.onPointerDown?.(e)
       }}
+      onDoubleClick={() => onOpen?.(cut)}
     >
       {hitPadPx > 0 && (
         /* Overhangs its neighbours rather than widening the block, so a scene
@@ -172,6 +231,47 @@ export const EditedCutBlock = memo(function EditedCutBlock({
         <span className="absolute bottom-0.5 left-1.5 z-10 text-[13px] font-semibold tabular-nums text-ink [text-shadow:0_1px_2px_rgba(0,0,0,0.8)]">
           {playOrder}
         </span>
+        {/* The scene's own state, top-left over the footage. The problem
+            marker is drawn even on a block too narrow for the rest — it is
+            the one thing the user has to act on. */}
+        {(problem ||
+          (roomForBadges && (state.alternates > 0 || state.swapped || state.fromAi))) && (
+          <span className="pointer-events-none absolute left-0.5 top-0.5 z-10 flex items-center gap-0.5">
+            {problem && (
+              <span
+                title={problem}
+                className="pointer-events-auto flex items-center rounded-sm bg-[rgb(28_28_30_/_0.82)] px-0.5 py-px text-error"
+              >
+                <AlertTriangle size={11} />
+              </span>
+            )}
+            {roomForBadges && state.alternates > 0 && (
+              <span
+                title={`มีช็อตสำรอง ${state.alternates} ช็อต — เปิด "ปรับช็อต" เพื่อสลับ`}
+                className="pointer-events-auto flex items-center gap-px rounded-sm bg-[rgb(28_28_30_/_0.82)] px-0.5 py-px text-[10px] font-semibold leading-none tabular-nums text-ink"
+              >
+                <Repeat2 size={11} />
+                {state.alternates}
+              </span>
+            )}
+            {roomForBadges &&
+              (state.swapped ? (
+                <span
+                  title="ช็อตนี้คุณเปลี่ยนเอง"
+                  className="pointer-events-auto flex items-center rounded-sm bg-[rgb(28_28_30_/_0.82)] px-0.5 py-px text-accent"
+                >
+                  <UserRoundPen size={11} />
+                </span>
+              ) : state.fromAi ? (
+                <span
+                  title="ช็อตนี้ AI เลือกให้"
+                  className="pointer-events-auto flex items-center rounded-sm bg-[rgb(28_28_30_/_0.82)] px-0.5 py-px text-ink-3"
+                >
+                  <Sparkles size={11} />
+                </span>
+              ) : null)}
+          </span>
+        )}
         {(selected || edgeZonePx(widthPx) > 0) && (
           <>
             <TrimBar

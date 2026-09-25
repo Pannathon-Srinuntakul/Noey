@@ -6,6 +6,8 @@ import {
   MAIN_TIERS,
   PAID_TIERS,
   PLAN_COPY,
+  SCENE_FOOTAGE_HIGH,
+  SCENE_FOOTAGE_STANDARD,
   TIERS,
   multiplierCaption,
   multiplierLabel,
@@ -147,6 +149,28 @@ describe("usage multipliers", () => {
       const text = JSON.stringify(PLAN_COPY[tier]);
       expect(text).not.toMatch(/token|โทเค็น/i);
     }
+  });
+
+  it("states the ตัดฉากเด่น footage cap wherever it undercuts the plan's", () => {
+    // The backend refuses over this (limits.video_call_footage_sec, 2026-09-26).
+    // A plan card that still promised a flat 2 hours would be a promise the
+    // product breaks, so every surface naming 2 hours must name this too.
+    expect(SCENE_FOOTAGE_STANDARD).toBe("1 ชั่วโมง");
+    expect(SCENE_FOOTAGE_HIGH).toBe("44 นาที");
+    for (const tier of ["pro", "studio", "agency", "max"] as const) {
+      const text = [...PLAN_COPY[tier].features, ...PLAN_COPY[tier].accountFeatures].join("\n");
+      expect(text, `${tier} promises 2 hours`).toContain("2 ชั่วโมง");
+      expect(text, `${tier} qualifies it`).toContain(SCENE_FOOTAGE_STANDARD);
+      expect(text, `${tier} names the High figure`).toContain(SCENE_FOOTAGE_HIGH);
+    }
+    const row = COMPARISON_ROWS.find((r) => r.label === "ฟุตเทจรวมต่อโปรเจกต์ · โหมดตัดฉากเด่น");
+    // Below Pro the plan's own cap is shorter, so it is what the cell shows.
+    expect(row?.values).toEqual([
+      "5 นาที",
+      "10 นาที",
+      "20 นาที",
+      ...Array(4).fill(`${SCENE_FOOTAGE_STANDARD} · High ${SCENE_FOOTAGE_HIGH}`),
+    ]);
   });
 
   it("every comparison row has one value per plan, multiplier row first", () => {

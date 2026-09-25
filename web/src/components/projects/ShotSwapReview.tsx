@@ -4,9 +4,14 @@
  * Replaces ShotSwapModal (v1), which was rejected in review: a 9-shot
  * storyboard of 82px thumbs plus a side tray meant you had to decode the whole
  * cut's structure before answering a single question. This screen does one
- * thing — put 2-4 equally sized frames side by side and ask which one — and it
- * only asks about shots that actually have an alternative, so a 9-shot project
- * with 3 alternatives is 3 questions, not 9.
+ * thing — put 2-4 equally sized frames side by side and ask which one.
+ *
+ * It walks EVERY shot of the cut, including the ones the AI returned no backup
+ * for. It used to skip those, so a 13-shot cut read "1 / 10" and shot 7 was
+ * really shot 9 — the counter described a queue nobody can see instead of the
+ * video the user made, and there was no way to tell where in their own edit a
+ * question sat (owner, 2026-09-26). A shot with nothing to choose between still
+ * shows its frame and says so plainly.
  *
  * Nothing behind the screen changed: the same `alternates` schema, the same
  * length regimes, and the same `applyShotSwap()` render path, which is still
@@ -27,6 +32,7 @@ import type { ProjectPipeline } from '../../lib/useProjectPipeline'
 import type { DubEditScript, DubTimeline } from '../../lib/videosLocalApi'
 import {
   applySwapsToScript,
+  hasSwapOptions,
   retimeTimelineForSwap,
   sameWindow,
   segmentSwappedFrom,
@@ -48,9 +54,82 @@ const num = (v: unknown): number => {
 /** Tallest a frame ever gets; below that it shrinks with the window so the row
  * never scrolls — comparing is the whole job, every option must be on screen. */
 const FRAME_MAX_H = 470
+/** Smallest a frame may shrink to before the body is allowed to scroll instead:
+ * under this the shots are too small to judge, which is the only reason to be
+ * on this screen. */
+const FRAME_MIN_H = 200
+/** The two centred caption lines under every frame (label + note), plus the
+ * row's own bottom padding. Constant by construction: both are single lines,
+ * and it is subtracted for a shot with no options too, so the frame does not
+ * change size as you step between shots that have backups and shots that do
+ * not. */
+const LABEL_BLOCK_H = 62
+/** pt-[26px] on the body plus the mt-[22px] above the row. */
+const BODY_PAD_H = 26 + 22
+/** px-6 on the body. */
+const BODY_SIDE_PAD = 24
+/** sm:gap-5 between the cards. */
+const CARD_GAP = 20
 /** Capture height for the stills. Comfortably above FRAME_MAX_H so a HiDPI
  * screen still gets real pixels rather than an upscale. */
 const THUMB_H = 960
+
+/**
+ * Live height of an element.
+ *
+ * The frames used to be sized by viewport math — `min(470px, 56dvh)` — which
+ * knows nothing about the header, the footer or the shot strip. On any window
+ * shorter than ~810px the row was taller than the body that holds it, and the
+ * body's `overflow-hidden` CROPPED the bottom off every card: the shots stopped
+ * being 9:16 exactly where judging the framing matters (owner screenshot,
+ * 2026-09-26, with the strip open). Measuring the box the frames actually live
+ * in is the only way the aspect ratio survives every window size.
+ *
+ * `active` exists because the observed node can be conditionally rendered: the
+ * effect has to re-attach when it mounts, not once on first render.
+ */
+function useBoxSize<T extends HTMLElement>(
+  active = true
+): [React.RefObject<T | null>, { width: number; height: number }] {
+  const ref = useRef<T | null>(null)
+  const [size, setSize] = useState({ width: 0, height: 0 })
+  useEffect(() => {
+    const el = active ? ref.current : null
+    if (!el) {
+      setSize({ width: 0, height: 0 })
+      return
+    }
+    const measure = (): void => {
+      const r = el.getBoundingClientRect()
+      setSize((prev) =>
+        prev.width === r.width && prev.height === r.height
+          ? prev
+          : { width: r.width, height: r.height }
+      )
+    }
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [active])
+  return [ref, size]
+}
+
+/** Tailwind's `sm`. Below it the cards are width-driven (a swipeable strip of
+ * 46vw frames); from it up their width is computed from the measured height, so
+ * the two regimes cannot both be expressed in one class list. */
+function useWideLayout(): boolean {
+  const query = '(min-width: 640px)'
+  const [wide, setWide] = useState(() => window.matchMedia(query).matches)
+  useEffect(() => {
+    const mq = window.matchMedia(query)
+    const onChange = (): void => setWide(mq.matches)
+    onChange()
+    mq.addEventListener('change', onChange)
+    return () => mq.removeEventListener('change', onChange)
+  }, [])
+  return wide
+}
 
 // ── thumbnails ──────────────────────────────────────────────────────────────
 // One hidden <video> seeked request by request (a video element serves one seek
@@ -293,29 +372,31 @@ export function ShotSwapReview({
   const segments = useMemo(() => script.segments ?? [], [script])
   const regime = swapRegimeFor(job.mode, project.voiceoverPath)
 
-  /** Only shots that pose a question. No alternatives = no decision = not in
-   * the queue; v1 walked you to those anyway and showed an empty-state box. */
-  const queue = useMemo(
-    () => segments.map((_, i) => i).filter((i) => swapCandidates(segments[i]).length > 0),
-    [segments]
-  )
+  /** The cursor IS the shot number: one step per shot of the cut, in cut order.
+   * Filtering to shots with alternatives made the counter and the progress
+   * ticks describe an invisible queue — see the file header. */
+  const shotCount = segments.length
 
   const [cursor, setCursor] = useState(0)
   /** segIndex → chosen candidate; absent = keep the shot in use. */
   const [picks, setPicks] = useState<ReadonlyMap<number, number>>(new Map())
   const [browsing, setBrowsing] = useState(false)
-  /** Set when the strip jumps to a shot that has nothing to choose between. */
-  const [noOptionShot, setNoOptionShot] = useState<number | null>(null)
 
   const panelRef = useRef<HTMLDivElement>(null)
-  const segIndex = noOptionShot ?? queue[cursor]
+  const wide = useWideLayout()
+  const [bodyRef, bodyBox] = useBoxSize<HTMLDivElement>()
+  const [headRef, headBox] = useBoxSize<HTMLDivElement>()
+  const [stripRef, stripBox] = useBoxSize<HTMLDivElement>(browsing)
+
+  const segIndex = Math.min(cursor, Math.max(0, shotCount - 1))
   const seg = segments[segIndex] as Record<string, unknown> | undefined
   const candidates = seg ? swapCandidates(seg) : []
+
   const durationOf = (s: Record<string, unknown>): number =>
     num(s.durationSec) || Math.max(0, num(s.sourceOut) - num(s.sourceIn))
 
   const options: Option[] = useMemo(() => {
-    if (!seg || noOptionShot !== null) return []
+    if (!seg || swapCandidates(seg).length === 0) return []
     const dur = durationOf(seg)
     const current = segmentWindow(seg)
     // After a swap the shot in use is a backup, and the AI's own pick is one
@@ -341,28 +422,51 @@ export function ShotSwapReview({
     }))
     return [head, ...rest]
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [seg, segIndex, noOptionShot, regime])
+  }, [seg, segIndex, regime])
 
-  // Thumbs for what is on screen plus the next question — one step of prefetch,
+  // ── frame size ────────────────────────────────────────────────────────────
+  // Measured, never guessed: the height comes from the box the frames really
+  // live in (which EXCLUDES the shot strip — it overlays, so opening it cannot
+  // resize a frame), the width is whatever that height allows at 9:16, and the
+  // width is then capped so N cards still fit side by side on a narrow window.
+  // Only the wrapper's width is set: the frame's own `aspect-[9/16]` derives
+  // the height from it, so the shot can never be squeezed out of ratio.
+  const cardCount = Math.max(1, options.length)
+  const frameH =
+    bodyBox.height > 0
+      ? Math.max(
+          FRAME_MIN_H,
+          Math.min(FRAME_MAX_H, bodyBox.height - headBox.height - BODY_PAD_H - LABEL_BLOCK_H)
+        )
+      : FRAME_MAX_H
+  const widthCap =
+    bodyBox.width > 0
+      ? (bodyBox.width - BODY_SIDE_PAD * 2 - CARD_GAP * (cardCount - 1)) / cardCount
+      : Infinity
+  const frameW = Math.max(120, Math.floor(Math.min((frameH * 9) / 16, widthCap)))
+  /** Below `sm` the CSS drives the size; from it up the measurement does. */
+  const frameStyle = wide ? { width: frameW } : undefined
+
+  // Thumbs for what is on screen plus the next shot — one step of prefetch,
   // not the whole cut.
   const wants = useMemo<ThumbWant[]>(() => {
     const list: ThumbWant[] = []
     const push = (w: ShotWindow): void => {
       list.push({ clip: w.sourceClip, time: w.matchedFrameTime || w.sourceIn })
     }
+    // A shot with no alternative still shows its own frame, so it still needs
+    // a thumb even though `options` is empty for it.
+    if (seg) push(segmentWindow(seg))
     for (const o of options) push(o.window)
-    const nextSeg = segments[queue[cursor + 1]] as Record<string, unknown> | undefined
+    const nextSeg = segments[segIndex + 1] as Record<string, unknown> | undefined
     if (nextSeg) {
       push(segmentWindow(nextSeg))
       for (const c of swapCandidates(nextSeg)) push(c.window)
     }
     // The strip shows every shot once opened.
     if (browsing) for (const s of segments) push(segmentWindow(s as Record<string, unknown>))
-    if (noOptionShot !== null && segments[noOptionShot]) {
-      push(segmentWindow(segments[noOptionShot] as Record<string, unknown>))
-    }
     return list
-  }, [options, segments, queue, cursor, browsing, noOptionShot])
+  }, [options, seg, segments, segIndex, browsing])
   const thumbs = useShotThumbs(project.uid, project.clips, wants)
   const thumbFor = (w: ShotWindow): string | undefined =>
     thumbs.get(thumbKey(project.uid, w.sourceClip, w.matchedFrameTime || w.sourceIn))
@@ -381,7 +485,7 @@ export function ShotSwapReview({
   const diffCount = pending.applied.length
 
   const choose = (opt: Option): void => {
-    if (opt.disabledReason || segIndex === undefined) return
+    if (opt.disabledReason || !seg) return
     setPicks((prev) => {
       const next = new Map(prev)
       if (opt.altIndex === null) next.delete(segIndex)
@@ -391,15 +495,14 @@ export function ShotSwapReview({
   }
 
   const isChosen = (opt: Option): boolean => {
-    const picked = segIndex === undefined ? undefined : picks.get(segIndex)
+    const picked = picks.get(segIndex)
     return opt.altIndex === null ? picked === undefined : picked === opt.altIndex
   }
 
-  const last = cursor >= queue.length - 1
+  const last = cursor >= shotCount - 1
   const goTo = (next: number): void => {
-    setNoOptionShot(null)
     // Nothing to stop: the next shot's chosen option starts playing on its own.
-    setCursor(Math.max(0, Math.min(queue.length - 1, next)))
+    setCursor(Math.max(0, Math.min(shotCount - 1, next)))
   }
 
   const requestClose = useCallback((): void => {
@@ -512,15 +615,16 @@ export function ShotSwapReview({
     document.addEventListener('keydown', onKeyDown, true)
     return () => document.removeEventListener('keydown', onKeyDown, true)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [options, cursor, last, queue.length, requestClose, segIndex, picks])
+  }, [options, cursor, last, shotCount, requestClose, segIndex, picks])
 
   useEffect(() => {
     panelRef.current?.focus()
   }, [])
 
-  if (queue.length === 0) return null
+  if (shotCount === 0 || !seg) return null
 
-  const lineText = seg ? String(seg.voiceoverScript ?? '').trim() : ''
+  const hasOptions = options.length > 0
+  const lineText = String(seg.voiceoverScript ?? '').trim()
   const regimeNote =
     regime === 'locked'
       ? 'ความยาวช็อตเท่าเดิม ไทม์ไลน์ไม่เคลื่อน'
@@ -547,19 +651,27 @@ export function ShotSwapReview({
           <span className="text-[15px] font-semibold text-ink">ปรับช็อต</span>
           <span className="min-w-0 truncate text-[13.5px] text-muted">{project.name}</span>
           <span className="flex-1" />
-          <span className="flex items-center gap-[7px]">
-            {queue.map((qi, i) => (
+          {/* One tick per shot of the cut. They shrink rather than overflow:
+              a 30-shot cut would otherwise push the counter off the header. A
+              tick for a shot with an alternative is drawn brighter, so the
+              places worth stopping at are visible from the header. */}
+          <span className="hidden min-w-0 shrink items-center gap-[7px] sm:flex">
+            {segments.map((s, i) => (
               <span
-                key={qi}
+                key={i}
                 className={cn(
-                  'h-1 w-[22px] rounded-sm',
-                  i <= cursor && noOptionShot === null ? 'bg-accent' : 'bg-[rgb(243_242_242_/_0.2)]'
+                  'h-1 w-[22px] min-w-[3px] shrink rounded-sm',
+                  i === segIndex
+                    ? 'bg-accent'
+                    : hasSwapOptions(s as Record<string, unknown>)
+                      ? 'bg-[rgb(243_242_242_/_0.45)]'
+                      : 'bg-[rgb(243_242_242_/_0.16)]'
                 )}
               />
             ))}
-            <span className="ml-[5px] text-[13.5px] tabular-nums text-muted">
-              {Math.min(cursor + 1, queue.length)} / {queue.length}
-            </span>
+          </span>
+          <span className="shrink-0 text-[13.5px] tabular-nums text-muted">
+            {segIndex + 1} / {shotCount}
           </span>
           <button
             type="button"
@@ -571,34 +683,23 @@ export function ShotSwapReview({
           </button>
         </div>
 
-        {/* ── question ── never scrolls: every option has to be visible at once */}
-        <div className="flex min-h-0 flex-1 flex-col items-center overflow-hidden px-6 pt-[26px]">
-          {noOptionShot !== null && seg ? (
-            <>
-              <p className="text-[22px] font-semibold text-ink">ช็อตนี้ AI ไม่มีตัวเลือกอื่นให้</p>
-              <p className="mt-[7px] text-sm text-muted">
-                ถ้าไม่ชอบช็อตนี้ ลองสั่งตัดใหม่พร้อมบอกเหตุผล หรือแก้เองในตัวแก้ไขวิดีโอ
+        {/* ── question ──
+            The body owns its own height and the shot strip OVERLAYS it, so
+            opening the strip cannot take height away from the frames. When the
+            strip is open the body simply gains that much scroll instead. */}
+        <div ref={bodyRef} className="relative min-h-0 flex-1">
+          <div
+            className="flex h-full flex-col items-center overflow-y-auto px-6 pt-[26px]"
+            style={browsing ? { paddingBottom: stripBox.height } : undefined}
+          >
+            <div ref={headRef} className="flex shrink-0 flex-col items-center">
+              <p className="text-[22px] font-semibold text-ink">
+                {hasOptions ? 'ช็อตนี้เอาอันไหน' : 'ช็อตนี้ AI ไม่มีตัวเลือกอื่นให้'}
               </p>
-              <div className="mt-[22px] flex min-h-0 flex-1 items-stretch justify-center">
-                <div
-                  className="relative aspect-[9/16] overflow-hidden rounded-[5px] border border-border-faint bg-media"
-                  style={{ maxHeight: FRAME_MAX_H, height: '100%' }}
-                >
-                  {thumbFor(segmentWindow(seg)) ? (
-                    <img
-                      src={thumbFor(segmentWindow(seg))}
-                      alt=""
-                      className="h-full w-full object-cover"
-                    />
-                  ) : null}
-                </div>
-              </div>
-            </>
-          ) : (
-            <>
-              <p className="text-[22px] font-semibold text-ink">ช็อตนี้เอาอันไหน</p>
-              <p className="mt-[7px] text-sm text-muted">
-                {lineText ? (
+              <p className="mt-[7px] text-center text-sm text-muted">
+                {!hasOptions ? (
+                  'ถ้าไม่ชอบช็อตนี้ ลองสั่งตัดใหม่พร้อมบอกเหตุผล หรือแก้เองในตัวแก้ไขวิดีโอ'
+                ) : lineText ? (
                   <>
                     ตอนที่พูดว่า <span className="text-ink-2">&ldquo;{lineText}&rdquo;</span>
                   </>
@@ -606,23 +707,48 @@ export function ShotSwapReview({
                   'เลือกภาพที่อยากให้อยู่ในคลิป'
                 )}
               </p>
+            </div>
 
-              {/* A swipeable strip below `sm`: four 9:16 cards in a
-                  non-wrapping centred row came out ~54px wide each at 390 —
-                  vertical slivers of the shots you are choosing between. */}
-              <div className="mt-[22px] flex min-h-0 flex-1 items-stretch gap-3 overflow-x-auto pb-1 sm:justify-center sm:gap-5 sm:overflow-visible">
+            {/* A shot the AI returned no backup for is still walked through:
+                the frame is shown so the user can see where they are in their
+                own cut, and the card says plainly there is nothing to pick. */}
+            {!hasOptions ? (
+              <div className="mt-[22px] flex shrink-0 justify-center">
+                <div
+                  className="relative aspect-[9/16] w-[46vw] max-w-[210px] overflow-hidden rounded-[5px] border border-border-faint bg-media sm:w-auto sm:max-w-none"
+                  style={frameStyle}
+                >
+                  {thumbFor(segmentWindow(seg)) ? (
+                    <img
+                      src={thumbFor(segmentWindow(seg))}
+                      alt=""
+                      className="h-full w-full object-cover"
+                    />
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center">
+                      <Film size={20} className="text-muted" />
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : (
+              /* A swipeable strip below `sm`: four 9:16 cards in a
+                 non-wrapping centred row came out ~54px wide each at 390 —
+                 vertical slivers of the shots you are choosing between. */
+              <div className="mt-[22px] flex shrink-0 items-start gap-3 self-stretch overflow-x-auto pb-1 sm:justify-center sm:gap-5 sm:overflow-visible">
                 {options.map((opt, i) => {
                   const chosen = isChosen(opt)
                   const replaced = !chosen && opt.altIndex === null && diffCountFor(picks, segIndex)
                   return (
                     <div
                       key={i}
-                      // Shrink-wraps the picture from `sm` (no flex-1): the
+                      // One measured width for every card from `sm` up: the
                       // cards' sizes must be identical BY CONSTRUCTION, not by
                       // two flex resolutions happening to agree — the owner
                       // caught one card rendering larger than the other
                       // (2026-09-09).
-                      className="flex min-h-0 w-[46vw] max-w-[210px] shrink-0 flex-col sm:w-auto sm:max-w-[270px]"
+                      className="flex w-[46vw] max-w-[210px] shrink-0 flex-col sm:w-auto sm:max-w-none"
+                      style={frameStyle}
                     >
                       {/* A div, not a <button>: the play control sits on top of
                           the picture, and a button inside a button is invalid
@@ -642,11 +768,11 @@ export function ShotSwapReview({
                           }
                         }}
                         className={cn(
-                          // Width-driven below `sm` (fills the 46vw wrapper);
-                          // an explicit shared height from `sm` up — every
-                          // card gets exactly the same box, video or still.
+                          // Always width-driven, and the width comes from the
+                          // card: the height then follows the 9:16 source. The
+                          // old `sm:h-[min(470px,56dvh)]` was viewport math the
+                          // body could not honour, so the cards were clipped.
                           'relative aspect-[9/16] w-full overflow-hidden rounded-[5px] bg-media outline-none transition-colors duration-state ease-out',
-                          'sm:h-[min(470px,56dvh)] sm:w-[calc(min(470px,56dvh)*9/16)]',
                           // One accent border, never a border plus a ring —
                           // stacked rings read as two overlapping edges.
                           chosen
@@ -689,49 +815,55 @@ export function ShotSwapReview({
                   )
                 })}
               </div>
-            </>
-          )}
-        </div>
-
-        {/* ── browse strip (second layer) ── */}
-        {browsing ? (
-          <div className="shrink-0 border-t border-divider px-6 py-3">
-            <div className="flex flex-wrap gap-[5px]">
-              {segments.map((s, i) => {
-                const w = segmentWindow(s as Record<string, unknown>)
-                const hasAlts = swapCandidates(s as Record<string, unknown>).length > 0
-                const current = i === segIndex
-                return (
-                  <button
-                    key={i}
-                    type="button"
-                    aria-label={`ช็อตที่ ${i + 1}`}
-                    onClick={() => {
-                      const q = queue.indexOf(i)
-                      if (q >= 0) {
-                        setNoOptionShot(null)
-                        setCursor(q)
-                      } else setNoOptionShot(i)
-                    }}
-                    className={cn(
-                      'relative h-[54px] w-[30px] overflow-hidden rounded-[3px] bg-media outline-none',
-                      current
-                        ? 'border-2 border-accent'
-                        : 'border border-[rgb(243_242_242_/_0.1)] focus-visible:border-accent'
-                    )}
-                  >
-                    {thumbFor(w) ? (
-                      <img src={thumbFor(w)} alt="" className="h-full w-full object-cover" />
-                    ) : null}
-                    {hasAlts ? (
-                      <span className="absolute bottom-1 left-1/2 h-[5px] w-[5px] -translate-x-1/2 rounded-full bg-accent" />
-                    ) : null}
-                  </button>
-                )
-              })}
-            </div>
+            )}
           </div>
-        ) : null}
+
+          {/* ── browse strip (second layer) ──
+              Absolute, INSIDE the body: it used to be a flex sibling, so
+              opening it shortened the body and the cards were cropped by the
+              body's overflow (owner screenshot, 2026-09-26). Overlaying costs
+              nothing — the body above gains exactly this much bottom padding,
+              so whatever the strip covers can still be scrolled to. */}
+          {browsing ? (
+            <div
+              ref={stripRef}
+              className="absolute inset-x-0 bottom-0 z-10 max-h-[45%] overflow-y-auto border-t border-divider bg-surface px-6 py-3"
+            >
+              <div className="flex flex-wrap gap-[5px]">
+                {segments.map((s, i) => {
+                  const w = segmentWindow(s as Record<string, unknown>)
+                  const hasAlts = hasSwapOptions(s as Record<string, unknown>)
+                  const current = i === segIndex
+                  return (
+                    <button
+                      key={i}
+                      type="button"
+                      aria-label={`ช็อตที่ ${i + 1}${hasAlts ? '' : ' (ไม่มีตัวเลือกอื่น)'}`}
+                      aria-current={current}
+                      // Every shot is reachable, with or without alternatives:
+                      // the strip is how someone finds the place in their own
+                      // cut that they came here to change.
+                      onClick={() => setCursor(i)}
+                      className={cn(
+                        'relative h-[54px] w-[30px] shrink-0 overflow-hidden rounded-[3px] bg-media outline-none',
+                        current
+                          ? 'border-2 border-accent'
+                          : 'border border-[rgb(243_242_242_/_0.1)] focus-visible:border-accent'
+                      )}
+                    >
+                      {thumbFor(w) ? (
+                        <img src={thumbFor(w)} alt="" className="h-full w-full object-cover" />
+                      ) : null}
+                      {hasAlts ? (
+                        <span className="absolute bottom-1 left-1/2 h-[5px] w-[5px] -translate-x-1/2 rounded-full bg-accent" />
+                      ) : null}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          ) : null}
+        </div>
 
         {/* ── footer ── one commit button, one place, label follows state ── */}
         <div className="flex shrink-0 flex-wrap items-center justify-end gap-x-4 gap-y-3 px-6 pb-[22px] pt-5">
@@ -741,8 +873,10 @@ export function ShotSwapReview({
                 <span className="text-ink-2">เปลี่ยนแล้ว {diffCount} ช็อต</span> · {regimeNote} ·
                 ของเดิมย้อนกลับได้เสมอ
               </>
-            ) : (
+            ) : hasOptions ? (
               'แตะภาพเพื่อเลือก — อันที่เลือกจะเล่นวนให้ดู'
+            ) : (
+              'ช็อตนี้ไม่มีอะไรให้เลือก — กด ถัดไป เพื่อดูช็อตต่อไป'
             )}
           </span>
           <button

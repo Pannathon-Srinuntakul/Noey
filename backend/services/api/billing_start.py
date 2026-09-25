@@ -3,18 +3,29 @@
 Guard layer 1 at the edge (docs/token-billing-design.md §6.1, §9.3). In
 order:
 
-0. footage over the plan's per-project cap (footage kinds) → 422
+0. footage over the cap that applies — the plan's per-project one, or, for a
+   mode that sends the whole project to the model in ONE video request, what
+   that request can hold at the chosen ความละเอียด → 422
    ``footage_over_limit`` (packages/billing/plan_features.py);
-1. circuit breaker open → 503 ``service_paused`` (admin/unlimited exempt);
-2. a Free account → per-IP / per-device limits → 429 ``free_tier_limited``
-   (checked here, but the run is COUNTED against them only after step 3);
-3. reserve the SERVER-side estimate against the rolling windows (and, with
-   ``allow_wallet``, the top-up balance) under the account row lock, commit
-   → 402 ``limit_reached`` when it does not fit.
+1. a run too big for an enforced window even when the window is EMPTY → 422
+   ``run_too_large``. This is the only quota check left before starting, and
+   it is about impossibility, not about having enough left: waiting for the
+   reset or topping up would not make it work;
+2. circuit breaker open → 503 ``service_paused`` (admin/unlimited exempt);
+3. a Free account → per-IP / per-device limits → 429 ``free_tier_limited``
+   (checked here, but the run is COUNTED against them only after the row is
+   opened).
 
-The reservation is committed in its own session BEFORE the worker task is
+**Nothing is reserved** (owner, 2026-09-26). The pre-flight estimate used to
+be held against the windows, which refused work that would have fitted — it
+reserves ~104 k where a real cut spends ~70 k, so a user with 90 k left was
+refused a job they could afford. The run is charged per call as it goes
+(packages/billing/metering.py) and pauses mid-run if the window really does
+run out (``guard.QuotaExhausted``), with everything it produced kept.
+
+The run row is committed in its own session BEFORE the worker task is
 enqueued, and the ``run_id`` travels to the task as a kwarg. Anything that
-fails between reserving and enqueueing must give the hold back —
+fails between opening and enqueueing must close the row again —
 ``release_on_error`` does that around the rest of the route.
 
 Every ``AI_ROUTES`` entry (services/api/ai_gate.py) calls this;
@@ -40,27 +51,6 @@ from services.api.deps import AuthUser
 
 log = get_logger(__name__)
 
-LIMIT_REACHED_MESSAGE = "ใช้งานครบ {label} แล้ว"
-LIMIT_REACHED_WALLET_HINT = " — ใช้ยอดเงินคงเหลือทำงานนี้ต่อได้"
-
-
-def limit_reached_detail(exc: runs.LimitReached) -> dict[str, Any]:
-    """The 402 body. Percent/label/time only — the client formats
-    ``resets_at`` (UTC ISO) in the viewer's timezone."""
-    label = limits_mod.WINDOW_LABELS.get(exc.window or "", "limit")
-    message = LIMIT_REACHED_MESSAGE.format(label=label)
-    if exc.wallet_can_cover:
-        message += LIMIT_REACHED_WALLET_HINT
-    return {
-        "code": "limit_reached",
-        "window": exc.window,
-        "label": label,
-        "resets_at": runs.iso(exc.resets_at),
-        "wallet_can_cover": exc.wallet_can_cover,
-        "wallet_satang": exc.wallet_need_satang,
-        "message": message,
-    }
-
 
 async def start_paid_run(
     auth: AuthUser,
@@ -74,18 +64,23 @@ async def start_paid_run(
     engine: str | None = None,
     precision: str | None = None,
 ) -> str:
-    """Reserve ``estimate`` for ``auth``'s user and return the ``run_id``."""
+    """Open a paid run for ``auth``'s user and return the ``run_id``."""
     user = auth.user
     unlimited = limits_mod.is_unlimited(user)
     free = not unlimited and str(user.plan or "free") == "free"
     ip = ratelimit.client_ip(request) if request is not None else None
     device = request.headers.get(free_tier.DEVICE_HEADER) if request is not None else None
     if estimate.kind in plan_features.FOOTAGE_KINDS:
-        # Server-measured footage against the plan's per-project cap — the
-        # client already refused this before uploading; this is the guard.
-        refusal = plan_features.check_footage(user, estimate.media_sec)
+        # Server-measured footage against the cap that applies — the client
+        # already refused this before uploading; this is the guard.
+        refusal = plan_features.check_footage(
+            user, estimate.media_sec, mode=mode, precision=precision
+        )
         if refusal is not None:
             raise HTTPException(status_code=422, detail=refusal)
+    too_large = plan_features.check_run_size(user, estimate.tokens)
+    if too_large is not None:
+        raise HTTPException(status_code=422, detail=too_large)
     if not unlimited and await guard.breaker_open():
         raise HTTPException(
             status_code=503, detail={"code": "service_paused", "message": guard.SERVICE_PAUSED_MESSAGE}
@@ -100,26 +95,22 @@ async def start_paid_run(
 
     async with get_sessionmaker()() as session:
         await session.execute(text("SET search_path TO core, public"))
-        try:
-            run = await runs.reserve(
-                session, user=user, tenant_id=auth.tenant_id, estimate=estimate,
-                allow_wallet=allow_wallet, job_id=job_id, reference_id=reference_id,
-                mode=mode, engine=engine, precision=precision,
-            )
-        except runs.LimitReached as exc:
-            await session.rollback()
-            raise HTTPException(status_code=402, detail=limit_reached_detail(exc)) from None
+        run = await runs.open_run(
+            session, user=user, tenant_id=auth.tenant_id, estimate=estimate,
+            allow_wallet=allow_wallet, job_id=job_id, reference_id=reference_id,
+            mode=mode, engine=engine, precision=precision,
+        )
         run_id = str(run.id)
         await session.commit()
     if free:
-        # Counted only now: a start refused above (402) must not use up the
-        # daily free runs every other account behind the same IP shares.
+        # Counted only now: a start refused above must not use up the daily
+        # free runs every other account behind the same IP shares.
         await free_tier.count_run(ip=ip, device=device)
     return run_id
 
 
 async def release_run(run_id: str) -> None:
-    """Give a reservation back (nothing charged). Never raises."""
+    """Close a run that never got to work (nothing charged). Never raises."""
     try:
         async with get_sessionmaker()() as session:
             await session.execute(text("SET search_path TO core, public"))

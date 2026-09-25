@@ -1,6 +1,6 @@
 import { canUseZoomEffects } from './platformFeatures'
 import { useEffect, useState } from 'react'
-import type { ProjectMode, ProjectStep } from './projectFlow'
+import { isBusy, type ProjectMode, type ProjectStep } from './projectFlow'
 
 /**
  * At most this many preview probes are in flight at once.
@@ -112,6 +112,40 @@ export function previewCandidates(step: ProjectStep, mode: ProjectMode): string[
 }
 
 /**
+ * The last RENDERED file each project's preview settled on, so a render that
+ * starts next can keep showing it (see `previewWhileBusy`).
+ *
+ * Module-level rather than per-hook state: the grid card and the detail page
+ * are two hook instances of the same project and should not disagree about
+ * what was last on screen, and a ref cannot be read during render here. One
+ * short string per project the session has previewed.
+ */
+const lastRenderedByUid = new Map<string, string>()
+
+/**
+ * What to show for a step that has no rendered candidates of its own.
+ *
+ * A running step returns null from `previewCandidates`, and the hook used to
+ * fall straight through to the source clip — so the moment a re-render started,
+ * a finished project's picture swapped back to UNCUT footage and stayed there
+ * for the whole run. The previous render is still on disk and is exactly what
+ * the person was looking at a second ago, so hold it (the file's own comment
+ * called the source-clip fallback wrong on 2026-08-13; owner 2026-09-26).
+ *
+ * The hold is scoped to BUSY steps. A terminal step with no candidates is a
+ * real "nothing to show" — `speech_highlights` whose index came back empty —
+ * and must not be answered with a file from before.
+ */
+export function previewWhileBusy(
+  step: ProjectStep,
+  lastRendered: string | null,
+  fallbackClipFile?: string
+): string | null {
+  if (isBusy(step) && lastRendered) return lastRendered
+  return fallbackClipFile ?? null
+}
+
+/**
  * Which rendered file to show as a project's preview, or null when nothing is
  * rendered yet. Extracted from the old ProjectCard so the grid card and the
  * detail page share one definition.
@@ -180,20 +214,27 @@ export function usePreviewFile(
     }
   }, [uid, step, mode, mediaKey, probeKey, enabled])
 
-  if (settled) return settled
-  if (candidates) {
-    // While the probe is in flight, fall back to the cascade's own LAST entry
-    // — documented always-present (final.mp4 / final_silent.mp4) — never null
-    // and never the raw source clip. Null here was how a finished preview
-    // VANISHED after a re-render until a refresh: the mediaKey bump re-keyed
-    // the probe, and for its whole in-flight window the player was handed
-    // nothing (owner 2026-09-09). The source-clip fallback stays wrong for the
-    // older reason (2026-08-13: a finished project opened on the UNCUT
-    // footage), but the cascade tail is the same RENDERED clip family the
-    // probe would pick anyway.
-    return probed?.key === probeKey ? probed.file : candidates[candidates.length - 1]
-  }
-  return fallbackClipFile ?? null
+  // While the probe is in flight, fall back to the cascade's own LAST entry —
+  // documented always-present (final.mp4 / final_silent.mp4) — never null and
+  // never the raw source clip. Null here was how a finished preview VANISHED
+  // after a re-render until a refresh: the mediaKey bump re-keyed the probe,
+  // and for its whole in-flight window the player was handed nothing (owner
+  // 2026-09-09). The cascade tail is the same RENDERED clip family the probe
+  // would pick anyway.
+  const rendered = settled
+    ? settled
+    : candidates
+      ? ((probed?.key === probeKey ? probed.file : candidates[candidates.length - 1]) ?? null)
+      : null
+
+  // Remembered in an effect, not during render: the answer has to be committed
+  // before it counts as "what the person is looking at".
+  useEffect(() => {
+    if (rendered) lastRenderedByUid.set(uid, rendered)
+  }, [uid, rendered])
+
+  if (rendered) return rendered
+  return previewWhileBusy(step, lastRenderedByUid.get(uid) ?? null, fallbackClipFile)
 }
 
 /**

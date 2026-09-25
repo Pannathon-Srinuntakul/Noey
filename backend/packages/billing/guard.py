@@ -36,6 +36,13 @@ Speech-to-text is checked the same way per file (``before_stt_clip``), priced
 from the WAV's length; a WAV whose length cannot be read is priced from its
 size (an upper bound), never as zero.
 
+The same admission also holds the PLAN's window, which since 2026-09-26 is no
+longer reserved at start: the meter carries a ``runs.QuotaSnapshot`` taken
+when the task began and stops before the call that would go past what is left
+(``QuotaExhausted``). That stop is a pause, not a failure — it carries the
+window, its reset time and what the balance would have to cover, so the
+client can offer the top-up and resume.
+
 Layer 3 — circuit breaker (§4.3). Today's (UTC) recorded vendor spend,
 Σ ``cost_thb``, against the admin's daily cap (``admin_settings`` key
 ``circuit_breaker``). At the cap, new jobs are refused (``breaker_open``, at
@@ -73,6 +80,10 @@ CHARS_PER_TOKEN = 3.0
 
 LIMIT_STOP_MESSAGE = "หยุดแล้ว: ถึงขีดจำกัดการใช้งานของงานนี้"
 SERVICE_PAUSED_MESSAGE = "ระบบหยุดรับงาน AI ชั่วคราว กรุณาลองใหม่ภายหลัง"
+#: A run paused because the plan's window ran out — not an error. The client
+#: adds the reset time in the viewer's own timezone.
+QUOTA_PAUSED_MESSAGE = "พักงานไว้ก่อน: โควตาหมดระหว่างทำงาน — งานที่ทำไปแล้วยังอยู่ ทำต่อได้เมื่อโควตากลับมา"
+WALLET_HINT = " — ใช้ยอดเงินคงเหลือทำงานนี้ต่อได้"
 
 
 class RunBudgetExceeded(Exception):
@@ -83,6 +94,63 @@ class RunBudgetExceeded(Exception):
     def __init__(self, run_id: str | None = None) -> None:
         self.run_id = run_id
         super().__init__(LIMIT_STOP_MESSAGE)
+
+    def payload(self) -> dict[str, Any]:
+        """What the client needs to explain the stop (and offer the balance).
+        The base stop has no window to name: it is this run's own ceiling."""
+        return {"code": self.code, "message": str(self)}
+
+
+class QuotaExhausted(RunBudgetExceeded):
+    """The user's plan window (and any balance they allowed) ran out mid-run.
+
+    A PAUSE, not a failure: everything the run produced so far is kept and the
+    project resumes from the same stage. It carries what the client needs to
+    offer the top-up — which window, when it resets, whether the balance
+    covers the rest and how much that is — because without those the editor
+    can only say "error" (web/src/lib/usageLimits.ts falls back to
+    ``walletCanCover: false``, and the "ใช้ยอดเงินคงเหลือทำต่อ" button never
+    appears). What is left is deliberately NOT in it as a token count: users
+    never see those (docs/token-billing-plan.md §2) — the amount they act on
+    is the baht figure, and the fullness bars come from ``GET /usage/me``.
+    """
+
+    code = "limit_reached"
+
+    def __init__(
+        self,
+        run_id: str | None = None,
+        *,
+        window: str | None = None,
+        resets_at: datetime | None = None,
+        wallet_can_cover: bool = False,
+        wallet_satang: int = 0,
+    ) -> None:
+        self.run_id = run_id
+        self.window = window
+        self.resets_at = resets_at
+        self.wallet_can_cover = wallet_can_cover
+        self.wallet_satang = wallet_satang
+        Exception.__init__(self, QUOTA_PAUSED_MESSAGE)
+
+    def payload(self) -> dict[str, Any]:
+        """The one body for this stop, wherever it is reported from — the 402
+        of a synchronous route or the paused job row of a worker task."""
+        from packages.billing.limits import WINDOW_LABELS
+        from packages.billing.runs import iso
+
+        message = str(self)
+        if self.wallet_can_cover:
+            message += WALLET_HINT
+        return {
+            "code": self.code,
+            "window": self.window,
+            "label": WINDOW_LABELS.get(self.window or "", "limit"),
+            "resets_at": iso(self.resets_at),
+            "wallet_can_cover": self.wallet_can_cover,
+            "wallet_satang": self.wallet_satang,
+            "message": message,
+        }
 
 
 class ServicePaused(Exception):
@@ -117,6 +185,21 @@ class RunMeter:
     #: The in-flight budget of the speech-to-text file being transcribed.
     stt_budget: int = 0
     stops: list[str] = field(default_factory=list)
+    #: The plan quota left when this task started (None: nothing to stop at).
+    #: Decremented locally against ``spent`` — see ``quota_left``.
+    quota: Any = None
+    #: ``spent`` when the snapshot was taken (a later step of a chain starts
+    #: from what earlier steps already spent AND already charged).
+    quota_baseline: int = 0
+    #: What the run still expects to spend, for the "how much baht" figure.
+    estimate: int = 0
+
+    def quota_left(self) -> int | None:
+        """Rate-card tokens this task may still spend before the plan window
+        runs out; None when there is no quota to run out of."""
+        if self.quota is None or getattr(self.quota, "unlimited", False):
+            return None
+        return int(self.quota.budget) - (self.spent - self.quota_baseline) - self.in_flight
 
 
 _meter: ContextVar[RunMeter | None] = ContextVar("billing_run_meter", default=None)
@@ -143,23 +226,31 @@ def meter_scope(meter: RunMeter | None) -> Iterator[RunMeter | None]:
         _meter.reset(token)
 
 
-def meter_for_run(run: Any) -> RunMeter:
+def meter_for_run(run: Any, quota: Any = None) -> RunMeter:
     """A meter for an ``ai_runs`` row, starting from what it already spent
-    (a later step of a multi-task chain continues the same budget)."""
+    (a later step of a multi-task chain continues the same budget).
+
+    ``quota`` — a ``runs.QuotaSnapshot`` — is what is left of the plan's
+    window; without it the meter only enforces this run's own ceiling.
+    """
     from packages.core.settings import get_settings
 
     profile = estimator.MODE_PROFILES.get(str(run.kind))
     media = 0
     if profile is not None and profile.uses_video:
         media = estimator.video_input_tokens(float(run.media_sec or 0.0), run.precision)
+    spent = int(run.actual_tokens or 0)
     return RunMeter(
         run_id=str(run.id),
         ceiling=None if run.unlimited else int(run.ceiling_tokens or 0),
-        spent=int(run.actual_tokens or 0),
+        spent=spent,
         default_max_output=profile.max_output if profile else get_settings().llm_max_output_tokens,
         media_input_tokens=media,
         kind=str(run.kind),
         unlimited=bool(run.unlimited),
+        quota=None if run.unlimited else quota,
+        quota_baseline=spent,
+        estimate=int(run.estimate_tokens or 0),
     )
 
 
@@ -292,10 +383,42 @@ def optional_call() -> Iterator[None]:
         _optional.reset(token)
 
 
+def _quota_stop(meter: RunMeter, budget: int) -> QuotaExhausted:
+    """The pause for a call the plan's window cannot pay for, priced with what
+    finishing the run would still cost (its estimate, or at least this call)."""
+    from packages.billing import wallet
+
+    left = meter.quota_left() or 0
+    remaining = max(budget, meter.estimate - (meter.spent - meter.quota_baseline))
+    need = wallet.satang_for_tokens(max(0, remaining - max(0, left)))
+    spare = int(getattr(meter.quota, "wallet_satang", 0) or 0)
+    log.warning(
+        "run_quota_stop", run_id=meter.run_id, kind=meter.kind, spent=meter.spent,
+        in_flight=meter.in_flight, call_budget=budget, quota_left=left,
+        window=getattr(meter.quota, "window", None), need_satang=need, wallet_satang=spare,
+    )
+    meter.stopped = True
+    meter.stops.append(f"quota left={left} call={budget}")
+    return QuotaExhausted(
+        meter.run_id,
+        window=getattr(meter.quota, "window", None),
+        resets_at=getattr(meter.quota, "resets_at", None),
+        wallet_can_cover=need > 0 and spare >= need,
+        wallet_satang=need,
+    )
+
+
 def admit(meter: RunMeter, budget: int) -> None:
     """Reserve ``budget`` in flight, or refuse (the call is not sent)."""
     if meter.stopped:
         raise RunBudgetExceeded(meter.run_id)
+    left = meter.quota_left()
+    if left is not None and budget > left:
+        # The plan's window, not this run's ceiling: the run pauses and can be
+        # resumed, so an optional call is skipped exactly as for the ceiling.
+        if _optional.get():
+            raise OptionalCallSkipped(meter.run_id)
+        raise _quota_stop(meter, budget)
     if meter.ceiling is not None and meter.spent + meter.in_flight + budget > meter.ceiling:
         optional = _optional.get()
         log.warning(

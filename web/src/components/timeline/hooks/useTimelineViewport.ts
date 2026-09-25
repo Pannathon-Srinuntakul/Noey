@@ -28,6 +28,7 @@ export interface TimelineViewportApi {
   followPlayhead: (t: number) => void
   resumeFollow: () => void
   revealPlayhead: (t: number) => void
+  revealAndFlashCut: (cutId: string) => void
   onViewportScroll: () => void
   timeAtClientX: (clientX: number, maxSec?: number) => number
   fitToScreen: () => void
@@ -173,6 +174,58 @@ export function useTimelineViewport({
     scrollToPlayhead(t)
   }
 
+  /**
+   * Bring a scene block on screen and flash its border — the answer an edit
+   * owes the eye. An added scene, an undone one or an AI re-edit could all
+   * land off screen, and the editor went on looking exactly as it did before
+   * (the edit had happened; nothing said so).
+   *
+   * It NUDGES, the way `scrollIntoView({ block: 'nearest' })` does: a block
+   * already in view is not moved, so this never yanks the view away from what
+   * the user was looking at. The scroll is the hook's own, so the follow stays
+   * off (autoScrollingRef).
+   *
+   * Deferred two frames: the cut list that produced the block has to render
+   * and lay out before there is a node to scroll to.
+   */
+  function revealAndFlashCut(cutId: string): void {
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        const el = viewportRef.current
+        const node = el?.querySelector<HTMLElement>(`[data-cut-id="${cutId}"]`)
+        if (!el || !node) return
+        const view = el.getBoundingClientRect()
+        const box = node.getBoundingClientRect()
+        // The sticky label column covers the left of the viewport — a block
+        // under it is not on screen.
+        const left = view.left + HEADER_COL_PX + 8
+        const right = view.right - 8
+        let delta = 0
+        // A block wider than the viewport is pulled only far enough to put its
+        // LEFT edge in view; scrolling to its right edge would hide its start.
+        if (box.left < left) delta = box.left - left
+        else if (box.right > right) delta = Math.min(box.right - right, box.left - left)
+        if (delta !== 0) {
+          autoScrollingRef.current = true
+          el.scrollLeft += delta
+          requestAnimationFrame(() => {
+            autoScrollingRef.current = false
+          })
+        }
+        // A ring rather than a class: nothing about this belongs in React
+        // state, and the block is memo()'d on props that did not change.
+        node.animate?.(
+          [
+            { boxShadow: '0 0 0 0 rgb(217 164 65 / 0)' },
+            { boxShadow: '0 0 0 3px rgb(217 164 65 / 0.9)' },
+            { boxShadow: '0 0 0 0 rgb(217 164 65 / 0)' }
+          ],
+          { duration: 850, easing: 'ease-out' }
+        )
+      })
+    )
+  }
+
   /** One scroll listener for the viewport: a scroll this hook did not cause
    * is the user looking around, and turns the follow off. */
   function onViewportScroll(): void {
@@ -303,6 +356,7 @@ export function useTimelineViewport({
     followPlayhead,
     resumeFollow,
     revealPlayhead,
+    revealAndFlashCut,
     onViewportScroll,
     timeAtClientX,
     fitToScreen,

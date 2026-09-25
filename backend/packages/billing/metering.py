@@ -8,8 +8,9 @@ real ``cost_thb`` at ``fx_rate`` (what we paid).
 
 Durability, in order:
 
-1. awaited insert — row + ``ai_runs.actual_tokens`` accrual in ONE
-   transaction — retried ``len(RETRY_DELAYS)`` times;
+1. awaited insert — row + ``ai_runs.actual_tokens`` accrual + the charge on
+   the user's windows/balance, all in ONE transaction — retried
+   ``len(RETRY_DELAYS)`` times;
 2. then the row goes to the Redis list ``OUTBOX_KEY``, which the worker cron
    ``drain_usage_outbox`` replays every minute (``idem_key`` makes a replay
    insert once);
@@ -151,15 +152,24 @@ def _model_for(table: Table) -> Any:
 
 
 async def _insert(table: Table, row: dict[str, Any]) -> bool:
-    """One transaction: the row (once per idem_key) + the run's actual_tokens.
+    """One transaction: the row (once per idem_key), the run's actual_tokens,
+    and the CHARGE for it — the user is billed as the run spends, not from an
+    estimate held at start (packages/billing/runs.py, owner 2026-09-26). The
+    money and the evidence for it land together or not at all.
 
     Returns True when the row was new. Raises on a DB problem.
     """
+    from packages.billing import runs
     from packages.db.session import get_sessionmaker
 
     async with get_sessionmaker()() as session:
         await session.execute(text("SET search_path TO core, public"))
         await _price(session, table, row)
+        # Account first, then the run — the one lock order (accounts.py) —
+        # and BEFORE the insert, whose foreign key locks the run row too.
+        locked = None
+        if row.get("run_id") and row.get("tokens"):
+            locked = await runs.lock_run(session, str(row["run_id"]))
         model = _model_for(table)
         stmt = (
             pg_insert(model)
@@ -168,11 +178,8 @@ async def _insert(table: Table, row: dict[str, Any]) -> bool:
             .returning(model.id)
         )
         inserted = (await session.execute(stmt)).first() is not None
-        if inserted and row.get("run_id") and row.get("tokens"):
-            await session.execute(
-                text("UPDATE core.ai_runs SET actual_tokens = actual_tokens + :t WHERE id = :r"),
-                {"t": int(row["tokens"]), "r": row["run_id"]},
-            )
+        if inserted and locked is not None:
+            await runs.apply_spend(session, *locked, int(row["tokens"]))
         await session.commit()
         return inserted
 

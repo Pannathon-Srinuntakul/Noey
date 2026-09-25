@@ -58,6 +58,9 @@ export const PreviewPane = memo(function PreviewPane({
   onSeek: (sec: number) => void
   onScrubStart: () => void
   onScrubEnd: () => void
+  /** Previous / next CUT, not frame: the arrow keys already step frames, and
+   * a one-frame button on a transport this size is a button nobody can aim
+   * with. Every NLE puts shot navigation here. */
   onStepBack: () => void
   onStepForward: () => void
 }): React.JSX.Element {
@@ -152,8 +155,8 @@ export const PreviewPane = memo(function PreviewPane({
         onScrubEnd={onScrubEnd}
         onStepBack={onStepBack}
         onStepForward={onStepForward}
-        stepBackTitle={withShortcut('ถอย 1 เฟรม', 'frame-back')}
-        stepForwardTitle={withShortcut('เดินหน้า 1 เฟรม', 'frame-back')}
+        stepBackTitle={withShortcut('ช็อตก่อนหน้า', 'cut-prev')}
+        stepForwardTitle={withShortcut('ช็อตถัดไป', 'cut-prev')}
         playTitle={withShortcut(isPlaying ? 'หยุด' : 'เล่น', 'play')}
         playDisabledReason={hasPreview ? undefined : 'ยังไม่มีวิดีโอให้เล่น'}
       />

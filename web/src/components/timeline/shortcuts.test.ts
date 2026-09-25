@@ -47,7 +47,15 @@ describe('formatShortcut', () => {
   })
 
   it('writes a chord tight and starts a new chord after a finished one', () => {
-    expect(formatShortcut(partsOf('undo'))).toBe(IS_MAC ? '⌘Z ⌘Y' : 'Ctrl+Z Ctrl+Y')
+    expect(formatShortcut(partsOf('undo'))).toBe(IS_MAC ? '⌘Z' : 'Ctrl+Z')
+    // Redo has two alternatives, and the first is a three-key chord.
+    expect(formatShortcut(partsOf('redo'))).toBe(IS_MAC ? '⌘⇧Z ⌘Y' : 'Ctrl+Shift+Z Ctrl+Y')
+  })
+
+  it('draws the shot and shuttle keys as alternatives, not as a chord', () => {
+    expect(formatShortcut(partsOf('cut-prev'))).toBe('↑ ↓')
+    expect(formatShortcut(partsOf('shuttle'))).toBe('J K L')
+    expect(formatShortcut(partsOf('zoom'))).toBe('+ −')
   })
 })
 

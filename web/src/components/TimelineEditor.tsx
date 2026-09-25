@@ -68,6 +68,7 @@ import {
   computeEditedDuration,
   computeEditedSegments,
   cutLineId,
+  cutsInLine,
   findEditedSegment,
   findSourceCutAtTime,
   lineScriptFor,
@@ -98,9 +99,18 @@ import {
   type EditorSnapshot
 } from '../lib/editorHistory'
 import { useStableCallback } from '../lib/useStableCallback'
+import { useToast } from '../lib/toast'
 import { canUseAiReedit } from '../lib/platformFeatures'
-import { FRAME_SEC, HEADER_COL_PX, RULER_PX } from './timeline/constants'
+import {
+  FRAME_SEC,
+  HEADER_COL_PX,
+  MAX_PX_PER_SEC,
+  MIN_PX_PER_SEC,
+  RULER_PX
+} from './timeline/constants'
 import { isTypingTarget, matchesShortcutParts } from './timeline/shortcuts'
+import { nextBoundary } from './timeline/previewMath'
+import { changedCutId } from './timeline/sceneDiff'
 import { TimelineRuler } from './timeline/TimelineRuler'
 import type { TrimSnapContext, WorkingCut } from './timeline/types'
 import { aiReeditPayload, cutPayload } from './timeline/cutPayload'
@@ -137,6 +147,9 @@ interface Props {
   onClose: () => void
   /** Called after a successful save — caller should re-poll project status. */
   onSaved: () => void
+  /** Open ปรับช็อต for a scene (Enter). The shot-swap screen lives outside the
+   * editor, so the key is only offered when the caller can act on it. */
+  onOpenShotSwap?: (cutId: string) => void
 }
 
 /** Caption style steps closer together than this are one edit — see
@@ -174,10 +187,14 @@ export const VideoTimelineEditor = memo(function VideoTimelineEditor({
   mode,
   projectName,
   onClose,
-  onSaved
+  onSaved,
+  onOpenShotSwap
 }: Props) {
   // AI re-edit runs at app level so leaving the editor doesn't kill it.
   const fxJobs = useFxJobs()
+  // Every edit owes an answer on screen: a scene added off screen, an undo or
+  // an AI re-edit all used to succeed in total silence.
+  const { showToast } = useToast()
   const isDub = mode === 'dub_first' || mode === 'highlight'
   const isHighlight = mode === 'highlight'
   // The editor is configured before it mounts (TimelineRoute), so this is
@@ -509,6 +526,33 @@ export const VideoTimelineEditor = memo(function VideoTimelineEditor({
     resume
   } = useEditorHistory(uid, snapshotNow, applySnapshot)
 
+  /**
+   * One history step, with the scene it landed on selected, revealed and
+   * flashed. A step replaces the whole cut list at once, so nothing in the
+   * call says what moved — changedCutId reads it off the two lists.
+   *
+   * Without this, เลิกทำ changed the cut under a still screen and an unchanged
+   * selection, which reads exactly like a button that did nothing.
+   */
+  function historyStep(run: () => void, text: string): void {
+    const before = cutsRef.current
+    run()
+    const after = cutsRef.current
+    const landed = changedCutId(before, after)
+    if (landed) setSelectedId(landed)
+    announceEdit(landed, text, before.length === after.length ? undefined : sceneCountDetail())
+  }
+
+  function undoWithFeedback(): void {
+    if (!canUndo) return
+    historyStep(undo, 'เลิกทำแล้ว')
+  }
+
+  function redoWithFeedback(): void {
+    if (!canRedo) return
+    historyStep(redo, 'ทำซ้ำแล้ว')
+  }
+
   function beginCutBlockEdit() {
     isCutBlockEditingRef.current = true
     beginEdit()
@@ -535,6 +579,7 @@ export const VideoTimelineEditor = memo(function VideoTimelineEditor({
     followPlayhead,
     resumeFollow,
     revealPlayhead,
+    revealAndFlashCut,
     onViewportScroll,
     timeAtClientX,
     fitToScreen,
@@ -572,7 +617,12 @@ export const VideoTimelineEditor = memo(function VideoTimelineEditor({
     loadPreviewFor,
     selectCut,
     showCutFrame,
-    applyScrubTime,
+    jumpTo,
+    goToCutStart,
+    shuttleFaster,
+    shuttleStop,
+    shuttleBack,
+    playbackRateRef,
     pauseForScrub,
     resumeAfterScrub,
     onRulerPointerDown,
@@ -767,6 +817,9 @@ export const VideoTimelineEditor = memo(function VideoTimelineEditor({
       if (a && !a.paused) a.pause()
       return
     }
+    // The J/K/L shuttle changes how fast the video plays; the music has to run
+    // at the same speed or it drifts a second off within a few seconds.
+    if (a.playbackRate !== playbackRateRef.current) a.playbackRate = playbackRateRef.current
     const trimIn = em.trimInSec
     const trimOut = em.trimOutSec ?? musicDurationSec
     const blockDur = Math.max(trimOut - trimIn, 0)
@@ -887,6 +940,25 @@ export const VideoTimelineEditor = memo(function VideoTimelineEditor({
     return next
   }
 
+  /**
+   * The answer an edit owes the eye: bring the scene it landed on into view,
+   * flash its border, and say in one line what happened.
+   *
+   * เพิ่มฉาก, เพิ่มมุม, แยกฉาก, ทำซ้ำ, the AI re-edit and undo/redo all used to
+   * succeed with the screen perfectly still — a scene added or changed outside
+   * the scrolled view left nothing at all to see, so the only way to tell an
+   * edit from a no-op was to go hunting for a block.
+   */
+  function announceEdit(cutId: string | null, text: string, detail?: string): void {
+    if (cutId) revealAndFlashCut(cutId)
+    showToast({ text, detail })
+  }
+
+  /** The scene count as it is NOW — the detail line a cut edit shows. */
+  function sceneCountDetail(): string {
+    return `ตอนนี้มี ${cutsRef.current.length} ฉาก`
+  }
+
   /** A live edit from a drag frame — no history of its own: the drag is
    * bracketed by beginCutBlockEdit/commitCutBlockEdit and recorded once. */
   function updateCut(id: string, patch: Partial<WorkingCut>) {
@@ -951,7 +1023,10 @@ export const VideoTimelineEditor = memo(function VideoTimelineEditor({
     )
     // The scene you just added is the one you edit next — as in any editor
     // (owner, 2026-09-22). Selection only: the playhead stays where it is.
-    if (added) setSelectedId(cutId)
+    if (added) {
+      setSelectedId(cutId)
+      announceEdit(cutId, 'เพิ่มฉากแล้ว', sceneCountDetail())
+    }
   }
 
   function addMontageCut() {
@@ -966,7 +1041,14 @@ export const VideoTimelineEditor = memo(function VideoTimelineEditor({
       withNewAngle(prev, { id: cutId, source: selectedCut.source, lineId, start, end })
     )
     // Selected, like a new scene — see addCut.
-    if (added) setSelectedId(cutId)
+    if (added) {
+      setSelectedId(cutId)
+      announceEdit(
+        cutId,
+        'เพิ่มมุมให้ประโยคนี้แล้ว',
+        `ประโยคนี้มี ${cutsInLine(added, lineId).length} มุม`
+      )
+    }
   }
 
   function addSceneAtPlayhead() {
@@ -992,24 +1074,35 @@ export const VideoTimelineEditor = memo(function VideoTimelineEditor({
 
   /** แยกที่หัวเล่น (S) — split the scene under the playhead into two. */
   function splitAtPlayhead() {
+    // Why it CANNOT split is worth saying too: the button refused in silence,
+    // which reads the same as a button that is broken.
+    const refuse = (): void =>
+      showToast({
+        text: 'แยกตรงนี้ไม่ได้',
+        detail: 'หัวเล่นต้องอยู่กลางฉาก และทั้งสองส่วนต้องยาวพอ'
+      })
     const t = currentTimeRef.current
     const list = cutsRef.current
     let cutId: string | null = null
     let atSrc = 0
     if (viewMode === 'edited') {
       const seg = findEditedSegment(list, t)
-      if (!seg) return
+      if (!seg) return refuse()
       cutId = seg.cut.id
       atSrc = seg.cut.in + (t - seg.editedIn)
     } else {
       const c = findSourceCutAtTime(list, previewSource, t)
-      if (!c) return
+      if (!c) return refuse()
       cutId = c.id
       atSrc = t
     }
     newCutCounter.current += 1
     const newId = `new${newCutCounter.current}`
-    editCuts((prev) => splitCutAt(prev, cutId, atSrc, newId))
+    if (!editCuts((prev) => splitCutAt(prev, cutId, atSrc, newId))) return refuse()
+    // The half AFTER the playhead: the split was made to work on what comes
+    // next, and it is the piece that did not exist a moment ago.
+    setSelectedId(newId)
+    announceEdit(newId, 'แยกฉากแล้ว', sceneCountDetail())
   }
 
   /** ทำซ้ำ — duplicate the selected scene right after itself. */
@@ -1017,7 +1110,9 @@ export const VideoTimelineEditor = memo(function VideoTimelineEditor({
     if (!selectedCut) return
     newCutCounter.current += 1
     const cutId = `new${newCutCounter.current}`
-    editCuts((prev) => withDuplicate(prev, selectedCut.id, cutId, isDub))
+    if (!editCuts((prev) => withDuplicate(prev, selectedCut.id, cutId, isDub))) return
+    setSelectedId(cutId)
+    announceEdit(cutId, 'ทำซ้ำฉากแล้ว', sceneCountDetail())
   }
 
   /** ตั้งจุดเข้า/จุดออก ([ / ]) — trim the selected cut to the playhead. */
@@ -1195,9 +1290,25 @@ export const VideoTimelineEditor = memo(function VideoTimelineEditor({
     if (!fxResult || fxResult.kind !== 'reedit') return
     // Deferred: applying the answer is a fresh update, not part of this commit.
     const t = window.setTimeout(() => {
+      const before = cutsRef.current
+      const next = fxResult.value as EditCut[]
       pushHistory(snapshotNow())
-      writeCuts(fxResult.value as EditCut[])
-      setSelectedId(null)
+      writeCuts(next)
+      // What the AI actually did, in the only terms the user cares about —
+      // and a way straight back out of it. The re-edit used to replace the
+      // whole cut in silence, with the selection cleared for good measure.
+      const landed = changedCutId(before, next)
+      setSelectedId(landed)
+      if (landed) revealAndFlashCut(landed)
+      showToast({
+        text: 'AI แก้การตัดให้แล้ว',
+        detail: `จาก ${before.length} ฉาก เป็น ${next.length} ฉาก`,
+        actionLabel: 'เลิกทำ',
+        // Through the stable wrapper, not this render's closure: the toast is
+        // pressed later, and `canUndo` as it was BEFORE the re-edit was pushed
+        // is false on a fresh project — the action would have done nothing.
+        onAction: () => onUndo()
+      })
       fxJobs.clearResult(uid)
     }, 0)
     return () => window.clearTimeout(t)
@@ -1212,6 +1323,46 @@ export const VideoTimelineEditor = memo(function VideoTimelineEditor({
     () => selectedCut,
     [selectedCut?.id, selectedCut?.source, selectedCut?.in, selectedCut?.out]
   )
+
+  // ---- navigation ----------------------------------------------------------
+
+  /**
+   * ↑ / ↓ and the transport's two step buttons: the cut boundary before or
+   * after the playhead, with that scene selected. Shot navigation is what
+   * every NLE binds there, and the frame step stays on ← / →.
+   *
+   * The boundaries are the ones cutBoundariesSec already lays out for the beat
+   * snap — until now that list fed nothing else. In the source view the clock
+   * belongs to the file on screen, so that file's own cut edges are the
+   * boundaries instead.
+   */
+  function jumpToCut(dir: -1 | 1): void {
+    const t = currentTimeRef.current
+    if (viewMode === 'edited') {
+      const target = nextBoundary(outputCutBoundaries, t, dir)
+      if (target === null) return
+      jumpTo(target)
+      // The scene the playhead is now INSIDE. The last boundary is the end of
+      // the edit and has no scene after it, so it keeps the last one.
+      const seg = findEditedSegment(cuts, Math.min(target, Math.max(editedDur - 0.001, 0)))
+      if (seg) setSelectedId(seg.cut.id)
+      return
+    }
+    const lane = cuts.filter((c) => c.source === previewSource)
+    const bounds = Array.from(new Set(lane.flatMap((c) => [c.in, c.out]))).sort((a, b) => a - b)
+    const target = nextBoundary(bounds, t, dir)
+    if (target === null) return
+    jumpTo(target)
+    // A hair inside, in the direction of travel: a boundary is shared by the
+    // scene that ends there and the one that starts there.
+    const at = findSourceCutAtTime(cuts, previewSource, target + dir * 0.001)
+    if (at) setSelectedId(at.id)
+  }
+
+  /** + / − zoom — the same clamps the slider and Alt+wheel use. */
+  function zoomBy(factor: number): void {
+    setPxPerSec((px) => clamp(px * factor, MIN_PX_PER_SEC, MAX_PX_PER_SEC))
+  }
 
   // ---- keyboard ------------------------------------------------------------
 
@@ -1233,10 +1384,16 @@ export const VideoTimelineEditor = memo(function VideoTimelineEditor({
         setShortcutsOpen(false)
         return
       }
-      if (editorPhase === 'ready') {
-        e.preventDefault()
-        void requestClose()
+      if (editorPhase !== 'ready') return
+      e.preventDefault()
+      // Esc gives the selection back first. Closing the whole editor from the
+      // key people press to deselect is a surprise, and everywhere else Esc
+      // undoes the smallest thing it can reach.
+      if (selectedId) {
+        setSelectedId(null)
+        return
       }
+      void requestClose()
       return
     }
 
@@ -1256,9 +1413,50 @@ export const VideoTimelineEditor = memo(function VideoTimelineEditor({
       return
     }
 
+    // J K L — the transport shuttle. See usePreviewPlayer for why J steps back
+    // instead of playing backwards.
+    if (matchesShortcutParts(e, [{ type: 'key', code: 'KeyL' }])) {
+      e.preventDefault()
+      shuttleFaster()
+      return
+    }
+
+    if (matchesShortcutParts(e, [{ type: 'key', code: 'KeyK' }])) {
+      e.preventDefault()
+      shuttleStop()
+      return
+    }
+
+    if (matchesShortcutParts(e, [{ type: 'key', code: 'KeyJ' }])) {
+      e.preventDefault()
+      shuttleBack()
+      return
+    }
+
+    // Enter opens ปรับช็อต for the selected scene — only where the caller can
+    // act on it (the shot-swap screen lives outside the editor).
+    if (onOpenShotSwap && selectedId && matchesShortcutParts(e, [{ type: 'key', code: 'Enter' }])) {
+      e.preventDefault()
+      onOpenShotSwap(selectedId)
+      return
+    }
+
+    // + / − zoom. Read off `key` as well as `code`: on most layouts '+' IS
+    // Shift+Equal, and a shift part would then be required to match it.
+    if (!e.metaKey && !e.ctrlKey && !e.altKey) {
+      const zoomIn = e.code === 'Equal' || e.code === 'NumpadAdd' || e.key === '+' || e.key === '='
+      const zoomOut =
+        e.code === 'Minus' || e.code === 'NumpadSubtract' || e.key === '-' || e.key === '_'
+      if (zoomIn || zoomOut) {
+        e.preventDefault()
+        zoomBy(zoomIn ? 1.25 : 0.8)
+        return
+      }
+    }
+
     if (matchesShortcutParts(e, [{ type: 'mod' }, { type: 'key', code: 'KeyZ' }]) && !e.shiftKey) {
       e.preventDefault()
-      undo()
+      undoWithFeedback()
       return
     }
 
@@ -1267,7 +1465,7 @@ export const VideoTimelineEditor = memo(function VideoTimelineEditor({
       matchesShortcutParts(e, [{ type: 'mod' }, { type: 'shift' }, { type: 'key', code: 'KeyZ' }])
     ) {
       e.preventDefault()
-      redo()
+      redoWithFeedback()
       return
     }
 
@@ -1358,15 +1556,27 @@ export const VideoTimelineEditor = memo(function VideoTimelineEditor({
       return
     }
 
+    if (matchesShortcutParts(e, [{ type: 'key', code: 'ArrowUp' }])) {
+      e.preventDefault()
+      jumpToCut(-1)
+      return
+    }
+
+    if (matchesShortcutParts(e, [{ type: 'key', code: 'ArrowDown' }])) {
+      e.preventDefault()
+      jumpToCut(1)
+      return
+    }
+
     if (matchesShortcutParts(e, [{ type: 'key', code: 'Home' }])) {
       e.preventDefault()
-      applyScrubTime(0, true)
+      jumpTo(0)
       return
     }
 
     if (matchesShortcutParts(e, [{ type: 'key', code: 'End' }])) {
       e.preventDefault()
-      applyScrubTime(getActiveDurationSec(), true)
+      jumpTo(getActiveDurationSec())
     }
   }
   useWindowKeydown(onKeyDown)
@@ -1401,15 +1611,18 @@ export const VideoTimelineEditor = memo(function VideoTimelineEditor({
     const next = clamp(idx, 0, captionLines.length - 1)
     setCaptionCursor(next)
     const line = captionLines[next]
+    // jumpTo, not applyScrubTime: a jump from a button has to bring the
+    // playhead back on screen, or the ท่อนก่อนหน้า / ท่อนถัดไป buttons move a
+    // playhead nobody can see.
     if (captionsOnOutputClock) {
       // Already an output time — only the source view needs a conversion, and
       // there is none to make (a line can span scenes there), so stay put.
-      if (viewMode === 'edited') applyScrubTime(line.start + 0.01, true)
+      if (viewMode === 'edited') jumpTo(line.start + 0.01)
     } else if (viewMode === 'edited') {
       const mapped = mapSourceTimeToOutput(cuts, line.start + 0.01)
-      if (mapped !== null) applyScrubTime(mapped, true)
+      if (mapped !== null) jumpTo(mapped)
     } else {
-      applyScrubTime(line.start, true)
+      jumpTo(line.start)
     }
   }
 
@@ -1498,8 +1711,8 @@ export const VideoTimelineEditor = memo(function VideoTimelineEditor({
   // new on every render and render every part on every render.
 
   const onBack = useStableCallback(requestClose)
-  const onUndo = useStableCallback(undo)
-  const onRedo = useStableCallback(redo)
+  const onUndo = useStableCallback(undoWithFeedback)
+  const onRedo = useStableCallback(redoWithFeedback)
   const onSave = useStableCallback(handleSave)
   const openShortcuts = useStableCallback(() => setShortcutsOpen(true))
   const closeShortcuts = useStableCallback(() => setShortcutsOpen(false))
@@ -1534,7 +1747,7 @@ export const VideoTimelineEditor = memo(function VideoTimelineEditor({
   // The preview. Both <video>s carry the same handlers, and only the one on
   // screen may move the clock: the hidden one is pre-seeking the next scene.
   const onTogglePlay = useStableCallback(togglePlay)
-  const onSeek = useStableCallback((sec: number) => applyScrubTime(sec, true))
+  const onSeek = useStableCallback((sec: number) => jumpTo(sec))
   const onScrubStart = useStableCallback(() => {
     isScrubbingSeekbarRef.current = true
     pauseForScrub()
@@ -1543,8 +1756,10 @@ export const VideoTimelineEditor = memo(function VideoTimelineEditor({
     isScrubbingSeekbarRef.current = false
     resumeAfterScrub()
   })
-  const onStepBack = useStableCallback(() => nudgePlayhead(-FRAME_SEC))
-  const onStepForward = useStableCallback(() => nudgePlayhead(FRAME_SEC))
+  // The transport's two step buttons are CUT jumps, not frame steps — see
+  // PreviewPane. The frame step is still on ← / →.
+  const onStepBack = useStableCallback(() => jumpToCut(-1))
+  const onStepForward = useStableCallback(() => jumpToCut(1))
   const onVideoTimeUpdate = useStableCallback(
     (e: React.SyntheticEvent<HTMLVideoElement>) => isActiveVideoEvent(e) && onTimeUpdate()
   )
@@ -1588,6 +1803,9 @@ export const VideoTimelineEditor = memo(function VideoTimelineEditor({
   const onBeginEdit = useStableCallback(beginEdit)
   const onCommitEdit = useStableCallback(commitEdit)
   const onSelectCut = useStableCallback((cut: WorkingCut) => void selectCut(cut))
+  // "Show me this one" — a double-click on a block, an angle thumbnail. A
+  // single click on a block still only selects (see selectCut).
+  const onGoToCut = useStableCallback((cut: WorkingCut) => goToCutStart(cut))
   const onScriptChange = useStableCallback(updateLineScript)
   const onAddAngle = useStableCallback(addMontageCut)
   const onUpdateCaptionLine = useStableCallback(updateCaptionLine)
@@ -1622,9 +1840,12 @@ export const VideoTimelineEditor = memo(function VideoTimelineEditor({
     musicOffsetSec: effectiveMusic?.offsetSec ?? 0,
     musicTrimInSec: effectiveMusic?.trimInSec ?? 0
   }))
-  const onPickVoiceoverLine = useStableCallback((firstCutId: string) => {
+  const onPickVoiceoverLine = useStableCallback((firstCutId: string, outStartSec: number) => {
     const first = cuts.find((c) => c.id === firstCutId)
-    if (first) void selectCut(first)
+    if (first) setSelectedId(first.id)
+    // A click on a line means "play me this line" — it is a label, not a
+    // handle to grab, so unlike a scene block it seeks.
+    jumpTo(outStartSec)
     setInspectorTab('script')
   })
   const onCommitMusic = useStableCallback((patch: MusicPatch) => void commitMusic(patch))
@@ -1661,7 +1882,9 @@ export const VideoTimelineEditor = memo(function VideoTimelineEditor({
           onSave={onSave}
         />
 
-        {shortcutsOpen && <ShortcutsSheet isDub={isDub} onClose={closeShortcuts} />}
+        {shortcutsOpen && (
+          <ShortcutsSheet isDub={isDub} canShotSwap={!!onOpenShotSwap} onClose={closeShortcuts} />
+        )}
 
         {captionStyleOpen && captionStyle && (
           <CaptionStyleDialog
@@ -1771,7 +1994,7 @@ export const VideoTimelineEditor = memo(function VideoTimelineEditor({
                       onScriptChange={onScriptChange}
                       onBeginEdit={onBeginEdit}
                       onCommitEdit={onCommitEdit}
-                      onSelectCut={onSelectCut}
+                      onSelectCut={onGoToCut}
                       onAddAngle={onAddAngle}
                     />
                   ) : (
@@ -1865,6 +2088,7 @@ export const VideoTimelineEditor = memo(function VideoTimelineEditor({
                         getSnapContext={getSnapContext}
                         onLaneBackgroundPointerDown={onLaneDown}
                         onSelectCut={onSelectCut}
+                        onOpenCut={onGoToCut}
                         onUpdateCut={onUpdateCut}
                         onTrimCut={onTrimCut}
                         onBlockEditStart={onBlockEditStart}

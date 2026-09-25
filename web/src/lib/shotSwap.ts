@@ -74,6 +74,16 @@ export function countShotsWithAlternates(script: DubEditScript | null): number {
   return (script?.segments ?? []).filter((s) => segmentAlternates(s).length > 0).length
 }
 
+/** Does this shot pose a question at all? The review screen walks EVERY shot
+ * (the position has to match the real cut, so the user can tell where they are
+ * in their own video), so it needs to know which ones have something to choose
+ * between and which only get a "nothing to swap here". Defined on
+ * swapCandidates, not on alternates: after a swap the AI's own shot is a
+ * candidate too, so a segment whose alternates were all used still poses one. */
+export function hasSwapOptions(seg: Record<string, unknown>): boolean {
+  return swapCandidates(seg).length > 0
+}
+
 /** The pre-swap original kept on a swapped segment, offered back in the tray
  * as "ตัวเดิมของ AI" so a swap is always reversible. */
 export function segmentSwappedFrom(seg: Record<string, unknown>): ShotWindow | null {

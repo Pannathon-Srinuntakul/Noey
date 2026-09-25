@@ -18,7 +18,7 @@ from tests.admin_helpers import _admin_env, db, email, make_user  # noqa: F401
 
 
 async def _paid_run(plan: str = "lite", tokens: int = 10_000) -> tuple[int, str, str]:
-    """A user, a reserved run and its job row: (user_id, run_id, job_id)."""
+    """A user, an open paid run and its job row: (user_id, run_id, job_id)."""
     uid = await make_user(email("worker"), plan=plan)
     tid = (await db("SELECT tenant_id FROM core.memberships WHERE user_id = :u", u=uid))[0][0]
     job_id = f"test_{uuid.uuid4().hex[:12]}"
@@ -29,7 +29,7 @@ async def _paid_run(plan: str = "lite", tokens: int = 10_000) -> tuple[int, str,
         user = await s.get(User, uid)
         est = Estimate(tokens=tokens, ceiling=math.ceil(tokens * 1.2), media_sec=10, kind="analyze_video",
                        model="gemini-3.7-flash")
-        run = await runs.reserve(s, user=user, tenant_id=int(tid), estimate=est, job_id=job_id)
+        run = await runs.open_run(s, user=user, tenant_id=int(tid), estimate=est, job_id=job_id)
         await s.commit()
         return uid, str(run.id), job_id
 
@@ -115,6 +115,51 @@ async def test_a_guard_stop_ends_the_job_and_charges_at_most_the_reservation():
     assert status == "error" and result["step"] == "stopped" and result["code"] == "limit_stop"
 
 
+async def test_running_out_of_quota_pauses_the_project_instead_of_failing_it():
+    """A stop for QUOTA is not a crash: the project goes to ``paused_quota``
+    (resumable from the stage it reached, not restarted from scratch) and the
+    job row carries everything the editor needs to offer the balance."""
+    from packages.db.tenancy import SHARED_DATA_SCHEMA
+
+    resets = datetime(2026, 9, 30, 8, 0, tzinfo=UTC)
+
+    @tasks.billed_task()
+    async def work(ctx, *, job_id, project_uid, tenant_slug):
+        await db("UPDATE core.ai_runs SET actual_tokens = 6000 WHERE id = :r", r=guard.current_meter().run_id)
+        # What the task's own handler writes on its way out.
+        await db(
+            f"UPDATE {SHARED_DATA_SCHEMA}.video_projects SET status = 'error', error_msg = 'x' WHERE uid = :p",
+            p=project_uid,
+        )
+        raise guard.QuotaExhausted(
+            "x", window="weekly", resets_at=resets, wallet_can_cover=True, wallet_satang=4_200,
+        )
+
+    uid, run_id, job_id = await _paid_run(tokens=10_000)
+    project = str(uuid.uuid4())
+    await db(
+        f"INSERT INTO {SHARED_DATA_SCHEMA}.video_projects (uid, user_id, tenant_slug, mode, status, job_id) "
+        "VALUES (:p, :u, 'default', 'dub_first', 'processing', :j)",
+        p=project, u=uid, j=job_id,
+    )
+    try:
+        out = await work({}, job_id=job_id, run_id=run_id, project_uid=project, tenant_slug="default")
+        _, result = await _job(job_id)
+        proj = await db(
+            f"SELECT status, error_msg FROM {SHARED_DATA_SCHEMA}.video_projects WHERE uid = :p", p=project
+        )
+    finally:
+        await db(f"DELETE FROM {SHARED_DATA_SCHEMA}.video_projects WHERE uid = :p", p=project)
+    assert out == {"stopped": True, "paused": True, "code": "limit_reached"}
+    assert result["step"] == "stopped" and result["paused"] is True
+    assert result["code"] == "limit_reached" and result["window"] == "weekly"
+    assert result["resets_at"] == runs.iso(resets)
+    assert result["wallet_can_cover"] is True and result["wallet_satang"] == 4_200
+    assert proj[0][0] == "paused_quota" and proj[0][1] == result["message"]
+    # Still a limit_stop for the money: charged what it burned, capped.
+    assert (await _run_row(run_id))["outcome"] == "limit_stop"
+
+
 async def test_a_cancelled_task_pays_for_what_it_used():
     @tasks.billed_task()
     async def work(ctx, *, job_id):
@@ -156,7 +201,7 @@ async def test_over_the_concurrency_cap_the_task_waits_its_turn():
     async with get_sessionmaker()() as s:
         await s.execute(text("SET search_path TO core, public"))
         user = await s.get(User, uid)
-        second = await runs.reserve(s, user=user, tenant_id=int(tid), estimate=Estimate(
+        second = await runs.open_run(s, user=user, tenant_id=int(tid), estimate=Estimate(
             tokens=1_000, ceiling=1_200, media_sec=1, kind="plan_dub", model="gemini-3.7-flash"))
         await s.commit()
         second_id = str(second.id)

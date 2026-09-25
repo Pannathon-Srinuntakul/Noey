@@ -13,6 +13,9 @@ interface ShortcutDisplayDef {
   labelTh: string
   parts: ShortcutKeyPart[]
   dubOnly?: boolean
+  /** Only when the project actually has AI backup shots to swap between —
+   * a key the editor cannot act on must not be advertised. */
+  shotSwapOnly?: boolean
 }
 
 /** R3 sheet ข — grouped เล่น / มุมมอง / แก้ไข. */
@@ -43,6 +46,27 @@ export const SHORTCUT_DISPLAY: ShortcutDisplayDef[] = [
     ]
   },
   {
+    id: 'cut-prev',
+    category: 'playback',
+    labelTh: 'ช็อตก่อนหน้า / ช็อตถัดไป',
+    parts: [
+      { type: 'key', code: 'ArrowUp' },
+      { type: 'key', code: 'ArrowDown' }
+    ]
+  },
+  {
+    // J is a step BACK, not backwards play: a <video> has no reverse — a
+    // negative playbackRate is ignored by every browser we ship on.
+    id: 'shuttle',
+    category: 'playback',
+    labelTh: 'ถอย 1 วิ / หยุด / เล่น–เร่ง',
+    parts: [
+      { type: 'key', code: 'KeyJ' },
+      { type: 'key', code: 'KeyK' },
+      { type: 'key', code: 'KeyL' }
+    ]
+  },
+  {
     id: 'home',
     category: 'playback',
     labelTh: 'ต้นคลิป / ท้ายคลิป',
@@ -62,6 +86,15 @@ export const SHORTCUT_DISPLAY: ShortcutDisplayDef[] = [
     category: 'view',
     labelTh: 'ดูแบบตัดแล้ว',
     parts: [{ type: 'mod' }, { type: 'key', code: 'Digit2' }]
+  },
+  {
+    id: 'zoom',
+    category: 'view',
+    labelTh: 'ซูมเข้า / ซูมออก',
+    parts: [
+      { type: 'key', code: 'Equal' },
+      { type: 'key', code: 'Minus' }
+    ]
   },
   {
     id: 'shortcuts-help',
@@ -98,6 +131,13 @@ export const SHORTCUT_DISPLAY: ShortcutDisplayDef[] = [
     ]
   },
   {
+    id: 'shot-swap',
+    category: 'edit',
+    labelTh: 'ปรับช็อตของฉากที่เลือก',
+    parts: [{ type: 'key', code: 'Enter' }],
+    shotSwapOnly: true
+  },
+  {
     id: 'delete',
     category: 'edit',
     labelTh: 'ลบฉากที่เลือก',
@@ -106,9 +146,18 @@ export const SHORTCUT_DISPLAY: ShortcutDisplayDef[] = [
   {
     id: 'undo',
     category: 'edit',
-    labelTh: 'เลิกทำ / ทำซ้ำ',
+    labelTh: 'เลิกทำ',
+    parts: [{ type: 'mod' }, { type: 'key', code: 'KeyZ' }]
+  },
+  {
+    // Ctrl/⌘+Shift+Z has always worked; it was only missing from this table,
+    // which is the one place anyone can find out that it does.
+    id: 'redo',
+    category: 'edit',
+    labelTh: 'ทำซ้ำ',
     parts: [
       { type: 'mod' },
+      { type: 'shift' },
       { type: 'key', code: 'KeyZ' },
       { type: 'mod' },
       { type: 'key', code: 'KeyY' }
@@ -123,7 +172,7 @@ export const SHORTCUT_DISPLAY: ShortcutDisplayDef[] = [
   {
     id: 'escape',
     category: 'edit',
-    labelTh: 'ปิดหน้านี้',
+    labelTh: 'ยกเลิกการเลือก / ปิดหน้านี้',
     parts: [{ type: 'key', code: 'Escape' }]
   }
 ]
@@ -149,12 +198,17 @@ function formatKeyPart(part: ShortcutKeyPart): string {
   if (part.code === 'Space') return 'Space'
   if (part.code === 'ArrowLeft') return '←'
   if (part.code === 'ArrowRight') return '→'
+  if (part.code === 'ArrowUp') return '↑'
+  if (part.code === 'ArrowDown') return '↓'
   if (part.code === 'Home') return 'Home'
   if (part.code === 'End') return 'End'
+  if (part.code === 'Enter') return 'Enter'
   if (part.code === 'Delete' || part.code === 'Backspace') return 'Del'
   if (part.code === 'Escape') return 'Esc'
   if (part.code === 'BracketLeft') return '['
   if (part.code === 'BracketRight') return ']'
+  if (part.code === 'Equal') return '+'
+  if (part.code === 'Minus') return '−'
   if (part.key === '?') return '?'
   if (part.code?.startsWith('Key')) return part.code.slice(3)
   if (part.code?.startsWith('Digit')) return part.code.slice(5)

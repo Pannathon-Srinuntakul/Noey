@@ -56,6 +56,39 @@ async def test_an_ok_call_records_tokens_cost_and_run_accrual():
     assert actual[0][0] == tokens
 
 
+async def test_each_recorded_request_charges_the_users_window_at_once():
+    """Nothing is reserved at start any more (owner, 2026-09-26): the row and
+    the charge for it land in the same transaction, so a run that never
+    reaches settle has still been paid for."""
+    ctx = await _ctx()
+    ctx.run_id = await _run(ctx)
+    first = await metering.record_llm_attempt(
+        ctx, model="gemini-3.7-flash", status="ok", input_tokens=5_000, output_tokens=500
+    )
+    second = await metering.record_llm_attempt(
+        ctx, model="gemini-3.7-flash", status="ok", input_tokens=1_000, output_tokens=100
+    )
+    used = await db(
+        "SELECT weekly_used, five_hour_used, monthly_used FROM core.usage_accounts WHERE user_id = :u",
+        u=ctx.user_id,
+    )
+    assert tuple(used[0]) == (first + second,) * 3
+    row = await db("SELECT actual_tokens, charged_tokens FROM core.ai_runs WHERE id = :r", r=ctx.run_id)
+    assert tuple(row[0]) == (first + second, first + second)
+
+
+async def test_a_replayed_row_is_charged_once():
+    ctx = await _ctx()
+    ctx.run_id = await _run(ctx)
+    row = metering.llm_row(
+        ctx, model="gemini-3.7-flash", status="ok", input_tokens=4_000, cached_tokens=0, output_tokens=200
+    )
+    assert await metering._insert("llm", row) is True
+    assert await metering._insert("llm", row) is False  # same idem_key
+    used = await db("SELECT weekly_used FROM core.usage_accounts WHERE user_id = :u", u=ctx.user_id)
+    assert used[0][0] == row["tokens"]
+
+
 async def test_a_failed_attempt_without_usage_is_recorded_unpriced():
     ctx = await _ctx()
     assert await metering.record_llm_attempt(ctx, model="gemini-3.8-flash", status="failed") == 0

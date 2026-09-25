@@ -179,6 +179,29 @@ export type UsageLimit = "Monthly limit" | "Weekly limit" | "5-hour limit";
 /** Shown next to every clip estimate: the guide depends on footage and mode. */
 export const APPROX_NOTE = "โดยประมาณ ขึ้นกับความยาวและโหมด";
 
+// ─── The ตัดฉากเด่น footage ceiling ──────────────────────────────────────────
+//
+// Every other mode reads the footage piece by piece, so the plan's
+// "ฟุตเทจรวมต่อโปรเจกต์" is the only cap. ตัดฉากเด่น hands the WHOLE project to
+// the AI in one pass, and how much one pass can read is fixed — a bigger plan
+// does not move it. The higher ความละเอียด reads the same footage more densely,
+// so it fills that pass sooner. Mirrors the backend's
+// `packages/billing/limits.py:video_call_footage_sec` (owner, 2026-09-26);
+// change both together or the site promises what the product refuses.
+
+/** ตัดฉากเด่น at ความละเอียด Standard. */
+export const SCENE_FOOTAGE_STANDARD = "1 ชั่วโมง";
+/** ตัดฉากเด่น at ความละเอียด High — the same pass, read five times as densely. */
+export const SCENE_FOOTAGE_HIGH = "44 นาที";
+
+/** Comparison-table cell for the plans where the mode cap, not the plan, binds. */
+const SCENE_ROW_PRO = `${SCENE_FOOTAGE_STANDARD} · High ${SCENE_FOOTAGE_HIGH}`;
+
+/** Feature bullet for every plan whose 2-hour cap the ตัดฉากเด่น mode undercuts. */
+const FOOTAGE_2H_FEATURE =
+  `ฟุตเทจรวมสูงสุด 2 ชั่วโมงต่อโปรเจกต์ · โหมดตัดฉากเด่น ${SCENE_FOOTAGE_STANDARD} ` +
+  `(ความละเอียด High ${SCENE_FOOTAGE_HIGH})`;
+
 /** "5x" badge text, or null for the free plan. */
 export function multiplierLabel(tier: Tier): string | null {
   const m = PLAN_COPY[tier].usageMultiplier;
@@ -260,15 +283,15 @@ export const PLAN_COPY: Record<Tier, PlanCopy> = {
       "Weekly limit · ประมาณ 15 งานต่อสัปดาห์ จากฟุตเทจดิบ 5 นาที",
       "5-hour limit · ประมาณ 6 งานต่อรอบ 5 ชั่วโมง",
       "ทำงาน AI พร้อมกันได้ 2 งาน",
-      "ฟุตเทจรวมสูงสุด 2 ชั่วโมงต่อโปรเจกต์",
+      FOOTAGE_2H_FEATURE,
       "คิวประมวลผลก่อนแพลนอื่น · จำนวนโปรเจกต์ไม่จำกัด ภายใน 10 GB",
     ],
     accountFeatures: [
-      "ฟุตเทจรวมสูงสุด 2 ชั่วโมงต่อโปรเจกต์",
+      FOOTAGE_2H_FEATURE,
       "คิวประมวลผลก่อนแพลนอื่น",
       "เก็บโปรเจกต์ไม่จำกัดจำนวน · 10 GB",
     ],
-    dialogSummary: "ใช้งาน 5x · ฟุตเทจสูงสุด 2 ชั่วโมง · 10 GB",
+    dialogSummary: `ใช้งาน 5x · ฟุตเทจสูงสุด 2 ชั่วโมง (ตัดฉากเด่น ${SCENE_FOOTAGE_STANDARD}) · 10 GB`,
     pricingCta: "เลือกแพลนนี้",
     recommended: true,
     usageMultiplier: 5,
@@ -285,10 +308,10 @@ export const PLAN_COPY: Record<Tier, PlanCopy> = {
       "Weekly limit · ประมาณ 30 งานต่อสัปดาห์ จากฟุตเทจดิบ 5 นาที",
       "5-hour limit · ประมาณ 12 งานต่อรอบ 5 ชั่วโมง",
       "ทำงาน AI พร้อมกันได้ 3 งาน",
-      "ฟุตเทจรวมสูงสุด 2 ชั่วโมงต่อโปรเจกต์",
+      FOOTAGE_2H_FEATURE,
       "คิวประมวลผลลำดับแรก · จำนวนโปรเจกต์ไม่จำกัด ภายใน 30 GB",
     ],
-    accountFeatures: ["ฟุตเทจรวมสูงสุด 2 ชั่วโมงต่อโปรเจกต์", "คิวประมวลผลลำดับแรก", "เก็บโปรเจกต์ไม่จำกัด · 30 GB"],
+    accountFeatures: [FOOTAGE_2H_FEATURE, "คิวประมวลผลลำดับแรก", "เก็บโปรเจกต์ไม่จำกัด · 30 GB"],
     dialogSummary: "ใช้งาน 10x · ทำงานพร้อมกัน 3 งาน · 30 GB",
     pricingCta: "เลือกแพลนนี้",
     usageMultiplier: 10,
@@ -305,7 +328,7 @@ export const PLAN_COPY: Record<Tier, PlanCopy> = {
       "Weekly limit · ประมาณ 60 งานต่อสัปดาห์ จากฟุตเทจดิบ 5 นาที",
       "5-hour limit · ประมาณ 24 งานต่อรอบ 5 ชั่วโมง",
       "ทำงาน AI พร้อมกันได้ 4 งาน",
-      "ฟุตเทจรวมสูงสุด 2 ชั่วโมงต่อโปรเจกต์",
+      FOOTAGE_2H_FEATURE,
       "คิวประมวลผลลำดับแรก · จำนวนโปรเจกต์ไม่จำกัด ภายใน 60 GB",
     ],
     accountFeatures: ["ทำงาน AI พร้อมกันได้ 4 งาน", "คิวประมวลผลลำดับแรก", "เก็บโปรเจกต์ไม่จำกัด · 60 GB"],
@@ -325,7 +348,7 @@ export const PLAN_COPY: Record<Tier, PlanCopy> = {
       "Weekly limit · ประมาณ 100 งานขึ้นไปต่อสัปดาห์ จากฟุตเทจดิบ 5 นาที",
       "5-hour limit · ประมาณ 40 งานต่อรอบ 5 ชั่วโมง",
       "ทำงาน AI พร้อมกันได้ 5 งาน",
-      "ฟุตเทจรวมสูงสุด 2 ชั่วโมงต่อโปรเจกต์",
+      FOOTAGE_2H_FEATURE,
       "คิวประมวลผลลำดับแรก · จำนวนโปรเจกต์ไม่จำกัด ภายใน 100 GB",
     ],
     accountFeatures: ["ทำงาน AI พร้อมกันได้ 5 งาน", "คิวประมวลผลลำดับแรก", "เก็บโปรเจกต์ไม่จำกัด · 100 GB"],
@@ -379,6 +402,22 @@ export const COMPARISON_ROWS: ReadonlyArray<{ label: string; values: Row7; numer
     numeric: true,
   },
   { label: "ฟุตเทจรวมต่อโปรเจกต์", values: ["5 นาที", "10 นาที", "20 นาที", "2 ชั่วโมง", "2 ชั่วโมง", "2 ชั่วโมง", "2 ชั่วโมง"], numeric: true },
+  {
+    // A row of its own, not a footnote on the one above: from Pro up the two
+    // numbers differ, and someone comparing plans has to see that this one
+    // stops climbing. Below Pro the plan's cap is the shorter of the two, so
+    // the cell repeats it and ความละเอียด changes nothing.
+    label: "ฟุตเทจรวมต่อโปรเจกต์ · โหมดตัดฉากเด่น",
+    values: [
+      "5 นาที",
+      "10 นาที",
+      "20 นาที",
+      SCENE_ROW_PRO,
+      SCENE_ROW_PRO,
+      SCENE_ROW_PRO,
+      SCENE_ROW_PRO,
+    ],
+  },
   { label: "โหมดเก็บทุกฉาก และโหมดไฮไลต์", values: ["มี", "มี", "มี", "มี", "มี", "มี", "มี"] },
   { label: "โหมดพากย์ใหม่ พร้อมสคริปต์ AI", values: ["มี", "มี", "มี", "มี", "มี", "มี", "มี"] },
   { label: "ซับไทยอัตโนมัติ", values: ["มี", "มี", "มี", "มี", "มี", "มี", "มี"] },

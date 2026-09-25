@@ -48,6 +48,82 @@ def test_footage_cap_with_a_small_tolerance():
     assert plan_features.check_footage(_user("enterprise"), 10 * 3600) is None
 
 
+def test_the_video_call_cap_is_derived_from_the_two_real_constants():
+    """1 hour is the owner's cap (2026-09-26), but an hour at High prices
+    3600 × 300 = 1.08 M tokens — past the model's 1 M input context. One
+    number cannot be right for both, so the cap is computed, not typed in."""
+    ceiling = limits.MODEL_INPUT_CONTEXT_TOKENS * limits.FOOTAGE_CONTEXT_SHARE
+    assert limits.footage_context_ceiling_sec("high") == int(ceiling // 300)
+    assert limits.footage_context_ceiling_sec("standard") == int(ceiling // 100)
+    # Standard: the owner's hour binds. High: the context does, ~44 min.
+    assert limits.video_call_footage_sec("standard") == 3_600
+    assert 40 * 60 <= limits.video_call_footage_sec("high") <= 45 * 60
+    # An hour at High would have been 1.08 M tokens — above the context.
+    assert 3_600 * 300 > limits.MODEL_INPUT_CONTEXT_TOKENS
+
+
+def test_the_video_call_cap_applies_to_the_video_modes_only():
+    pro = _user("pro")
+    assert plan_features.check_footage(pro, 3_000, mode="dub_first", precision="standard") is None
+    tight = plan_features.check_footage(pro, 3_000, mode="dub_first", precision="high")
+    assert tight["code"] == "footage_over_limit" and tight["by_precision"] is True
+    assert "Standard" in tight["message"] and "1 ชั่วโมง" in tight["message"]
+    # Speech modes send audio per clip: only the plan's own cap applies.
+    assert plan_features.check_footage(pro, 3_000, mode="talking_head", precision="high") is None
+    # The plan cap still wins when it is the tighter of the two, and its
+    # message points at the plan rather than at ความละเอียด.
+    lite = plan_features.check_footage(_user("lite"), 1_200, mode="dub_first", precision="standard")
+    assert lite["limit_sec"] == 600 and lite["by_precision"] is False and "แผนนี้" in lite["message"]
+    # No plan can make a request fit a context it does not fit.
+    assert plan_features.check_footage(_user("free", admin=True), 3_000, mode="dub_first",
+                                       precision="high")["by_precision"] is True
+
+
+def test_a_run_too_big_for_every_window_is_refused_whatever_is_left():
+    assert plan_features.check_run_size(_user("free"), 99_000) is None
+    too_big = plan_features.check_run_size(_user("free"), 120_000)
+    assert too_big["code"] == "run_too_large" and too_big["window"] == "monthly"
+    assert "โควตารายเดือน" in too_big["message"]
+    # Pro enforces weekly AND a 5-hour window at 40 % of it. An hour of
+    # footage costs more than the 5-hour window holds — refusing on THAT would
+    # make it unstartable forever, so only the biggest window decides.
+    five, week = limits.window_limit("pro", "five_hour"), limits.window_limit("pro", "weekly")
+    assert five < week
+    assert plan_features.check_run_size(_user("pro"), five + 1) is None
+    refused = plan_features.check_run_size(_user("pro"), week + 1)
+    assert refused["code"] == "run_too_large" and refused["window"] == "weekly"
+    assert plan_features.check_run_size(_user("free", admin=True), 10**9) is None
+    assert plan_features.check_run_size(_user("enterprise"), 10**9) is None
+
+
+def test_an_hour_of_footage_still_starts_on_pro():
+    """The owner's cap is 1 hour of dub_first (2026-09-26); it must actually
+    be startable on the plan it is meant for, at both precisions."""
+    from packages.billing import estimate
+
+    for precision in ("standard", "high"):
+        seconds = limits.video_call_footage_sec(precision)
+        est = estimate.estimate_run(
+            kind="analyze_video", engine="pro", precision=precision, clip_secs=[float(seconds)]
+        )
+        assert plan_features.check_run_size(_user("pro"), est.tokens) is None, (precision, est.tokens)
+        assert plan_features.check_footage(_user("pro"), seconds, mode="dub_first",
+                                           precision=precision) is None
+
+
+def test_the_features_payload_tells_a_client_both_caps():
+    payload = plan_features.features_payload(_user("pro"))
+    assert payload["footage_sec"] == 7_200
+    assert payload["video_call_footage_sec"] == {
+        "standard": limits.video_call_footage_sec("standard"),
+        "high": limits.video_call_footage_sec("high"),
+    }
+    assert payload["video_call_modes"] == sorted(limits.VIDEO_CALL_MODES)
+    # Unlimited skips the plan cap but never the request one.
+    assert plan_features.features_payload(_user("enterprise"))["footage_sec"] is None
+    assert plan_features.features_payload(_user("enterprise"))["video_call_footage_sec"]["high"] > 0
+
+
 def test_project_cap_counts_what_would_be_added():
     assert plan_features.check_new_project(_user("free"), 2) is None
     assert plan_features.check_new_project(_user("free"), 3)["code"] == "project_limit"
@@ -120,16 +196,33 @@ async def test_free_keeps_three_projects_and_the_old_ones_stay_open():
     assert me["features"]["footage_sec"] == 300 and me["features"]["queue"] == "normal"
 
 
-async def test_admin_accounts_have_no_caps():
+async def test_admin_accounts_have_no_plan_caps():
     uid = await make_user(email("feat"), admin=True)
     token = await user_token(uid)
     async with client() as c:
         for _ in range(4):
-            r = await _new_project(c, token, seconds=9000)
+            # Well past every paid plan's footage cap and project count.
+            r = await _new_project(c, token, seconds=3000)
             assert r.status_code == 201, r.text
         me = (await c.get("/usage/me", headers=bearer(token))).json()
     assert me["projects"]["max"] is None and me["features"]["footage_sec"] is None
     assert me["features"]["music"] and me["features"]["transcode"] and me["features"]["queue"] == "first"
+
+
+async def test_even_an_admin_cannot_exceed_the_models_context():
+    """The 1-hour cap is a product decision; the context ceiling is not.
+
+    An unlimited account skips every PLAN rule, but a request whose footage
+    prices above the model's input window cannot be answered by anyone — so
+    that one limit still binds, and the refusal says the length, not the plan.
+    """
+    token = await user_token(await make_user(email("feat"), admin=True))
+    async with client() as c:
+        # 150 minutes at Standard is ~900k video tokens against a 1M context.
+        r = await _new_project(c, token, seconds=9000)
+    assert r.status_code == 422
+    detail = r.json()["detail"]
+    assert detail["code"] == "footage_over_limit" and detail["by_precision"] is True
 
 
 async def test_music_needs_lite_and_conversion_needs_starter():

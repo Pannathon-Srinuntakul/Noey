@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import type { EditCut } from '../../lib/editorApi'
 import { computeEditedSegments } from '../../lib/timelineMath'
-import { editedTimeIn, followScrollLeft, resolveEditedPosition, sceneIsOver } from './previewMath'
+import {
+  editedTimeIn,
+  followScrollLeft,
+  nextBoundary,
+  resolveEditedPosition,
+  sceneIsOver
+} from './previewMath'
 
 const cut = (id: string, source: string, inSec: number, outSec: number): EditCut => ({
   id,
@@ -90,6 +96,27 @@ describe('resolveEditedPosition', () => {
 
   it('has nothing to land on in an empty edit', () => {
     expect(resolveEditedPosition([], 'a', 1, 1)).toBeNull()
+  })
+})
+
+describe('nextBoundary', () => {
+  // cutBoundariesSec of three 2s scenes.
+  const bounds = [0, 2, 4, 6]
+
+  it('finds the boundary on each side of the playhead', () => {
+    expect(nextBoundary(bounds, 3, 1)).toBe(4)
+    expect(nextBoundary(bounds, 3, -1)).toBe(2)
+  })
+
+  it('keeps moving when the playhead sits exactly on a boundary', () => {
+    expect(nextBoundary(bounds, 4, 1)).toBe(6)
+    expect(nextBoundary(bounds, 4, -1)).toBe(2)
+  })
+
+  it('stops at the ends instead of wrapping', () => {
+    expect(nextBoundary(bounds, 6, 1)).toBeNull()
+    expect(nextBoundary(bounds, 0, -1)).toBeNull()
+    expect(nextBoundary([], 1, 1)).toBeNull()
   })
 })
 
