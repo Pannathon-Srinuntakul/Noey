@@ -157,7 +157,11 @@ async def delete_gemini_files(file_ids: list[str]) -> None:
 
 
 def gemini_video_block(
-    file_id: str, *, mime_type: str = VIDEO_MP4_MIME, fps: int | None = None
+    file_id: str,
+    *,
+    mime_type: str = VIDEO_MP4_MIME,
+    fps: int | None = None,
+    processing: str | None = None,
 ) -> dict[str, Any]:
     """LiteLLM/OpenAI-shaped block → Gemini file_uri pass-through via gateway.
 
@@ -185,8 +189,19 @@ def gemini_video_block(
     input tokens still billed), and that class is NOT adjustable via
     safety_settings. Downscaled to 270x480 the identical frame count passes.
     Every caller today uploads proxies; do not change that to feed this flag.
+
+    ``processing="agentic"`` hands the file to the model to navigate instead of
+    pre-sampling it — see packages/llm/gemini_video_mode.py, which also explains
+    why the request travels inside video_metadata. "static" and None both mean
+    the default and send nothing. Setting BOTH is legal but pointless: fps
+    describes a fixed sampling rate that agentic mode replaces with its own.
     """
+    from packages.llm.gemini_video_mode import carrier
+
     file_part: dict[str, Any] = {"file_id": file_id, "format": mime_type}
+    video_metadata: dict[str, Any] = dict(carrier(processing))
     if fps and fps > 0:
-        file_part["video_metadata"] = {"fps": fps}
+        video_metadata["fps"] = fps
+    if video_metadata:
+        file_part["video_metadata"] = video_metadata
     return {"type": "file", "file": file_part}

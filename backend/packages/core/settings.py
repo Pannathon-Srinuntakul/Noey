@@ -162,6 +162,14 @@ class Settings(BaseSettings):
     dub_engine_lite: str = "gemini-3.7-flash"
     dub_engine_pro: str = "gemini-3.8-flash"
     dub_precision_high_fps: int = 5
+    #: How the cut analysis reads a video: "static" (pre-sampled frames at
+    #: dub_precision_high_fps, today's behaviour) or "agentic" (the model
+    #: navigates the file itself). Static stays the default until an A/B on
+    #: real clips says otherwise — Google recommends agentic first, but its own
+    #: guidance also names "frame-level precision across the entire clip",
+    #: which is this product's job, as static's case. See
+    #: scripts/probe_agentic_video.py and packages/llm/gemini_video_mode.py.
+    dub_video_processing: str = "static"
     # Which ตัดฉากเด่น edit-prompt generation the native-video call uses.
     # "v2" (2026-08-15): spans bounded by complete action arcs, spans/moments
     # RANKED rather than merely filtered, state continuity required, and no

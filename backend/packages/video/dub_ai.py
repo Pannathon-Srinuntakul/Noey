@@ -1066,7 +1066,9 @@ async def generate_dub_edit_script_video(
             )}]
             for (clip_id, _path, _duration), file_id in zip(clip_videos, file_ids, strict=True):
                 content.append({"type": "text", "text": f"=== {clip_id} ==="})
-                content.append(gemini_video_block(file_id, fps=sample_fps))
+                content.append(
+                    gemini_video_block(file_id, fps=sample_fps, processing=settings.dub_video_processing)
+                )
             content.append({"type": "text", "text": build_dub_edit_instruction_text_video(
                 target_duration_sec=target_duration_sec,
                 clip_durations=clip_durations,
