@@ -63,7 +63,8 @@ function PipelineHost({
     editScript,
     showEditor,
     resumeState,
-    resumeBusy
+    resumeBusy,
+    lockedByOtherTab
   } = pipeline
   const updatedAt = pipeline.project.updatedAt
 
@@ -99,6 +100,7 @@ function PipelineHost({
     showEditor,
     resumeState,
     resumeBusy,
+    lockedByOtherTab,
     updatedAt,
     publish
   ])

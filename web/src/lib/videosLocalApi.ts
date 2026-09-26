@@ -4,7 +4,8 @@
  * report the renewed tokens via onTokens so the caller can persist them.
  */
 
-import { ApiError, connectErrorMessage, errorFromResponse, refresh } from './api'
+import { ApiError, connectErrorMessage, errorFromResponse } from './api'
+import { refreshOnce } from './tokenRefresh'
 import { apiFetch } from './httpClient'
 import {
   isWaitingSlot,
@@ -127,7 +128,8 @@ async function request<T>(
   if (res.status === 401 && !retried) {
     let pair
     try {
-      pair = await refresh(session.baseUrl, session.refreshToken)
+      // Single-flight with every other 401 in flight (tokenRefresh.ts).
+      pair = await refreshOnce(session)
     } catch {
       // The refresh token itself is dead (revoked, or expired after 14 days).
       // Nothing used to end the session here: every later call failed with an
@@ -222,7 +224,43 @@ export function getRemoteStatus(
   return request(session, `/videos/${remoteUid}`)
 }
 
-/** Poll a job until it finishes; onTick receives every snapshot. */
+/**
+ * Transport failures `pollJob` rides out before giving up: no response at all
+ * (status 0) and a server-side error. A 4xx is an answer about THIS job (gone,
+ * forbidden) and is never retried. Delays sum to ~60 s, which covers a Wi-Fi
+ * hand-off, a phone waking from the lock screen, and a deploy of the API.
+ */
+const POLL_RETRY_DELAYS_MS = [2_000, 4_000, 8_000, 16_000, 30_000]
+/** While the tab is hidden the job is not being watched; poll gently. */
+const HIDDEN_INTERVAL_MS = 5_000
+
+function isTransient(err: unknown): boolean {
+  return err instanceof ApiError && (err.status === 0 || err.status >= 500)
+}
+
+/** Resolves once the browser says it is online again (or at once when it is). */
+function whenOnline(signal?: AbortSignal): Promise<void> {
+  if (typeof navigator === 'undefined' || navigator.onLine !== false) return Promise.resolve()
+  return new Promise((resolve) => {
+    const done = (): void => {
+      window.removeEventListener('online', done)
+      signal?.removeEventListener('abort', done)
+      resolve()
+    }
+    window.addEventListener('online', done)
+    signal?.addEventListener('abort', done)
+  })
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms))
+}
+
+/**
+ * Poll a job until it finishes; onTick receives every snapshot.
+ *
+ * `fetchJob` is the one request it makes, injectable for tests.
+ */
 export async function pollJob(
   session: ApiSession,
   jobId: string,
@@ -230,8 +268,14 @@ export async function pollJob(
   {
     intervalMs = 2000,
     signal,
-    queuedStallMs = 180_000
-  }: { intervalMs?: number; signal?: AbortSignal; queuedStallMs?: number } = {}
+    queuedStallMs = 180_000,
+    fetchJob = getJob
+  }: {
+    intervalMs?: number
+    signal?: AbortSignal
+    queuedStallMs?: number
+    fetchJob?: (session: ApiSession, jobId: string) => Promise<JobStatus>
+  } = {}
 ): Promise<JobStatus> {
   // A job that is enqueued but never claimed used to poll forever: the card sat
   // on the same step with the same message for as long as the app was open,
@@ -240,9 +284,36 @@ export async function pollJob(
   // FOREVER is a failure, and it belongs on the card like any other.
   let lastMovementAt = Date.now()
   let lastProgress = -1
+  // Consecutive transport failures. One poll that cannot reach the server
+  // used to end the run: the card said "เชื่อมต่อ server ไม่ได้" and the
+  // project was written as failed while the worker carried on and finished
+  // it — a phone that dropped Wi-Fi for two seconds lost a ten-minute cut
+  // it had already paid for. Reset by every answer, even an error status:
+  // that is the server talking.
+  let failures = 0
   for (;;) {
     if (signal?.aborted) throw new ApiError(0, 'ยกเลิกแล้ว')
-    const status = await getJob(session, jobId)
+    // Offline is not a failure to count: nothing can be learned until the
+    // network is back, so wait for it rather than burn the retry budget.
+    await whenOnline(signal)
+    if (signal?.aborted) throw new ApiError(0, 'ยกเลิกแล้ว')
+    let status: JobStatus
+    try {
+      status = await fetchJob(session, jobId)
+    } catch (err) {
+      if (!isTransient(err) || failures >= POLL_RETRY_DELAYS_MS.length) throw err
+      const wait = POLL_RETRY_DELAYS_MS[failures]
+      failures += 1
+      void window.noey.log.write(
+        'videosLocalApi',
+        `pollJob ${jobId}: transport error (${(err as ApiError).status}), retry ${failures}/${POLL_RETRY_DELAYS_MS.length} in ${wait / 1000}s`
+      )
+      await sleep(wait)
+      // Time spent unable to ask is not time the queue stood still.
+      lastMovementAt += wait
+      continue
+    }
+    failures = 0
     onTick(status)
     if (status.status === 'ok') return status
     if (status.status === 'error') {
@@ -263,7 +334,8 @@ export async function pollJob(
     if (status.status === 'queued' && !waitingSlot && Date.now() - lastMovementAt > queuedStallMs) {
       throw new ApiError(503, 'ระบบกำลังมีงานค้างและยังไม่มีคิวว่าง กรุณาลองใหม่อีกครั้งในภายหลัง')
     }
-    await new Promise((r) => setTimeout(r, intervalMs))
+    const hidden = typeof document !== 'undefined' && document.hidden
+    await sleep(hidden ? Math.max(intervalMs, HIDDEN_INTERVAL_MS) : intervalMs)
   }
 }
 

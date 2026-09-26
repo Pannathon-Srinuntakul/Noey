@@ -22,6 +22,7 @@ import {
   type VideoReader
 } from './media'
 import { blobForPath } from './jobs/probe'
+import { even } from './util'
 import { listDir, openStagedWrite, readFile } from '../platform/fs'
 
 /** The pipeline renders at 30 fps; the editor's frame nudge assumes it too. */
@@ -90,7 +91,6 @@ async function outputGeometry(
 ): Promise<{ width: number; height: number }> {
   const first = clips.find((c) => c.id === firstClipId) ?? clips[0]
   const info = await probeSource(await blobForPath(projectFilePath(uid, first.file)))
-  const even = (n: number): number => (n % 2 === 0 ? n : n - 1)
   return { width: even(info.width), height: even(info.height) }
 }
 

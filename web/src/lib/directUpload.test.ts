@@ -14,7 +14,8 @@ vi.mock('./authedFetch', () => ({
   authedFetch: async (_s: unknown, url: string, init?: RequestInit) => {
     apiCalls.push({ url, method: init?.method ?? 'GET', body: init?.body })
     if (url.endsWith('/uploads')) {
-      if (ticketStatus !== 200) return new Response('{"detail":"พื้นที่เก็บเต็มแล้ว"}', { status: ticketStatus })
+      if (ticketStatus !== 200)
+        return new Response('{"detail":"พื้นที่เก็บเต็มแล้ว"}', { status: ticketStatus })
       return new Response(
         JSON.stringify({
           url: 'https://bucket.test/videos/r/outputs/final.mp4?sig=1',
@@ -25,7 +26,9 @@ vi.mock('./authedFetch', () => ({
       )
     }
     if (url.endsWith('/uploads/complete')) {
-      return new Response(JSON.stringify({ path: 'final.mp4', bytes: 10 }), { status: completeStatus })
+      return new Response(JSON.stringify({ path: 'final.mp4', bytes: 10 }), {
+        status: completeStatus
+      })
     }
     return new Response('{}')
   },
@@ -66,7 +69,9 @@ describe('uploadDirect', () => {
       bytes: 10,
       content_type: 'video/mp4'
     })
-    expect(bucketCalls).toEqual([{ url: 'https://bucket.test/videos/r/outputs/final.mp4?sig=1', method: 'PUT' }])
+    expect(bucketCalls).toEqual([
+      { url: 'https://bucket.test/videos/r/outputs/final.mp4?sig=1', method: 'PUT' }
+    ])
   })
 
   it('reports "unavailable" on a deploy with no bucket, touching nothing else', async () => {
@@ -96,7 +101,9 @@ describe('uploadDirect', () => {
 
   it('does not hide a bucket that answered with an error behind the fallback', async () => {
     bucketMode = 'error'
-    await expect(uploadDirect(session, 'r', 'final.mp4', file)).rejects.toMatchObject({ status: 403 })
+    await expect(uploadDirect(session, 'r', 'final.mp4', file)).rejects.toMatchObject({
+      status: 403
+    })
     // Not blocked: the bucket is reachable, the ticket was the problem.
     bucketMode = 'ok'
     expect(await uploadDirect(session, 'r', 'final.mp4', file)).toBe('direct')
@@ -104,6 +111,8 @@ describe('uploadDirect', () => {
 
   it('propagates a failed confirmation (the object was deleted again)', async () => {
     completeStatus = 507
-    await expect(uploadDirect(session, 'r', 'final.mp4', file)).rejects.toMatchObject({ status: 507 })
+    await expect(uploadDirect(session, 'r', 'final.mp4', file)).rejects.toMatchObject({
+      status: 507
+    })
   })
 })

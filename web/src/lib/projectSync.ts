@@ -32,6 +32,21 @@ import { authedFetch, serverMessage } from './authedFetch'
 import { uploadDirect } from './directUpload'
 import type { ApiSession } from './videosLocalApi'
 
+/**
+ * `syncPending` — a sync of this project's files failed and is owed.
+ *
+ * Written by `useProjectPipeline.syncToServer` after its retry also fails,
+ * cleared at the start of the next round, read by the projects list for a
+ * card badge and by the boot/focus retry. Declared as an augmentation of the
+ * shared `LocalProject` rather than in `platform/types.ts` because the field
+ * is web-only: the desktop owns a real folder and never syncs.
+ */
+declare module '../platform/types' {
+  interface LocalProject {
+    syncPending?: boolean
+  }
+}
+
 /** Mirrors `_WEB_FILE_ROOTS` / `_WEB_FILE_NAMES` in `videos_local.py`. */
 const SYNC_ROOTS = ['normalized', 'clips', 'highlights', 'captions', 'voiceover', 'music', 'fx']
 const SYNC_NAMES = [
@@ -138,9 +153,16 @@ export async function pushProjectFiles(
   onProgress?: (p: SyncProgress) => void,
   signal?: AbortSignal
 ): Promise<{ uploaded: number; bytes: number; removed: number }> {
+  // The manifest read is NOT caught. It used to fall back to "the server has
+  // nothing", which turned a single timed-out listing into a re-upload of
+  // every clip in the project — hundreds of MB over a connection that had
+  // just shown it was struggling — and, because `dropStaleFiles` then saw an
+  // empty remote, into no sweep of anything. A round that cannot learn what
+  // the server holds has nothing sound to do; it fails, and the caller
+  // (`syncToServer`) retries and remembers it is owed.
   const [local, remote] = await Promise.all([
     localFiles(uid),
-    serverManifest(session, remoteUid, uid).catch(() => [] as ServerFile[])
+    serverManifest(session, remoteUid, uid)
   ])
   const have = new Map(remote.map((f) => [f.path, f.bytes]))
   const missing = local.filter(
@@ -160,11 +182,15 @@ export async function pushProjectFiles(
     if (how !== 'direct') {
       const form = new FormData()
       form.append('file', file, entry.path.split('/').pop() ?? 'file')
-      const res = await authedFetch(session, `/videos/${remoteUid}/files/${encodePath(entry.path)}`, {
-        method: 'PUT',
-        body: form,
-        signal
-      })
+      const res = await authedFetch(
+        session,
+        `/videos/${remoteUid}/files/${encodePath(entry.path)}`,
+        {
+          method: 'PUT',
+          body: form,
+          signal
+        }
+      )
       if (!res.ok) {
         // The server's own message, not a status code. 507 is "พื้นที่เก็บเต็ม"
         // and names the numbers; 413 names the size limit. Both used to be

@@ -89,9 +89,19 @@ function chunk(id: string, data: ArrayBuffer, at?: number): void {
 }
 
 /**
- * Copy staging → destination, then drop staging.
+ * Move staging → destination.
  *
- * Copied in slices rather than one buffer: the destination of a long render is
+ * Preferably a RENAME: `FileSystemFileHandle.move()` changes one directory
+ * entry and the destination is never observable half-written. Where the
+ * browser has no `move` (Safari, which is the browser this worker exists
+ * for), the bytes are copied in slices — and that copy is the one place the
+ * "a file that exists is complete" contract is only mostly true: a tab
+ * killed mid-copy leaves a truncated destination behind. `truncate(0)` first
+ * keeps that window as short as the copy itself rather than showing a stale
+ * tail; `sweepStaleFiles` has no way to tell such a file from a finished
+ * one, so the rename is used everywhere it exists.
+ *
+ * Sliced rather than one buffer: the destination of a long render is
  * hundreds of megabytes, and materialising it whole would undo the streaming
  * this path exists to provide.
  */
@@ -102,7 +112,24 @@ async function publish(id: string): Promise<void> {
   if (!f) throw new Error(`no open write ${id}`)
   f.handle.flush()
   const total = f.handle.getSize()
+  // The rename needs the exclusive lock released first.
+  f.handle.close()
+  open.delete(id)
 
+  const staging = (await f.dir.getFileHandle(f.stagingName)) as FileSystemFileHandle & {
+    move?: (name: string) => Promise<void>
+  }
+  if (typeof staging.move === 'function') {
+    try {
+      await f.dir.removeEntry(f.name).catch(() => undefined)
+      await staging.move(f.name)
+      return
+    } catch {
+      // fall through to the copy
+    }
+  }
+
+  const src = await syncHandle(f.dir, f.stagingName)
   const dest = await syncHandle(f.dir, f.name)
   try {
     dest.truncate(0)
@@ -111,15 +138,14 @@ async function publish(id: string): Promise<void> {
     while (at < total) {
       const want = Math.min(COPY_SLICE, total - at)
       const slice = buf.subarray(0, want)
-      f.handle.read(slice, { at })
+      src.read(slice, { at })
       dest.write(slice, { at })
       at += want
     }
     dest.flush()
   } finally {
     dest.close()
-    f.handle.close()
-    open.delete(id)
+    src.close()
   }
   await f.dir.removeEntry(f.stagingName).catch(() => undefined)
 }
@@ -186,10 +212,14 @@ self.onmessage = async (e: MessageEvent): Promise<void> => {
     }
     ;(self as unknown as Worker).postMessage({ id: msg.id, ok: true })
   } catch (err) {
+    // The NAME travels with the text: a `QuotaExceededError` from the sync
+    // handle has to stay recognisable on the other side (`storageQuota.ts`),
+    // and the message alone ("The operation failed…") says nothing.
+    const name = err instanceof Error && err.name && err.name !== 'Error' ? `${err.name}: ` : ''
     ;(self as unknown as Worker).postMessage({
       id: msg.id,
       ok: false,
-      error: err instanceof Error ? err.message : String(err)
+      error: `${name}${err instanceof Error ? err.message : String(err)}`
     })
   }
 }

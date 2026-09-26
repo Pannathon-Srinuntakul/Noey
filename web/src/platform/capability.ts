@@ -135,7 +135,66 @@ async function probeAudioEncoder(): Promise<boolean> {
   return false
 }
 
+/**
+ * Where a passing probe is remembered for the rest of the session.
+ *
+ * The probe is a real encode plus, on a browser without native AAC, a WASM
+ * fetch — half a second to a few seconds on every page open, for an answer
+ * that does not change between reloads of the same build in the same
+ * browser. The key names both: a new build (the module's hashed URL changes)
+ * or a different browser re-probes. Only `ok: true` is cached — a refusal is
+ * cheap to repeat and must not outlive whatever the user changes to fix it.
+ * Storage access can throw (private windows, blocked site data), and the
+ * probe is the fallback, so every touch is wrapped.
+ */
+export const CAPABILITY_CACHE_PREFIX = 'noey.capabilities.v1'
+
+export function capabilityCacheKey(
+  ua = typeof navigator !== 'undefined' ? navigator.userAgent : '',
+  build = import.meta.url
+): string {
+  // The pathname of a Vite build's module carries its content hash; the
+  // origin does not matter and the query (dev server timestamps) must not.
+  let buildId = build
+  try {
+    buildId = new URL(build).pathname
+  } catch {
+    // not a URL in a test runner; use it as given
+  }
+  return `${CAPABILITY_CACHE_PREFIX}:${buildId}:${ua}`
+}
+
+export function readCachedCapabilities(key: string): Capabilities | null {
+  try {
+    const raw = sessionStorage.getItem(key)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as Partial<Capabilities>
+    if (parsed.ok !== true || !Array.isArray(parsed.missing)) return null
+    return parsed as Capabilities
+  } catch {
+    return null
+  }
+}
+
+export function writeCachedCapabilities(key: string, caps: Capabilities): void {
+  if (!caps.ok) return
+  try {
+    sessionStorage.setItem(key, JSON.stringify(caps))
+  } catch {
+    // no storage, no cache — the probe runs again next time
+  }
+}
+
 export async function detectCapabilities(): Promise<Capabilities> {
+  const key = capabilityCacheKey()
+  const cached = readCachedCapabilities(key)
+  if (cached) return cached
+  const caps = await probeCapabilities()
+  writeCachedCapabilities(key, caps)
+  return caps
+}
+
+async function probeCapabilities(): Promise<Capabilities> {
   const missing: string[] = []
 
   // Not just "is there an OPFS" — can this browser WRITE to it? Safari has

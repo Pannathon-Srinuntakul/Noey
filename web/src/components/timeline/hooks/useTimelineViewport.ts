@@ -578,12 +578,20 @@ export function useTimelineViewport({
    * anchor arithmetic then lands the wrong time under the pointer. And the
    * page would zoom on ⌘/Ctrl+wheel.
    */
+  // The gesture listeners bind ONCE and reach the newest render's helpers
+  // through this ref: a re-bind mid-pinch drops the fingers it is tracking,
+  // and the wheel effect used to have no dependency array at all, so the
+  // non-passive listener was torn down and re-added on every editor render —
+  // which is every frame of a drag.
+  const gestureHelpersRef = useRef({ timeAtClientX, applyZoom, clearFit })
+  gestureHelpersRef.current = { timeAtClientX, applyZoom, clearFit }
   useEffect(() => {
     const el = viewportRef.current
     if (!el) return
     function onWheel(e: WheelEvent): void {
       const node = viewportRef.current
       if (!node) return
+      const { timeAtClientX, applyZoom, clearFit } = gestureHelpersRef.current
       if (e.ctrlKey || e.metaKey || e.altKey) {
         e.preventDefault()
         const anchorTime = timeAtClientX(e.clientX)
@@ -607,7 +615,9 @@ export function useTimelineViewport({
     }
     el.addEventListener('wheel', onWheel, { passive: false })
     return () => el.removeEventListener('wheel', onWheel)
-  })
+    // The viewport element mounts when the phase turns 'ready' (same key the
+    // pinch effect below uses) — bound then, and only then.
+  }, [editorPhase])
 
   // ---- touch pinch zoom ----------------------------------------------------
   /** The two-finger gesture in progress, or null. While set, a scroll event
@@ -619,10 +629,7 @@ export function useTimelineViewport({
     anchorVX: number
     frame: number
   } | null>(null)
-  // The gesture listeners bind once (a re-bind mid-pinch would drop the
-  // fingers it is tracking) and reach the newest render's helpers here.
-  const pinchHelpersRef = useRef({ timeAtClientX, applyZoom, clearFit })
-  pinchHelpersRef.current = { timeAtClientX, applyZoom, clearFit }
+  const pinchHelpersRef = gestureHelpersRef
   useEffect(() => {
     const el = viewportRef.current
     if (!el) return

@@ -4,14 +4,103 @@
  * Contents match `dub_render.build_dub_bundle_zip` and
  * `render_common.build_capcut_bundle`, because someone downloads these and
  * opens them somewhere else — the file names ARE the interface.
+ *
+ * Streamed, not `zipSync`: that call wanted every member as a `Uint8Array` at
+ * once — final.mp4, every per-scene clip AND the finished archive — so a
+ * bundle briefly held three copies of the render in memory. Video members
+ * are STORED (they are already H.264; deflating them costs CPU for nothing),
+ * text members are deflated, and the archive goes out to OPFS a slice at a
+ * time through the same staged write every encode uses.
  */
 
-import { zipSync } from 'fflate'
-import { listDir, listProjectDir, projectFilePath, writeFileAtomic } from '../platform/fs'
+import { Zip, ZipDeflate, ZipPassThrough } from 'fflate'
+import {
+  listDir,
+  listProjectDir,
+  openStagedWrite,
+  projectFilePath,
+  writeFileAtomic
+} from '../platform/fs'
 import { blobForPath } from './jobs/probe'
 
-async function bytesOf(blob: Blob): Promise<Uint8Array> {
-  return new Uint8Array(await blob.arrayBuffer())
+/** One member: a name and where its bytes come from. */
+export type ZipMember = { name: string } & ({ blob: Blob } | { text: string })
+
+/** Blobs are read in slices of this size, so the archive never holds a whole video. */
+const ZIP_SLICE = 4 * 1024 * 1024
+
+/**
+ * Write `members` as a zip at `outPath`, in order, one at a time.
+ *
+ * fflate's streaming `Zip` emits archive bytes through a callback as members
+ * are pushed; those are forwarded to the staged writable in sequence, and
+ * each blob slice waits for the previous chunk to land so back-pressure holds.
+ */
+export async function writeZip(outPath: string, members: ZipMember[]): Promise<void> {
+  const staged = await openStagedWrite(outPath)
+  const writer = staged.writable.getWriter()
+  let position = 0
+  let pending: Promise<void> = Promise.resolve()
+  let failure: Error | null = null
+
+  const zip = new Zip((err, chunk) => {
+    if (err) {
+      failure ??= err
+      return
+    }
+    // Copy: fflate reuses its output buffers between callbacks.
+    const data = chunk.slice()
+    const at = position
+    position += data.byteLength
+    // `pending` never rejects — a failed write is parked in `failure` and
+    // re-thrown by the loop at its next await, so nothing is left as an
+    // unhandled rejection between the callback and that await.
+    pending = pending
+      .then(() => writer.write({ type: 'write', data, position: at }))
+      .catch((e: unknown) => {
+        failure ??= e instanceof Error ? e : new Error(String(e))
+      })
+  })
+
+  try {
+    for (const member of members) {
+      const file: ZipDeflate | ZipPassThrough =
+        'text' in member
+          ? new ZipDeflate(member.name, { level: 6 })
+          : new ZipPassThrough(member.name)
+      zip.add(file)
+      if ('text' in member) {
+        file.push(new TextEncoder().encode(member.text), true)
+      } else {
+        const blob = member.blob
+        if (blob.size === 0) {
+          file.push(new Uint8Array(0), true)
+        } else {
+          for (let at = 0; at < blob.size; at += ZIP_SLICE) {
+            const end = Math.min(blob.size, at + ZIP_SLICE)
+            const slice = new Uint8Array(await blob.slice(at, end).arrayBuffer())
+            file.push(slice, end === blob.size)
+            if (failure) throw failure
+            await pending
+          }
+        }
+      }
+      if (failure) throw failure
+      await pending
+    }
+    zip.end()
+    if (failure) throw failure
+    await pending
+    await writer.close()
+    writer.releaseLock()
+    await staged.publish()
+  } catch (err) {
+    zip.terminate()
+    await writer.abort().catch(() => undefined)
+    writer.releaseLock()
+    await staged.discard().catch(() => undefined)
+    throw err
+  }
 }
 
 /**
@@ -22,8 +111,8 @@ async function bytesOf(blob: Blob): Promise<Uint8Array> {
  * a second browser came out with no per-scene clips in it at all, and said
  * nothing about it.
  */
-async function perSceneClips(uid: string): Promise<Record<string, Uint8Array>> {
-  const out: Record<string, Uint8Array> = {}
+async function perSceneClips(uid: string): Promise<ZipMember[]> {
+  const out: ZipMember[] = []
   // LOCAL first: a bundle is built right after a render, and the render just
   // wrote this browser's clips/. The merged listing exists for the restored
   // project whose clips live only on the server -- but merging it here too let
@@ -37,7 +126,7 @@ async function perSceneClips(uid: string): Promise<Record<string, Uint8Array>> {
     .sort((a, b) => a.name.localeCompare(b.name))
   for (const e of entries) {
     const blob = await blobForPath(projectFilePath(uid, `clips/${e.name}`)).catch(() => null)
-    if (blob) out[`clips/${e.name}`] = new Uint8Array(await blob.arrayBuffer())
+    if (blob) out.push({ name: `clips/${e.name}`, blob })
   }
   return out
 }
@@ -46,22 +135,22 @@ export async function buildDubBundle(
   uid: string,
   parts: { finalSilent: Blob; scriptTxt: string; musicMixed: Blob | null }
 ): Promise<void> {
-  const entries: Record<string, Uint8Array> = {
-    'final_silent.mp4': await bytesOf(parts.finalSilent),
-    'script.txt': new TextEncoder().encode(parts.scriptTxt),
+  const members: ZipMember[] = [
+    { name: 'final_silent.mp4', blob: parts.finalSilent },
+    { name: 'script.txt', text: parts.scriptTxt },
     ...(await perSceneClips(uid))
-  }
-  if (parts.musicMixed) entries['final_with_music.mp4'] = await bytesOf(parts.musicMixed)
-  await writeFileAtomic(projectFilePath(uid, 'dub_bundle.zip'), zipSync(entries))
+  ]
+  if (parts.musicMixed) members.push({ name: 'final_with_music.mp4', blob: parts.musicMixed })
+  await writeZip(projectFilePath(uid, 'dub_bundle.zip'), members)
 }
 
 export async function buildFinalBundle(
   uid: string,
   parts: { final: Blob; scriptTxt?: string | null }
 ): Promise<void> {
-  const entries: Record<string, Uint8Array> = { 'final.mp4': await bytesOf(parts.final) }
-  if (parts.scriptTxt) entries['script.txt'] = new TextEncoder().encode(parts.scriptTxt)
-  await writeFileAtomic(projectFilePath(uid, 'final_bundle.zip'), zipSync(entries))
+  const members: ZipMember[] = [{ name: 'final.mp4', blob: parts.final }]
+  if (parts.scriptTxt) members.push({ name: 'script.txt', text: parts.scriptTxt })
+  await writeZip(projectFilePath(uid, 'final_bundle.zip'), members)
 }
 
 export interface CapCutManifest {
@@ -94,7 +183,7 @@ export async function buildCapCutBundle(
     project_uid: uid,
     mode: parts.mode,
     output: parts.outputName,
-    clips: Object.keys(clips).map((file, i) => ({ file, label: `Scene ${i + 1}` })),
+    clips: clips.map((m, i) => ({ file: m.name, label: `Scene ${i + 1}` })),
     captions: 'captions/subtitles.srt',
     captions_ass: null
   }
@@ -109,16 +198,13 @@ export async function buildCapCutBundle(
     new TextEncoder().encode(parts.srt)
   )
 
-  await writeFileAtomic(
-    projectFilePath(uid, 'capcut_bundle.zip'),
-    zipSync({
-      [parts.outputName]: await bytesOf(parts.final),
-      ...clips,
-      'captions/subtitles.srt': new TextEncoder().encode(parts.srt),
-      'manifest.json': new TextEncoder().encode(manifestJson),
-      'README.txt': new TextEncoder().encode(CAPCUT_README)
-    })
-  )
+  await writeZip(projectFilePath(uid, 'capcut_bundle.zip'), [
+    { name: parts.outputName, blob: parts.final },
+    ...clips,
+    { name: 'captions/subtitles.srt', text: parts.srt },
+    { name: 'manifest.json', text: manifestJson },
+    { name: 'README.txt', text: CAPCUT_README }
+  ])
 }
 
 /** `HH:MM:SS,mmm` — SubRip's timestamp. Mirrors `render_common.write_srt`. */

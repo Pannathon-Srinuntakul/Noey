@@ -74,13 +74,23 @@ export function ClipThumbnail({
     // blob: URL of a picked File. Same reason the filmstrip sets it.
     video.crossOrigin = 'anonymous'
 
+    /** The server's JPEG lives behind an object URL that only this effect
+     * knows; revoked in the cleanup, because a wizard that lists twenty HEVC
+     * clips and re-runs this on every reorder otherwise leaks twenty blobs a
+     * pass for as long as the tab lives. */
+    let posterUrl: string | null = null
     /** The element gave up (or never answered) — try the server. */
     const fallback = (): void => {
       if (cancelled || !file) return setFailed(true)
-      void askServerForPoster(file).then((posterUrl) => {
-        if (cancelled) return
-        if (posterUrl) setThumb(posterUrl)
-        else setFailed(true)
+      void askServerForPoster(file).then((url) => {
+        if (cancelled) {
+          if (url) URL.revokeObjectURL(url)
+          return
+        }
+        if (url) {
+          posterUrl = url
+          setThumb(url)
+        } else setFailed(true)
       })
     }
 
@@ -133,6 +143,7 @@ export function ClipThumbnail({
       video.src = ''
       video.load()
       if (objectUrl) URL.revokeObjectURL(objectUrl)
+      if (posterUrl) URL.revokeObjectURL(posterUrl)
     }
   }, [file, path, askServerForPoster])
 

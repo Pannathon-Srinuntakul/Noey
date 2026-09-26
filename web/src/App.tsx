@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { onAuthLost, onTokens } from './lib/sessionBus'
-import { me, restoreSession, type Me } from './lib/api'
+import { logout as logoutOnServer, me, restoreSession, type Me } from './lib/api'
+import { ErrorBoundary } from './components/ErrorBoundary'
 import type { ApiSession } from './lib/videosLocalApi'
 import { ConfirmProvider } from './lib/confirm'
 import { FxJobsProvider } from './lib/fxJobs'
@@ -43,6 +44,27 @@ export interface Session {
   accessToken: string
   refreshToken: string
   profile: Me
+}
+
+/**
+ * Make the service worker forget the session.
+ *
+ * The worker keeps the origin, the bearer token and the uid→remoteUid map in
+ * its own storage (public/media-sw.js) so that a media read can fall back to
+ * the server. Sign-out used to clear localStorage and nothing else: the
+ * worker kept serving the previous account's server files, with the previous
+ * account's token, until that token expired. A null token is the worker's
+ * cue to drop the map as well.
+ */
+function forgetWorkerSession(): void {
+  const worker = navigator.serviceWorker?.controller
+  if (!worker) return
+  worker.postMessage({ type: 'sw:origin', baseUrl: null, token: null })
+  worker.postMessage({ type: 'sw:projects', projects: [] })
+}
+
+const appLog = (scope: string, message: string): void => {
+  void window.noey.log.write(scope, message)
 }
 
 function Workspace({
@@ -111,7 +133,11 @@ function Workspace({
               <FxJobsProvider>
                 <UsageProvider session={session}>
                   <AppShell session={session}>
-                    <RouteView session={session} onLogout={onLogout} />
+                    {/* Below the job providers on purpose: a screen that
+                        throws must not take a running render with it. */}
+                    <ErrorBoundary onError={(m) => appLog('render', `screen crashed: ${m}`)}>
+                      <RouteView session={session} onLogout={onLogout} />
+                    </ErrorBoundary>
                   </AppShell>
                 </UsageProvider>
               </FxJobsProvider>
@@ -142,14 +168,8 @@ function App(): React.JSX.Element {
       busy = true
       void (async () => {
         try {
-          const raw = localStorage.getItem('noey.auth')
-          if (!raw) return
-          const stored = JSON.parse(raw) as {
-            baseUrl: string
-            email: string
-            accessToken: string
-            refreshToken: string
-          }
+          const stored = await window.noey.auth.load()
+          if (!stored) return
           const pair = await restoreSession(BACKEND_URL, stored.accessToken, stored.refreshToken)
           if (pair) {
             await window.noey.auth.save({
@@ -185,7 +205,10 @@ function App(): React.JSX.Element {
       setSession((s) => (s ? { ...s, accessToken, refreshToken } : s))
     })
     const offLost = onAuthLost(() => {
+      // No server call: the refresh token is already dead, which is why we
+      // are here. The worker still has to be told.
       window.noey.auth.clear()
+      forgetWorkerSession()
       setSession(null)
     })
     return () => {
@@ -193,6 +216,29 @@ function App(): React.JSX.Element {
       offLost()
     }
   }, [])
+  // Failures that reach no component. A lazy chunk that 404s after a deploy
+  // (`vite:preloadError` — the hashed file it wants no longer exists) is
+  // only fixable by reloading, so that is what happens. A rejected promise
+  // nothing awaited used to go to the console alone; on a phone there is no
+  // console, and the app log is what support gets to see.
+  useEffect(() => {
+    const onPreloadError = (e: Event): void => {
+      e.preventDefault()
+      appLog('boot', 'stale chunk after deploy — reloading')
+      window.location.reload()
+    }
+    const onRejection = (e: PromiseRejectionEvent): void => {
+      const r = e.reason as { name?: string; message?: string } | undefined
+      appLog('unhandled', `${r?.name ?? 'Error'}: ${r?.message ?? String(e.reason)}`)
+    }
+    window.addEventListener('vite:preloadError', onPreloadError)
+    window.addEventListener('unhandledrejection', onRejection)
+    return () => {
+      window.removeEventListener('vite:preloadError', onPreloadError)
+      window.removeEventListener('unhandledrejection', onRejection)
+    }
+  }, [])
+
   // Temporary — components/ui/* preview page, no login required. See
   // PLAN.md chunk 1. Remove once the redesign ships.
   const [devUi] = useState(() => window.location.hash === '#/dev/ui')
@@ -225,9 +271,16 @@ function App(): React.JSX.Element {
   }, [])
 
   const logout = useCallback(() => {
+    // Revoke on the server, then forget locally. The server call is
+    // fire-and-forget: it tolerates a 404 (older server), a 401 and no
+    // network, because none of those may keep someone signed in.
+    if (session) {
+      void logoutOnServer(session.baseUrl, session.accessToken, session.refreshToken)
+    }
     window.noey.auth.clear()
+    forgetWorkerSession()
     setSession(null)
-  }, [])
+  }, [session])
 
   const onLogin = useCallback(async (next: Session) => {
     await ensureStoreOwner(next.profile.email)

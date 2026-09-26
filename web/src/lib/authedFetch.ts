@@ -14,7 +14,7 @@
  * exactly one refresh-and-retry when the token has lapsed.
  */
 
-import { refresh } from './api'
+import { refreshOnce } from './tokenRefresh'
 import type { ApiSession } from './videosLocalApi'
 import { apiErrorDetail } from './apiError'
 import { DEVICE_HEADER, deviceId } from './usageLimits'
@@ -46,7 +46,8 @@ export async function authedFetch(
   if (res.status !== 401 || retried) return res
 
   try {
-    const pair = await refresh(session.baseUrl, session.refreshToken)
+    // Single-flight with every other 401 in flight (tokenRefresh.ts).
+    const pair = await refreshOnce(session)
     session.accessToken = pair.access_token
     session.refreshToken = pair.refresh_token
     session.onTokens?.(pair.access_token, pair.refresh_token)

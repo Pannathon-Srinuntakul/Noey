@@ -121,6 +121,8 @@ export default function LoginPage({
             <Input
               label="อีเมล"
               type="email"
+              name="email"
+              autoComplete="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               autoFocus
@@ -157,6 +159,8 @@ export default function LoginPage({
               >
                 <input
                   id="login-password"
+                  name="password"
+                  autoComplete="current-password"
                   type={showPassword ? 'text' : 'password'}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}

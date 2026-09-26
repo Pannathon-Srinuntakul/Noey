@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ArrowLeft, ArrowRight, Check, Sparkles } from 'lucide-react'
 import type { LocalProject } from '@renderer/platform/types'
+import { ensureRoomFor } from '../lib/storageQuota'
 import { cn } from '../lib/cn'
 import { useConfirm } from '../lib/confirm'
 import { useJobs } from '../lib/jobs'
@@ -388,6 +389,9 @@ export default function WizardPage({
         // pointing at a file that no longer existed anywhere, unimportable and
         // unretryable. `stageAll` returns `noeyfs://` paths a reload survives,
         // and passes through anything already in the store.
+        // Room for the copies about to be made, checked before the first one:
+        // a full store used to surface minutes later as a raw DOMException.
+        await ensureRoomFor(group.reduce((n, f) => n + (f.file?.size ?? 0), 0))
         const stagedSources = await stageAll(
           group.map((f) => f.path),
           project.uid

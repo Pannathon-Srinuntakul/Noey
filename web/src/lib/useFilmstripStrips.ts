@@ -18,7 +18,7 @@
  * The filmstrip is orientation, not data — nothing about the cut depends on it.
  */
 import { useEffect, useState } from 'react'
-import { resetDecodedFilmstripImages } from './filmstripImageCache'
+import { forgetDecodedFilmstripImagesFor } from './filmstripImageCache'
 
 export interface FilmstripStrip {
   /** Tiles extracted for this source. */
@@ -118,7 +118,7 @@ export function useFilmstripStrips(
       // A cached row changed nothing on disk, so its decodes stay warm; the
       // old unconditional reset threw away every decoded tile on every
       // editor open, which is why even a WARM reopen re-fetched everything.
-      if (!row.cached) resetDecodedFilmstripImages()
+      if (!row.cached) forgetDecodedFilmstripImagesFor(`/filmstrip/${row.id}/`)
       setState((prev) => ({
         ...prev,
         strips: { ...prev.strips, [row.id]: toStrip(row) },
@@ -170,6 +170,9 @@ export function useFilmstripStrips(
       aborter.abort()
       unsub?.()
     }
+    // Keyed on the clips' identity string, not the array: a new array of the
+    // same clips (every parent render) must not restart the extraction.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [localUid, clipsKey])
 
   return state

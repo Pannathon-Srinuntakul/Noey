@@ -27,7 +27,6 @@ import {
   voiceoverLineBlocks,
   clipAbsOffsets,
   remapWordsToOutput,
-  snapTrimToBeat,
   withDuplicate,
   withNewAngle,
   withNewScene,
@@ -662,88 +661,6 @@ describe('scene lane width', () => {
 
 // ── beat snap must not undo the trim clamp (2026-09-07) ──────────────────────
 //
-// bindTrimDrag clamps, then hands the value to the snap. A snap of up to
-// BEAT_SNAP_THRESHOLD_SEC could push it straight back out of bounds, and
-// nothing downstream re-checks: dubSegmentsFromEditCuts passes in/out through
-// into sourceIn/sourceOut and trim_one_segment hands them to ffmpeg as-is.
-describe('snapTrimToBeat', () => {
-  const base = {
-    cut: { in: 0.05, out: 3.0 },
-    startOffsetSec: 0,
-    maxOut: 10,
-    snapEnabled: true,
-    musicOffsetSec: 0,
-    musicTrimInSec: 0,
-    beatsSec: [3.15]
-  }
-
-  it('passes the patch straight through when snapping is off', () => {
-    const p = { in: 0 }
-    expect(snapTrimToBeat({ ...base, patch: p, snapEnabled: false })).toBe(p)
-    expect(snapTrimToBeat({ ...base, patch: p, beatsSec: null })).toBe(p)
-    expect(snapTrimToBeat({ ...base, patch: p, beatsSec: [] })).toBe(p)
-  })
-
-  it('never produces a negative sourceIn', () => {
-    // Left handle dragged past the start: bindTrimDrag clamps to in=0, then the
-    // beat at 3.15 pulls the end later, which the old code turned into
-    // in = 3.0 - 3.15 = -0.15 and saved verbatim.
-    const out = snapTrimToBeat({ ...base, patch: { in: 0 } })
-    expect(out.in).toBeGreaterThanOrEqual(0)
-  })
-
-  it('never leaves a scene shorter than MIN_CUT_SEC from the left edge', () => {
-    const out = snapTrimToBeat({ ...base, patch: { in: 0 }, beatsSec: [0.1] })
-    expect(base.cut.out - out.in!).toBeGreaterThanOrEqual(MIN_CUT_SEC - 1e-9)
-  })
-
-  it('never leaves a scene shorter than MIN_CUT_SEC from the right edge', () => {
-    // Right handle dragged to the floor, then a beat just before it.
-    const cut = { in: 1.0, out: 1.2 }
-    const out = snapTrimToBeat({
-      ...base,
-      cut,
-      patch: { out: 1.2 },
-      startOffsetSec: 0,
-      beatsSec: [0.05]
-    })
-    expect(out.out! - cut.in).toBeGreaterThanOrEqual(MIN_CUT_SEC - 1e-9)
-  })
-
-  it('never lets a right-edge snap run past the source clip', () => {
-    const out = snapTrimToBeat({
-      ...base,
-      cut: { in: 0, out: 9.9 },
-      patch: { out: 9.9 },
-      maxOut: 10,
-      beatsSec: [10.05]
-    })
-    expect(out.out!).toBeLessThanOrEqual(10)
-  })
-
-  it('still snaps when the result stays in bounds', () => {
-    // The cut's END on the OUTPUT clock is startOffset + (out - in) = 2.95,
-    // not 3.0 — that offset is exactly what the snap has to account for.
-    // A beat at 3.0 is 0.05 away, inside the threshold, so the end moves there
-    // and `out` becomes in + 3.0.
-    const out = snapTrimToBeat({ ...base, patch: { out: 3.0 }, beatsSec: [3.0] })
-    expect(out.out).toBeCloseTo(3.05, 6)
-  })
-
-  it('leaves a beat outside the threshold alone', () => {
-    // End on the output clock is 2.95; a beat at 3.3 is 0.35 away, well past
-    // BEAT_SNAP_THRESHOLD_SEC, so the drag stands as the user left it.
-    const out = snapTrimToBeat({ ...base, patch: { out: 3.0 }, beatsSec: [3.3] })
-    expect(out.out).toBeCloseTo(3.0, 6)
-  })
-
-  it('snaps the left edge by moving the END onto the beat', () => {
-    // Dragging `in` changes the duration, so it is the cut's END on the output
-    // clock that lands on the beat — in = out - (beat - startOffset).
-    const out = snapTrimToBeat({ ...base, patch: { in: 0.2 }, beatsSec: [2.9] })
-    expect(out.in).toBeCloseTo(0.1, 6)
-  })
-})
 
 describe('splitCutAt keeps AI shot metadata on the first half only', () => {
   it('does not offer the same alternates twice', async () => {

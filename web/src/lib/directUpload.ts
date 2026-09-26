@@ -93,7 +93,8 @@ export async function putToBucket(
     blockedThisSession = true
     return false
   }
-  if (!res.ok) throw new ApiError(res.status, `อัปโหลดไปยังที่เก็บไฟล์ไม่สำเร็จ (HTTP ${res.status})`)
+  if (!res.ok)
+    throw new ApiError(res.status, `อัปโหลดไปยังที่เก็บไฟล์ไม่สำเร็จ (HTTP ${res.status})`)
   return true
 }
 
@@ -110,7 +111,8 @@ export async function completeDirectUpload(
     body: JSON.stringify({ path }),
     signal
   })
-  if (!res.ok) throw new ApiError(res.status, await serverMessage(res, `ยืนยันอัปโหลด ${path} ไม่สำเร็จ`))
+  if (!res.ok)
+    throw new ApiError(res.status, await serverMessage(res, `ยืนยันอัปโหลด ${path} ไม่สำเร็จ`))
   return (await res.json()) as { path: string; bytes: number }
 }
 

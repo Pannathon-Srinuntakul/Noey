@@ -99,10 +99,24 @@ export function getDecodedFilmstripImage(url: string): HTMLImageElement | null {
  * the only way old bytes could survive a re-extract.
  */
 export function resetDecodedFilmstripImages(): void {
-  for (const entry of decodedImages.values()) {
+  forgetDecodedFilmstripImages(() => true)
+}
+
+/**
+ * Drop the decodes whose URL contains `fragment` — one clip's strip after a
+ * re-extract. Dropping EVERYTHING per clip, as the strips hook used to, threw
+ * away the tiles the lanes were painting N times while N clips landed.
+ */
+export function forgetDecodedFilmstripImagesFor(fragment: string): void {
+  forgetDecodedFilmstripImages((url) => url.includes(fragment))
+}
+
+function forgetDecodedFilmstripImages(match: (url: string) => boolean): void {
+  for (const [url, entry] of decodedImages) {
+    if (!match(url)) continue
     entry.image.onload = null
     entry.image.onerror = null
     entry.image.src = ''
+    decodedImages.delete(url)
   }
-  decodedImages.clear()
 }

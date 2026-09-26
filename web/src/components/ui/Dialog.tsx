@@ -1,7 +1,8 @@
 import { X } from 'lucide-react'
-import { useEffect, useRef } from 'react'
+import { useEffect, useId, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { cn } from '../../lib/cn'
+import { cycleTab, enterConfirms, useModalFocus } from './focusTrap'
 
 export interface DialogProps {
   open: boolean
@@ -17,7 +18,8 @@ export interface DialogProps {
   footerNote?: React.ReactNode
   /** Right-aligned footer buttons — caller composes ghost + primary Button. */
   footerActions?: React.ReactNode
-  /** Enter confirms, unless focus is inside a <textarea>. */
+  /** Enter confirms, unless focus is inside a <textarea> or on a control
+   * that has its own Enter meaning (see `enterConfirms`). */
   onConfirm?: () => void
 }
 
@@ -33,50 +35,44 @@ export function Dialog({
   onConfirm
 }: DialogProps): React.JSX.Element | null {
   const panelRef = useRef<HTMLDivElement>(null)
-  const previouslyFocused = useRef<HTMLElement | null>(null)
+  // A unique id per instance: two dialogs on one page (a confirm over a
+  // form dialog) shared the literal "dialog-title", so aria-labelledby on the
+  // upper one could resolve to the lower one's heading.
+  const titleId = useId()
+  // The callbacks live in refs so the keydown effect keys on `open` alone.
+  // Callers pass inline arrows, which are new on every render — keyed on
+  // them, the effect tore down and re-ran on each render, and its cleanup
+  // (`previouslyFocused.focus()`) yanked focus back to the opener while the
+  // dialog was still up.
+  const onCloseRef = useRef(onClose)
+  const onConfirmRef = useRef(onConfirm)
+  useEffect(() => {
+    onCloseRef.current = onClose
+    onConfirmRef.current = onConfirm
+  })
+
+  useModalFocus(open, panelRef)
 
   useEffect(() => {
     if (!open) return
 
-    previouslyFocused.current = document.activeElement as HTMLElement | null
-    panelRef.current?.focus()
-
     const onKeyDown = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') {
         e.stopPropagation()
-        onClose()
+        onCloseRef.current()
         return
       }
-      if (e.key === 'Enter' && onConfirm && (e.target as HTMLElement)?.tagName !== 'TEXTAREA') {
+      if (e.key === 'Enter' && onConfirmRef.current && enterConfirms(e.target)) {
         e.stopPropagation()
-        onConfirm()
+        onConfirmRef.current()
         return
       }
-      if (e.key === 'Tab') {
-        const panel = panelRef.current
-        if (!panel) return
-        const focusable = panel.querySelectorAll<HTMLElement>(
-          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
-        )
-        if (focusable.length === 0) return
-        const first = focusable[0]
-        const last = focusable[focusable.length - 1]
-        if (e.shiftKey && document.activeElement === first) {
-          e.preventDefault()
-          last.focus()
-        } else if (!e.shiftKey && document.activeElement === last) {
-          e.preventDefault()
-          first.focus()
-        }
-      }
+      if (e.key === 'Tab' && panelRef.current) cycleTab(panelRef.current, e)
     }
 
     document.addEventListener('keydown', onKeyDown)
-    return () => {
-      document.removeEventListener('keydown', onKeyDown)
-      previouslyFocused.current?.focus()
-    }
-  }, [open, onClose, onConfirm])
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [open])
 
   if (!open) return null
 
@@ -91,7 +87,7 @@ export function Dialog({
         ref={panelRef}
         role="dialog"
         aria-modal="true"
-        aria-labelledby="dialog-title"
+        aria-labelledby={titleId}
         tabIndex={-1}
         // The handoff's widths are exact on a desktop window and a ceiling on
         // anything narrower — a 620px dialog on a 390px screen is a dialog with
@@ -101,7 +97,7 @@ export function Dialog({
       >
         <div className="flex items-start justify-between gap-4 px-6 py-5">
           <div>
-            <h2 id="dialog-title" className="text-2xl font-semibold text-ink">
+            <h2 id={titleId} className="text-2xl font-semibold text-ink">
               {title}
             </h2>
             {subtitle ? <p className="mt-1 text-sm text-muted">{subtitle}</p> : null}

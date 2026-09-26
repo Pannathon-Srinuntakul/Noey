@@ -10,6 +10,9 @@ import {
   type KeptHistory
 } from '../../../lib/editorHistory'
 
+/** Undo steps kept per editor session (the effects editor keeps 20). */
+export const HISTORY_LIMIT = 100
+
 /** What undo()/redo() hand back: the state put back and the step's name. */
 export interface HistoryStep {
   snapshot: EditorSnapshot
@@ -83,6 +86,11 @@ export function createEditHistory(
 
   function recordStep(entry: HistoryEntry): void {
     core.undoStack.push(entry)
+    // Every entry is a whole cuts + captions snapshot; a long session of
+    // trims used to keep all of them (the effects editor caps at 20 — the
+    // same reason). Oldest steps go, which is what every editor does.
+    if (core.undoStack.length > HISTORY_LIMIT)
+      core.undoStack.splice(0, core.undoStack.length - HISTORY_LIMIT)
     core.redoStack = []
     onChange()
   }

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Check } from 'lucide-react'
 import { cn } from '../../lib/cn'
 
@@ -34,22 +34,49 @@ export function Toast({
   durationMs = 10_000,
   className
 }: ToastProps): React.JSX.Element {
-  const [remaining, setRemaining] = useState(Math.ceil(durationMs / 1000))
+  const seconds = Math.max(1, Math.ceil(durationMs / 1000))
+  const [remaining, setRemaining] = useState(seconds)
+  // The auto-dismiss pauses while the pointer or keyboard focus is on the
+  // toast: a 10s undo bar that vanished under the cursor on the way to its
+  // button was a race the user lost more often than not.
+  const [held, setHeld] = useState(false)
+  const onDismissRef = useRef(onDismiss)
+  useEffect(() => {
+    onDismissRef.current = onDismiss
+  })
 
   useEffect(() => {
-    const dismissTimer = setTimeout(onDismiss, durationMs)
-    const tick = showCountdown
-      ? setInterval(() => setRemaining((s) => Math.max(0, s - 1)), 1000)
-      : undefined
-    return () => {
-      clearTimeout(dismissTimer)
-      if (tick) clearInterval(tick)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- fire once per mount, not per prop churn
-  }, [])
+    if (held) return
+    // One tick per second, and the dismiss falls out of the same clock, so
+    // pausing and resuming keeps the digit and the deadline in agreement.
+    const tick = setInterval(() => {
+      setRemaining((s) => {
+        const next = Math.max(0, s - 1)
+        if (next === 0) queueMicrotask(() => onDismissRef.current())
+        return next
+      })
+    }, 1000)
+    return () => clearInterval(tick)
+  }, [held])
 
   return (
     <div
+      role="status"
+      aria-live="polite"
+      onPointerEnter={() => setHeld(true)}
+      onPointerLeave={(e) => {
+        // A finger lifting is not a cursor leaving (responsive.test.ts): a
+        // touch has no hover, so the lift restarts the countdown in full
+        // instead of resuming it — a tap buys the whole duration again.
+        if (e.pointerType !== 'mouse') setRemaining(seconds)
+        setHeld(false)
+      }}
+      onFocus={() => setHeld(true)}
+      onBlur={(e) => {
+        // Only when focus leaves the toast altogether, not when it moves
+        // from the action button to the dismiss button.
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setHeld(false)
+      }}
       className={cn(
         'fixed bottom-6 right-6 z-[110] flex items-center gap-3.5 rounded-md border bg-surface px-4.5 py-3.5 shadow-modal',
         variant === 'ok' ? 'border-[rgb(104_177_132_/_0.45)]' : 'border-border',

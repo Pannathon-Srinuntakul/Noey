@@ -83,6 +83,14 @@ export function stripIndexTimelines(index: HighlightIndex): HighlightIndex {
 import { dubCutsFor, dubScenesFor, timelineCutsFor, timelineScenesFor } from './dubScenes'
 import { countShotsWithAlternates, retimeTimelineForSwap, type ShotSwapLogEntry } from './shotSwap'
 import { createServerWriteQueue, type ServerDoc, type ServerWriteQueue } from './serverWriteQueue'
+import {
+  acquireProjectLock,
+  isCrossTabStorageError,
+  PROJECT_LOCKED_MESSAGE,
+  type ProjectLock
+} from './projectLock'
+import { useToast } from './toast'
+import { describeStorageError } from './storageQuota'
 import type { CaptionStyle } from './captionStyle'
 import { pickFile } from './pickFile'
 import type { ProjectMode, ProjectStep } from './projectFlow'
@@ -280,7 +288,13 @@ export interface ProjectPipeline {
   updateScriptLine: (lineId: number, text: string) => Promise<void>
   stop: () => Promise<void>
   stopping: boolean
+  /** Take the cross-tab lock and configure the editor (`showEditor` turns
+   * true once it is). Refused — another tab has the project — it shows the
+   * toast, sets `lockedByOtherTab` and leaves `showEditor` alone. */
   openEditor: () => void
+  /** The last attempt to claim this project found another tab holding it
+   * (lib/projectLock.ts). Cleared by the next successful claim. */
+  lockedByOtherTab: boolean
 }
 
 /**
@@ -347,6 +361,8 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
   const [error, setError] = useState<string | null>(null)
   const [mediaKey, setMediaKey] = useState(0)
   const [showEditor, setShowEditor] = useState(false)
+  /** Mirror for the lock bookkeeping, which runs outside render. */
+  const showEditorRef = useRef(false)
   const [stopping, setStopping] = useState(false)
   /**
    * What the SERVER says about a paused project — the window that ran out,
@@ -408,6 +424,67 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
   const stoppingRef = useRef(false)
   const disposedRef = useRef(false)
   const pipelineRef = useRef<Promise<void> | null>(null)
+  const { showToast } = useToast()
+  /**
+   * This tab's claim on the project (lib/projectLock.ts), held while a run
+   * is in flight or the editor is open. One handle per host: the lock itself
+   * is ref-counted, but nothing else in this tab asks for it.
+   */
+  const lockRef = useRef<ProjectLock | null>(null)
+  /** Published so a screen that WAITS on the pipeline (TimelineRoute waits
+   * for `showEditor`) can tell a refused open from a slow one. */
+  const [lockedByOtherTab, setLockedByOtherTab] = useState(false)
+  const lockedRef = useRef(false)
+  /** Take the project's cross-tab lock, or say why not. Every user-started
+   * action calls this BEFORE writing a busy step, so a project another tab
+   * is running stays theirs — the toast is the whole answer, and the action
+   * does not happen. Idempotent while held; the toast fires once per
+   * refusal streak, not once per call (TimelineRoute re-asks on every
+   * publish). */
+  const holdProjectLock = async (): Promise<boolean> => {
+    if (lockRef.current) return true
+    const lock = await acquireProjectLock(projectRef.current.uid)
+    if (!lock) {
+      if (!lockedRef.current) {
+        void window.noey.log.write(
+          'useProjectPipeline',
+          `refused: project ${projectRef.current.uid} is locked by another tab`
+        )
+        if (!disposedRef.current) showToast({ text: PROJECT_LOCKED_MESSAGE })
+      }
+      lockedRef.current = true
+      if (!disposedRef.current) setLockedByOtherTab(true)
+      return false
+    }
+    lockedRef.current = false
+    if (!disposedRef.current) setLockedByOtherTab(false)
+    // Two awaits raced to the same handle (a retry and the busy-step boot):
+    // keep one, give the other straight back.
+    if (lockRef.current) lock.release()
+    else lockRef.current = lock
+    return true
+  }
+  const releaseProjectLock = (): void => {
+    lockRef.current?.release()
+    lockRef.current = null
+  }
+  /** Give the lock back if nothing here needs it any more: no run in
+   * flight, the editor closed, no resume POST under way. */
+  const releaseLockIfIdle = (): void => {
+    if (pipelineRef.current || resumeBusyRef.current) return
+    if (isBusy(projectRef.current.step as ProjectStep)) return
+    if (showEditorRef.current) return
+    releaseProjectLock()
+  }
+  /** Every tracked run ends here (`pipelineRef.current = run.finally(runEnded)`):
+   * the slot is freed, then the lock, if the run was the last thing using it.
+   * The release EFFECT below cannot do this alone — it keys on React state,
+   * and the step's final patch commits before the promise chain has cleared
+   * the slot, so it saw a run still "in flight" and kept the lock. */
+  const runEnded = (): void => {
+    pipelineRef.current = null
+    releaseLockIfIdle()
+  }
   /** The music writes still in flight (an undo's onSetMusic, say), chained —
    * pruneReplacedMusic must not read `live().music` before they land. */
   const musicWritesRef = useRef<Promise<unknown>>(Promise.resolve())
@@ -456,8 +533,23 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     return () => {
       disposedRef.current = true
       abortRef.current?.abort()
+      // The host is gone: nothing here can be running the project any more.
+      // (The browser would release it when the tab dies; this is the
+      // in-page unmount, where it would not.)
+      lockRef.current?.release()
+      lockRef.current = null
     }
   }, [])
+
+  // The lock is given back the moment nothing here needs it: no run in
+  // flight and the editor closed. `error` and `stopping` are in the key
+  // because a run that fails or is stopped lands on the SAME step it started
+  // from ('error' → 'error'), which alone would never re-run this.
+  useEffect(() => {
+    showEditorRef.current = showEditor
+    releaseLockIfIdle()
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-evaluated on these transitions only
+  }, [step, showEditor, error, stopping])
 
   /**
    * The project as it is NOW, for code inside a pipeline stage.
@@ -476,6 +568,36 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
   const [serverWrites] = useState(createServerWriteQueue)
   const queueServerWrite: ServerWriteQueue['write'] = (doc, put, opts) =>
     serverWrites.write(doc, put, opts)
+
+  /**
+   * Re-send a server document whose last write failed, from the local copy
+   * (the local write always lands first, so it is the truth). Throws a Thai
+   * refusal when the re-send fails too, or when there is no local copy to
+   * send: the caller is about to start paid work that reads the server copy.
+   */
+  const flushFailedServerWrites = async (remoteUid: string): Promise<void> => {
+    const refusal = new Error(
+      'ยังส่งการแก้ไขล่าสุดไปเซิร์ฟเวอร์ไม่สำเร็จ — ตรวจการเชื่อมต่อแล้วกดลองใหม่'
+    )
+    if (serverWrites.failed('edit_script')) {
+      const script = live().editScript as unknown as DubEditScript | undefined
+      if (!script?.segments) throw refusal
+      await queueServerWrite('edit_script', () =>
+        putLocalEditScript(session, remoteUid, script)
+      ).catch(() => {
+        throw refusal
+      })
+    }
+    if (serverWrites.failed('timeline')) {
+      const timeline = live().timeline as DubTimeline | undefined
+      if (!timeline?.timeline) throw refusal
+      await queueServerWrite('timeline', () =>
+        putLocalTimeline(session, remoteUid, timeline)
+      ).catch(() => {
+        throw refusal
+      })
+    }
+  }
 
   /** What a stash keeps so revertRecut can put the project back at rest. */
   const restingStateOf = (p: LocalProject): Partial<NonNullable<LocalProject['previousRender']>> =>
@@ -749,7 +871,16 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
   }
 
   const fail = async (exc: unknown): Promise<void> => {
-    const message = exc instanceof ApiError ? exc.detail : String((exc as Error).message ?? exc)
+    // OPFS refusing a write because another tab holds the file is the
+    // cross-tab conflict surfacing one level down; it gets the same words as
+    // the lock's own refusal rather than the DOMException's English name.
+    const message = isCrossTabStorageError(exc)
+      ? PROJECT_LOCKED_MESSAGE
+      : exc instanceof ApiError
+        ? exc.detail
+        : // A full browser store in the user's words (lib/storageQuota.ts),
+          // not "QuotaExceededError: The quota has been exceeded."
+          (describeStorageError(exc) ?? String((exc as Error).message ?? exc))
     void window.noey.log.write('useProjectPipeline', `fail uid=${project.uid}: ${message}`)
     // A limit / paused-service refusal rides along so the card can offer the
     // matching way out (reset time, continue with the balance) — written with
@@ -980,6 +1111,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
 
   // ── stage: analyze (frames → upload → LLM → edit script → silent render) ──
   const runAnalyze = async (): Promise<void> => {
+    if (!(await holdProjectLock())) return
     const existingRemote = projectRef.current.remote?.uid
     if (existingRemote && (await findRunningJob(existingRemote))) {
       await patchProject({ step: 'analyzing', error: undefined })
@@ -1178,6 +1310,51 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
   }
 
   /**
+   * One sync round: push, and on a failure try once more after a pause.
+   *
+   * Two attempts, not more: a sync is best effort, and a server that is down
+   * for longer than this is what `syncPending` is for — the next boot or
+   * focus of the tab retries it. The flag is cleared BEFORE the push so the
+   * `project.json` that goes up does not carry it (another browser restoring
+   * from that copy would otherwise start out believing it owes a sync).
+   */
+  const SYNC_RETRY_DELAY_MS = 5_000
+  const runSyncRound = async (why: string): Promise<void> => {
+    const { pushProjectFiles } = await import('./projectSync')
+    if (projectRef.current.syncPending) await patchProject({ syncPending: undefined })
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const current = projectRef.current
+      const remoteUid = current.remote?.uid
+      if (!remoteUid) return
+      try {
+        const res = await pushProjectFiles(session, current.uid, remoteUid)
+        if (res.uploaded > 0) {
+          void window.noey.log.write(
+            'projectSync',
+            `${why}: uploaded ${res.uploaded} files, ${(res.bytes / 1e6).toFixed(1)} MB`
+          )
+        }
+        return
+      } catch (err) {
+        void window.noey.log.write(
+          'projectSync',
+          `${why}: sync attempt ${attempt} failed — ${String(err)}`
+        )
+        if (attempt === 1) await new Promise((r) => setTimeout(r, SYNC_RETRY_DELAY_MS))
+      }
+    }
+    // Both attempts failed: remembered on the project, where a card badge
+    // can show it and the boot/focus effect can retry it.
+    await patchProject({ syncPending: true }).catch(() => undefined)
+  }
+
+  /** The round in flight and whether another was asked for meanwhile. */
+  const syncRef = useRef<{ running: Promise<void> | null; queued: string | null }>({
+    running: null,
+    queued: null
+  })
+
+  /**
    * Copy this project's files to the server so it can be opened elsewhere.
    *
    * Best effort, always: a project whose files did not reach the server still
@@ -1186,27 +1363,52 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
    * UI on a slow upload.
    *
    * Called at the points where the files actually change: after the import
-   * that creates them, and after each render that rewrites them.
+   * that creates them, and after each render that rewrites them. Single-flight
+   * per project: a call that arrives while a round is running is coalesced
+   * into ONE more round after it, so two rounds never upload the same clip
+   * side by side (or, worse, race a delete of a stale file against its
+   * re-upload).
    */
   const syncToServer = (why: string): void => {
     const current = projectRef.current
     const remoteUid = current.remote?.uid
     if (!remoteUid) return
-    void (async () => {
+    const state = syncRef.current
+    if (state.running) {
+      state.queued = why
+      return
+    }
+    state.running = (async () => {
       try {
-        const { pushProjectFiles } = await import('./projectSync')
-        const res = await pushProjectFiles(session, current.uid, remoteUid)
-        if (res.uploaded > 0) {
-          void window.noey.log.write(
-            'projectSync',
-            `${why}: uploaded ${res.uploaded} files, ${(res.bytes / 1e6).toFixed(1)} MB`
-          )
-        }
+        await runSyncRound(why)
       } catch (err) {
+        // runSyncRound catches its own pushes; this is the module import or
+        // the flag write. Neither may reach a render.
         void window.noey.log.write('projectSync', `${why}: sync skipped — ${String(err)}`)
+      } finally {
+        state.running = null
+        const next = state.queued
+        state.queued = null
+        if (next) syncToServer(next)
       }
     })()
   }
+
+  // A sync owed from an earlier session or a lost connection is retried when
+  // the host mounts and whenever the tab comes back into view — the two
+  // moments the network is likeliest to have changed.
+  useEffect(() => {
+    if (!project.syncPending) return
+    syncToServer('boot')
+    const onVisible = (): void => {
+      if (document.visibilityState === 'visible' && projectRef.current.syncPending) {
+        syncToServer('focus')
+      }
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project.syncPending, project.remote?.uid])
 
   const runImport = async (): Promise<boolean> => {
     const current = projectRef.current
@@ -1514,10 +1716,9 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
    */
   const runFinalWithAudio = async (voiceoverPath: string): Promise<void> => {
     if (pipelineRef.current) return
+    if (!(await holdProjectLock())) return
     const run = runFinalWithAudioInner(voiceoverPath)
-    pipelineRef.current = run.finally(() => {
-      pipelineRef.current = null
-    })
+    pipelineRef.current = run.finally(runEnded)
     await pipelineRef.current
   }
 
@@ -1541,8 +1742,11 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
       )
       setProgressMsg('AI กำลังวางแผน timeline ตามเสียงพากย์…')
       // plan-dub reads the SERVER's edit script: every queued write of it
-      // (drafts, a save, a revert) has to land first.
+      // (drafts, a save, a revert) has to land first — and one that FAILED
+      // is re-sent, or the plan is refused. Planning against a server copy
+      // the editor has moved past would voice a cut the user no longer has.
       await serverWrites.idle()
+      await flushFailedServerWrites(remoteUid)
       const timeline = await planDub(
         session,
         remoteUid,
@@ -1627,7 +1831,10 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
         } catch (fxErr) {
           // Effects re-apply is best-effort — the voiced final.mp4 is already
           // good; the user can re-render effects from the editor if this fails.
-          console.error('effects re-apply failed', fxErr)
+          void window.noey.log.write(
+            'useProjectPipeline',
+            `effects re-apply failed: ${String((fxErr as Error)?.message ?? fxErr)}`
+          )
         }
       }
 
@@ -1657,6 +1864,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
   const runTalkingHead = async (): Promise<void> => {
     // Same rule as runAnalyze: follow a paid run that is already going.
     const existingRemote = projectRef.current.remote?.uid
+    if (!(await holdProjectLock())) return
     if (existingRemote && (await findRunningJob(existingRemote))) {
       await patchProject({ step: 'transcribing', error: undefined })
       await resumeFromJobPoll('transcribing')
@@ -1890,6 +2098,12 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
 
     if (isTerminal(currentStep)) return
 
+    // A busy step whose run lives in ANOTHER tab: that tab holds the lock,
+    // polls the job and writes the outcome. Booting a second pipeline here
+    // would poll the same job and finish it twice. The step on disk is what
+    // this tab shows, and the list reload picks up the outcome when it lands.
+    if (!(await holdProjectLock())) return
+
     // Sources still need copying/transcoding — do that first, then continue
     // into this mode's first AI stage without waiting for another kick.
     if (currentStep === 'importing') {
@@ -1976,9 +2190,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
       // Belt over the try/catch inside: no future branch may regress into an
       // unobserved rejection.
       .catch((err) => void window.noey.log.write('useProjectPipeline', `bootstrap: ${String(err)}`))
-      .finally(() => {
-        pipelineRef.current = null
-      })
+      .finally(runEnded)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session])
 
@@ -2121,6 +2333,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
 
   const retry = async (): Promise<void> => {
     if (pipelineRef.current) return
+    if (!(await holdProjectLock())) return
     void window.noey.log.write('useProjectPipeline', `retry uid=${project.uid} step=${step}`)
     setError(null)
     const run = (async () => {
@@ -2161,9 +2374,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
       if (isSpeechMode(mode)) await runTalkingHead()
       else await runAnalyze()
     })()
-    pipelineRef.current = run.finally(() => {
-      pipelineRef.current = null
-    })
+    pipelineRef.current = run.finally(runEnded)
     await pipelineRef.current
   }
 
@@ -2179,10 +2390,9 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
    * busy-step effect does not boot a second one underneath it. */
   const runPipeline = async (fn: () => Promise<void>): Promise<void> => {
     if (pipelineRef.current) return
+    if (!(await holdProjectLock())) return
     const run = fn()
-    pipelineRef.current = run.finally(() => {
-      pipelineRef.current = null
-    })
+    pipelineRef.current = run.finally(runEnded)
     await pipelineRef.current
   }
 
@@ -2252,6 +2462,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
       return
     }
     if (resumeBusyRef.current || pipelineRef.current) return
+    if (!(await holdProjectLock())) return
     resumeBusyRef.current = true
     if (!disposedRef.current) {
       setResumeBusy(true)
@@ -2390,6 +2601,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     // VIDEO analyze chain on them (happened live 2026-09-07 on a
     // speech_scenes project via the card menu, whose guard predated R17).
     if (!note || pipelineRef.current || isSpeechMode(mode)) return
+    if (!(await holdProjectLock())) return
     void window.noey.log.write('useProjectPipeline', `recut uid=${project.uid}`)
     setError(null)
 
@@ -2440,9 +2652,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
       })
       await runAnalyze()
     })()
-    pipelineRef.current = run.finally(() => {
-      pipelineRef.current = null
-    })
+    pipelineRef.current = run.finally(runEnded)
     await pipelineRef.current
   }
 
@@ -2455,6 +2665,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
   const revertRecut = async (): Promise<void> => {
     const kept = live().previousRender
     if (!kept || pipelineRef.current || isBusy(live().step as ProjectStep)) return
+    if (!(await holdProjectLock())) return
     void window.noey.log.write('useProjectPipeline', `revertRecut uid=${project.uid}`)
     await window.noey.projects.restoreRender(project.uid)
     setMediaKey((k) => k + 1)
@@ -2579,6 +2790,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     swapLog: ShotSwapLogEntry[] = []
   ): Promise<void> => {
     if (pipelineRef.current) return
+    if (!(await holdProjectLock())) return
     const run = (async () => {
       setError(null)
       setThinking('')
@@ -2682,9 +2894,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
         await handlePipelineError(exc)
       }
     })()
-    pipelineRef.current = run.finally(() => {
-      pipelineRef.current = null
-    })
+    pipelineRef.current = run.finally(runEnded)
     await pipelineRef.current
   }
 
@@ -2915,9 +3125,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
   ): Promise<void> => {
     if (pipelineRef.current) throw new Error('มีงานเรนเดอร์ค้างอยู่ รอให้เสร็จก่อนแล้วลองใหม่')
     const run = saveEditedCutsInner(cuts, target, captionLines)
-    pipelineRef.current = run.finally(() => {
-      pipelineRef.current = null
-    })
+    pipelineRef.current = run.finally(runEnded)
     await pipelineRef.current
   }
 
@@ -2964,7 +3172,19 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     return editCutsFromDubSegments(segments)
   }
 
+  /** The editor is a long hold on the project: another tab must not run or
+   * edit it meanwhile. The lock is taken first and the editor configured
+   * only once it is held; the refusal is the toast. */
   const openEditor = (): void => {
+    // A fresh attempt: the flag from the LAST refusal must not send the
+    // timeline route straight back before this request has been answered.
+    if (lockedRef.current && !disposedRef.current) setLockedByOtherTab(false)
+    void holdProjectLock().then((held) => {
+      if (held && !disposedRef.current) openEditorLocked()
+    })
+  }
+
+  const openEditorLocked = (): void => {
     // talking_head always edits the render timeline. dub_first: post-VO
     // (done + planned timeline) edits the timeline; otherwise the edit script.
     const target: 'edit_script' | 'timeline' =
@@ -3045,6 +3265,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
               requestAiReedit(cuts, selectedLineIds, instruction)
           : undefined
     })
+    showEditorRef.current = true
     setShowEditor(true)
   }
 
@@ -3061,6 +3282,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     mediaKey,
     showEditor,
     setShowEditor: (show: boolean) => {
+      showEditorRef.current = show
       setShowEditor(show)
       if (!show) pruneReplacedMusic()
     },
@@ -3117,6 +3339,7 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     },
     stop,
     stopping,
-    openEditor
+    openEditor,
+    lockedByOtherTab
   }
 }

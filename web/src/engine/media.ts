@@ -41,6 +41,7 @@ import {
   type InputVideoTrack,
   type StreamTargetChunk
 } from 'mediabunny'
+import type { StagedWrite } from '../platform/fs'
 
 export interface SourceInfo {
   durationSec: number
@@ -468,11 +469,22 @@ export async function remuxWithAudio(video: Blob, audio: AudioBuffer | null): Pr
  * started. This copies the encoded packets — video and audio both — into a
  * real MP4: seconds, and bit-identical pictures.
  *
+ * With `outPath` the MP4 is streamed into the project store through a staged
+ * write and the published (handle-backed, lazy) File comes back; without it
+ * the whole file is built in memory, which is only right for a short clip.
+ * A 2 h `.mov` used to be copied into RAM twice over — the muxer's buffer and
+ * its in-memory faststart copy — before a byte reached OPFS.
+ *
  * Returns null when the packets cannot be copied, so the caller can fall back
  * to a real transcode.
  */
-export async function remuxToMp4(source: Blob, signal?: AbortSignal): Promise<Blob | null> {
+export async function remuxToMp4(
+  source: Blob,
+  signal?: AbortSignal,
+  outPath?: string
+): Promise<Blob | null> {
   const input = new Input({ formats: ALL_FORMATS, source: new BlobSource(source) })
+  let staged: StagedWrite | null = null
   try {
     const videoTrack = await input.getPrimaryVideoTrack()
     if (!videoTrack) return null
@@ -487,10 +499,19 @@ export async function remuxToMp4(source: Blob, signal?: AbortSignal): Promise<Bl
       : null
 
     const stats = await videoTrack.computePacketStats(120)
-    const bufferTarget = new BufferTarget()
+    if (outPath) {
+      const { openStagedWrite } = await import('../platform/fs')
+      staged = await openStagedWrite(outPath)
+    }
+    const bufferTarget = staged ? null : new BufferTarget()
     const output = new Output({
-      format: new Mp4OutputFormat({ fastStart: 'in-memory' }),
-      target: bufferTarget
+      // moov at end on the streamed path: in-memory faststart holds the whole
+      // file until finalize, and both consumers (the service worker and a
+      // Range-capable player) seek fine without it.
+      format: new Mp4OutputFormat(staged ? {} : { fastStart: 'in-memory' }),
+      target: staged
+        ? new StreamTarget(staged.writable, { chunked: true })
+        : (bufferTarget as BufferTarget)
     })
 
     const videoSource = new EncodedVideoPacketSource(videoCodec)
@@ -530,9 +551,68 @@ export async function remuxToMp4(source: Blob, signal?: AbortSignal): Promise<Bl
       throw err
     }
 
-    if (!bufferTarget.buffer) return null
+    if (staged) {
+      const { readFile } = await import('../platform/fs')
+      const path = await staged.publish()
+      staged = null
+      return readFile(path)
+    }
+    if (!bufferTarget?.buffer) return null
     return new Blob([bufferTarget.buffer], { type: 'video/mp4' })
-  } catch {
+  } catch (err) {
+    // A half-written staging file must not outlive the attempt; the caller
+    // keeps the original container instead.
+    await staged?.discard().catch(() => undefined)
+    if (err instanceof Error && err.name === 'AbortError') throw err
+    return null
+  } finally {
+    input.dispose()
+  }
+}
+
+/**
+ * The audio track alone, packet-copied into a small audio-only MP4.
+ *
+ * The fallback for a track the streamed decoder (`audioStream.ts`) will not
+ * open: `decodeAudioData` still needs a whole file in memory, but an
+ * audio-only file is a few hundred megabytes at the very worst instead of the
+ * multi-gigabyte video it used to be handed. Null when there is no audio
+ * track or the MP4 muxer cannot carry its codec; the caller then decides
+ * whether the whole source is worth reading.
+ */
+export async function demuxAudioOnly(source: Blob, signal?: AbortSignal): Promise<Blob | null> {
+  const input = new Input({ formats: ALL_FORMATS, source: new BlobSource(source) })
+  try {
+    const audioTrack = await input.getPrimaryAudioTrack()
+    if (!audioTrack) return null
+    const codec = await audioTrack.getCodec()
+    const config = (await audioTrack.getDecoderConfig()) as AudioDecoderConfig | null
+    if (!codec || !config) return null
+    const format = new Mp4OutputFormat({ fastStart: 'in-memory' })
+    if (!format.getSupportedAudioCodecs().includes(codec)) return null
+
+    const bufferTarget = new BufferTarget()
+    const output = new Output({ format, target: bufferTarget })
+    const audioSource = new EncodedAudioPacketSource(codec)
+    output.addAudioTrack(audioSource)
+    await output.start()
+    try {
+      let first = true
+      for await (const packet of new EncodedPacketSink(audioTrack).packets()) {
+        if (signal?.aborted) throw new DOMException('ยกเลิกแล้ว', 'AbortError')
+        await audioSource.add(packet, first ? { decoderConfig: config } : undefined)
+        first = false
+      }
+      audioSource.close()
+      await output.finalize()
+    } catch (err) {
+      await output.cancel().catch(() => undefined)
+      throw err
+    }
+    if (!bufferTarget.buffer) return null
+    return new Blob([bufferTarget.buffer], { type: 'audio/mp4' })
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') throw err
     return null
   } finally {
     input.dispose()

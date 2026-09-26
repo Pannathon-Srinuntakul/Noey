@@ -24,7 +24,9 @@ import { captionLinesToSrt } from '../../lib/captionLines'
 import { plainCaptionLines, timelineCaptionLines } from '../../lib/captionEdits'
 import { clipAbsOffsets, remapWordsToOutput, type TimedWord } from '../../lib/timelineMath'
 import { renderCutList, OUTPUT_FPS, type CutSpec } from '../cutRender'
-import { concatSourceAudio, decodeBlob, type SourceAudioCut } from '../audio'
+import { concatSourceAudio, decodeBlob, MIX_SAMPLE_RATE, type SourceAudioCut } from '../audio'
+import { openAudioSource, type AudioSource } from '../audioStream'
+import { quantiseToFrames } from '../util'
 import { buildCapCutBundle, buildSrt } from '../bundle'
 import { registerJob, type ProgressCallback } from '../index'
 import { blobForPath } from './probe'
@@ -71,36 +73,62 @@ export async function renderTimelineInto(
     sourceOut: Number(c.out)
   }))
 
-  // Decode each source's audio ONCE; a cut list usually revisits the same clip
-  // many times and decoding per cut would dominate the render.
+  // Each cut's own window, decoded from the clip it references — not every
+  // project clip in full. A talking-head source can be two hours long and a
+  // cut list references seconds of it; decoding whole clips read each one
+  // into memory entire (multi-gigabyte) and did it for clips no cut used.
+  // The container is opened once per clip and kept for every cut from it.
   const project = await window.noey.projects.get(uid)
   const sources = project?.clips ?? []
-  const audioByClip = new Map<string, AudioBuffer | null>()
-  for (const c of sources) {
-    // Only a clip that HAS no audio may become silence. This catch used to
-    // swallow fetch and decode failures too — and these are the modes built on
-    // the original audio, so one transient failure here wrote a silent
-    // final.mp4, reported it as done, and the size-diffed sync then pushed it
-    // over the good server copy.
-    if (c.hasAudio === false) {
-      audioByClip.set(c.id, null)
-      continue
+  const clipById = new Map(sources.map((c) => [c.id, c]))
+  const opened = new Map<string, AudioSource | null>()
+  // The whole-clip path survives only for a track the streamed decoder will
+  // not open; that buffer is then sliced by `sourceIn` as before.
+  const whole = new Map<string, AudioBuffer>()
+  const audioCuts: SourceAudioCut[] = []
+  try {
+    for (const cut of cuts) {
+      const durationSec = quantiseToFrames(cut.sourceOut - cut.sourceIn, OUTPUT_FPS)
+      const c = clipById.get(cut.sourceClip)
+      // Only a clip that HAS no audio may become silence. This catch used to
+      // swallow fetch and decode failures too — and these are the modes built
+      // on the original audio, so one transient failure here wrote a silent
+      // final.mp4, reported it as done, and the size-diffed sync then pushed
+      // it over the good server copy.
+      if (!c || c.hasAudio === false) {
+        audioCuts.push({ buffer: null, sourceIn: 0, durationSec })
+        continue
+      }
+      try {
+        if (!opened.has(c.id)) {
+          const blob = await blobForPath(projectFilePath(uid, c.file))
+          const source = await openAudioSource(blob)
+          opened.set(c.id, source)
+          if (!source) whole.set(c.id, await decodeBlob(blob, opts.signal))
+        }
+        const source = opened.get(c.id)
+        if (source) {
+          const buffer = await source.decode({
+            sampleRate: MIX_SAMPLE_RATE,
+            channels: 'source',
+            startSec: cut.sourceIn,
+            endSec: cut.sourceIn + durationSec,
+            signal: opts.signal
+          })
+          audioCuts.push({ buffer, sourceIn: 0, durationSec })
+        } else {
+          audioCuts.push({ buffer: whole.get(c.id) ?? null, sourceIn: cut.sourceIn, durationSec })
+        }
+      } catch (err) {
+        if (err instanceof Error && err.name === 'AbortError') throw err
+        throw new Error(
+          `อ่านเสียงจากคลิปต้นฉบับไม่ได้ (${c.file.split('/').pop()}) — ลองใหม่อีกครั้ง`
+        )
+      }
     }
-    try {
-      audioByClip.set(c.id, await decodeBlob(await blobForPath(projectFilePath(uid, c.file))))
-    } catch {
-      throw new Error(
-        `อ่านเสียงจากคลิปต้นฉบับไม่ได้ (${c.file.split('/').pop()}) — ลองใหม่อีกครั้ง`
-      )
-    }
+  } finally {
+    for (const s of opened.values()) s?.close()
   }
-
-  const quantised = (sec: number): number => Math.max(1, Math.round(sec * OUTPUT_FPS)) / OUTPUT_FPS
-  const audioCuts: SourceAudioCut[] = cuts.map((c) => ({
-    buffer: audioByClip.get(c.sourceClip) ?? null,
-    sourceIn: c.sourceIn,
-    durationSec: quantised(c.sourceOut - c.sourceIn)
-  }))
   const audio = await concatSourceAudio(audioCuts)
 
   // Source-clock words → output-clock words, then grouped into lines the same

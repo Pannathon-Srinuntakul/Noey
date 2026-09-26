@@ -1,6 +1,10 @@
 import type { Session } from '../App'
-import { ApiError, restoreSession } from './api'
+import { ApiError } from './api'
+import { isTokenExpired } from './jwt'
 import { emitTokens } from './sessionBus'
+import { refreshOnce } from './tokenRefresh'
+
+export { refreshOnce } from './tokenRefresh'
 
 /**
  * Call an account endpoint with the session's token, refreshing it once on a
@@ -17,7 +21,13 @@ export async function withFreshToken<T>(
   } catch (err) {
     if (!(err instanceof ApiError) || err.status !== 401) throw err
   }
-  const pair = await restoreSession(session.baseUrl, accessToken, session.refreshToken)
+  // The 401 already said the access token is dead, so the only question is
+  // whether the refresh token can still buy a new one. Single-flight with
+  // every other 401 in flight (tokenRefresh.ts).
+  if (isTokenExpired(session.refreshToken)) {
+    throw new ApiError(401, 'เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่')
+  }
+  const pair = await refreshOnce(session).catch(() => null)
   if (!pair) throw new ApiError(401, 'เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่')
   accessToken = pair.access_token
   await window.noey.auth.save({

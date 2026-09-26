@@ -78,4 +78,41 @@ describe('the worker protocol cannot deadlock or cross wires', () => {
     // it whole would undo the streaming this path exists to provide.
     expect(worker).toContain('COPY_SLICE')
   })
+
+  it('publishes by rename where the browser has one, copying only as the fallback', () => {
+    // A copy is the one publish a killed tab can leave half done — and the
+    // truncated destination then "exists", which every reader takes to mean
+    // "complete". `move()` changes one directory entry instead.
+    const publish = worker.slice(worker.indexOf('async function publish'))
+    expect(publish.indexOf('staging.move(f.name)')).toBeGreaterThan(-1)
+    expect(publish.indexOf('staging.move(f.name)')).toBeLessThan(publish.indexOf('COPY_SLICE'))
+    // The exclusive lock is released BEFORE the rename is attempted.
+    expect(publish.indexOf('f.handle.close()')).toBeLessThan(publish.indexOf('staging.move'))
+  })
+
+  it('a dead worker rejects every pending call instead of hanging them', () => {
+    // No `error`/`messageerror` listener meant a worker that crashed (or
+    // failed to load) left the render at its last percentage for ever.
+    expect(client).toContain("addEventListener('error'")
+    expect(client).toContain("addEventListener('messageerror'")
+    const died = client.slice(client.indexOf('const died'))
+    expect(died.slice(0, 400)).toContain('pending.clear()')
+    expect(died.slice(0, 400)).toContain('p.reject(')
+    // ...and the next call gets a fresh worker.
+    expect(died.slice(0, 200)).toContain('current = null')
+  })
+
+  it('keeps the error NAME across the worker boundary', () => {
+    // `QuotaExceededError` has to be recognisable on the main thread
+    // (storageQuota.ts); the message alone is "The operation failed".
+    expect(worker).toContain('err.name')
+  })
+
+  it('sends a Blob across in slices, never whole', () => {
+    // A staged source clip is a Blob; `arrayBuffer()` on all of it put a
+    // multi-gigabyte file in memory to copy it into a store it was already in.
+    const body = client.slice(client.indexOf('export async function workerWriteFile'))
+    expect(body).toContain('BLOB_SLICE')
+    expect(body).toContain('data.slice(at')
+  })
 })

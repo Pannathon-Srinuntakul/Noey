@@ -24,13 +24,26 @@ const UPLOAD_ORIGIN = (process.env.VITE_UPLOAD_ORIGIN ?? '').trim()
  * left it, with nothing in the UI to say why. VITE_BACKEND_URL now moves both
  * at once, which is the only way the two can stay in agreement.
  */
+/**
+ * A local API for `vite dev` only. These used to be baked into every build,
+ * so the production page's own policy allowed connections to whatever was
+ * listening on the viewer's port 8000 — an origin nothing in production ever
+ * needs, and one that widens what an injected script could talk to.
+ */
+const DEV_ORIGINS = 'http://127.0.0.1:8000 http://localhost:8000'
+
 function cspBackendOrigin(): Plugin {
+  let serving = false
   return {
     name: 'noey-csp-backend-origin',
+    configResolved(config) {
+      serving = config.command === 'serve'
+    },
     transformIndexHtml(html) {
       return html
         .replaceAll('%BACKEND_ORIGIN%', new URL(BACKEND_URL).origin)
         .replaceAll('%UPLOAD_ORIGIN%', UPLOAD_ORIGIN ? new URL(UPLOAD_ORIGIN).origin : '')
+        .replaceAll('%DEV_ORIGINS%', serving ? DEV_ORIGINS : '')
     }
   }
 }

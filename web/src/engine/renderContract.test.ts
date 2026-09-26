@@ -35,6 +35,102 @@ describe('renders stream to disk instead of buffering the whole MP4', () => {
   })
 })
 
+describe('nothing reads a whole source video into memory', () => {
+  it('the audio decode goes packet by packet, and only falls back on an audio-only demux', () => {
+    // `blob.arrayBuffer()` of a 2 h source video, then `decodeAudioData` of
+    // the lot: multi-gigabyte, on the tab with the least memory to spare.
+    const src = read('audio.ts')
+    expect(src).toContain('decodeAudioStreamed(blob')
+    expect(src).toContain('demuxAudioOnly(blob')
+    expect(src).not.toMatch(/const bytes = await blob\.arrayBuffer\(\)/)
+  })
+
+  it('render-timeline decodes each cut’s own window from the clips the cuts reference', () => {
+    // It decoded EVERY project clip in full, cuts or no cuts.
+    const src = read('jobs/renderTimeline.ts')
+    expect(src).toContain('openAudioSource(blob)')
+    expect(src).toContain('startSec: cut.sourceIn')
+    expect(src).not.toMatch(/for \(const c of sources\) \{[\s\S]{0,400}decodeBlob/)
+  })
+
+  it('the speech WAV streams to disk', () => {
+    expect(read('jobs/extractAudio.ts')).toContain('speechWavStream(source')
+    expect(read('jobs/extractAudio.ts')).toContain(
+      'writeFileAtomic(projectFilePath(uid, `audio/${name}`), stream)'
+    )
+  })
+
+  it('ingest streams the container remux into the store', () => {
+    const src = read('jobs/ingest.ts')
+    expect(src).toContain('remuxToMp4(blob, signal, projectFilePath(uid, mp4Rel))')
+  })
+
+  it('remuxToMp4 does not force in-memory faststart on a streamed target', () => {
+    const src = read('media.ts')
+    const remux = src.slice(src.indexOf('export async function remuxToMp4'))
+    expect(remux).toContain("staged ? {} : { fastStart: 'in-memory' }")
+    expect(remux).toContain('staged?.discard()')
+  })
+
+  it('extract-proxy streams its encode', () => {
+    const src = read('jobs/extractProxy.ts')
+    expect(src).toContain('{ writable: staged.writable }')
+    expect(src).toContain('staged.discard()')
+  })
+
+  it('blobForPath pipes a server download into the store instead of materialising it', () => {
+    const src = read('jobs/probe.ts')
+    expect(src).toContain('writeFileAtomic(path, res.body)')
+  })
+
+  it('bundles are written as a stream, not zipSync', () => {
+    const src = read('bundle.ts')
+    expect(src).not.toContain('zipSync(')
+    expect(src).toContain('new Zip(')
+    expect(src).toContain('ZipPassThrough')
+    expect(src).toContain('openStagedWrite(outPath)')
+  })
+})
+
+describe('storage is checked before an import moves bytes', () => {
+  it('ingest asks ensureRoomFor with the sources’ sizes first', () => {
+    const src = read('jobs/ingest.ts')
+    const at = src.indexOf('await ensureRoomFor(sourceBytes)')
+    expect(at).toBeGreaterThan(-1)
+    expect(at).toBeLessThan(src.indexOf('stageIntoStore(src, uid)'))
+  })
+})
+
+describe('a failed job does not leave its intermediates behind', () => {
+  it('transcode drops .videoonly.mp4 in a finally', () => {
+    const src = read('jobs/transcode.ts')
+    const fin = src.slice(src.lastIndexOf('} finally {'))
+    expect(fin).toContain('deleteFile(tempPath)')
+  })
+
+  it('ingest drops the normalized files it wrote when it throws', () => {
+    const src = read('jobs/ingest.ts')
+    const onError = src.slice(src.indexOf('} catch (err) {'))
+    expect(onError.slice(0, 300)).toContain('for (const rel of written)')
+    // ...but never the staged sources: a retry reads those.
+    expect(onError.slice(0, 300)).not.toContain('stagingDir')
+  })
+})
+
+describe('shared arithmetic has one home', () => {
+  for (const f of ['cutRender.ts', 'jobs/transcode.ts', 'jobs/extractProxy.ts']) {
+    it(`${f} imports even() rather than defining it`, () => {
+      expect(read(f)).not.toMatch(/function even\(|const even = /)
+    })
+  }
+  for (const f of ['jobs/renderFinal.ts', 'jobs/renderTimeline.ts']) {
+    it(`${f} imports quantiseToFrames rather than defining it`, () => {
+      expect(read(f)).not.toMatch(/const quantise[d]? = /)
+      expect(read(f)).toContain('quantiseToFrames')
+    })
+  }
+})
+
 describe('a stopped render leaves the previous clips/ intact', () => {
   it('writes scene clips to a staging folder and swaps them in after publish', () => {
     // clips/ used to be deleted before the encode: a stop mid-render left the

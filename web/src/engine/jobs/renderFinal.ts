@@ -22,6 +22,7 @@ import type { CaptionLine } from '../../lib/captionLines'
 import type { CaptionStyle } from '../../lib/captionStyle'
 import type { CaptionWord } from '../captions'
 import { OUTPUT_FPS, renderCutList, type CutSpec } from '../cutRender'
+import { quantiseToFrames } from '../util'
 import { decodeBlob, decodeStored, renderMix } from '../audio'
 import { buildFinalBundle } from '../bundle'
 import { blobForPath } from './probe'
@@ -65,8 +66,10 @@ registerJob('render-final', async (job, emit: ProgressCallback): Promise<Sidecar
   // durations gave the audio a different length from the picture by the
   // accumulated rounding of every cut. `renderTimeline` already does it this
   // way; this call site did not.
-  const quantise = (sec: number): number => Math.max(1, Math.round(sec * OUTPUT_FPS)) / OUTPUT_FPS
-  const nominalSec = cuts.reduce((n, c) => n + quantise(Math.max(0, c.sourceOut - c.sourceIn)), 0)
+  const nominalSec = cuts.reduce(
+    (n, c) => n + quantiseToFrames(Math.max(0, c.sourceOut - c.sourceIn), OUTPUT_FPS),
+    0
+  )
 
   const musicPath = job.musicPath ? String(job.musicPath) : ''
   const audio = await renderMix({

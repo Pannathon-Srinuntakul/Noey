@@ -64,6 +64,12 @@ function mimeFor(name) {
   return MIME_BY_EXT[ext] || 'application/octet-stream'
 }
 
+/**
+ * `null` = no (usable) Range header, serve the whole file. `'unsatisfiable'`
+ * = a well-formed range that lies entirely past the end (a `<video>` that
+ * kept a byte offset from a longer previous render of the same URL), which
+ * per RFC 9110 gets a 416 rather than a silent 200 of the whole file.
+ */
 function parseRange(header, size) {
   if (!header) return null
   const m = /^bytes=(\d*)-(\d*)$/.exec(header.trim())
@@ -73,22 +79,28 @@ function parseRange(header, size) {
   let end = endStr ? parseInt(endStr, 10) : size - 1
   if (Number.isNaN(start)) {
     // Suffix form, `bytes=-500`.
-    const suffix = endStr ? parseInt(endStr, 10) : 0
+    if (!endStr) return null
+    const suffix = parseInt(endStr, 10)
+    if (suffix === 0) return 'unsatisfiable'
     start = Math.max(size - suffix, 0)
     end = size - 1
   }
+  if (start >= size) return 'unsatisfiable'
   end = Math.min(end, size - 1)
   if (start > end || start < 0) return null
   return { start, end }
 }
 
 async function fileFor(pathname) {
-  const rel = decodeURIComponent(pathname.slice(MEDIA_PREFIX.length))
-  const parts = rel.split('/').filter(Boolean)
-  // Reject traversal outright rather than resolving it.
-  if (parts.length < 2 || parts.some((p) => p === '.' || p === '..')) return null
-  const name = parts.pop()
   try {
+    // Inside the try: a malformed escape (`%E0%B8` cut short) makes
+    // decodeURIComponent throw, and thrown from here it escaped `serve` as a
+    // failed fetch rather than the 404 every probe expects.
+    const rel = decodeURIComponent(pathname.slice(MEDIA_PREFIX.length))
+    const parts = rel.split('/').filter(Boolean)
+    // Reject traversal outright rather than resolving it.
+    if (parts.length < 2 || parts.some((p) => p === '.' || p === '..')) return null
+    const name = parts.pop()
     let dir = await navigator.storage.getDirectory()
     dir = await dir.getDirectoryHandle('projects')
     for (const seg of parts) dir = await dir.getDirectoryHandle(seg)
@@ -163,6 +175,10 @@ self.addEventListener('message', (event) => {
       updateState((state) => {
         state.baseUrl = data.baseUrl || null
         state.token = data.token || null
+        // No token is a sign-out. The uid→remoteUid map belongs to the
+        // account that just left; kept, the next account's media reads would
+        // be sent to the previous account's projects (and 403).
+        if (!state.token) state.projects = {}
       })
     )
   } else if (data.type === 'sw:project') {
@@ -254,6 +270,17 @@ async function serve(request) {
 
   const contentType = mimeFor(url.pathname)
   const range = parseRange(request.headers.get('range'), file.size)
+
+  if (range === 'unsatisfiable') {
+    return new Response(null, {
+      status: 416,
+      headers: {
+        'Content-Range': `bytes */${file.size}`,
+        'Accept-Ranges': 'bytes',
+        'Cache-Control': NO_STORE
+      }
+    })
+  }
 
   if (!range) {
     return new Response(file, {

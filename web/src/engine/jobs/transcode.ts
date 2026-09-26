@@ -15,11 +15,7 @@
 import { decodeBlob } from '../audio'
 import { deleteFile, openStagedWrite, readFile, writeFileAtomic } from '../../platform/fs'
 import { attachDonorAudio, encodeVideo, openVideo, remuxWithAudio, type SourceInfo } from '../media'
-
-/** Even dimensions — H.264 requires them, and odd sizes fail to configure. */
-function even(n: number): number {
-  return n % 2 === 0 ? n : n - 1
-}
+import { even } from '../util'
 
 /**
  * PCM fallback ceiling. Only a donor whose audio cannot be packet-copied is
@@ -89,21 +85,17 @@ export async function transcodeToH264(
     if (!videoOnly) throw new Error('แปลงไฟล์ไม่สำเร็จ')
 
     // The common case: AAC (every iPhone recording) copies straight across.
-    if (await attachDonorAudio(videoOnly, source, outPath, signal)) {
-      await deleteFile(tempPath)
-      return
-    }
+    if (await attachDonorAudio(videoOnly, source, outPath, signal)) return
 
     // Uncopyable audio. Decode it ONLY when the PCM is survivable; otherwise
     // the clip converts silent — and says so in the log, not in a later
     // stage's misdiagnosis.
     if (info.hasAudio && info.durationSec <= PCM_FALLBACK_MAX_SEC) {
       try {
-        const pcm = await decodeBlob(source)
+        const pcm = await decodeBlob(source, signal)
         const mixed = await remuxWithAudio(videoOnly, pcm)
         if (mixed) {
           await writeFileAtomic(outPath, mixed)
-          await deleteFile(tempPath)
           return
         }
       } catch (err) {
@@ -119,7 +111,6 @@ export async function transcodeToH264(
       )
     }
     await writeFileAtomic(outPath, videoOnly)
-    await deleteFile(tempPath)
     return
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') throw err
@@ -132,5 +123,10 @@ export async function transcodeToH264(
   } finally {
     await pass.return(undefined).catch(() => undefined)
     reader.close()
+    // The silent intermediate is only ever an input to this function. It
+    // was deleted on each success path and on none of the failure paths, so
+    // a stopped conversion left a full-size `.videoonly.mp4` in the project
+    // that nothing listed and nothing ever reclaimed.
+    await deleteFile(tempPath).catch(() => undefined)
   }
 }

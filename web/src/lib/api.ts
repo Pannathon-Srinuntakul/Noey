@@ -117,6 +117,47 @@ export function refresh(baseUrl: string, refreshToken: string): Promise<TokenPai
   })
 }
 
+/**
+ * `POST /auth/logout` — revoke the refresh token server-side.
+ *
+ * Best effort by contract: the local sign-out happens whether or not this
+ * lands, so a server that predates the route (404), an already-dead access
+ * token (401) or no network at all must not keep the user signed in. Only
+ * the log records the miss.
+ */
+export async function logout(
+  baseUrl: string,
+  accessToken: string,
+  refreshToken: string
+): Promise<void> {
+  const revoke = (access: string, refreshTok: string): Promise<void> =>
+    request<void>(baseUrl, '/auth/logout', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${access}` },
+      body: JSON.stringify({ refresh_token: refreshTok })
+    })
+  try {
+    await revoke(accessToken, refreshToken)
+  } catch (err) {
+    // The access token has lapsed (an idle tab signing out): the refresh
+    // token is still live, and it is the one that matters. Spend it on a
+    // new pair and revoke that — through the single-flight helper, and by
+    // dynamic import because it imports `refresh` from here.
+    if (err instanceof ApiError && err.status === 401 && !isTokenExpired(refreshToken)) {
+      try {
+        const { refreshOnce } = await import('./tokenRefresh')
+        const pair = await refreshOnce({ baseUrl, refreshToken })
+        await revoke(pair.access_token, pair.refresh_token)
+        return
+      } catch (again) {
+        void window.noey.log.write('api', `logout not acknowledged: ${String(again)}`)
+        return
+      }
+    }
+    void window.noey.log.write('api', `logout not acknowledged: ${String(err)}`)
+  }
+}
+
 export function me(baseUrl: string, accessToken: string): Promise<Me> {
   return request<Me>(baseUrl, '/auth/me', {
     headers: { Authorization: `Bearer ${accessToken}` }
@@ -279,7 +320,11 @@ export async function restoreSession(
   }
   if (isTokenExpired(refreshToken)) return null
   try {
-    const pair = await refresh(baseUrl, refreshToken)
+    // Through the single-flight helper, so a boot-time restore and a 401
+    // elsewhere never present the same refresh token twice (tokenRefresh.ts).
+    // Dynamic: that module imports `refresh` from here.
+    const { refreshOnce } = await import('./tokenRefresh')
+    const pair = await refreshOnce({ baseUrl, refreshToken })
     return { access_token: pair.access_token, refresh_token: pair.refresh_token }
   } catch {
     return null

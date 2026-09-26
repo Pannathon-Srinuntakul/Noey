@@ -17,7 +17,6 @@
     "skipLibCheck": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
-    "noImplicitAny": false,
     "noImplicitReturns": true,
     "noEmit": true,
     "baseUrl": ".",

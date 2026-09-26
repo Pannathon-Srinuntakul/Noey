@@ -4,6 +4,7 @@ import { ChevronLeft, ChevronRight, X } from 'lucide-react'
 import { cn } from '../../lib/cn'
 import { VideoPlayer } from './VideoPlayer'
 import { useIsNarrow } from '../../lib/useMediaQuery'
+import { cycleTab, useModalFocus } from './focusTrap'
 
 /**
  * The app's big-screen player: one clip, as large as the window allows, in a
@@ -93,6 +94,12 @@ export function VideoModal({
   const hasList = !!playlist && playlist.length > 1
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const railRef = useRef<HTMLDivElement | null>(null)
+  const panelRef = useRef<HTMLDivElement | null>(null)
+  // Focus moves into the panel on open and back to the opener on close, the
+  // same as Dialog: without it a keyboard user who pressed the expand button
+  // was still "on" the inline player behind the picture, and Tab walked the
+  // hidden screen.
+  useModalFocus(open, panelRef)
   // Keyed by `open` so the ratio starts unknown for each clip without a
   // setState in an effect: a stale ratio would letterbox the wrong shape for a
   // frame. Deliberately NOT re-keyed per playlist index — every highlight in a
@@ -133,6 +140,10 @@ export function VideoModal({
         if (!el) return
         if (el.paused) void el.play().catch(() => undefined)
         else el.pause()
+        return
+      }
+      if (e.key === 'Tab' && panelRef.current) {
+        cycleTab(panelRef.current, e)
         return
       }
       // Added to the existing handler rather than a second listener: this one
@@ -208,7 +219,14 @@ export function VideoModal({
       {/* One box, not a floating video with the name in one window corner and
           the close button in another (R9). Width comes from the clip's own
           ratio — the header follows whatever the video is. */}
-      <div className="flex max-h-full max-w-full flex-col overflow-hidden rounded-[6px] border border-[rgb(243_242_242_/_0.16)] bg-surface shadow-[0_30px_70px_rgb(0_0_0_/_0.6)]">
+      <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title || 'วิดีโอ'}
+        tabIndex={-1}
+        className="flex max-h-full max-w-full flex-col overflow-hidden rounded-[6px] border border-[rgb(243_242_242_/_0.16)] bg-surface shadow-[0_30px_70px_rgb(0_0_0_/_0.6)] outline-none"
+      >
         <div className="flex h-[46px] shrink-0 items-center gap-2.5 border-b border-[rgb(243_242_242_/_0.1)] pr-1.5 pl-4">
           <span className="min-w-0 flex-1 truncate text-[15px] font-semibold text-ink">
             {hasList && playlist ? `${title} — ไฮไลต์ ${index + 1} จาก ${playlist.length}` : title}

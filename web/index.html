@@ -19,14 +19,15 @@
       native AudioEncoder has no AAC.
 
       `%BACKEND_ORIGIN%` is substituted at build time from VITE_BACKEND_URL by
-      the plugin in vite.config.ts. Vite does not expand env into HTML on its
+      the plugin in vite.config.ts; `%DEV_ORIGINS%` becomes the local API
+      origins under `vite dev` and nothing in a build. Vite does not expand env into HTML on its
       own, so this used to be a hard-coded origin — which silently blocked
       every request on any other deployment, before it left the page, with the
       UI reporting only "เชื่อมต่อ server ไม่ได้".
     -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; worker-src 'self' blob:; connect-src 'self' blob: %BACKEND_ORIGIN% %UPLOAD_ORIGIN% http://127.0.0.1:8000 http://localhost:8000"
+      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; worker-src 'self' blob:; connect-src 'self' blob: %BACKEND_ORIGIN% %UPLOAD_ORIGIN% %DEV_ORIGINS%"
     />
   </head>
 

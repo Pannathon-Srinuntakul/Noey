@@ -1,11 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Dispatch, RefObject, SetStateAction } from 'react'
-import {
-  editorApi,
-  formatUserError,
-  type CaptionLine,
-  type EditTimeline
-} from '../../../lib/editorApi'
+import { editorApi, formatUserError, type CaptionLine } from '../../../lib/editorApi'
 import { bindPointerDrag, NO_SCROLLER, type DragScroller } from '../../../lib/pointerDrag'
 import {
   clamp,
@@ -163,7 +158,6 @@ function absoluteUrl(src: string): string {
 
 export function usePreviewPlayer({
   uid,
-  timeline,
   cuts,
   cutsRef,
   editedSegments,
@@ -176,7 +170,6 @@ export function usePreviewPlayer({
   setSelectedId,
   previewSource,
   setPreviewSource,
-  videoDuration,
   setVideoDuration,
   currentTimeRef,
   captionLinesRef,
@@ -192,7 +185,6 @@ export function usePreviewPlayer({
   setErrorRetry
 }: {
   uid: string
-  timeline: EditTimeline | null
   cuts: WorkingCut[]
   cutsRef: RefObject<WorkingCut[]>
   /** `cuts` laid out on the edited clock — computeEditedSegments(cuts). */
@@ -208,7 +200,6 @@ export function usePreviewPlayer({
   setSelectedId: Dispatch<SetStateAction<string | null>>
   previewSource: string | null
   setPreviewSource: Dispatch<SetStateAction<string | null>>
-  videoDuration: number
   setVideoDuration: Dispatch<SetStateAction<number>>
   currentTimeRef: RefObject<number>
   captionLinesRef: RefObject<CaptionLine[] | null>
@@ -314,6 +305,8 @@ export function usePreviewPlayer({
   const touchScrubTRef = useRef(0)
 
   useEffect(() => {
+    // Captured now: the refs are cleared by React before this cleanup runs.
+    const elements = [videoARef.current, videoBRef.current]
     return () => {
       previewCache.current.forEach((v) => v.cleanup())
       previewCache.current.clear()
@@ -322,6 +315,14 @@ export function usePreviewPlayer({
       cancelAnimationFrame(skimFrameRef.current)
       cancelAnimationFrame(touchScrubFrameRef.current)
       if (twoUpRef.current?.frame) cancelAnimationFrame(twoUpRef.current.frame)
+      // Release the decoders: an element that leaves the DOM with a src keeps
+      // its buffers until GC gets round to it (useFilmstrip does the same).
+      for (const v of elements) {
+        if (!v) continue
+        v.pause()
+        v.removeAttribute('src')
+        v.load()
+      }
     }
   }, [])
 
@@ -376,40 +377,43 @@ export function usePreviewPlayer({
 
   // Smooth playhead — rAF paints the positioned playhead + transport directly
   // (no React re-render per frame).
+  // One frame of the playback clock. Kept in a ref so the rAF loop below
+  // binds once per play: it used to depend on `cuts` and `pxPerSec` too, so a
+  // trim or a zoom during playback cancelled and restarted the loop on every
+  // frame of the gesture.
+  const playbackStep = (): void => {
+    const v = activeVideo()
+    if (v && !v.paused && !isScrubbingRef.current && !isSourceSwapPendingRef.current) {
+      // Neither the selection nor the active scene is re-derived from `t`
+      // here: `t` is computed FROM the active scene, and the selection is
+      // the user's (see syncTimeFromVideo).
+      const t =
+        viewMode === 'edited'
+          ? editedTimeOfVideo(v)
+          : clamp(v.currentTime, 0, getActiveDurationSec())
+      // The range's end comes before the scene's: a scene that ends where
+      // the range does must not advance to the next one.
+      if (enforceRange(v, t)) return
+      if (viewMode === 'edited' && maybeAdvanceEditedSegment(v)) return
+      currentTimeRef.current = t
+      paintTime(t)
+      followPlayhead(t)
+      syncMusicAudio(t, true)
+      syncCaptionOverlay()
+    }
+  }
+  const playbackStepRef = useRef(playbackStep)
+  playbackStepRef.current = playbackStep
   useEffect(() => {
     if (!isPlaying) return
     let raf = 0
     const tick = () => {
-      const v = activeVideo()
-      if (v && !v.paused && !isScrubbingRef.current && !isSourceSwapPendingRef.current) {
-        // Neither the selection nor the active scene is re-derived from `t`
-        // here: `t` is computed FROM the active scene, and the selection is
-        // the user's (see syncTimeFromVideo).
-        const t =
-          viewMode === 'edited'
-            ? editedTimeOfVideo(v)
-            : clamp(v.currentTime, 0, getActiveDurationSec())
-        // The range's end comes before the scene's: a scene that ends where
-        // the range does must not advance to the next one.
-        if (enforceRange(v, t)) {
-          raf = requestAnimationFrame(tick)
-          return
-        }
-        if (viewMode === 'edited' && maybeAdvanceEditedSegment(v)) {
-          raf = requestAnimationFrame(tick)
-          return
-        }
-        currentTimeRef.current = t
-        paintTime(t)
-        followPlayhead(t)
-        syncMusicAudio(t, true)
-        syncCaptionOverlay()
-      }
+      playbackStepRef.current()
       raf = requestAnimationFrame(tick)
     }
     raf = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(raf)
-  }, [isPlaying, previewSrc, previewSource, videoDuration, timeline, viewMode, cuts, pxPerSec])
+  }, [isPlaying])
 
   function currentEditedCut(): WorkingCut | null {
     return cuts.find((c) => c.id === editedActiveCutIdRef.current) ?? null
@@ -913,6 +917,11 @@ export function usePreviewPlayer({
       holdFrame(v)
       v.src = previewSrc
     }
+    // Named so the cleanup can drop it: a once-listener left on the element
+    // by a load that was superseded released the NEXT load's held frame early.
+    const onFirstSeeked = (): void => {
+      requestAnimationFrame(() => requestAnimationFrame(releaseHeldFrame))
+    }
     const onLoaded = () => {
       const range = playRangeRef.current
       if (!range) {
@@ -922,11 +931,7 @@ export function usePreviewPlayer({
       v.currentTime = range.in
       // The held frame goes once the new file shows its own: `seeked`, then
       // two frames for the compositor to put it on screen.
-      v.addEventListener(
-        'seeked',
-        () => requestAnimationFrame(() => requestAnimationFrame(releaseHeldFrame)),
-        { once: true }
-      )
+      v.addEventListener('seeked', onFirstSeeked, { once: true })
       setVideoDuration(v.duration || 0)
       // The exact moment the load was asked for: `range.in` through the
       // active scene. It used to paint the scene's START, so a scrub, a view
@@ -946,7 +951,10 @@ export function usePreviewPlayer({
     }
     if (v.readyState >= 1 && v.src === absSrc) onLoaded()
     else v.addEventListener('loadedmetadata', onLoaded, { once: true })
-    return () => v.removeEventListener('loadedmetadata', onLoaded)
+    return () => {
+      v.removeEventListener('loadedmetadata', onLoaded)
+      v.removeEventListener('seeked', onFirstSeeked)
+    }
   }, [previewSrc, editorPhase])
 
   /** Source-absolute time of whatever the active <video> is showing — the clock

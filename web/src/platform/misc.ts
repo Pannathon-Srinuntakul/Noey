@@ -135,12 +135,15 @@ export const log = {
     ring.push(line)
     if (ring.length > LOG_MAX) ring.shift()
     scheduleFlush()
-    console.debug(line)
+    // The console copy is a dev convenience; in a build the ring + storage
+    // are the log, and a production console full of project uids and file
+    // names is a leak to anyone looking over a shoulder at devtools.
+    if (import.meta.env.DEV) console.debug(line)
   },
   openFolder: async (): Promise<void> => {
     // No folder to open. Dump what we have so it can be copied out.
     flushLog()
-    console.log(ring.join('\n'))
+    if (import.meta.env.DEV) console.log(ring.join('\n'))
   }
 }
 

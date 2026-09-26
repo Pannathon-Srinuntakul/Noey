@@ -16,17 +16,47 @@
 
 import { splitFsPath } from './fs'
 
-let workerPromise: Promise<Worker> | null = null
+let current: Worker | null = null
 let seq = 0
 
-function spawn(): Worker {
-  return new Worker(new URL('./opfsWriteWorker.ts', import.meta.url), { type: 'module' })
-}
+type Pending = { resolve: () => void; reject: (err: Error) => void }
 
-/** One worker for the whole session — spawning per write would dominate. */
-function worker(): Promise<Worker> {
-  if (!workerPromise) workerPromise = Promise.resolve(spawn())
-  return workerPromise
+/** Calls awaiting a reply from `current`, by message id. */
+const pending = new Map<string, Pending>()
+
+/**
+ * One worker for the whole session — spawning per write would dominate.
+ *
+ * Its three listeners are attached once, here. `message` answers a call;
+ * `error` (an uncaught throw inside the worker, or a failure to load it) and
+ * `messageerror` (a reply that could not be deserialised) used to have no
+ * listener at all, so a worker that died left every caller's promise
+ * pending for ever — the render sat at its last percentage with no error.
+ * Now every outstanding call is rejected and the next call gets a fresh
+ * worker; the caller's own discard/retry logic takes it from there.
+ */
+function worker(): Worker {
+  if (current) return current
+  const w = new Worker(new URL('./opfsWriteWorker.ts', import.meta.url), { type: 'module' })
+  w.addEventListener('message', (e: MessageEvent) => {
+    const msg = e.data as { id?: string; ok?: boolean; error?: string }
+    const p = msg.id ? pending.get(msg.id) : undefined
+    if (!p) return
+    pending.delete(msg.id as string)
+    if (msg.ok) p.resolve()
+    else p.reject(new Error(msg.error || 'เขียนไฟล์ไม่สำเร็จ'))
+  })
+  const died = (why: string): void => {
+    if (current === w) current = null
+    w.terminate()
+    const waiting = [...pending.values()]
+    pending.clear()
+    for (const p of waiting) p.reject(new Error(`เขียนไฟล์ไม่สำเร็จ — ${why}`))
+  }
+  w.addEventListener('error', (e: ErrorEvent) => died(e.message || 'worker error'))
+  w.addEventListener('messageerror', () => died('unreadable reply'))
+  current = w
+  return w
 }
 
 /**
@@ -36,24 +66,28 @@ function worker(): Promise<Worker> {
  * id used to double as the message id, so two operations on the same file
  * could resolve each other's promise.
  */
-async function call(
+function call(
   op: string,
   payload: Record<string, unknown> = {},
   transfer: Transferable[] = []
 ): Promise<void> {
-  const w = await worker()
+  const w = worker()
   const id = `m${++seq}`
   return new Promise((resolve, reject) => {
-    const onMessage = (e: MessageEvent): void => {
-      const msg = e.data as { id: string; ok: boolean; error?: string }
-      if (msg.id !== id) return
-      w.removeEventListener('message', onMessage)
-      if (msg.ok) resolve()
-      else reject(new Error(msg.error || 'เขียนไฟล์ไม่สำเร็จ'))
+    pending.set(id, { resolve, reject })
+    try {
+      w.postMessage({ ...payload, id, op }, transfer)
+    } catch (err) {
+      pending.delete(id)
+      reject(err instanceof Error ? err : new Error(String(err)))
     }
-    w.addEventListener('message', onMessage)
-    w.postMessage({ ...payload, id, op }, transfer)
   })
+}
+
+/** Test seam: outstanding calls, and a way to kill the worker as the browser would. */
+export const __workerRpc = {
+  pendingCount: (): number => pending.size,
+  current: (): Worker | null => current
 }
 
 // ── which path does this browser take? ───────────────────────────────────────
@@ -85,12 +119,14 @@ export function writeCapability(): Promise<'writable' | 'worker' | 'none'> {
 
 // ── the two operations fs.ts needs ───────────────────────────────────────────
 
-async function toArrayBuffer(data: Uint8Array | Blob): Promise<ArrayBuffer> {
-  if (data instanceof Blob) return data.arrayBuffer()
+async function toArrayBuffer(data: Uint8Array): Promise<ArrayBuffer> {
   // Copy: the worker takes ownership of whatever is transferred, and the
   // caller's view may be a slice of a buffer it still uses.
   return data.slice().buffer as ArrayBuffer
 }
+
+/** A Blob crosses to the worker in slices of this size, never whole. */
+const BLOB_SLICE = 8 * 1024 * 1024
 
 /** Whole-file atomic write through the worker. */
 export async function workerWriteFile(
@@ -107,6 +143,14 @@ export async function workerWriteFile(
         const { done, value } = await reader.read()
         if (done) break
         const buf = await toArrayBuffer(value)
+        await call('chunk', { file, data: buf }, [buf])
+      }
+    } else if (data instanceof Blob) {
+      // Sliced: a staged source clip is a Blob, and `arrayBuffer()` on the
+      // whole of it put a multi-gigabyte file in the tab's memory to copy it
+      // into a store it was already in.
+      for (let at = 0; at < data.size; at += BLOB_SLICE) {
+        const buf = await data.slice(at, Math.min(data.size, at + BLOB_SLICE)).arrayBuffer()
         await call('chunk', { file, data: buf }, [buf])
       }
     } else {

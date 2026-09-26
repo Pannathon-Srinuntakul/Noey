@@ -21,7 +21,13 @@
  * concatenates streams, the composer draws frames and mixes audio separately.
  */
 
-import { projectFilePath, writeFileAtomic, deleteDir, readFile } from '../../platform/fs'
+import {
+  projectFilePath,
+  writeFileAtomic,
+  deleteDir,
+  deleteFile,
+  readFile
+} from '../../platform/fs'
 import { stageIntoStore, stagingDir } from '../../platform/picked'
 import { signalOf, throwIfAborted } from '../abort'
 import type { LocalClip, SidecarEvent } from '../../platform/types'
@@ -30,6 +36,7 @@ import { registerJob, type ProgressCallback } from '../index'
 import { blobForPath } from './probe'
 import { canDecodeSource, remuxToMp4 } from '../media'
 import { transcodeToH264 } from './transcode'
+import { ensureRoomFor } from '../../lib/storageQuota'
 
 /** Same ceilings as `packages/video/scene.py` and `timeline.py`. */
 const DUB_MAX_CLIP_SEC = 2 * 60 * 60
@@ -83,113 +90,148 @@ registerJob('ingest', async (job, emit: ProgressCallback): Promise<SidecarEvent>
 
   const signal = signalOf(job)
 
-  for (let i = 0; i < sources.length; i++) {
-    throwIfAborted(signal)
-    const src = sources[i]
-    // A picked file has to reach the store before anything else: a reload
-    // between here and the next step would otherwise lose it.
-    const stagedPath = await stageIntoStore(src, uid)
-    let blob = await blobForPath(stagedPath)
-    const name = (blob as File).name ?? `clip_${i}.mp4`
+  // Asked once, up front, with the sizes already known: every source becomes
+  // a second copy under normalized/ (a transcode can be larger), and finding
+  // out that it will not fit is better done here than as the browser's own
+  // QuotaExceededError three clips in. `ensureRoomFor` keeps its own margin.
+  let sourceBytes = 0
+  for (const src of sources) sourceBytes += (await blobForPath(src)).size
+  await ensureRoomFor(sourceBytes)
 
-    emit({ event: 'progress', stage: 'ingest', step: i + 1, total: sources.length, message: name })
+  // What THIS run wrote under normalized/, dropped again if it fails: a
+  // half-imported set is garbage the next attempt overwrites anyway, and it
+  // was left behind full-size with nothing listing it. The staged sources are
+  // deliberately NOT touched on failure — `pendingSources` still points at
+  // them and "ลองใหม่" re-runs this job from those paths.
+  const written: string[] = []
 
-    let info = await probeSource(blob)
-    if (!Number.isFinite(info.durationSec) || info.durationSec <= 0)
-      throw new Error(`อ่านความยาวของ ${name} ไม่ได้`)
+  try {
+    for (let i = 0; i < sources.length; i++) {
+      throwIfAborted(signal)
+      const src = sources[i]
+      // A picked file has to reach the store before anything else: a reload
+      // between here and the next step would otherwise lose it.
+      const stagedPath = await stageIntoStore(src, uid)
+      let blob = await blobForPath(stagedPath)
+      const name = (blob as File).name ?? `clip_${i}.mp4`
 
-    // Caps — same numbers, same sentences as the desktop.
-    if (
-      (mode === 'dub_first' || mode === 'highlight') &&
-      info.durationSec > DUB_MAX_CLIP_SEC + DUB_UPLOAD_TOLERANCE_SEC
-    ) {
-      throw new Error(
-        `คลิป ${name} ยาว ${info.durationSec.toFixed(0)}s เกินลิมิตต่อคลิป ${DUB_MAX_CLIP_SEC}s`
-      )
-    }
-    if (mode === 'talking_head' && info.durationSec > TALKING_HEAD_MAX_TOTAL_SEC) {
-      throw new Error(
-        `คลิป ${name} ยาว ${(info.durationSec / 3600).toFixed(1)} ชม. — โหมดนี้รองรับสูงสุด ` +
-          `${TALKING_HEAD_MAX_TOTAL_SEC / 3600} ชั่วโมงต่อโปรเจกต์ (รวมทุกไฟล์)`
-      )
-    }
-    totalSec += info.durationSec
+      emit({
+        event: 'progress',
+        stage: 'ingest',
+        step: i + 1,
+        total: sources.length,
+        message: name
+      })
 
-    // Everything ends up as H.264 in an MP4 — see PASSTHROUGH_CODEC above.
-    let isMp4 = extOf(name) === '.mp4'
-    let alreadyStored = false
-    if (info.codec === PASSTHROUGH_CODEC) {
-      // Already the right pictures; only the container may be wrong.
-      if (!isMp4) {
+      let info = await probeSource(blob)
+      if (!Number.isFinite(info.durationSec) || info.durationSec <= 0)
+        throw new Error(`อ่านความยาวของ ${name} ไม่ได้`)
+
+      // Caps — same numbers, same sentences as the desktop.
+      if (
+        (mode === 'dub_first' || mode === 'highlight') &&
+        info.durationSec > DUB_MAX_CLIP_SEC + DUB_UPLOAD_TOLERANCE_SEC
+      ) {
+        throw new Error(
+          `คลิป ${name} ยาว ${info.durationSec.toFixed(0)}s เกินลิมิตต่อคลิป ${DUB_MAX_CLIP_SEC}s`
+        )
+      }
+      if (mode === 'talking_head' && info.durationSec > TALKING_HEAD_MAX_TOTAL_SEC) {
+        throw new Error(
+          `คลิป ${name} ยาว ${(info.durationSec / 3600).toFixed(1)} ชม. — โหมดนี้รองรับสูงสุด ` +
+            `${TALKING_HEAD_MAX_TOTAL_SEC / 3600} ชั่วโมงต่อโปรเจกต์ (รวมทุกไฟล์)`
+        )
+      }
+      totalSec += info.durationSec
+
+      // Everything ends up as H.264 in an MP4 — see PASSTHROUGH_CODEC above.
+      const mp4Rel = `normalized/norm_${String(i).padStart(3, '0')}.mp4`
+      let isMp4 = extOf(name) === '.mp4'
+      let alreadyStored = false
+      if (info.codec === PASSTHROUGH_CODEC) {
+        // Already the right pictures; only the container may be wrong.
+        if (!isMp4) {
+          emit({
+            event: 'progress',
+            stage: 'transcode',
+            step: i + 1,
+            total: sources.length,
+            message: `กำลังจัดรูปแบบ ${name} เป็น MP4…`
+          })
+          // Streamed into its final home — the remux used to build the whole
+          // MP4 in memory (twice, with the in-memory faststart) and then
+          // copy it into the store.
+          written.push(mp4Rel)
+          const remuxed = await remuxToMp4(blob, signal, projectFilePath(uid, mp4Rel))
+          if (remuxed) {
+            blob = remuxed
+            info = await probeSource(blob)
+            isMp4 = true
+            alreadyStored = true
+          }
+          // A remux that fails is not fatal: the pictures are already editable,
+          // so the original container is kept rather than the import refused.
+        }
+      } else if (await canDecodeSource(info)) {
         emit({
           event: 'progress',
           stage: 'transcode',
           step: i + 1,
           total: sources.length,
-          message: `กำลังจัดรูปแบบ ${name} เป็น MP4…`
+          message: `กำลังแปลง ${name} เป็น MP4…`
         })
-        const remuxed = await remuxToMp4(blob, signal)
-        if (remuxed) {
-          blob = remuxed
-          info = await probeSource(blob)
-          isMp4 = true
-        }
-        // A remux that fails is not fatal: the pictures are already editable,
-        // so the original container is kept rather than the import refused.
+        // Streamed straight into its final home -- the conversion no longer
+        // returns (or ever holds) the whole MP4 in memory.
+        written.push(mp4Rel)
+        await transcodeToH264(blob, info, signal, projectFilePath(uid, mp4Rel))
+        const converted = await readFile(projectFilePath(uid, mp4Rel))
+        if (!converted) throw new Error('แปลงไฟล์ไม่สำเร็จ')
+        blob = converted
+        info = await probeSource(blob)
+        isMp4 = true
+        alreadyStored = true
+      } else {
+        throw new Error(undecodableMessage(name, info.codec))
       }
-    } else if (await canDecodeSource(info)) {
-      emit({
-        event: 'progress',
-        stage: 'transcode',
-        step: i + 1,
-        total: sources.length,
-        message: `กำลังแปลง ${name} เป็น MP4…`
+
+      // The stored name states what the file IS, so nothing downstream has to
+      // sniff it: `.mp4` unless a remux failed and the original container stayed.
+      const rel = isMp4 ? mp4Rel : `normalized/norm_${String(i).padStart(3, '0')}${extOf(name)}`
+      if (!alreadyStored) {
+        written.push(rel)
+        await writeFileAtomic(projectFilePath(uid, rel), blob)
+      }
+
+      const id = `clip${i}`
+      clips.push({
+        id,
+        file: rel,
+        durationSec: info.durationSec,
+        width: info.width,
+        height: info.height,
+        fps: info.fps,
+        hasAudio: info.hasAudio
       })
-      // Streamed straight into its final home -- the conversion no longer
-      // returns (or ever holds) the whole MP4 in memory.
-      const transRel = `normalized/norm_${String(i).padStart(3, '0')}.mp4`
-      await transcodeToH264(blob, info, signal, projectFilePath(uid, transRel))
-      const written = await readFile(projectFilePath(uid, transRel))
-      if (!written) throw new Error('แปลงไฟล์ไม่สำเร็จ')
-      blob = written
-      info = await probeSource(blob)
-      isMp4 = true
-      alreadyStored = true
-    } else {
-      throw new Error(undecodableMessage(name, info.codec))
+      manifest.push({ id, file: rel, original: name })
     }
 
-    // The stored name states what the file IS, so nothing downstream has to
-    // sniff it: `.mp4` unless a remux failed and the original container stayed.
-    const rel = `normalized/norm_${String(i).padStart(3, '0')}${isMp4 ? '.mp4' : extOf(name)}`
-    if (!alreadyStored) await writeFileAtomic(projectFilePath(uid, rel), blob)
-
-    const id = `clip${i}`
-    clips.push({
-      id,
-      file: rel,
-      durationSec: info.durationSec,
-      width: info.width,
-      height: info.height,
-      fps: info.fps,
-      hasAudio: info.hasAudio
-    })
-    manifest.push({ id, file: rel, original: name })
-  }
-
-  // Project total, checked after the per-clip cap: many short clips add up.
-  if (mode === 'dub_first' || mode === 'highlight') {
-    if (totalSec > DUB_FIRST_MAX_TOTAL_SEC) {
+    // Project total, checked after the per-clip cap: many short clips add up.
+    if (mode === 'dub_first' || mode === 'highlight') {
+      if (totalSec > DUB_FIRST_MAX_TOTAL_SEC) {
+        throw new Error(
+          `คลิปทั้งหมดรวมกันยาว ${totalSec.toFixed(0)}s — โหมดนี้รองรับสูงสุด ` +
+            `${DUB_FIRST_MAX_TOTAL_SEC / 60} นาทีต่อโปรเจกต์ กรุณาลดจำนวน/ความยาวคลิป`
+        )
+      }
+    } else if (totalSec > TALKING_HEAD_MAX_TOTAL_SEC) {
       throw new Error(
-        `คลิปทั้งหมดรวมกันยาว ${totalSec.toFixed(0)}s — โหมดนี้รองรับสูงสุด ` +
-          `${DUB_FIRST_MAX_TOTAL_SEC / 60} นาทีต่อโปรเจกต์ กรุณาลดจำนวน/ความยาวคลิป`
+        `คลิปทั้งหมดรวมกันยาว ${(totalSec / 3600).toFixed(1)} ชม. — รองรับสูงสุด ` +
+          `${TALKING_HEAD_MAX_TOTAL_SEC / 3600} ชั่วโมงต่อโปรเจกต์ กรุณาลดจำนวน/ความยาวคลิป`
       )
     }
-  } else if (totalSec > TALKING_HEAD_MAX_TOTAL_SEC) {
-    throw new Error(
-      `คลิปทั้งหมดรวมกันยาว ${(totalSec / 3600).toFixed(1)} ชม. — รองรับสูงสุด ` +
-        `${TALKING_HEAD_MAX_TOTAL_SEC / 3600} ชั่วโมงต่อโปรเจกต์ กรุณาลดจำนวน/ความยาวคลิป`
-    )
+  } catch (err) {
+    for (const rel of written) await deleteFile(projectFilePath(uid, rel)).catch(() => undefined)
+    throw err
   }
 
   await writeFileAtomic(

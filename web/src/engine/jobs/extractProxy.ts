@@ -15,11 +15,12 @@
  * to map the model's timestamps back onto the original footage.
  */
 
-import { projectFilePath, writeFileAtomic } from '../../platform/fs'
+import { openStagedWrite, projectFilePath, writeFileAtomic } from '../../platform/fs'
 import type { SidecarEvent } from '../../platform/types'
 import { encodeVideo, openVideo, probeSource } from '../media'
 import { registerJob, type ProgressCallback } from '../index'
 import { signalOf, throwIfAborted } from '../abort'
+import { even } from '../util'
 import { blobForPath } from './probe'
 
 /** Same as proxy.py: 480 tall, 12 fps, silent. */
@@ -40,10 +41,6 @@ interface ProxyEntry {
   file: string
   durationSec: number
   order: number
-}
-
-function even(n: number): number {
-  return n % 2 === 0 ? n : n - 1
 }
 
 registerJob('extract-proxy', async (job, emit: ProgressCallback): Promise<SidecarEvent> => {
@@ -102,8 +99,11 @@ registerJob('extract-proxy', async (job, emit: ProgressCallback): Promise<Sideca
     const stamps: number[] = []
     for (let f = 0; f < frames; f++) stamps.push(f / PROXY_FPS)
     const pass = reader.framesAt(stamps)
+    // Streamed into its final home, like every other encode: a proxy is
+    // small per minute but a 2 h source still made one whole file in RAM.
+    const staged = await openStagedWrite(projectFilePath(uid, `proxy/${src.id}.mp4`))
     try {
-      const out = await encodeVideo(
+      await encodeVideo(
         frames,
         async (ctx) => {
           const frame = (await pass.next()).value ?? null
@@ -112,7 +112,7 @@ registerJob('extract-proxy', async (job, emit: ProgressCallback): Promise<Sideca
           return true
         },
         { width, height, fps: PROXY_FPS, bitrate: PROXY_BITRATE, signal },
-        {},
+        { writable: staged.writable },
         (done, total) => {
           emit({
             event: 'progress',
@@ -123,8 +123,10 @@ registerJob('extract-proxy', async (job, emit: ProgressCallback): Promise<Sideca
           })
         }
       )
-      if (!out) throw new Error('สร้างไฟล์ตัวอย่างไม่สำเร็จ')
-      await writeFileAtomic(projectFilePath(uid, `proxy/${src.id}.mp4`), out)
+      await staged.publish()
+    } catch (err) {
+      await staged.discard().catch(() => undefined)
+      throw err
     } finally {
       await pass.return(undefined).catch(() => undefined)
       reader.close()

@@ -1,4 +1,4 @@
-import { Plus } from 'lucide-react'
+import { CloudOff, Plus } from 'lucide-react'
 import { useJobs } from '../lib/jobs'
 import { useRouter } from '../lib/router'
 import { useDeleteProject } from '../lib/useDeleteProject'
@@ -93,13 +93,31 @@ export default function ProjectsPage(): React.JSX.Element {
               }
               // Running jobs already have the full-width bar above.
               if (isBusy(job.step as ProjectStep)) return null
-              return (
+              const card = (
                 <ProjectGridCard
                   key={p.uid}
                   job={job}
                   onOpen={() => openProject(p.uid, job.step as ProjectStep)}
                   onDelete={() => void requestDelete(p.uid, p.name)}
                 />
+              )
+              // A project whose files did not reach the server (the sync and
+              // its retry both failed — `syncPending`, lib/projectSync.ts)
+              // exists only in this browser until the next boot or focus
+              // retries it. The badge is what says so; the card itself is
+              // not this page's to change.
+              if (!job.project.syncPending) return card
+              return (
+                <div key={p.uid} className="relative w-full max-w-[325px]">
+                  {card}
+                  <span
+                    title="ไฟล์ของโปรเจกต์นี้ยังไม่ได้สำรองขึ้นเซิร์ฟเวอร์ — จะลองใหม่เมื่อเชื่อมต่อได้"
+                    className="pointer-events-auto absolute right-3 top-3 z-10 flex items-center gap-1 rounded-full border border-border-faint bg-surface/90 px-2 py-0.5 text-[11px] text-muted"
+                  >
+                    <CloudOff size={11} />
+                    ยังไม่ได้สำรอง
+                  </span>
+                </div>
               )
             })}
           </div>

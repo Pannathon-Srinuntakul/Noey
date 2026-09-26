@@ -18,7 +18,7 @@ import {
   deleteFile
 } from '../../platform/fs'
 import type { SidecarEvent } from '../../platform/types'
-import { extractSpeechWav } from '../audio'
+import { speechWavStream } from '../audio'
 import { probeSource } from '../media'
 import { registerJob, type ProgressCallback } from '../index'
 import { signalOf, throwIfAborted } from '../abort'
@@ -60,10 +60,12 @@ registerJob('extract-audio', async (job, emit: ProgressCallback): Promise<Sideca
     if (!info.hasAudio) {
       throw new Error(`คลิป ${entry.name} ไม่มีเสียง — โหมดนี้ต้องมีเสียงพูดในวิดีโอ`)
     }
-    const wav = await extractSpeechWav(source)
+    // Decoded packet by packet and written as a stream: the whole source video
+    // used to be read into memory to get at its audio (audio.ts).
+    const { stream, bytes } = await speechWavStream(source, signal)
     const name = `audio_${String(i).padStart(3, '0')}.wav`
-    await writeFileAtomic(projectFilePath(uid, `audio/${name}`), wav)
-    wavs.push({ file: `audio/${name}`, name, bytes: wav.byteLength })
+    await writeFileAtomic(projectFilePath(uid, `audio/${name}`), stream)
+    wavs.push({ file: `audio/${name}`, name, bytes })
   }
 
   return { event: 'done', wavs }

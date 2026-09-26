@@ -12,7 +12,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { BrandMark } from '../components/ui/BrandMark'
 import { detectCapabilities, type Capabilities } from './capability'
-import { ensureProjectsRoot, requestPersistentStorage } from './fs'
+import { ensureProjectsRoot, requestPersistentStorage, sweepStaleFiles } from './fs'
 
 type State =
   | { phase: 'checking' }
@@ -83,6 +83,9 @@ export function WebGate({ children }: { children: ReactNode }): React.JSX.Elemen
         }
         await registerMediaWorker()
         await ensureProjectsRoot()
+        // Leftovers of a tab that died mid-write (.part, .clips_next, orphaned
+        // staging) — swept before any job can start writing new ones.
+        void sweepStaleFiles().catch(() => undefined)
         // Ask before anything is stored, not after: this store holds the only
         // copy of the user's footage, and without it the browser is free to
         // evict the lot under disk pressure. A refusal is not fatal — the

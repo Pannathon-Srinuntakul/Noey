@@ -17,10 +17,39 @@
 # so every path falls back to index.html. What the rest of this file exists for
 # is the two files that must NOT be treated like ordinary assets.
 
+# The response headers every answer carries. nginx's `add_header` is NOT
+# inherited into a `location` that sets any add_header of its own — the
+# inner block's list REPLACES the outer one — so each location below that
+# adds a Cache-Control repeats these. Change them in every copy.
+#
+#   nosniff            — a served file is only ever what its type says.
+#   Referrer-Policy    — a project uid in a path never reaches another site.
+#   Permissions-Policy — camera and geolocation are never used; the
+#                        microphone IS (the voiceover recorder), so it is
+#                        deliberately not listed.
+#   frame-ancestors    — the meta CSP in index.html cannot express this
+#                        directive (browsers ignore it there), and it is the
+#                        one that stops the editor being framed by another
+#                        site for clickjacking.
+
 server {
     listen ${PORT};
     server_name _;
     root /usr/share/nginx/html;
+
+    # Text assets compressed on the way out. The main bundle is a few MB of
+    # JavaScript; on a phone over mobile data that is the difference between
+    # the editor opening and the viewer giving up. Media is never in the list:
+    # it is already compressed, and it is served by the worker anyway.
+    gzip on;
+    gzip_types application/javascript text/css image/svg+xml application/json application/wasm;
+    gzip_min_length 1024;
+    gzip_vary on;
+
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header Permissions-Policy "camera=(), geolocation=()" always;
+    add_header Content-Security-Policy "frame-ancestors 'none'" always;
 
     # The service worker must be served from the ROOT path, uncached.
     #
@@ -33,6 +62,10 @@ server {
     location = /media-sw.js {
         add_header Cache-Control "no-store" always;
         add_header Service-Worker-Allowed "/" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        add_header Permissions-Policy "camera=(), geolocation=()" always;
+        add_header Content-Security-Policy "frame-ancestors 'none'" always;
         try_files $uri =404;
     }
 
@@ -40,11 +73,30 @@ server {
     # points at files a new deploy has removed.
     location = /index.html {
         add_header Cache-Control "no-store" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        add_header Permissions-Policy "camera=(), geolocation=()" always;
+        add_header Content-Security-Policy "frame-ancestors 'none'" always;
     }
 
     # Hashed filenames — safe to keep for a year.
     location /assets/ {
         add_header Cache-Control "public, max-age=31536000, immutable" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        add_header Permissions-Policy "camera=(), geolocation=()" always;
+        add_header Content-Security-Policy "frame-ancestors 'none'" always;
+    }
+
+    # The caption fonts (public/fonts, unhashed names). A week: they change
+    # rarely, and a stale one costs a caption preview a font swap, not
+    # correctness — the render bakes the font it is given.
+    location /fonts/ {
+        add_header Cache-Control "public, max-age=604800" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        add_header Permissions-Policy "camera=(), geolocation=()" always;
+        add_header Content-Security-Policy "frame-ancestors 'none'" always;
     }
 
     # /media/ belongs to the service worker alone. Before the worker controls

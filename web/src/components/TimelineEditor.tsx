@@ -894,7 +894,6 @@ export const VideoTimelineEditor = memo(function VideoTimelineEditor({
     onTouchScrub: playerTouchScrub
   } = usePreviewPlayer({
     uid,
-    timeline,
     cuts,
     cutsRef,
     editedSegments,
@@ -907,7 +906,6 @@ export const VideoTimelineEditor = memo(function VideoTimelineEditor({
     setSelectedId,
     previewSource,
     setPreviewSource,
-    videoDuration,
     setVideoDuration,
     currentTimeRef,
     captionLinesRef,
@@ -943,10 +941,15 @@ export const VideoTimelineEditor = memo(function VideoTimelineEditor({
     fitToScreen()
   }, [editorPhase])
 
+  const filmstripCapRef = useRef<number | null>(null)
   // The filmstrip half of the preparing gate. Bounded at 8s: past that the
   // in-lane pending wash takes over and the user edits while lanes fill in.
   useEffect(() => {
-    if (!filmstripGateArmed || editorPhase === 'ready') return
+    if (!filmstripGateArmed || editorPhase === 'ready') {
+      window.clearTimeout(filmstripCapRef.current ?? undefined)
+      filmstripCapRef.current = null
+      return
+    }
     if (filmstrip.status === 'ready' || filmstrip.status === 'error' || filmstrip.total === 0) {
       setEditorPhase('ready')
       return
@@ -956,9 +959,14 @@ export const VideoTimelineEditor = memo(function VideoTimelineEditor({
         ? `กำลังเตรียมภาพตัวอย่างวิดีโอ… (${Math.min(filmstrip.done + 1, filmstrip.total)}/${filmstrip.total})`
         : 'กำลังเตรียมภาพตัวอย่างวิดีโอ…'
     )
-    const cap = window.setTimeout(() => setEditorPhase('ready'), 8000)
-    return () => window.clearTimeout(cap)
+    // Armed ONCE per gate, not per progress tick: keyed on `filmstrip.done`
+    // the timer restarted for every clip, so N clips could hold the preparing
+    // screen for N × 8 s.
+    if (filmstripCapRef.current === null) {
+      filmstripCapRef.current = window.setTimeout(() => setEditorPhase('ready'), 8000)
+    }
   }, [filmstripGateArmed, editorPhase, filmstrip.status, filmstrip.done, filmstrip.total])
+  useEffect(() => () => window.clearTimeout(filmstripCapRef.current ?? undefined), [])
 
   useEffect(() => {
     let cancelled = false
@@ -1038,8 +1046,9 @@ export const VideoTimelineEditor = memo(function VideoTimelineEditor({
       return
     }
     let cancelled = false
+    const abort = new AbortController()
     const src = window.noey.media.urlFor(uid, music.path)
-    void decodeAudioPeaks(src)
+    void decodeAudioPeaks(src, 400, abort.signal)
       .then(({ peaks, durationSec }) => {
         if (cancelled) return
         setMusicPeaks(peaks)
@@ -1060,6 +1069,7 @@ export const VideoTimelineEditor = memo(function VideoTimelineEditor({
       })
     return () => {
       cancelled = true
+      abort.abort()
     }
   }, [music?.path, uid])
 

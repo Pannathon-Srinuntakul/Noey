@@ -129,10 +129,20 @@ export interface KeptHistory {
 }
 
 const keptHistory = new Map<string, KeptHistory>()
+/** Projects whose history is kept for the session. Each entry holds full
+ * snapshots, so a long session over many projects is bounded: the least
+ * recently left project's history goes first. */
+const KEPT_PROJECTS = 8
 
 export function keepHistory(uid: string, history: KeptHistory): void {
-  if (history.undo.length === 0 && history.redo.length === 0) keptHistory.delete(uid)
-  else keptHistory.set(uid, history)
+  keptHistory.delete(uid)
+  if (history.undo.length === 0 && history.redo.length === 0) return
+  keptHistory.set(uid, history)
+  while (keptHistory.size > KEPT_PROJECTS) {
+    const oldest = keptHistory.keys().next().value
+    if (oldest === undefined) break
+    keptHistory.delete(oldest)
+  }
 }
 
 /** The history to resume, or null — and a stale entry is dropped either way. */

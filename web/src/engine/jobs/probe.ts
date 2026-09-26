@@ -43,13 +43,26 @@ export async function blobForPath(path: string): Promise<Blob> {
     throw new Error('เซสชันหมดอายุ กรุณารีเฟรชหน้าเว็บแล้วลองใหม่')
   }
   if (!res.ok) throw new Error(`ไม่พบไฟล์ ${path}`)
-  const blob = await res.blob()
-  try {
-    await writeFileAtomic(path, blob)
-  } catch {
-    // A cache write that fails costs speed, not correctness.
+  // The body is piped into the store as it arrives and the handle-backed File
+  // comes back: `res.blob()` materialised the whole download first, which for
+  // a source clip is the whole clip. The write is the cache; a failure there
+  // costs speed, not correctness — the bytes are fetched once more, whole.
+  if (res.body) {
+    try {
+      await writeFileAtomic(path, res.body)
+      const cached = await readFile(path)
+      if (cached) return cached
+    } catch {
+      // fall through to the plain download
+    }
+  } else {
+    const blob = await res.blob()
+    await writeFileAtomic(path, blob).catch(() => undefined)
+    return blob
   }
-  return blob
+  const again = await fetch(url)
+  if (!again.ok) throw new Error(`ไม่พบไฟล์ ${path}`)
+  return again.blob()
 }
 
 registerJob('probe', async (job): Promise<SidecarEvent> => {

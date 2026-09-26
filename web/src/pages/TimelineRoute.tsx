@@ -44,6 +44,21 @@ export default function TimelineRoute({ uid }: { uid: string }): React.JSX.Eleme
     job.openEditor()
   }, [job, ready, uid])
 
+  // Another tab holds this project (lib/projectLock.ts): openEditor never
+  // flips `ready`, so this screen would sit on "กำลังเปิดตัวแก้ไข…" forever.
+  // The pipeline has already shown the toast; go back to the project page.
+  // Only a refusal answered AFTER this mount counts: the flag from the last
+  // refusal is still published when the route mounts again, and reading it
+  // as an answer sent the user straight back before the new request (which
+  // openEditor above has just made) was even answered.
+  const lockedBefore = useRef<boolean | undefined>(undefined)
+  useEffect(() => {
+    const now = job?.lockedByOtherTab ?? false
+    const before = lockedBefore.current
+    lockedBefore.current = now
+    if (before === false && now) navigate({ name: 'detail', uid })
+  }, [job?.lockedByOtherTab, navigate, uid])
+
   // One identity for the editor's life. `job` is a new object on every jobs
   // publish — a draft save is one — so a plain closure changed every time and
   // re-rendered the whole (memoized) editor for nothing. Declared above the

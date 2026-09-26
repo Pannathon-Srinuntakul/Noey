@@ -20,26 +20,62 @@
  * music bed appears — so nothing is scaled here either.
  */
 
-import { encodeVideo, openVideo, probeSource, remuxWithAudio } from './media'
+import { demuxAudioOnly, encodeVideo, openVideo, probeSource, remuxWithAudio } from './media'
+import { decodeAudioStreamed } from './audioStream'
+import { wav16Bytes, wav16Chunks } from './pcm'
 import { blobForPath } from './jobs/probe'
 
 /** Everything downstream (the mux, the encoder) works at this rate. */
-const MIX_SAMPLE_RATE = 48000
+export const MIX_SAMPLE_RATE = 48000
 const MIX_CHANNELS = 2
 
 /** ElevenLabs Scribe's fast path — matches `audio_extract.py`. */
 export const STT_SAMPLE_RATE = 16000
 
 /** Decode any audio-bearing blob at the mix's rate. */
-export async function decodeBlob(blob: Blob): Promise<AudioBuffer> {
-  return decode(blob, MIX_SAMPLE_RATE, MIX_CHANNELS)
+export async function decodeBlob(blob: Blob, signal?: AbortSignal): Promise<AudioBuffer> {
+  return decode(blob, MIX_SAMPLE_RATE, MIX_CHANNELS, signal)
 }
 
-async function decode(blob: Blob, sampleRate: number, channels: number): Promise<AudioBuffer> {
-  const bytes = await blob.arrayBuffer()
+/**
+ * Three ways in, cheapest first.
+ *
+ *   streamed     packets decoded one at a time into a buffer sized from the
+ *                track (`audioStream.ts`). Memory is the output alone. Mono
+ *                is mixed down here when asked for.
+ *   audio-only   the track packet-copied into a small MP4, then
+ *                `decodeAudioData` — for a codec the streamed decoder will not
+ *                open. Whole-file, but the file is the audio, not the video.
+ *   whole blob   the original path, kept for the audio-only file (a music bed,
+ *                a voiceover) whose whole size IS its audio, and for a
+ *                container the muxer cannot carry.
+ *
+ * `decodeAudioData` returns the file's own channel count; `channels` only
+ * bounds the streamed result. Callers that need one layout mix down after.
+ */
+async function decode(
+  blob: Blob,
+  sampleRate: number,
+  channels: 1 | 2,
+  signal?: AbortSignal
+): Promise<AudioBuffer> {
+  try {
+    const streamed = await decodeAudioStreamed(blob, { sampleRate, channels, signal })
+    if (streamed) return streamed
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') throw err
+    logDecode(`streamed decode failed, falling back: ${String(err)}`)
+  }
+  const audioOnly = await demuxAudioOnly(blob, signal)
+  const bytes = await (audioOnly ?? blob).arrayBuffer()
   // A one-frame context just to decode; the real graph is built after.
   const probe = new OfflineAudioContext(channels, 1, sampleRate)
   return probe.decodeAudioData(bytes)
+}
+
+function logDecode(line: string): void {
+  if (typeof window === 'undefined' || !window.noey?.log) return
+  void window.noey.log.write('audio', line)
 }
 
 export interface MusicMixOptions {
@@ -162,18 +198,32 @@ export async function renderMix(spec: MixSpec): Promise<AudioBuffer | null> {
  * browser equivalent, so this normalises by peak instead — enough to stop a
  * quietly-recorded clip transcribing badly, without pretending to be EBU R128.
  */
-export async function extractSpeechWav(source: Blob): Promise<Uint8Array> {
-  const decoded = await decode(source, STT_SAMPLE_RATE, 1)
+export async function extractSpeechWav(source: Blob, signal?: AbortSignal): Promise<Uint8Array> {
+  const { stream, bytes } = await speechWavStream(source, signal)
+  const out = new Uint8Array(bytes)
+  let at = 0
+  const reader = stream.getReader()
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    out.set(value, at)
+    at += value.byteLength
+  }
+  return out
+}
 
-  const frames = decoded.length
-  const ctx = new OfflineAudioContext(1, frames, STT_SAMPLE_RATE)
-  const src = ctx.createBufferSource()
-  src.buffer = decoded
-  src.connect(ctx.destination)
-  src.start(0)
-  const mono = await ctx.startRendering()
+/**
+ * The same WAV as a stream, with its size known up front.
+ *
+ * The file is produced in slices from the decoded samples as the writer
+ * pulls, so a long track exists in memory once (the samples), not twice.
+ */
+export async function speechWavStream(
+  source: Blob,
+  signal?: AbortSignal
+): Promise<{ stream: ReadableStream<Uint8Array>; bytes: number }> {
+  const samples = await monoSamples(await decode(source, STT_SAMPLE_RATE, 1, signal))
 
-  const samples = mono.getChannelData(0)
   let peak = 0
   for (let i = 0; i < samples.length; i++) {
     const a = Math.abs(samples[i])
@@ -182,37 +232,30 @@ export async function extractSpeechWav(source: Blob): Promise<Uint8Array> {
   // Leave 1.5 dB of headroom, the same margin loudnorm's TP=-1.5 keeps.
   const gain = peak > 0 ? Math.min(8, 0.84 / peak) : 1
 
-  return encodeWav16(samples, gain, STT_SAMPLE_RATE)
+  const chunks = wav16Chunks(samples, gain, STT_SAMPLE_RATE)
+  const stream = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      const next = chunks.next()
+      if (next.done) controller.close()
+      else controller.enqueue(next.value)
+    }
+  })
+  return { stream, bytes: wav16Bytes(samples.length) }
 }
 
-/** 16-bit PCM WAV. */
-function encodeWav16(samples: Float32Array, gain: number, sampleRate: number): Uint8Array {
-  const bytes = new Uint8Array(44 + samples.length * 2)
-  const view = new DataView(bytes.buffer)
-  const ascii = (offset: number, text: string): void => {
-    for (let i = 0; i < text.length; i++) view.setUint8(offset + i, text.charCodeAt(i))
-  }
-  ascii(0, 'RIFF')
-  view.setUint32(4, 36 + samples.length * 2, true)
-  ascii(8, 'WAVE')
-  ascii(12, 'fmt ')
-  view.setUint32(16, 16, true)
-  view.setUint16(20, 1, true) // PCM
-  view.setUint16(22, 1, true) // mono
-  view.setUint32(24, sampleRate, true)
-  view.setUint32(28, sampleRate * 2, true)
-  view.setUint16(32, 2, true)
-  view.setUint16(34, 16, true)
-  ascii(36, 'data')
-  view.setUint32(40, samples.length * 2, true)
-
-  let offset = 44
-  for (let i = 0; i < samples.length; i++) {
-    const v = Math.max(-1, Math.min(1, samples[i] * gain))
-    view.setInt16(offset, v < 0 ? v * 0x8000 : v * 0x7fff, true)
-    offset += 2
-  }
-  return bytes
+/**
+ * One channel of samples. The streamed decoder already hands back mono; the
+ * `decodeAudioData` fallback returns the file's own layout, and the mix-down
+ * is the Web Audio one so the two paths agree.
+ */
+async function monoSamples(decoded: AudioBuffer): Promise<Float32Array> {
+  if (decoded.numberOfChannels === 1) return decoded.getChannelData(0)
+  const ctx = new OfflineAudioContext(1, decoded.length, decoded.sampleRate)
+  const src = ctx.createBufferSource()
+  src.buffer = decoded
+  src.connect(ctx.destination)
+  src.start(0)
+  return (await ctx.startRendering()).getChannelData(0)
 }
 
 /** Decode a file already in the project store. */

@@ -1,7 +1,13 @@
 import { useState } from 'react'
 import { Smartphone, Upload } from 'lucide-react'
 import { cn } from '../../lib/cn'
-import { pickVideoFiles, toPickedVideoFiles, type PickedVideoFile } from '../../lib/pickVideoFiles'
+import {
+  pickVideoFilesDetailed,
+  toPickedVideoFiles,
+  toPickedVideoFilesDetailed,
+  type PickedVideoFile
+} from '../../lib/pickVideoFiles'
+import { useToast } from '../../lib/toast'
 import {
   SOFT_CAP_SEC,
   capSecFor,
@@ -34,8 +40,21 @@ export function WizardStepFiles({
   const { session } = useJobs()
   const { files } = state
 
+  const { showToast } = useToast()
   const add = (picked: PickedVideoFile[]): void => {
     if (picked.length > 0) setFiles((prev) => [...prev, ...picked.map(toWizardFile)])
+  }
+  // A file the picker refused used to vanish without a word — on Windows a
+  // .mov often arrives with an empty MIME type and looked like a dead drop.
+  const addDetailed = ({
+    picked,
+    rejected
+  }: {
+    picked: PickedVideoFile[]
+    rejected: string[]
+  }): void => {
+    add(picked)
+    if (rejected.length > 0) showToast({ text: `ข้ามไฟล์ที่ไม่ใช่วิดีโอ: ${rejected.join(', ')}` })
   }
 
   const total = totalDurationSec(files)
@@ -52,7 +71,7 @@ export function WizardStepFiles({
       <div className="flex min-w-0 flex-1 flex-col gap-4">
         <button
           type="button"
-          onClick={() => void pickVideoFiles().then(add)}
+          onClick={() => void pickVideoFilesDetailed().then(addDetailed)}
           onDragOver={(e) => {
             e.preventDefault()
             setDragOver(true)
@@ -61,7 +80,7 @@ export function WizardStepFiles({
           onDrop={(e) => {
             e.preventDefault()
             setDragOver(false)
-            add(toPickedVideoFiles(Array.from(e.dataTransfer.files)))
+            addDetailed(toPickedVideoFilesDetailed(Array.from(e.dataTransfer.files)))
           }}
           className={cn(
             'flex h-[200px] shrink-0 flex-col items-center justify-center gap-3 rounded-md border border-dashed transition-colors duration-state ease-out',

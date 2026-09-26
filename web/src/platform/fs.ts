@@ -155,16 +155,20 @@ export async function fileSize(path: string): Promise<number | null> {
 }
 
 /**
- * Write bytes, then publish under the real name.
+ * Write bytes so that the file EXISTS only once it is COMPLETE.
  *
- * Same contract the desktop's `atomic.py` gives every render output: a file
- * that EXISTS is COMPLETE. Readers here are the service worker (a `<video>`
- * that opens a half-written file plays a few seconds and stalls) and the UI's
- * own "is it rendered yet" probes, so the guarantee has to survive the port.
+ * Same contract the desktop's `atomic.py` gives every render output. Readers
+ * here are the service worker (a `<video>` that opens a half-written file
+ * plays a few seconds and stalls) and the UI's own "is it rendered yet"
+ * probes, so the guarantee has to survive the port.
  *
- * OPFS has no rename, so "publish" is a copy from the staging file followed by
- * deleting it. The window where the destination is incomplete is one
- * `write()` call rather than the whole encode.
+ * On the main-thread path that is what `createWritable()` already does: the
+ * stream writes a swap file and the destination is replaced on `close()`, so
+ * `abort()` — or a tab killed mid-write — leaves the old file untouched. This
+ * used to write a `.part` and then COPY it over the destination, every file
+ * twice, for a guarantee the API was already giving. The worker path
+ * (`createSyncAccessHandle`) has no swap file, so it still stages and then
+ * renames — see `opfsWriteWorker.ts:publish`.
  */
 export async function writeFileAtomic(
   path: string,
@@ -183,9 +187,8 @@ export async function writeFileAtomic(
   const dir = await dirFor(segments, { create: true })
   if (!dir) throw new Error(`cannot create directory for ${path}`)
 
-  const stagingName = `.${name}.part`
-  const staging = await dir.getFileHandle(stagingName, { create: true })
-  const writable = await staging.createWritable()
+  const dest = await dir.getFileHandle(name, { create: true })
+  const writable = await dest.createWritable()
   try {
     if (data instanceof ReadableStream) {
       await data.pipeTo(writable, { preventClose: true })
@@ -196,34 +199,74 @@ export async function writeFileAtomic(
     }
   } catch (err) {
     await writable.abort().catch(() => undefined)
-    await dir.removeEntry(stagingName).catch(() => undefined)
     throw err
   }
-
-  const staged = await staging.getFile()
-  const dest = await dir.getFileHandle(name, { create: true })
-  const out = await dest.createWritable()
-  await out.write(staged)
-  await out.close()
-  await dir.removeEntry(stagingName).catch(() => undefined)
   return path
 }
 
-/**
- * A writable straight onto the destination, for the encoder's streamed output.
- *
- * Used only where the caller cannot hold the whole file in memory (a multi
- * minute 1080x1920 encode). It writes the staging file and returns a `publish`
- * that swaps it in, so the atomic contract above still holds.
- */
-export async function openStagedWrite(path: string): Promise<{
+/** What `openStagedWrite` hands out; the encoder streams into `writable`. */
+export interface StagedWrite {
   // Both paths accept the muxer's `{type,data,position}` chunks: an OPFS
   // `FileSystemWritableFileStream` understands them natively, and the worker
   // fallback translates them into positional sync writes.
   writable: WritableStream<MuxChunk>
   publish: () => Promise<string>
   discard: () => Promise<void>
-}> {
+}
+
+/**
+ * Rename `from` to `name` inside `dir` where the browser can, or copy it.
+ *
+ * `FileSystemFileHandle.move()` is Chromium's OPFS rename: one directory
+ * entry changes, no bytes move, and the destination is never observable
+ * half-written. Firefox and Safari have no `move`, so there the destination
+ * is written through its own (swap-file) writable — one copy, still atomic
+ * on the main thread. `false` means the copy path was taken.
+ */
+export async function publishStaged(
+  dir: FileSystemDirectoryHandle,
+  from: FileSystemFileHandle,
+  name: string
+): Promise<boolean> {
+  const movable = from as FileSystemFileHandle & { move?: (name: string) => Promise<void> }
+  if (typeof movable.move === 'function') {
+    try {
+      // Chromium refuses to move onto an existing entry; the old file goes
+      // first. Between the two calls the destination is ABSENT, never
+      // partial, which the contract allows.
+      await dir.removeEntry(name).catch(() => undefined)
+      await movable.move(name)
+      return true
+    } catch {
+      // fall through to the copy
+    }
+  }
+  const staged = await from.getFile()
+  const dest = await dir.getFileHandle(name, { create: true })
+  const out = await dest.createWritable()
+  try {
+    await out.write(staged)
+    await out.close()
+  } catch (err) {
+    await out.abort().catch(() => undefined)
+    throw err
+  }
+  await dir.removeEntry(from.name).catch(() => undefined)
+  return false
+}
+
+/**
+ * A writable for the encoder's streamed output, published only when the
+ * caller says so.
+ *
+ * Why this is not `writeFileAtomic` with a stream: mediabunny's `StreamTarget`
+ * CLOSES the writable on `output.cancel()` as well as on `finalize()`, and a
+ * closed swap-file writable commits. A writable opened straight on the
+ * destination would therefore publish a truncated MP4 on every failed
+ * render. So the bytes go to `.<name>.part`, and `publish` renames it into
+ * place (or copies, where the browser has no rename — `publishStaged`).
+ */
+export async function openStagedWrite(path: string): Promise<StagedWrite> {
   const { workerStagedWrite, writeCapability } = await import('./opfsWrite')
   if ((await writeCapability()) === 'worker') return workerStagedWrite(path)
 
@@ -237,12 +280,7 @@ export async function openStagedWrite(path: string): Promise<{
   return {
     writable,
     publish: async () => {
-      const staged = await staging.getFile()
-      const dest = await dir.getFileHandle(name, { create: true })
-      const out = await dest.createWritable()
-      await out.write(staged)
-      await out.close()
-      await dir.removeEntry(stagingName).catch(() => undefined)
+      await publishStaged(dir, staging, name)
       return path
     },
     discard: async () => {
@@ -355,6 +393,133 @@ export function mediaUrlForFsPath(path: string): string {
   // segments[0] is 'projects'; the rest plus the name is what the SW routes on.
   const rest = [...segments.slice(1), name].map(encodeURIComponent).join('/')
   return `/media/${rest}`
+}
+
+/** Names the sweeper recognises as leftovers, per the writers that make them. */
+const STALE_PART = /^\..+\.part$/
+const STALE_VIDEOONLY = /\.videoonly\.mp4$/
+const STALE_CLIPS_STAGING = '.clips_next'
+const STALE_PROBE = '.opfs-write-probe'
+const SWEEP_MAX_AGE_MS = 60 * 60 * 1000
+const STAGING_ROOT = 'staging'
+const PROJECT_JSON = 'project.json'
+
+/**
+ * Remove what a killed tab leaves behind.
+ *
+ * Every writer here cleans up after itself on the paths it can see — a
+ * thrown render discards its `.part`, a failed conversion drops its
+ * `.videoonly.mp4` — but none of them runs when the tab is closed or the
+ * browser discards it mid-job, and OPFS is not visible to the user, so those
+ * files simply accumulate against the quota. Once per boot, before any job
+ * can start, this removes:
+ *
+ *   staging/<uid>      when no project row exists for `uid` (the wizard was
+ *                      interrupted between staging and writing the row), or
+ *                      the row has no `pendingSources` left (ingest finished
+ *                      but its delete did not). A row STILL pointing at its
+ *                      staged files keeps them, whatever their age — that is
+ *                      what "ลองใหม่" on a failed import reads.
+ *   .<name>.part       a staged write nobody published
+ *   .clips_next/       a render's per-scene clips that were never swapped in
+ *   *.videoonly.mp4    a conversion's silent intermediate
+ *
+ * The last three only when older than an hour, so a job that IS running
+ * (the sweep is meant for boot, but a caller could be late) keeps its files.
+ * Ages come from `File.lastModified`; the walk is depth-limited to a
+ * project's immediate subdirectories, which is where every writer puts them.
+ */
+export async function sweepStaleFiles(
+  opts: { maxAgeMs?: number; now?: number } = {}
+): Promise<{ removed: string[] }> {
+  const maxAge = opts.maxAgeMs ?? SWEEP_MAX_AGE_MS
+  const now = opts.now ?? Date.now()
+  const removed: string[] = []
+  const r = await root()
+
+  const olderThan = async (dir: FileSystemDirectoryHandle, name: string): Promise<boolean> => {
+    try {
+      const file = await (await dir.getFileHandle(name)).getFile()
+      return now - file.lastModified > maxAge
+    } catch {
+      return false
+    }
+  }
+  const dirIsStale = async (dir: FileSystemDirectoryHandle): Promise<boolean> => {
+    // A directory is as fresh as its newest file; an empty one is stale.
+    for await (const [name, handle] of entriesOf(dir)) {
+      if (handle.kind !== 'file') continue
+      if (!(await olderThan(dir, name))) return false
+    }
+    return true
+  }
+  // Listings are taken whole before anything is removed: deleting entries
+  // out from under a live `entries()` iterator is unspecified behaviour.
+  const listed = async (dir: FileSystemDirectoryHandle): Promise<[string, FileSystemHandle][]> => {
+    const out: [string, FileSystemHandle][] = []
+    for await (const e of entriesOf(dir)) out.push(e)
+    return out
+  }
+  const sweepDir = async (dir: FileSystemDirectoryHandle, label: string): Promise<void> => {
+    for (const [name, handle] of await listed(dir)) {
+      if (handle.kind === 'file') {
+        if (STALE_PART.test(name) || STALE_VIDEOONLY.test(name) || name === STALE_PROBE) {
+          if (await olderThan(dir, name)) {
+            await dir.removeEntry(name).catch(() => undefined)
+            removed.push(`${label}/${name}`)
+          }
+        }
+      } else if (name === STALE_CLIPS_STAGING) {
+        if (await dirIsStale(handle as FileSystemDirectoryHandle)) {
+          await dir.removeEntry(name, { recursive: true }).catch(() => undefined)
+          removed.push(`${label}/${name}`)
+        }
+      }
+    }
+  }
+  type Row = { pendingSources?: unknown[] }
+  const rowFor = (uid: string): Promise<Row | null> =>
+    readJson<Row>(projectFilePath(uid, PROJECT_JSON))
+
+  // Projects: the project directory and one level of subdirectories.
+  const projects = await dirFor([PROJECTS_ROOT], { create: false })
+  if (projects) {
+    for (const [uid, handle] of await listed(projects)) {
+      if (handle.kind !== 'directory') continue
+      const pdir = handle as FileSystemDirectoryHandle
+      await sweepDir(pdir, uid)
+      for (const [sub, subHandle] of await listed(pdir)) {
+        if (subHandle.kind !== 'directory' || sub === STALE_CLIPS_STAGING) continue
+        await sweepDir(subHandle as FileSystemDirectoryHandle, `${uid}/${sub}`)
+      }
+    }
+  }
+
+  // Staging: per project uid, kept only while a row still points at it.
+  const staging = await dirFor([STAGING_ROOT], { create: false })
+  if (staging) {
+    for (const [uid, handle] of await listed(staging)) {
+      if (handle.kind !== 'directory') continue
+      const row = await rowFor(uid)
+      const referenced = Array.isArray(row?.pendingSources) && row.pendingSources.length > 0
+      if (referenced) continue
+      await staging.removeEntry(uid, { recursive: true }).catch(() => undefined)
+      removed.push(`${STAGING_ROOT}/${uid}`)
+    }
+  }
+
+  // The worker's write probe, at the root.
+  if (await olderThan(r, STALE_PROBE)) {
+    await r.removeEntry(STALE_PROBE).catch(() => undefined)
+    removed.push(STALE_PROBE)
+  }
+
+  return { removed }
+}
+
+/** `entries()` is async-iterable but not in every lib.dom yet. */
+function entriesOf(dir: FileSystemDirectoryHandle): AsyncIterable<[string, FileSystemHandle]> {
+  return (dir as unknown as { entries: () => AsyncIterable<[string, FileSystemHandle]> }).entries()
 }
 
 /** Bytes used by the whole store, for the settings screen. */
