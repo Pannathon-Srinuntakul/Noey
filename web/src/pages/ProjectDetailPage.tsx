@@ -223,7 +223,8 @@ export default function ProjectDetailPage({ uid }: { uid: string }): React.JSX.E
     {
       highlightId: selectedHighlight,
       fallbackClipFile: job?.project.clips?.[0]?.file,
-      hasHighlights: highlightItems.length > 0
+      hasHighlights: highlightItems.length > 0,
+      hasMusic: job ? !!job.project.music : undefined
     }
   )
 

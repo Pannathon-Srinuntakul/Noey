@@ -107,7 +107,8 @@ export default function VoiceoverPage({ uid }: { uid: string }): React.JSX.Eleme
     uid,
     (job?.step ?? 'waiting_vo') as ProjectStep,
     job?.mode ?? 'dub_first',
-    job?.mediaKey ?? 0
+    job?.mediaKey ?? 0,
+    { hasMusic: job ? !!job.project.music : undefined }
   )
   const stageVideoRef = useRef<HTMLVideoElement>(null)
   // Which line the PREVIEW is currently inside. Playing the cut SELECTS that

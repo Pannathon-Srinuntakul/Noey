@@ -4,7 +4,6 @@ import {
   deviceId,
   durationTh,
   estimateBlockLine,
-  estimateLine,
   formatBaht,
   formatPack,
   isWaitingSlot,
@@ -139,39 +138,23 @@ describe('estimate lines', () => {
     unlimited: false
   }
 
-  it('says how much of the limit a run uses', () => {
-    expect(estimateLine(base)).toBe('ใช้ประมาณ 18% ของโควตารายสัปดาห์')
-  })
-
-  it('lists both windows, fullest first', () => {
-    expect(estimateLine({ ...base, pct: { weekly: 18.2, five_hour: 45.5 } })).toBe(
-      'ใช้ประมาณ 46% ของโควตารอบ 5 ชั่วโมง · 18% ของโควตารายสัปดาห์'
-    )
-  })
-
-  it('rounds a tiny run to "under 1%"', () => {
-    expect(estimateLine({ ...base, pct: { monthly: 0.3 } })).toBe('ใช้ไม่ถึง 1% ของโควตารายเดือน')
-  })
-
-  it('has nothing to say for an unlimited account', () => {
-    expect(estimateLine({ ...base, unlimited: true, pct: {} })).toBeNull()
-  })
-
   it('explains a block and the wallet way out', () => {
     expect(estimateBlockLine(base, NOW)).toBeNull()
     const none = { ...base, fits: 'none' as const, resets_at: '2026-09-22T11:00:00Z' }
+    // A run is charged as it goes: it starts, pauses when the window is spent
+    // and resumes on the reset — the line says so instead of refusing.
     expect(estimateBlockLine(none, NOW)).toBe(
-      'โควตารายสัปดาห์เหลือไม่พอสำหรับงานนี้ · รอบใหม่อีก 1 ชม.'
+      'โควตารายสัปดาห์อาจไม่พอสำหรับงานนี้ — ถ้าหมดระหว่างทำ งานจะหยุดพัก แล้วทำต่อให้เมื่อรอบใหม่เริ่ม (รอบใหม่อีก 1 ชม.)'
     )
     const wallet = { ...base, fits: 'wallet' as const, wallet_satang: 1234 }
     expect(estimateBlockLine(wallet, NOW)).toBe(
-      'โควตารายสัปดาห์เหลือไม่พอสำหรับงานนี้ — ใช้ยอดเงินคงเหลือ ฿12.34 ทำต่อได้'
+      'โควตารายสัปดาห์อาจไม่พอสำหรับงานนี้ — ใช้ยอดเงินคงเหลือ ฿12.34 ทำต่อได้โดยไม่ต้องรอ'
     )
   })
 
-  it('never carries a token count', () => {
-    const text = [estimateLine(base), estimateBlockLine({ ...base, fits: 'none' }, NOW)].join(' ')
-    expect(text).not.toMatch(/token/i)
+  it('never carries a token count or a percent guess', () => {
+    const text = estimateBlockLine({ ...base, fits: 'none' }, NOW) ?? ''
+    expect(text).not.toMatch(/token|%/i)
   })
 })
 

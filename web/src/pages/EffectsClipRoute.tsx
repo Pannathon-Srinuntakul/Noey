@@ -19,7 +19,8 @@ export default function EffectsClipRoute({ uid }: { uid: string }): React.JSX.El
     uid,
     (job?.step as ProjectStep) ?? 'imported',
     job?.mode ?? 'dub_first',
-    job?.mediaKey ?? 0
+    job?.mediaKey ?? 0,
+    job ? !!job.project.music : undefined
   )
 
   if (!job) {

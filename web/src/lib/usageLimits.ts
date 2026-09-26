@@ -254,44 +254,24 @@ export function checkoutAlreadyCredited(url: string): boolean {
 
 // ── estimate ─────────────────────────────────────────────────────────────────
 
-/** Windows of an estimate, fullest first. */
-function estimateParts(est: UsageEstimate): { key: LimitKey; pct: number }[] {
-  return (Object.entries(est.pct) as [LimitKey, number | undefined][])
-    .filter((e): e is [LimitKey, number] => typeof e[1] === 'number' && e[1] >= 0)
-    .map(([key, pct]) => ({ key, pct }))
-    .sort((a, b) => b.pct - a.pct)
-}
-
-function approxPct(pct: number): string {
-  return pct < 1 ? 'ไม่ถึง 1%' : `ประมาณ ${Math.round(pct)}%`
-}
-
 /**
- * "ใช้ประมาณ 18% ของโควตารายสัปดาห์" — every enforced window, fullest first
- * ("ใช้ประมาณ 45% ของโควตารอบ 5 ชั่วโมง · 18% ของโควตารายสัปดาห์").
- * Null for an unlimited account or an estimate with no windows.
+ * The one thing said before a run about its cost: nothing when the plan
+ * covers it, otherwise that the quota may run out and what happens then. A
+ * run is charged as it goes (docs/token-billing-plan.md) — it starts either
+ * way, pauses when the window is spent and resumes when the window resets,
+ * or at once when the top-up balance is allowed to cover it. The old
+ * "ใช้ประมาณ 18% ของโควตา" percent line was dropped with the reservation it
+ * described (owner, 2026-09-26): a guess shown as a number reads as a price.
  */
-export function estimateLine(est: UsageEstimate): string | null {
-  if (est.unlimited) return null
-  const parts = estimateParts(est)
-  if (parts.length === 0) return null
-  const [first, ...rest] = parts
-  const head = `ใช้${approxPct(first.pct)} ของ${limitLabel(first.key)}`
-  const tail = rest.map(
-    (p) => `${approxPct(p.pct).replace(/^ประมาณ /, '')} ของ${limitLabel(p.key)}`
-  )
-  return [head, ...tail].join(' · ')
-}
-
-/** Why a run does not fit, for the line under the estimate. */
 export function estimateBlockLine(est: UsageEstimate, now: Date = new Date()): string | null {
   if (est.unlimited || est.fits === 'plan') return null
   const label = limitLabel(est.binding)
   const back = whenBack(est.resets_at, now)
-  const base = `${label}เหลือไม่พอสำหรับงานนี้${back ? ` · รอบใหม่${back.startsWith('อีก') ? '' : ' '}${back}` : ''}`
+  const base = `${label}อาจไม่พอสำหรับงานนี้`
   if (est.fits === 'wallet')
-    return `${base} — ใช้ยอดเงินคงเหลือ ${formatBaht(est.wallet_satang)} ทำต่อได้`
-  return base
+    return `${base} — ใช้ยอดเงินคงเหลือ ${formatBaht(est.wallet_satang)} ทำต่อได้โดยไม่ต้องรอ`
+  const reset = back ? ` (รอบใหม่${back.startsWith('อีก') ? '' : ' '}${back})` : ''
+  return `${base} — ถ้าหมดระหว่างทำ งานจะหยุดพัก แล้วทำต่อให้เมื่อรอบใหม่เริ่ม${reset}`
 }
 
 // ── refusals ─────────────────────────────────────────────────────────────────

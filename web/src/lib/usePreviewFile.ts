@@ -93,9 +93,18 @@ async function probeOnce(uid: string, rel: string): Promise<boolean> {
  *
  * `null` means this state has no rendered candidates at all.
  */
-export function previewCandidates(step: ProjectStep, mode: ProjectMode): string[] | null {
+export function previewCandidates(
+  step: ProjectStep,
+  mode: ProjectMode,
+  /** Whether the project has a music track attached. `false` drops the
+   * music mix from the cascade: a project with no track can have no
+   * `final_silent_music.mp4`, and probing for it 404s in the console on every
+   * preview of every project (2026-09-27). Undefined = unknown, probe. */
+  hasMusic?: boolean
+): string[] | null {
   // Handled by `settled` — the mode has no final.mp4, only highlights/hNN.mp4.
   if (mode === 'speech_highlights') return null
+  const music = hasMusic === false ? [] : ['final_silent_music.mp4']
   // A build that cannot BAKE zoom effects can never produce final_fx.mp4, so
   // asking for it first costs a network probe on every preview — and, worse,
   // that probe can find the SERVER's copy from a previous render and play it
@@ -105,7 +114,7 @@ export function previewCandidates(step: ProjectStep, mode: ProjectMode): string[
   // Voiceover is optional, and `highlight` never runs the VO mux, so for both
   // of these the silent cut is the end of the line.
   if (step === 'waiting_vo' || (step === 'done' && mode === 'highlight')) {
-    return [...fx, 'final_silent_music.mp4', 'final_silent.mp4']
+    return [...fx, ...music, 'final_silent.mp4']
   }
   if (step === 'done') return [...fx, 'final.mp4']
   return null
@@ -178,26 +187,29 @@ export function usePreviewFile(
     /** False while the card is still far off-screen: no probe is sent until it
      * is worth sending (see lib/useInView). Defaults to true. */
     enabled?: boolean
+    /** Whether a music track is attached (`project.music`) — see
+     * previewCandidates. */
+    hasMusic?: boolean
   } = {}
 ): string | null {
-  const { highlightId, fallbackClipFile, hasHighlights = true, enabled = true } = opts
+  const { highlightId, fallbackClipFile, hasHighlights = true, enabled = true, hasMusic } = opts
   // speech_highlights is the one mode whose answer is derivable without a
   // probe: it has no final.mp4 at all, only highlights/hNN.mp4.
   const settled =
     mode === 'speech_highlights' && step === 'done' && hasHighlights
       ? `highlights/${highlightId ?? 'h01'}.mp4`
       : null
-  const candidates = previewCandidates(step, mode)
+  const candidates = previewCandidates(step, mode, hasMusic)
   // Keyed by the inputs the answer depends on, so a stale answer is discarded
   // during render instead of being cleared by a setState inside the effect.
   // After a re-render (mediaKey bump) the previous answer really can be the
   // wrong file — the music mix that was just removed, an fx bake that did not
   // exist last time round.
-  const probeKey = `${uid}|${step}|${mode}|${mediaKey}`
+  const probeKey = `${uid}|${step}|${mode}|${mediaKey}|${hasMusic ?? '?'}`
   const [probed, setProbed] = useState<{ key: string; file: string } | null>(null)
 
   useEffect(() => {
-    const list = previewCandidates(step, mode)
+    const list = previewCandidates(step, mode, hasMusic)
     if (!list || !enabled) return
     let cancelled = false
     void (async () => {
@@ -214,7 +226,7 @@ export function usePreviewFile(
     return () => {
       cancelled = true
     }
-  }, [uid, step, mode, mediaKey, probeKey, enabled])
+  }, [uid, step, mode, mediaKey, probeKey, enabled, hasMusic])
 
   // While the probe is in flight, fall back to the cascade's own LAST entry —
   // documented always-present (final.mp4 / final_silent.mp4) — never null and
@@ -251,7 +263,9 @@ export function useEffectsBase(
   uid: string,
   step: ProjectStep,
   mode: ProjectMode,
-  mediaKey: number
+  mediaKey: number,
+  /** `project.music` attached? `false` skips the probe (see previewCandidates). */
+  hasMusic?: boolean
 ): string | null {
   const [withMusic, setWithMusic] = useState<boolean | null>(null)
   // Checked FIRST, before the candidate list: `done` now offers final_fx.mp4 to
@@ -260,7 +274,8 @@ export function useEffectsBase(
   const usesFinal = step === 'done' && mode !== 'highlight'
 
   useEffect(() => {
-    if (usesFinal || !previewCandidates(step, mode)) return
+    // No track attached: nothing to probe, the plain cut is the answer below.
+    if (usesFinal || hasMusic === false || !previewCandidates(step, mode)) return
     let cancelled = false
     void exists(uid, 'final_silent_music.mp4').then((has) => {
       if (!cancelled) setWithMusic(has)
@@ -268,10 +283,11 @@ export function useEffectsBase(
     return () => {
       cancelled = true
     }
-  }, [uid, step, mode, mediaKey, usesFinal])
+  }, [uid, step, mode, mediaKey, usesFinal, hasMusic])
 
   if (usesFinal) return 'final.mp4'
   if (!previewCandidates(step, mode)) return null
+  if (hasMusic === false) return 'final_silent.mp4'
   if (withMusic === null) return null // still probing
   return withMusic ? 'final_silent_music.mp4' : 'final_silent.mp4'
 }

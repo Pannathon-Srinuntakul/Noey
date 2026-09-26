@@ -85,14 +85,49 @@ describe('fileStepGate', () => {
     )
   })
 
-  it('still blocks past two hours, in both modes', () => {
-    for (const uiMode of ['highlight', 'silence'] as const) {
-      const gate = fileStepGate(stateWith({ uiMode, files: [fileOf('a', 2 * 3600 + 1)] }))
-      expect(gate.ok).toBe(false)
-      expect(gate.reason).toContain('2 ชั่วโมง')
-    }
+  it('blocks past two hours for the speech modes', () => {
+    const gate = fileStepGate(stateWith({ uiMode: 'silence', files: [fileOf('a', 2 * 3600 + 1)] }))
+    expect(gate.ok).toBe(false)
+    expect(gate.reason).toContain('2 ชั่วโมง')
     expect(capSecFor('silence')).toBe(7200)
-    expect(capSecFor('highlight')).toBe(7200)
+    expect(capSecFor('longform')).toBe(7200)
+  })
+
+  it('caps ตัดฉากเด่น at what one video request holds — 1 h Standard, 44 min High', () => {
+    // Mirrors plan_features.footage_limit_sec: min(1 h, 1M × 0.8 ÷ tokens/s).
+    expect(capSecFor('highlight')).toBe(3600)
+    expect(capSecFor('highlight', 'standard')).toBe(3600)
+    expect(capSecFor('highlight', 'high')).toBe(2666)
+    const std = fileStepGate(stateWith({ uiMode: 'highlight', files: [fileOf('a', 3601)] }))
+    expect(std.ok).toBe(false)
+    expect(std.reason).toContain('1 ชั่วโมง')
+    const high = fileStepGate(
+      stateWith({ uiMode: 'highlight', precision: 'high', files: [fileOf('a', 2700)] })
+    )
+    expect(high.ok).toBe(false)
+    expect(high.reason).toContain('44 นาที')
+    expect(fileStepGate(stateWith({ uiMode: 'highlight', files: [fileOf('a', 3600)] })).ok).toBe(
+      true
+    )
+    // Precision is picked after the files step: 50 min passes at Standard and
+    // is caught on the outcome step once High is chosen.
+    const late = stateWith({
+      uiMode: 'highlight',
+      precision: 'high',
+      duration: '30',
+      files: [fileOf('a', 3000)]
+    })
+    expect(fileStepGate({ ...late, precision: 'standard' }).ok).toBe(true)
+    expect(outcomeStepGate(late).ok).toBe(false)
+    expect(outcomeStepGate(late).reason).toContain('44 นาที')
+    expect(outcomeStepGate(late).reason).toContain('Standard')
+    expect(outcomeStepGate({ ...late, precision: 'standard' }).ok).toBe(true)
+    // The mode is picked on the same step: 90 min passed the files step as
+    // ตัดช่วงเงียบ (2 h) and fails once ตัดฉากเด่น is chosen.
+    const switched = stateWith({ uiMode: 'highlight', duration: '30', files: [fileOf('a', 5400)] })
+    expect(fileStepGate({ ...switched, uiMode: 'silence' }).ok).toBe(true)
+    expect(outcomeStepGate(switched).ok).toBe(false)
+    expect(outcomeStepGate(switched).reason).toContain('1 ชั่วโมง')
   })
 
   it('warns before it blocks: the soft cap is well under the hard one', () => {

@@ -32,7 +32,8 @@ export function RunningJobBar({ job }: { job: ProjectPipeline }): React.JSX.Elem
   // Same picture the card shows — an empty grey rectangle next to a running
   // job gives no clue WHICH clip is running when several look alike.
   const previewFile = usePreviewFile(job.project.uid, job.step as ProjectStep, mode, job.mediaKey, {
-    fallbackClipFile: job.project.clips?.[0]?.file
+    fallbackClipFile: job.project.clips?.[0]?.file,
+    hasMusic: !!job.project.music
   })
 
   return (

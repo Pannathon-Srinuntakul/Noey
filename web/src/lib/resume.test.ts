@@ -226,15 +226,9 @@ describe('what a paused project says', () => {
     expect(nextStageLine(state({ next_stage: null }))).toBe('ไม่มีขั้นตอนค้างอยู่')
   })
 
-  it('prices the next stage in percent of the windows, never in tokens', () => {
-    // Fullest window first, whole percent, both windows named.
-    expect(resumeCostLine(state())).toBe(
-      'ใช้ประมาณ 14% ของโควตารอบ 5 ชั่วโมง · 6% ของโควตารายสัปดาห์'
-    )
-  })
-
-  it('marks an estimate the server could only guess at', () => {
-    expect(resumeCostLine(state({ estimate_source: 'declared' }))).toContain('ประมาณการคร่าว ๆ')
+  it('names no price for a charged next stage — it is charged as it goes', () => {
+    expect(resumeCostLine(state())).toBeNull()
+    expect(resumeCostLine(state({ estimate_source: 'declared' }))).toBeNull()
   })
 
   it('says a local next step costs nothing', () => {

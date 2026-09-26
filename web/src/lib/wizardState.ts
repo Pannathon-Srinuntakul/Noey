@@ -152,22 +152,31 @@ export function totalDurationSec(files: WizardFile[]): number | null {
 }
 
 /**
- * Combined source-length ceiling — two hours for both modes.
+ * Combined source-length ceiling, mirroring the server's
+ * (`packages/billing/plan_features.py:footage_limit_sec`) so the files step
+ * refuses what the start route would refuse — it used to say "/ 2:00:00" for
+ * ตัดฉากเด่น while the server stopped at an hour.
  *
- * ตัดฉากเด่น used to stop at 20 minutes because it uploads a video proxy for AI
- * analysis rather than audio. Measured on this machine, that proxy runs about
- * 60 KB/s (480p/12fps/crf28) and Gemini reads it at ~66 tokens per second of
- * footage, so two hours is roughly a 430 MB upload and ~480k input tokens —
- * large, but inside the model's context and inside what the pipeline can carry.
- * The ceiling is therefore about what the machine can move, not about what the
- * model can read; `SOFT_CAP_SEC` is where the UI starts warning that a run will
- * cost real time and credits.
+ * The speech modes send audio per clip and share the two-hour ceiling. ตัดฉากเด่น
+ * sends the WHOLE project to the model in one video request, so its cap is
+ * what that request can hold: the model reads 100 tokens per second of
+ * footage at Standard and 300 at High, into a 1M-token context of which 80% is
+ * footage (`VIDEO_CALL_CONTEXT_SEC`), and on top of that a product cap of one
+ * hour (owner, 2026-09-26). Standard: 1 h. High: ~44 min.
+ *
+ * The plan's own footage cap is a separate, server-stated number
+ * (`features.footage_sec`, `footageNotice`) and applies on top.
  */
-export function capSecFor(uiMode: UiMode): number {
-  // longform/silence never upload video at all (audio only), highlight uploads
-  // a proxy — all three share the same two-hour ceiling today.
-  return uiMode === 'highlight' ? 2 * 60 * 60 : 2 * 60 * 60
+export function capSecFor(uiMode: UiMode, precision: 'standard' | 'high' = 'standard'): number {
+  if (uiMode !== 'highlight') return 2 * 60 * 60
+  return Math.min(VIDEO_CALL_CAP_SEC, VIDEO_CALL_CONTEXT_SEC[precision])
 }
+
+/** The one-hour product cap on a single video request (limits.py
+ * `VIDEO_CALL_FOOTAGE_CAP_SEC`). */
+const VIDEO_CALL_CAP_SEC = 3600
+/** 1,000,000 × 0.8 ÷ tokens-per-second, as `limits.footage_context_ceiling_sec`. */
+const VIDEO_CALL_CONTEXT_SEC = { standard: 8000, high: 2666 } as const
 
 /** Past this much footage a ตัดฉากเด่น run is slow and expensive enough that the
  * user should be told before starting, not after. */
@@ -236,22 +245,37 @@ export interface Gate {
 /** The cap as prose ("20 นาที" / "2 ชั่วโมง"), never as a clock — the 2h cap
  * formatted by `fmtClock` reads "2:00:00", and a h:mm:ss string glued to the
  * word "นาที" is not a reason anyone can act on. */
-export function capLabel(uiMode: UiMode): string {
-  const sec = capSecFor(uiMode)
-  return sec % 3600 === 0 ? `${sec / 3600} ชั่วโมง` : `${sec / 60} นาที`
+export function capLabel(uiMode: UiMode, precision: 'standard' | 'high' = 'standard'): string {
+  const sec = capSecFor(uiMode, precision)
+  return sec % 3600 === 0 ? `${sec / 3600} ชั่วโมง` : `${Math.floor(sec / 60)} นาที`
 }
 
 export function fileStepGate(state: WizardState): Gate {
   if (state.files.length === 0) return { ok: false, reason: 'เลือกคลิปอย่างน้อย 1 ไฟล์' }
   const total = totalDurationSec(state.files)
-  if (total !== null && total > capSecFor(state.uiMode)) {
-    return { ok: false, reason: `รวมกันเกิน ${capLabel(state.uiMode)}` }
+  if (total !== null && total > capSecFor(state.uiMode, state.precision)) {
+    return { ok: false, reason: `รวมกันเกิน ${capLabel(state.uiMode, state.precision)}` }
   }
   return { ok: true }
 }
 
 export function outcomeStepGate(state: WizardState): Gate {
   if (state.uiMode === 'silence') return { ok: true }
+  // The mode and the precision are both picked on THIS step, and either can
+  // shorten the cap the files step checked (ตัดฉากเด่น sends the whole project
+  // in one video request; High reads three times the tokens per second), so
+  // the footage is re-checked here rather than refused by the server at start.
+  const total = totalDurationSec(state.files)
+  if (total !== null && total > capSecFor(state.uiMode, state.precision)) {
+    const fix =
+      state.precision === 'high' && total <= capSecFor(state.uiMode, 'standard')
+        ? 'เลือกความละเอียด Standard หรือลดคลิป'
+        : 'ลดคลิปหรือเลือกโหมดอื่น'
+    return {
+      ok: false,
+      reason: `โหมดนี้รับคลิปรวมได้ไม่เกิน ${capLabel(state.uiMode, state.precision)} — ${fix}`
+    }
+  }
   // ตัดไฮไลต์จากคลิปยาว has no length to pick: a highlight that ends where the
   // thought ends is the whole point, and a number chosen before the clip is
   // read forces the selector to pad or truncate one (owner, 2026-09-23).

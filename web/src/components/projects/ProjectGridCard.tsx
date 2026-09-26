@@ -136,7 +136,8 @@ export function ProjectGridCard({
   const previewFile = usePreviewFile(job.project.uid, step, job.mode, job.mediaKey, {
     fallbackClipFile: job.project.clips?.[0]?.file,
     hasHighlights: (highlightCount ?? 0) > 0,
-    enabled: inView
+    enabled: inView,
+    hasMusic: !!job.project.music
   })
 
   // speech_highlights ships N finished clips; the picture can only show one, so

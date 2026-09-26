@@ -36,6 +36,16 @@ describe('previewCandidates', () => {
     expect(previewCandidates('done', 'highlight')).toEqual(silent)
   })
 
+  it('does not look for a music mix when the project has no track', () => {
+    expect(previewCandidates('waiting_vo', 'dub_first', false)).toEqual(['final_silent.mp4'])
+    expect(previewCandidates('done', 'highlight', false)).toEqual(['final_silent.mp4'])
+    // Unknown and attached both keep the probe — the mix may exist.
+    expect(previewCandidates('waiting_vo', 'dub_first', true)?.[0]).toBe('final_silent_music.mp4')
+    expect(previewCandidates('waiting_vo', 'dub_first', undefined)?.[0]).toBe(
+      'final_silent_music.mp4'
+    )
+  })
+
   it('leaves speech_highlights alone — it has no final.mp4 to offer', () => {
     expect(previewCandidates('done', 'speech_highlights')).toBeNull()
     expect(previewCandidates('waiting_vo', 'speech_highlights')).toBeNull()

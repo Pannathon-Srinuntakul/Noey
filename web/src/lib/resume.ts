@@ -20,7 +20,6 @@
 
 import {
   estimateBlockLine,
-  estimateLine,
   formatBaht,
   limitLabel,
   whenBack,
@@ -305,17 +304,15 @@ export function nextStageLine(state: ResumeState): string {
 }
 
 /**
- * What continuing would cost, in the same percent-of-window language the
- * wizard uses. Null when the next step is local (nothing is charged) or the
- * account has no enforced windows.
+ * What continuing costs, in the only terms the product uses: nothing when
+ * the next step runs on this machine, otherwise nothing is said here — the
+ * step is charged as it goes and `resumeBlockLine` covers the case where the
+ * window may not last. (The percent-of-window line went with the
+ * reservation it described, owner 2026-09-26.)
  */
 export function resumeCostLine(state: ResumeState): string | null {
   if (!state.charges) return 'ขั้นตอนถัดไปทำบนเครื่องนี้ — ไม่ใช้โควตาเพิ่ม'
-  const line = estimateLine(state.quota)
-  if (!line) return null
-  // A ticket is priced on the stage the server measured; a `declared` estimate
-  // was worked out from the lengths given at creation and is a rough guide.
-  return state.estimateSource === 'declared' ? `${line} (ประมาณการคร่าว ๆ)` : line
+  return null
 }
 
 /** Why the plan cannot pay for it, and what the balance would do instead. */

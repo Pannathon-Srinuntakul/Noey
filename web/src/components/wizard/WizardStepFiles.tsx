@@ -39,7 +39,7 @@ export function WizardStepFiles({
   }
 
   const total = totalDurationSec(files)
-  const cap = capSecFor(state.uiMode)
+  const cap = capSecFor(state.uiMode, state.precision)
   const overCap = total !== null && total > cap
   // Long ตัดฉากเด่น sources are allowed but not free: every second of footage is
   // uploaded and read by the model, so the run gets slower and dearer in a way
