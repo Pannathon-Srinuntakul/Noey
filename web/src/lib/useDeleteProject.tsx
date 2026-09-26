@@ -37,7 +37,9 @@ function flushPending(): void {
   pending.clear()
 }
 
-export function useDeleteProject(): (uid: string, name: string) => Promise<void> {
+/** Resolves true when the project was deleted (undo window opened), false
+ * when the person cancelled — the detail page stays put on a cancel. */
+export function useDeleteProject(): (uid: string, name: string) => Promise<boolean> {
   const { jobFor, session, removeProject, reload } = useJobs()
   const confirm = useConfirm()
   const { showToast } = useToast()
@@ -64,7 +66,7 @@ export function useDeleteProject(): (uid: string, name: string) => Promise<void>
           </p>
         )
       })
-      if (!ok) return
+      if (!ok) return false
 
       const remoteUid = jobFor(uid)?.project.remote?.uid
       removeProject(uid)
@@ -120,6 +122,7 @@ export function useDeleteProject(): (uid: string, name: string) => Promise<void>
           reload()
         }
       })
+      return true
     },
     [confirm, jobFor, session, removeProject, reload, showToast]
   )

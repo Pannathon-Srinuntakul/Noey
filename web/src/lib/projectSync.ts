@@ -173,8 +173,15 @@ export async function pushProjectFiles(
   let bytes = 0
   for (const entry of missing) {
     if (signal?.aborted) break
-    const file = await readFile(projectFilePath(uid, entry.path))
-    if (!file) continue
+    const stored = await readFile(projectFilePath(uid, entry.path))
+    if (!stored) continue
+    // Small files (project.json, the manifests, the script) are rewritten
+    // while a run is on: the File handed to fetch is a live view of the
+    // entry, and Chrome refuses to send one whose bytes changed since it was
+    // obtained (net::ERR_UPLOAD_FILE_CHANGED — seen on every first sync of a
+    // fresh project). Those are sent from a snapshot; a clip is not rewritten
+    // mid-sync and would not fit in memory anyway.
+    const file = await snapshotIfSmall(stored)
     // Straight into the bucket when the server offers it (directUpload.ts);
     // through the API only on a deploy with no bucket or a browser that
     // cannot reach it.
@@ -206,6 +213,15 @@ export async function pushProjectFiles(
 
   const removed = await dropStaleFiles(session, remoteUid, local, remote, signal)
   return { uploaded, bytes, removed }
+}
+
+/** Bytes copied into memory before a PUT — see pushProjectFiles. */
+const SNAPSHOT_BELOW_BYTES = 8 * 1024 * 1024
+
+async function snapshotIfSmall(file: File): Promise<File> {
+  if (file.size >= SNAPSHOT_BELOW_BYTES) return file
+  const bytes = await file.arrayBuffer()
+  return new File([bytes], file.name, { type: file.type, lastModified: file.lastModified })
 }
 
 /**

@@ -788,9 +788,11 @@ export default function ProjectDetailPage({ uid }: { uid: string }): React.JSX.E
               <button
                 type="button"
                 onClick={() => {
-                  void requestDelete(uid, job.project.name).then(() =>
-                    navigate({ name: 'projects' })
-                  )
+                  // Leave only when it was deleted — a cancelled dialog used
+                  // to bounce the person out to the list all the same.
+                  void requestDelete(uid, job.project.name).then((deleted) => {
+                    if (deleted) navigate({ name: 'projects' })
+                  })
                 }}
                 className="ml-auto text-error underline hover:text-[rgb(224_139_132_/_0.75)]"
               >
