@@ -58,13 +58,18 @@ export function buildOutputTargets(input: OutputTargetsInput): SnapTarget[] {
     if (isOwnEdge(seg.editedOut)) continue
     out.push({ sec: seg.editedOut, kind: 'cut', ownerId: seg.cut.id })
   }
+  // Voiceover lines and caption chips are derived from the cuts, so a line or
+  // chip that ends on the dragged cut's edge IS that edge one frame behind —
+  // offered as a target it pins the handle to where it was last frame.
   for (const b of input.voBlocks) {
-    out.push({ sec: b.outStart, kind: 'voiceover' })
-    out.push({ sec: b.outStart + b.durationSec, kind: 'voiceover' })
+    for (const sec of [b.outStart, b.outStart + b.durationSec]) {
+      if (!isOwnEdge(sec)) out.push({ sec, kind: 'voiceover' })
+    }
   }
   for (const c of input.capSpans) {
-    out.push({ sec: c.outStart, kind: 'caption' })
-    out.push({ sec: c.outStart + c.durationSec, kind: 'caption' })
+    for (const sec of [c.outStart, c.outStart + c.durationSec]) {
+      if (!isOwnEdge(sec)) out.push({ sec, kind: 'caption' })
+    }
   }
   const m = input.music
   if (m) {

@@ -4,14 +4,21 @@ import type { TrimEdge } from '../../../lib/timelineMath'
  * from the handle itself, nowhere else. */
 const ROLL_HINT = 'ค้าง ⌘/Ctrl แล้วลากเพื่อเลื่อนรอยตัดทั้งสองฉาก'
 
+/** The painted bar's width. The grab area stays 12px (BAR_HIT_PX): a 12px
+ * bar read as a block of its own, not the clip's edge (owner, 2026-09-27),
+ * so like CapCut's brackets the paint is thin and the hit zone is not. */
+const BAR_PX = 5
+const BAR_HIT_PX = 12
+
 /**
- * R3's ที่จับยืด–หด: a gold bar the full height of the block, 12px wide, on
- * the selected block. Every other block gets the same grip as an edge zone
- * (8px, a third of a narrow block — constants.edgeZonePx; wider on a touch
- * pointer) with the resize cursor — any block's edge trims it, the way a
- * normal editor works, instead of select first, then trim (owner, 2026-09-22).
- * The zone's bar appears on hover (CapCut users look for the white bars), so
- * the parent's inner div carries `group`.
+ * R3's ที่จับยืด–หด: a thin gold bracket the full height of the block, on
+ * the selected block's edge, with a 12px grab zone behind it. Every other
+ * block gets the same grip as an edge zone (8px, a third of a narrow block —
+ * constants.edgeZonePx; wider on a touch pointer) with the resize cursor —
+ * any block's edge trims it, the way a normal editor works, instead of
+ * select first, then trim (owner, 2026-09-22). The zone's bar appears on
+ * hover (CapCut users look for the white bars), so the parent's inner div
+ * carries `group`.
  *
  * The selected block's handle is a `role=slider` on the scene's in- or
  * out-point, part of the lanes' roving focus: only the focused edge is in the
@@ -75,9 +82,8 @@ export function TrimBar({
         {/* The hover-revealed bar, clipped by the block to whatever the zone
             allows on a narrow block. */}
         <span
-          className={`absolute inset-y-0 block w-[12px] opacity-0 transition-opacity duration-state group-hover:opacity-70 ${fill} ${
-            edge === 'left' ? 'left-0 rounded-l-[5px]' : 'right-0 rounded-r-[5px]'
-          }`}
+          className={`absolute inset-y-0 block opacity-0 transition-opacity duration-state group-hover:opacity-70 ${fill} ${side}`}
+          style={{ width: BAR_PX }}
         />
       </span>
     )
@@ -109,9 +115,17 @@ export function TrimBar({
       onBlur={() => {
         if (cutId !== undefined) onFocusEdge?.(cutId, null)
       }}
-      className={`absolute inset-y-0 z-30 flex w-[12px] cursor-ew-resize touch-none items-center justify-center ${fill} ${side}`}
+      // The button is the grab zone; only the inner bracket is painted, so
+      // the footage shows right up to the edge.
+      className={`absolute inset-y-0 z-30 cursor-ew-resize touch-none ${side}`}
+      style={{ width: BAR_HIT_PX }}
     >
-      <span className="block h-3 w-[2px] rounded bg-black/50" />
+      <span
+        className={`absolute inset-y-0 flex items-center justify-center ${fill} ${side}`}
+        style={{ width: BAR_PX }}
+      >
+        <span className="block h-3 w-px rounded bg-black/40" />
+      </span>
     </button>
   )
 }

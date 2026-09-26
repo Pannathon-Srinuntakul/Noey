@@ -291,6 +291,10 @@ export function usePreviewPlayer({
   // undefined = nothing pending; null = a restore to the playhead's frame.
   const skimPendingRef = useRef<number | null | undefined>(undefined)
   const skimFrameRef = useRef(0)
+  /** The element shows a skimmed frame, not the playhead's. Its `seeked` /
+   * `timeupdate` must not be read back as the clock — they were, so hovering
+   * the timeline dragged the playhead along (measured 2026-09-27). */
+  const skimShowingRef = useRef(false)
   // Two-up (roll / slip): which element was active when it began, so it can
   // be put back, and the last frame each pane was asked for.
   const [twoUp, setTwoUp] = useState(false)
@@ -342,11 +346,17 @@ export function usePreviewPlayer({
   useEffect(() => {
     if (viewMode !== 'edited' || editorPhase !== 'ready') return
     if (isSourceSwapPendingRef.current || isScrubbingRef.current) return
+    // Mid-trim the element shows the edge being dragged (showCutFrame), not
+    // the playhead's frame: the clock keeps its time, and seeking it back
+    // here would fight the drag frame by frame. The commit runs this again.
+    if (isCutBlockEditingRef.current) return
     const v = activeVideo()
     if (!v || !previewSrc) return
     const activeId = editedActiveCutIdRef.current
     const active = cuts.find((c) => c.id === activeId)
-    const shownTime = active && active.source === previewSource ? v.currentTime : null
+    // A skimmed frame is not the playhead's either: fall back to the clock.
+    const shownTime =
+      !skimShowingRef.current && active && active.source === previewSource ? v.currentTime : null
     const pos = resolveEditedPosition(editedSegments, activeId, shownTime, currentTimeRef.current)
     if (!pos) {
       editedActiveCutIdRef.current = null
@@ -476,6 +486,7 @@ export function usePreviewPlayer({
    * edited clock), loading its file when it is not the one on screen. */
   function goToEditedPosition(cut: WorkingCut, local: number, t: number): void {
     setActiveCut(cut.id)
+    skimShowingRef.current = false
     currentTimeRef.current = t
     paintTime(t)
     if (previewSource !== cut.source) {
@@ -647,6 +658,8 @@ export function usePreviewPlayer({
   function applyScrubTime(sec: number, seekVideo: boolean) {
     const dur = getActiveDurationSec()
     const t = clamp(sec, 0, dur)
+    // A deliberate move: whatever frame the skimmer left on screen is over.
+    skimShowingRef.current = false
     currentTimeRef.current = t
     paintTime(t)
     if (seekVideo) seekActiveTime(t)
@@ -971,6 +984,10 @@ export function usePreviewPlayer({
     if (isScrubbingRef.current || isSourceSwapPendingRef.current) return
     const v = activeVideo()
     if (!v) return
+    // A skimmed frame, or the edge a trim is showing (showCutFrame), is not
+    // where the playhead is. Playback ends a skim: the frames are the clock's.
+    if (!v.paused) skimShowingRef.current = false
+    else if (skimShowingRef.current || isCutBlockEditingRef.current) return
     let t: number
     if (viewMode === 'edited') {
       if (!currentEditedCut()) return
@@ -1388,8 +1405,13 @@ export function usePreviewPlayer({
       const target = skimPendingRef.current
       skimPendingRef.current = undefined
       if (target === undefined) return
-      if (target === null) seekVideoOnScreen(currentTimeRef.current, true)
-      else seekVideoOnScreen(target)
+      if (target === null) {
+        skimShowingRef.current = false
+        seekVideoOnScreen(currentTimeRef.current, true)
+      } else {
+        skimShowingRef.current = true
+        seekVideoOnScreen(target)
+      }
     })
   }
 

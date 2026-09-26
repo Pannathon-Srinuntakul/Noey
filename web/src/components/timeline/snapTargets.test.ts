@@ -85,6 +85,19 @@ describe('buildOutputTargets', () => {
     expect(secsOf(t, 'end')).toEqual([6])
   })
 
+  it('drops a voiceover or caption edge that sits on the dragged scene’s boundary', () => {
+    // Line 1 ends where scene b ends (5): derived from the cuts, so while b's
+    // out-point is being dragged that edge is the handle's previous position.
+    const t = buildOutputTargets({
+      ...base,
+      voBlocks: voiceoverLineBlocks(cuts),
+      capSpans: [{ outStart: 2, durationSec: 1 }],
+      excludeCutId: 'b'
+    })
+    expect(secsOf(t, 'voiceover')).toEqual([0, 6])
+    expect(secsOf(t, 'caption')).toEqual([3])
+  })
+
   it('includes the I/O range edges when set', () => {
     const t = buildOutputTargets({ ...base, range: { inSec: 1.5, outSec: 4 } })
     expect(secsOf(t, 'range')).toEqual([1.5, 4])

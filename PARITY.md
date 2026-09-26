@@ -129,6 +129,11 @@ limit except where marked.
   modifier tracker + the drag binder's per-frame `altKey`); a snap draws a
   guide line with a triangle head; the scrub has a softer 6 px threshold and
   Alt/Shift bypass; every drag result is frame-quantised before snapping.
+- The playhead is a FIXED target: the player no longer reads a skimmed frame
+  or a trim's edge preview back as the clock (`skimShowingRef`), and the
+  target is frozen at drag start (`dragPlayheadRef`); voiceover/caption edges
+  that sit on the dragged cut's own boundary are dropped (they are derived
+  from the cuts, so they were the handle one frame behind).
 - Beat targets are the one platform limit: the web runs no beat analysis, so
   `canSnapToBeat` gates only that SOURCE — the magnet itself must exist on
   both.
@@ -145,7 +150,9 @@ limit except where marked.
   `endTwoUp`, `PreviewPane twoUp` + `twoUpIncoming`).
 - Slip: Alt+drag a scene body moves its window inside the source, block stays
   put (`slipCut`); source-view move is a snapped slip.
-- Trim handles: hover-revealed bars, coarse-aware grab zones (22 px), red
+- Trim handles: thin 5 px brackets on a 12 px grab zone (CapCut-style — a
+  12 px bar read as a block of its own, owner 2026-09-27), hover-revealed on
+  unselected blocks, coarse-aware grab zones (22 px), red
   `หมดฟุตเทจ` when the footage end is hit, live readout pills (`DragReadout`:
   `+0.40 วิ`, `เลื่อนรอยตัด ±`, `เลื่อนหน้าต่าง`, `เริ่มที่ 0:03.2`), a
   tooltip with the AI's shot note, sticky play-order label.

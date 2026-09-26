@@ -749,9 +749,24 @@ export const VideoTimelineEditor = memo(function VideoTimelineEditor({
   /** A drag on a scene block begins: one history step for the whole drag,
    * named for the undo button, and the playhead stops moving the selection. */
   const blockEditRef = useRef<{ label: string; cuts: WorkingCut[] } | null>(null)
+  /**
+   * Where the playhead WAS when a block drag began.
+   *
+   * A trim previews the edge it is moving (showCutFrame), and the player
+   * used to read that seek back as the clock, so for the whole drag the
+   * "playhead" was wherever the handle was — a target chasing the handle, so
+   * a trim could never snap to the playhead (found on a real drag,
+   * 2026-09-27: the edge landed at 3.76 s next to a playhead parked at
+   * 3.9 s). The player no longer reads a trim's or a skim's frame as the
+   * clock (usePreviewPlayer.skimShowingRef); this freezes the target at the
+   * drag's start on top of that, since every editor treats the playhead as
+   * a fixed target during a trim.
+   */
+  const dragPlayheadRef = useRef<number | null>(null)
   function beginCutBlockEdit(label = 'ยืด–หดฉาก') {
     isCutBlockEditingRef.current = true
     blockEditRef.current = { label, cuts: cutsRef.current }
+    dragPlayheadRef.current = currentTimeRef.current
     beginEdit(label)
   }
 
@@ -761,6 +776,7 @@ export const VideoTimelineEditor = memo(function VideoTimelineEditor({
    * nothing. */
   function commitCutBlockEdit() {
     isCutBlockEditingRef.current = false
+    dragPlayheadRef.current = null
     commitEdit()
     const started = blockEditRef.current
     blockEditRef.current = null
@@ -2695,7 +2711,9 @@ export const VideoTimelineEditor = memo(function VideoTimelineEditor({
       beats: em?.beats ?? null,
       markers: markersRef.current,
       range: rangeRef.current,
-      playheadSec: currentTimeRef.current,
+      // Frozen at drag start — see dragPlayheadRef. Live only outside a drag
+      // (e.g. a scrub building its own targets).
+      playheadSec: dragPlayheadRef.current ?? currentTimeRef.current,
       editedDur: computeEditedDuration(cutsRef.current),
       excludeCutId
     })
@@ -2742,6 +2760,8 @@ export const VideoTimelineEditor = memo(function VideoTimelineEditor({
       return
     }
     if (!skimEnabled || coarse) return
+    // A drag has its own readout; the skim chip beside it is noise.
+    if (isCutBlockEditingRef.current) return
     if (skimFrameRef.current) return
     skimFrameRef.current = window.requestAnimationFrame(() => {
       skimFrameRef.current = 0
