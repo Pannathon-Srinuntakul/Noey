@@ -124,11 +124,13 @@ describe('history kept across leaving the editor', () => {
 
   it('resumes when the editor reopens on the state it was left in, under fresh cut ids', async () => {
     const { keepHistory, takeHistory } = await import('./editorHistory')
-    const before = snap([cut('cut0', 1)])
+    const before = { snapshot: snap([cut('cut0', 1)]), label: 'ยืด–หดฉาก' }
     const at = snap([cut('new3', 4)])
     keepHistory('p1', { undo: [before], redo: [], at, edits: 1 })
     const resumed = takeHistory('p1', snap([cut('cut0', 4)]))
+    // The step and its name both come back.
     expect(resumed?.undo).toEqual([before])
+    expect(resumed?.undo[0].label).toBe('ยืด–หดฉาก')
     expect(resumed?.at.cuts[0].id).toBe('new3')
     // Taken once: a second open does not replay it again.
     expect(takeHistory('p1', snap([cut('cut0', 4)]))).toBeNull()
@@ -137,7 +139,7 @@ describe('history kept across leaving the editor', () => {
   it('is dropped when something else changed the project meanwhile', async () => {
     const { keepHistory, takeHistory } = await import('./editorHistory')
     keepHistory('p2', {
-      undo: [snap([cut('cut0', 1)])],
+      undo: [{ snapshot: snap([cut('cut0', 1)]), label: null }],
       redo: [],
       at: snap([cut('cut0', 4)]),
       edits: 1
@@ -149,15 +151,15 @@ describe('history kept across leaving the editor', () => {
     const { highestNewCutNumber } = await import('./editorHistory')
     expect(
       highestNewCutNumber({
-        undo: [snap([cut('cut0', 1), cut('new2', 3)])],
-        redo: [snap([cut('new7', 1)])],
+        undo: [{ snapshot: snap([cut('cut0', 1), cut('new2', 3)]), label: null }],
+        redo: [{ snapshot: snap([cut('new7', 1)]), label: null }],
         at: snap([cut('new4', 4)]),
         edits: 3
       })
     ).toBe(7)
     expect(
       highestNewCutNumber({
-        undo: [snap([cut('new12', 1)])],
+        undo: [{ snapshot: snap([cut('new12', 1)]), label: null }],
         redo: [],
         at: snap([cut('new3', 4)]),
         edits: 1
@@ -169,7 +171,12 @@ describe('history kept across leaving the editor', () => {
     const { highestNewCutNumber } = await import('./editorHistory')
     expect(
       highestNewCutNumber({
-        undo: [snap([cut('cut9', 1), cut('new', 2), cut('renew5', 3), cut('new5x', 4)])],
+        undo: [
+          {
+            snapshot: snap([cut('cut9', 1), cut('new', 2), cut('renew5', 3), cut('new5x', 4)]),
+            label: null
+          }
+        ],
         redo: [],
         at: snap([cut('cut0', 4)]),
         edits: 1
@@ -185,8 +192,11 @@ describe('what a closed editor leaves behind for the music prune', () => {
   it('names every track the kept history can restore', async () => {
     const { keepHistory, keptMusicPaths } = await import('./editorHistory')
     keepHistory('m1', {
-      undo: [withMusic('music/a.mp3'), withMusic(null)],
-      redo: [withMusic('music/c.mp3')],
+      undo: [
+        { snapshot: withMusic('music/a.mp3'), label: null },
+        { snapshot: withMusic(null), label: 'เอาเพลงออก' }
+      ],
+      redo: [{ snapshot: withMusic('music/c.mp3'), label: null }],
       at: withMusic('music/b.mp3'),
       edits: 3
     })

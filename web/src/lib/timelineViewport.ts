@@ -5,8 +5,8 @@
  * source of truth and the playhead is already painted imperatively (see the
  * header of `TimelineEditor.tsx`); the filmstrip lanes are the other consumer
  * of scroll, and they redraw a canvas rather than producing DOM. So the scroll
- * handler pushes `{scrollLeft, viewportWidth}` here and interested lanes are
- * called back directly — no `setState`, no reconciliation, one canvas draw per
+ * handler pushes `{scrollLeft, viewportWidth, leadPx}` here and interested
+ * lanes are called back directly — no `setState`, no reconciliation, one canvas draw per
  * lane that actually moved.
  *
  * One store per editor instance, created by the editor and handed down through
@@ -18,6 +18,9 @@ import { createContext } from 'react'
 export interface TimelineViewport {
   scrollLeft: number
   viewportWidth: number
+  /** Padding before time 0 in touch-scrub mode (useTimelineViewport.leadPx),
+   * so a lane drawing to the content box offsets by it. Zero on desktop. */
+  leadPx: number
 }
 
 export interface TimelineViewportStore {
@@ -28,13 +31,17 @@ export interface TimelineViewportStore {
 }
 
 export function createTimelineViewportStore(): TimelineViewportStore {
-  let value: TimelineViewport = { scrollLeft: 0, viewportWidth: 0 }
+  let value: TimelineViewport = { scrollLeft: 0, viewportWidth: 0, leadPx: 0 }
   const listeners = new Set<(v: TimelineViewport) => void>()
 
   return {
     get: () => value,
     set: (next) => {
-      if (next.scrollLeft === value.scrollLeft && next.viewportWidth === value.viewportWidth) {
+      if (
+        next.scrollLeft === value.scrollLeft &&
+        next.viewportWidth === value.viewportWidth &&
+        next.leadPx === value.leadPx
+      ) {
         return
       }
       value = next

@@ -1,26 +1,60 @@
 import type { TrimEdge } from '../../../lib/timelineMath'
 
+/** Title text shared by both variants — the roll gesture is discoverable
+ * from the handle itself, nowhere else. */
+const ROLL_HINT = 'ค้าง ⌘/Ctrl แล้วลากเพื่อเลื่อนรอยตัดทั้งสองฉาก'
+
 /**
  * R3's ที่จับยืด–หด: a gold bar the full height of the block, 12px wide, on
- * the selected block. Every other block gets the same grip as an invisible
- * edge zone (8px, a third of a narrow block — constants.edgeZonePx) with the
- * resize cursor — any block's edge trims it, the way a
+ * the selected block. Every other block gets the same grip as an edge zone
+ * (8px, a third of a narrow block — constants.edgeZonePx; wider on a touch
+ * pointer) with the resize cursor — any block's edge trims it, the way a
  * normal editor works, instead of select first, then trim (owner, 2026-09-22).
+ * The zone's bar appears on hover (CapCut users look for the white bars), so
+ * the parent's inner div carries `group`.
+ *
+ * The selected block's handle is a `role=slider` on the scene's in- or
+ * out-point, part of the lanes' roving focus: only the focused edge is in the
+ * tab order, and focus reports up so Alt+←/→ know which edge to nudge.
  */
 export function TrimBar({
   edge,
   visible = true,
   zonePx = 8,
-  onTrimDown
+  sceneNumber,
+  min,
+  max,
+  value,
+  focused = false,
+  atLimit = false,
+  cutId,
+  onTrimDown,
+  onFocusEdge
 }: {
   edge: TrimEdge
-  /** False: the invisible edge zone of a block that is not selected. */
+  /** False: the edge zone of a block that is not selected. */
   visible?: boolean
   /** The invisible zone's width (constants.edgeZonePx). */
   zonePx?: number
+  /** The scene's play-order number, for the accessible name. */
+  sceneNumber?: number
+  /** The edge's value range and current value in seconds (the slider's). */
+  min?: number
+  max?: number
+  value?: number
+  /** This edge holds the lanes' roving focus. */
+  focused?: boolean
+  /** The edge is pinned at the end of the footage — painted red (FCP). */
+  atLimit?: boolean
+  cutId?: string
   onTrimDown: (e: React.PointerEvent, edge: TrimEdge) => void
+  onFocusEdge?: (cutId: string, edge: TrimEdge | null) => void
 }): React.JSX.Element {
   const side = edge === 'left' ? 'left-0 rounded-l-[5px]' : 'right-0 rounded-r-[5px]'
+  const fill = atLimit ? 'bg-error' : 'bg-accent'
+  const title = atLimit
+    ? 'หมดฟุตเทจ'
+    : `${edge === 'left' ? 'ลากเพื่อปรับจุดเริ่ม' : 'ลากเพื่อปรับจุดจบ'} · ${ROLL_HINT}`
   if (!visible) {
     // z-10, UNDER the playhead's grab strip (z-20), where the gold handles
     // (z-30) sit above it. The playhead parks on scene boundaries all the time
@@ -31,21 +65,51 @@ export function TrimBar({
       <span
         aria-hidden
         data-trim-handle
+        title={title}
         onPointerDown={(e) => {
           if (e.button === 0) onTrimDown(e, edge)
         }}
         className={`absolute inset-y-0 z-10 cursor-ew-resize touch-none ${side}`}
         style={{ width: zonePx }}
-      />
+      >
+        {/* The hover-revealed bar, clipped by the block to whatever the zone
+            allows on a narrow block. */}
+        <span
+          className={`absolute inset-y-0 block w-[12px] opacity-0 transition-opacity duration-state group-hover:opacity-70 ${fill} ${
+            edge === 'left' ? 'left-0 rounded-l-[5px]' : 'right-0 rounded-r-[5px]'
+          }`}
+        />
+      </span>
     )
   }
+  const label =
+    sceneNumber !== undefined
+      ? `${edge === 'left' ? 'จุดเริ่มของฉาก' : 'จุดจบของฉาก'} ${sceneNumber}`
+      : edge === 'left'
+        ? 'จุดเริ่มของฉาก'
+        : 'จุดจบของฉาก'
   return (
     <button
       type="button"
       data-trim-handle
-      title={edge === 'left' ? 'ลากเพื่อปรับจุดเริ่ม' : 'ลากเพื่อปรับจุดจบ'}
+      role="slider"
+      aria-orientation="horizontal"
+      aria-label={label}
+      aria-valuemin={min}
+      aria-valuemax={max}
+      aria-valuenow={value}
+      aria-valuetext={value !== undefined ? `${value.toFixed(2)} วินาที` : undefined}
+      // Roving: the lanes are one Tab stop; ←/→ inside stay the frame step.
+      tabIndex={focused ? 0 : -1}
+      title={title}
       onPointerDown={(e) => onTrimDown(e, edge)}
-      className={`absolute inset-y-0 z-30 flex w-[12px] cursor-ew-resize touch-none items-center justify-center bg-accent ${side}`}
+      onFocus={() => {
+        if (cutId !== undefined) onFocusEdge?.(cutId, edge)
+      }}
+      onBlur={() => {
+        if (cutId !== undefined) onFocusEdge?.(cutId, null)
+      }}
+      className={`absolute inset-y-0 z-30 flex w-[12px] cursor-ew-resize touch-none items-center justify-center ${fill} ${side}`}
     >
       <span className="block h-3 w-[2px] rounded bg-black/50" />
     </button>

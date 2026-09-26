@@ -6,25 +6,37 @@ import {
   sameSnapshot,
   takeHistory,
   type EditorSnapshot,
+  type HistoryEntry,
   type KeptHistory
 } from '../../../lib/editorHistory'
 
+/** What undo()/redo() hand back: the state put back and the step's name. */
+export interface HistoryStep {
+  snapshot: EditorSnapshot
+  label: string | null
+}
+
 export interface EditorHistoryApi {
-  /** Record the state from before an edit — the caller applies the edit. */
-  push: (snapshot: EditorSnapshot) => void
+  /** Record the state from before an edit — the caller applies the edit.
+   * `label` names the step ('แยกฉาก') for the undo button and its toast. */
+  push: (snapshot: EditorSnapshot, label?: string) => void
   /** Everything that is not a cut edit — call BEFORE applying the change. */
-  pushNow: () => void
-  /** Start of a continuous edit (drag, typing) — pairs with commitEdit(). */
-  beginEdit: () => void
+  pushNow: (label?: string) => void
+  /** Start of a continuous edit (drag, typing) — pairs with commitEdit(),
+   * which keeps this label for the step it records. */
+  beginEdit: (label?: string) => void
   /** End of a continuous edit: one step, and none if nothing changed. */
   commitEdit: () => void
   /** Record a continuous edit that is still open or still being committed,
    * now — the way out calls it, so typing that never lost focus is a step. */
   settleEdit: () => void
-  undo: () => void
-  redo: () => void
+  undo: () => HistoryStep | null
+  redo: () => HistoryStep | null
   canUndo: boolean
   canRedo: boolean
+  /** The name of the step เลิกทำ / ทำซ้ำ would take next, or null. */
+  undoLabel: string | null
+  redoLabel: string | null
   /** Steps taken this session, undo and redo included — the header count. */
   editCount: number
   resume: (loaded: EditorSnapshot) => KeptHistory | null
@@ -33,18 +45,18 @@ export interface EditorHistoryApi {
 /** The stacks and the rules for filling them, free of React so they can be
  * tested — the hook below owns one for the editor's life. */
 export interface EditHistoryCore {
-  undoStack: EditorSnapshot[]
-  redoStack: EditorSnapshot[]
-  push: (snapshot: EditorSnapshot) => void
-  pushNow: () => void
-  beginEdit: () => void
+  undoStack: HistoryEntry[]
+  redoStack: HistoryEntry[]
+  push: (snapshot: EditorSnapshot, label?: string) => void
+  pushNow: (label?: string) => void
+  beginEdit: (label?: string) => void
   commitEdit: () => void
   settleEdit: () => void
-  /** The snapshot to put back, or null when there is nothing to undo. */
-  undo: () => EditorSnapshot | null
-  redo: () => EditorSnapshot | null
+  /** The step to put back, or null when there is nothing to undo. */
+  undo: () => HistoryStep | null
+  redo: () => HistoryStep | null
   /** Replace both stacks — a resumed session's history. */
-  load: (undo: EditorSnapshot[], redo: EditorSnapshot[]) => void
+  load: (undo: HistoryEntry[], redo: HistoryEntry[]) => void
 }
 
 export function createEditHistory(
@@ -64,12 +76,13 @@ export function createEditHistory(
     redo,
     load
   }
-  let editSnapshot: EditorSnapshot | null = null
+  /** The open continuous edit: the state it began on and its name. */
+  let editSnapshot: HistoryEntry | null = null
   /** commitEdit's deferred comparison, until its timer fires — see settleEdit. */
-  let pendingCommit: { before: EditorSnapshot; timer: ReturnType<typeof setTimeout> } | null = null
+  let pendingCommit: { before: HistoryEntry; timer: ReturnType<typeof setTimeout> } | null = null
 
-  function recordStep(snapshot: EditorSnapshot): void {
-    core.undoStack.push(snapshot)
+  function recordStep(entry: HistoryEntry): void {
+    core.undoStack.push(entry)
     core.redoStack = []
     onChange()
   }
@@ -79,7 +92,7 @@ export function createEditHistory(
     if (!pending) return
     pendingCommit = null
     clearTimeout(pending.timer)
-    if (!sameSnapshot(pending.before, snapshotNow())) recordStep(pending.before)
+    if (!sameSnapshot(pending.before.snapshot, snapshotNow())) recordStep(pending.before)
   }
 
   /**
@@ -104,7 +117,8 @@ export function createEditHistory(
     const open = editSnapshot
     if (!open) return reopening
     editSnapshot = null
-    if (!sameSnapshot(open, snapshotNow())) recordStep(open)
+    reopenLabel = open.label
+    if (!sameSnapshot(open.snapshot, snapshotNow())) recordStep(open)
     return true
   }
 
@@ -115,6 +129,9 @@ export function createEditHistory(
 
   /** A deferred re-open (see reopenAfterStep), until it fires. */
   let reopenTimer: ReturnType<typeof setTimeout> | null = null
+  /** The name of the edit a step interrupted (set by settleForStep), so the
+   * re-opened edit keeps it. */
+  let reopenLabel: string | null = null
   function cancelReopen(): boolean {
     if (!reopenTimer) return false
     clearTimeout(reopenTimer)
@@ -127,30 +144,30 @@ export function createEditHistory(
    * caller's own change — applied after push — has reached the mirrors. */
   function reopenAfterStep(after?: EditorSnapshot): void {
     if (after) {
-      editSnapshot = after
+      editSnapshot = { snapshot: after, label: reopenLabel }
       return
     }
     reopenTimer = setTimeout(() => {
       reopenTimer = null
-      editSnapshot = snapshotNow()
+      editSnapshot = { snapshot: snapshotNow(), label: reopenLabel }
     }, 0)
   }
 
-  function push(snapshot: EditorSnapshot): void {
+  function push(snapshot: EditorSnapshot, label?: string): void {
     const reopen = settleForStep()
-    recordStep(snapshot)
+    recordStep({ snapshot, label: label ?? null })
     if (reopen) reopenAfterStep()
   }
 
-  function pushNow(): void {
+  function pushNow(label?: string): void {
     const reopen = settleForStep()
-    recordStep(snapshotNow())
+    recordStep({ snapshot: snapshotNow(), label: label ?? null })
     if (reopen) reopenAfterStep()
   }
 
-  function beginEdit(): void {
+  function beginEdit(label?: string): void {
     cancelReopen()
-    editSnapshot = snapshotNow()
+    editSnapshot = { snapshot: snapshotNow(), label: label ?? null }
   }
 
   /** Pushes the pre-edit snapshot onto the undo stack, unless nothing
@@ -172,34 +189,34 @@ export function createEditHistory(
     const timer = setTimeout(() => {
       if (pendingCommit?.timer !== timer) return
       pendingCommit = null
-      if (!sameSnapshot(before, snapshotNow())) recordStep(before)
+      if (!sameSnapshot(before.snapshot, snapshotNow())) recordStep(before)
     }, 0)
     pendingCommit = { before, timer }
   }
 
-  function undo(): EditorSnapshot | null {
+  function undo(): HistoryStep | null {
     const reopen = settleForStep()
     const prev = core.undoStack.pop()
     if (prev) {
-      core.redoStack.push(snapshotNow())
+      core.redoStack.push({ snapshot: snapshotNow(), label: prev.label })
       onChange()
     }
-    if (reopen) reopenAfterStep(prev ?? snapshotNow())
+    if (reopen) reopenAfterStep(prev?.snapshot ?? snapshotNow())
     return prev ?? null
   }
 
-  function redo(): EditorSnapshot | null {
+  function redo(): HistoryStep | null {
     const reopen = settleForStep()
     const next = core.redoStack.pop()
     if (next) {
-      core.undoStack.push(snapshotNow())
+      core.undoStack.push({ snapshot: snapshotNow(), label: next.label })
       onChange()
     }
-    if (reopen) reopenAfterStep(next ?? snapshotNow())
+    if (reopen) reopenAfterStep(next?.snapshot ?? snapshotNow())
     return next ?? null
   }
 
-  function load(undo: EditorSnapshot[], redo: EditorSnapshot[]): void {
+  function load(undo: HistoryEntry[], redo: HistoryEntry[]): void {
     core.undoStack = undo
     core.redoStack = redo
   }
@@ -246,14 +263,16 @@ export function useEditorHistory(
     editCountRef.current = editCount
   }, [editCount])
 
-  function undo() {
+  function undo(): HistoryStep | null {
     const prev = history.undo()
-    if (prev) void applySnapshot(prev)
+    if (prev) void applySnapshot(prev.snapshot)
+    return prev
   }
 
-  function redo() {
+  function redo(): HistoryStep | null {
     const next = history.redo()
-    if (next) void applySnapshot(next)
+    if (next) void applySnapshot(next.snapshot)
+    return next
   }
 
   /**
@@ -291,6 +310,8 @@ export function useEditorHistory(
     // snapshotNow reads refs only, so the first render's copy is current here.
   }, [uid])
 
+  const undoTop = history.undoStack[history.undoStack.length - 1]
+  const redoTop = history.redoStack[history.redoStack.length - 1]
   return {
     push: history.push,
     pushNow: history.pushNow,
@@ -303,6 +324,8 @@ export function useEditorHistory(
     // bumps historyTick, which re-renders the editor.
     canUndo: history.undoStack.length > 0,
     canRedo: history.redoStack.length > 0,
+    undoLabel: undoTop?.label ?? null,
+    redoLabel: redoTop?.label ?? null,
     editCount,
     resume
   }

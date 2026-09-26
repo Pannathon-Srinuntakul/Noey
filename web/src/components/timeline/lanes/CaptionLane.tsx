@@ -1,6 +1,6 @@
 import { memo, useMemo } from 'react'
 import type { CaptionLine } from '../../../lib/editorApi'
-import type { CaptionChipSpan, TrimEdge } from '../../../lib/timelineMath'
+import { fmtTimeTenths, type CaptionChipSpan, type TrimEdge } from '../../../lib/timelineMath'
 import { CAPTION_LANE_PX } from '../constants'
 import { CaptionEdge } from './CaptionEdge'
 import { TrackRow } from './TrackRow'
@@ -13,6 +13,7 @@ export const CaptionLane = memo(function CaptionLane({
   captionCursorIdx,
   pxPerSec,
   contentW,
+  leadPx = 0,
   onLaneBackgroundPointerDown,
   onDragEdge,
   onPickChip
@@ -23,6 +24,7 @@ export const CaptionLane = memo(function CaptionLane({
   captionCursorIdx: number
   pxPerSec: number
   contentW: number
+  leadPx?: number
   onLaneBackgroundPointerDown: (e: React.PointerEvent) => void
   onDragEdge: (chip: CaptionChipSpan, edge: TrimEdge, e: React.PointerEvent) => void
   /** A chip was clicked: its line's index. */
@@ -43,6 +45,9 @@ export const CaptionLane = memo(function CaptionLane({
       label="คำบรรยาย"
       laneClassName="relative h-full"
       contentW={contentW}
+      leadPx={leadPx}
+      role="listbox"
+      ariaLabel="คำบรรยาย"
       onLanePointerDown={onLaneBackgroundPointerDown}
     >
       {capSpans.map((chip) => {
@@ -52,6 +57,11 @@ export const CaptionLane = memo(function CaptionLane({
           <div
             key={chip.id}
             data-cut-block
+            role="option"
+            aria-selected={isActive}
+            aria-label={`คำบรรยาย: ${chip.text} ${fmtTimeTenths(chip.outStart)}–${fmtTimeTenths(
+              chip.outStart + chip.durationSec
+            )}`}
             onPointerDown={(e) => e.stopPropagation()}
             className={`absolute inset-y-0 rounded border transition-colors duration-state ${
               isActive

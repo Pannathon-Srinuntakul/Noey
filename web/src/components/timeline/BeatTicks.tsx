@@ -11,7 +11,8 @@ export const BeatTicks = memo(function BeatTicks({
   trimInSec,
   offsetSec,
   editedDur,
-  pxPerSec
+  pxPerSec,
+  leadPx = 0
 }: {
   /** Beat times in the music file. */
   beats: number[]
@@ -19,6 +20,8 @@ export const BeatTicks = memo(function BeatTicks({
   offsetSec: number
   editedDur: number
   pxPerSec: number
+  /** Touch-scrub padding before t=0 (the viewport hook's leadPx). */
+  leadPx?: number
 }): React.JSX.Element {
   return (
     <div
@@ -32,7 +35,7 @@ export const BeatTicks = memo(function BeatTicks({
           <div
             key={i}
             className="absolute top-0 bottom-0 w-px bg-[rgb(217_164_65_/_0.4)]"
-            style={{ left: HEADER_COL_PX + outputSec * pxPerSec }}
+            style={{ left: leadPx + HEADER_COL_PX + outputSec * pxPerSec }}
           />
         )
       })}

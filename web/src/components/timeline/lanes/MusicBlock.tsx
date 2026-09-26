@@ -1,24 +1,35 @@
 import { useEffect, useRef, useState } from 'react'
 import type { EditorMusic, MusicPatch } from '../../../lib/editorApi'
+import { bindPointerDrag, type DragScroller } from '../../../lib/pointerDrag'
 import {
-  BEAT_SNAP_THRESHOLD_SEC,
   clamp,
+  fmtTimeTenths,
   snapMusicOffsetToCut,
   type TrimEdge
 } from '../../../lib/timelineMath'
+import { quantizeToFrame, snapScrub, snapSpan, type SnapHit } from '../../../lib/timelineSnap'
 import { MUSIC_LANE_PX } from '../constants'
+import type { SnapContext } from '../types'
+import { DragReadout } from './DragReadout'
+import { musicReadoutText, pickMusicSnap } from './sceneLabel'
 
 const MUSIC_MIN_SEC = 0.3
 
+/** A span snap needs an upper bound; the music may start anywhere. */
+const NO_MAX_END = 1e9
+
 /** Background-music block on the เพลง track — waveform behind, name + volume
- * on top; drag the block to change offsetSec, drag either edge to trim. */
+ * on top; drag the block to change offsetSec, drag either edge to trim. Every
+ * drag snaps to the output targets (cut edges, VO lines, playhead, markers,
+ * captions) and, when the track has beats, a beat onto a cut — whichever
+ * moves the block less. */
 export function MusicBlock({
   music,
   peaks,
   fullDurationSec,
   pxPerSec,
-  cutBoundaries = [],
-  snapEnabled = false,
+  getSnapContext,
+  dragScroller,
   onChange,
   onDraftChange
 }: {
@@ -26,10 +37,9 @@ export function MusicBlock({
   peaks: number[] | null
   fullDurationSec: number
   pxPerSec: number
-  /** Scene boundaries on the output clock — a dragged track snaps so that one
-   * of its beats lands on one of these. */
-  cutBoundaries?: number[]
-  snapEnabled?: boolean
+  /** Asked once per drag; isActive / tolSec / targets are read per frame. */
+  getSnapContext: () => SnapContext
+  dragScroller?: DragScroller
   onChange: (patch: MusicPatch) => void
   /** Fired on every drag move (and null on release) purely for the parent's
    * live audio preview — not persisted, unlike onChange. */
@@ -37,6 +47,10 @@ export function MusicBlock({
 }): React.JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [draft, setDraft] = useState<MusicPatch | null>(null)
+  const [readout, setReadout] = useState<{
+    text: string
+    anchor: 'left' | 'right' | 'center'
+  } | null>(null)
   const offsetSec = draft?.offsetSec ?? music.offsetSec
   const trimInSec = draft?.trimInSec ?? music.trimInSec
   const trimOut = draft?.trimOutSec ?? music.trimOutSec ?? fullDurationSec
@@ -78,55 +92,61 @@ export function MusicBlock({
 
   const onMoveDown = (e: React.PointerEvent): void => {
     if (e.button !== 0) return
-    e.stopPropagation()
-    e.preventDefault()
-    const startX = e.clientX
+    const ctx = getSnapContext()
     const startOffset = music.offsetSec
+    const startTrimIn = music.trimInSec
+    const startTrimOut = music.trimOutSec ?? fullDurationSec
+    const len = Math.max(startTrimOut - startTrimIn, MUSIC_MIN_SEC)
     let last: MusicPatch = {}
-    // One draft per frame, the newest pointer position winning — see
-    // bindTrimDrag. Each draft re-renders this block and re-syncs the audio.
-    let lastX = startX
-    let frame = 0
-    const apply = (): void => {
-      frame = 0
-      const deltaSec = (lastX - startX) / pxPerSec
-      const raw = Math.max(startOffset + deltaSec, 0)
-      // Land a beat on a cut rather than the file's start on a cut — see
-      // snapMusicOffsetToCut. Threshold scales with zoom so it stays a ~10px
-      // pull at any timeline scale.
-      const offsetSec = snapEnabled
-        ? snapMusicOffsetToCut(
-            raw,
-            music.beats ?? null,
-            cutBoundaries,
-            music.trimInSec,
-            Math.max(BEAT_SNAP_THRESHOLD_SEC, 10 / Math.max(pxPerSec, 1))
-          )
-        : raw
-      last = { offsetSec }
-      setDraft(last)
-      onDraftChange?.(last)
-    }
-    const onMove = (ev: PointerEvent): void => {
-      lastX = ev.clientX
-      if (!frame) frame = window.requestAnimationFrame(apply)
-    }
-    const onUp = (): void => {
-      window.removeEventListener('pointermove', onMove)
-      window.removeEventListener('pointerup', onUp)
-      window.removeEventListener('pointercancel', onUp)
-      // Land the last position before it is committed.
-      if (frame) {
-        window.cancelAnimationFrame(frame)
-        apply()
+    bindPointerDrag({
+      e,
+      pxPerSec,
+      scroller: dragScroller,
+      onFrame(f) {
+        const raw = Math.max(quantizeToFrame(startOffset + f.deltaSec), 0)
+        let next = raw
+        let hit: SnapHit | null = null
+        if (ctx.isActive() && !f.altKey) {
+          const tolSec = ctx.tolSec()
+          const targets = ctx.outputTargets()
+          // (a) the block's own edges onto anything on the output clock …
+          const span = snapSpan({
+            start: raw,
+            end: raw + len,
+            minStart: 0,
+            maxEnd: NO_MAX_END,
+            targets,
+            tolSec
+          })
+          // … (b) or a beat onto a cut — beats matter more than where the file
+          // starts (snapMusicOffsetToCut). The smaller move wins.
+          const beat = music.beats?.length
+            ? snapMusicOffsetToCut(
+                raw,
+                music.beats,
+                targets.filter((t) => t.kind === 'cut' || t.kind === 'end').map((t) => t.sec),
+                startTrimIn,
+                tolSec
+              )
+            : null
+          const pick = pickMusicSnap(raw, span, beat)
+          next = pick.offsetSec
+          hit = pick.hit
+        }
+        ctx.report(hit, 'output')
+        last = { offsetSec: next }
+        setDraft(last)
+        onDraftChange?.(last)
+        setReadout({ text: musicReadoutText(next), anchor: 'left' })
+      },
+      onEnd({ cancelled }) {
+        ctx.report(null, 'output')
+        setDraft(null)
+        onDraftChange?.(null)
+        setReadout(null)
+        if (!cancelled && last.offsetSec !== undefined) onChange(last)
       }
-      setDraft(null)
-      onDraftChange?.(null)
-      if (last.offsetSec !== undefined) onChange(last)
-    }
-    window.addEventListener('pointermove', onMove)
-    window.addEventListener('pointerup', onUp)
-    window.addEventListener('pointercancel', onUp)
+    })
   }
 
   const commitVolume = (): void => {
@@ -160,70 +180,93 @@ export function MusicBlock({
   }
 
   const onTrimDown = (e: React.PointerEvent, edge: TrimEdge): void => {
+    if (e.button !== 0) return
+    // Not a move of the whole block (the binder stops propagation too, but
+    // only once it is reached).
     e.stopPropagation()
-    e.preventDefault()
     // The track's length comes from decoding the file, which can still be in
     // flight (or have failed). With 0 the right-edge clamp inverts —
     // clamp(x, trimIn + 0.3, 0) returns 0.3 — so one drag committed a track
     // trimmed to 0.3s and re-mixed the whole clip against it.
     if (fullDurationSec <= 0) return
-    const startX = e.clientX
+    const ctx = getSnapContext()
     const startTrimIn = music.trimInSec
     const startTrimOut = music.trimOutSec ?? fullDurationSec
     const startOffset = music.offsetSec
     let last: MusicPatch = {}
-    // One draft per frame, as for the move above.
-    let lastX = startX
-    let frame = 0
-    const apply = (): void => {
-      frame = 0
-      const deltaSec = (lastX - startX) / pxPerSec
-      if (edge === 'left') {
-        const nextIn = clamp(startTrimIn + deltaSec, 0, startTrimOut - MUSIC_MIN_SEC)
-        const applied = nextIn - startTrimIn
-        last = { trimInSec: nextIn, offsetSec: Math.max(startOffset + applied, 0) }
-      } else {
-        const nextOut = clamp(startTrimOut + deltaSec, startTrimIn + MUSIC_MIN_SEC, fullDurationSec)
-        last = { trimOutSec: nextOut }
+    bindPointerDrag({
+      e,
+      pxPerSec,
+      scroller: dragScroller,
+      onFrame(f) {
+        const snapActive = ctx.isActive() && !f.altKey
+        const targets = snapActive ? ctx.outputTargets() : []
+        const tolSec = ctx.tolSec()
+        let hit: SnapHit | null = null
+        if (edge === 'left') {
+          // The left edge sits at offsetSec on the output clock: trimming the
+          // head moves the block's start by the same amount.
+          const lo = 0
+          const hi = startTrimOut - MUSIC_MIN_SEC
+          let nextIn = clamp(quantizeToFrame(startTrimIn + f.deltaSec), lo, hi)
+          if (snapActive) {
+            const s = snapScrub(startOffset + (nextIn - startTrimIn), targets, tolSec)
+            const snappedIn = clamp(startTrimIn + (s.sec - startOffset), lo, hi)
+            // A snap the clamp undid draws no guide.
+            hit = Math.abs(snappedIn - (startTrimIn + (s.sec - startOffset))) < 1e-9 ? s.hit : null
+            nextIn = snappedIn
+          }
+          const applied = nextIn - startTrimIn
+          const nextOffset = Math.max(startOffset + applied, 0)
+          last = { trimInSec: nextIn, offsetSec: nextOffset }
+          setReadout({ text: musicReadoutText(nextOffset), anchor: 'left' })
+        } else {
+          // The right edge sits at offsetSec + (trimOut − trimIn).
+          const lo = startTrimIn + MUSIC_MIN_SEC
+          const hi = fullDurationSec
+          let nextOut = clamp(quantizeToFrame(startTrimOut + f.deltaSec), lo, hi)
+          if (snapActive) {
+            const s = snapScrub(startOffset + (nextOut - startTrimIn), targets, tolSec)
+            const snappedOut = clamp(startTrimIn + (s.sec - startOffset), lo, hi)
+            hit = Math.abs(snappedOut - (startTrimIn + (s.sec - startOffset))) < 1e-9 ? s.hit : null
+            nextOut = snappedOut
+          }
+          last = { trimOutSec: nextOut }
+          setReadout({
+            text: `จบที่ ${fmtTimeTenths(startOffset + (nextOut - startTrimIn))}`,
+            anchor: 'right'
+          })
+        }
+        ctx.report(hit, 'output')
+        setDraft(last)
+        onDraftChange?.(last)
+      },
+      onEnd({ cancelled }) {
+        ctx.report(null, 'output')
+        setDraft(null)
+        onDraftChange?.(null)
+        setReadout(null)
+        if (!cancelled && Object.keys(last).length > 0) onChange(last)
       }
-      setDraft(last)
-      onDraftChange?.(last)
-    }
-    const onMove = (ev: PointerEvent): void => {
-      lastX = ev.clientX
-      if (!frame) frame = window.requestAnimationFrame(apply)
-    }
-    const onUp = (): void => {
-      window.removeEventListener('pointermove', onMove)
-      window.removeEventListener('pointerup', onUp)
-      window.removeEventListener('pointercancel', onUp)
-      // Land the last position before it is committed.
-      if (frame) {
-        window.cancelAnimationFrame(frame)
-        apply()
-      }
-      setDraft(null)
-      onDraftChange?.(null)
-      if (Object.keys(last).length > 0) onChange(last)
-    }
-    window.addEventListener('pointermove', onMove)
-    window.addEventListener('pointerup', onUp)
-    window.addEventListener('pointercancel', onUp)
+    })
   }
 
   return (
     <div
       data-cut-block
-      className="absolute inset-y-0 flex cursor-grab items-center overflow-hidden rounded-[5px] border border-border bg-surface active:cursor-grabbing"
+      className="absolute inset-y-0 flex cursor-grab items-center rounded-[5px] border border-border bg-surface active:cursor-grabbing"
       style={{ left, width }}
       onPointerDown={onMoveDown}
-      title="ลากเพื่อเลื่อนตำแหน่งเพลง"
+      title="ลากเพื่อเลื่อนตำแหน่งเพลง · Alt ค้าง = ปิดดูดขอบ"
     >
-      <canvas
-        ref={canvasRef}
-        className="pointer-events-none absolute inset-0 h-full w-full"
-        style={{ width, height: MUSIC_LANE_PX }}
-      />
+      {/* The clipped inner box — the readout hangs above the block. */}
+      <div className="pointer-events-none absolute inset-0 overflow-hidden rounded-[5px]">
+        <canvas
+          ref={canvasRef}
+          className="absolute inset-0 h-full w-full"
+          style={{ width, height: MUSIC_LANE_PX }}
+        />
+      </div>
       <div className="pointer-events-none relative z-10 flex min-w-0 items-center gap-2 pr-3 pl-3 text-[13px] text-ink">
         <span className="truncate">{name}</span>
         <span className="shrink-0 tabular-nums text-muted">
@@ -237,6 +280,7 @@ export function MusicBlock({
         step={0.05}
         value={volume}
         data-trim-handle
+        aria-label="ระดับเสียงเพลง"
         onPointerDown={onVolumeDown}
         onChange={(e) => onVolumeInput(Number(e.target.value))}
         onKeyUp={commitVolume}
@@ -251,6 +295,13 @@ export function MusicBlock({
           <button
             type="button"
             data-trim-handle
+            role="slider"
+            aria-orientation="horizontal"
+            aria-label="จุดเริ่มของเพลง"
+            aria-valuemin={0}
+            aria-valuemax={trimOut}
+            aria-valuenow={trimInSec}
+            tabIndex={-1}
             onPointerDown={(e) => onTrimDown(e, 'left')}
             title="ลากเพื่อตัดต้นเพลง"
             className="absolute top-0 left-0 z-20 h-full w-[10px] cursor-ew-resize touch-none rounded-l-[5px] bg-accent/60 hover:bg-accent"
@@ -258,12 +309,20 @@ export function MusicBlock({
           <button
             type="button"
             data-trim-handle
+            role="slider"
+            aria-orientation="horizontal"
+            aria-label="จุดจบของเพลง"
+            aria-valuemin={trimInSec}
+            aria-valuemax={fullDurationSec}
+            aria-valuenow={trimOut}
+            tabIndex={-1}
             onPointerDown={(e) => onTrimDown(e, 'right')}
             title="ลากเพื่อตัดท้ายเพลง"
             className="absolute top-0 right-0 z-20 h-full w-[10px] cursor-ew-resize touch-none rounded-r-[5px] bg-accent/60 hover:bg-accent"
           />
         </>
       ) : null}
+      {readout && <DragReadout text={readout.text} anchor={readout.anchor} />}
     </div>
   )
 }

@@ -99,6 +99,17 @@ export function sameSnapshotIgnoringIds(a: EditorSnapshot, b: EditorSnapshot): b
 }
 
 /**
+ * One step on a stack: the state to put back, and what the step was called
+ * ('แยกฉาก', 'ลบ 3 ฉาก', …) so เลิกทำ can say what it is about to undo — the
+ * named step Premiere's History panel and FCP's "Undo Trim" show. null for a
+ * step nobody named (a resumed history from before labels, a music change).
+ */
+export interface HistoryEntry {
+  snapshot: EditorSnapshot
+  label: string | null
+}
+
+/**
  * Undo/redo history per project, kept for the browser session.
  *
  * The stacks used to live in the editor's refs, so leaving the editor and
@@ -110,8 +121,8 @@ export function sameSnapshotIgnoringIds(a: EditorSnapshot, b: EditorSnapshot): b
  * the ground under it, and replaying it would undo work the user never saw.
  */
 export interface KeptHistory {
-  undo: EditorSnapshot[]
-  redo: EditorSnapshot[]
+  undo: HistoryEntry[]
+  redo: HistoryEntry[]
   /** The state the history ended at — the only state it may resume from. */
   at: EditorSnapshot
   edits: number
@@ -132,6 +143,11 @@ export function takeHistory(uid: string, loaded: EditorSnapshot): KeptHistory | 
   return kept
 }
 
+/** Every state a kept history holds: where it ended and both stacks. */
+function keptSnapshots(kept: KeptHistory): EditorSnapshot[] {
+  return [kept.at, ...kept.undo.map((e) => e.snapshot), ...kept.redo.map((e) => e.snapshot)]
+}
+
 /**
  * Every music file a kept history can still restore — its end state and both
  * stacks. A replaced track must outlive the editor for as long as one of
@@ -142,7 +158,7 @@ export function keptMusicPaths(uid: string): string[] {
   const kept = keptHistory.get(uid)
   if (!kept) return []
   const paths = new Set<string>()
-  for (const snapshot of [kept.at, ...kept.undo, ...kept.redo]) {
+  for (const snapshot of keptSnapshots(kept)) {
     if (snapshot.music?.path) paths.add(snapshot.music.path)
   }
   return [...paths]
@@ -192,7 +208,7 @@ export function whenEditorClosed(uid: string): Promise<void> {
  */
 export function highestNewCutNumber(kept: KeptHistory): number {
   let highest = 0
-  for (const snapshot of [kept.at, ...kept.undo, ...kept.redo]) {
+  for (const snapshot of keptSnapshots(kept)) {
     for (const c of snapshot.cuts) {
       const m = /^new(\d+)$/.exec(c.id)
       if (m) highest = Math.max(highest, Number(m[1]))

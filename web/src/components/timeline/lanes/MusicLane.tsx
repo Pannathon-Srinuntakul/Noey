@@ -1,9 +1,11 @@
 import { Loader2, Music2, RefreshCw, Trash2, Volume2, VolumeX } from 'lucide-react'
 import { memo } from 'react'
 import type { EditorMusic, MusicPatch } from '../../../lib/editorApi'
+import type { DragScroller } from '../../../lib/pointerDrag'
 import { featureLockedLine } from '../../../lib/planLadder'
 import { useUsageInfo } from '../../../lib/usageInfo'
 import { MIN_LANE_PX, MUSIC_LANE_PX } from '../constants'
+import type { SnapContext } from '../types'
 import { MusicBlock } from './MusicBlock'
 import { TrackRow } from './TrackRow'
 
@@ -21,10 +23,11 @@ export const MusicLane = memo(function MusicLane({
   musicDurationSec,
   musicBusy,
   editedDur,
-  outputCutBoundaries,
-  snapToBeatEnabled,
+  getSnapContext,
+  dragScroller,
   pxPerSec,
   contentW,
+  leadPx = 0,
   onLaneBackgroundPointerDown,
   onCommitMusic,
   onMusicDraft,
@@ -36,11 +39,13 @@ export const MusicLane = memo(function MusicLane({
   musicDurationSec: number
   musicBusy: boolean
   editedDur: number
-  /** Scene boundaries on the output clock — what a dragged track snaps to. */
-  outputCutBoundaries: number[]
-  snapToBeatEnabled: boolean
+  /** What a dragged track snaps to (cut edges, VO lines, playhead, markers,
+   * captions — and its own beats onto a cut). Asked once per drag. */
+  getSnapContext: () => SnapContext
+  dragScroller?: DragScroller
   pxPerSec: number
   contentW: number
+  leadPx?: number
   onLaneBackgroundPointerDown: (e: React.PointerEvent) => void
   onCommitMusic: (patch: MusicPatch) => void
   onMusicDraft: (patch: MusicPatch | null) => void
@@ -92,6 +97,7 @@ export const MusicLane = memo(function MusicLane({
       }
       laneClassName="relative h-full"
       contentW={contentW}
+      leadPx={leadPx}
       onLanePointerDown={onLaneBackgroundPointerDown}
     >
       {music ? (
@@ -100,8 +106,8 @@ export const MusicLane = memo(function MusicLane({
           peaks={musicPeaks}
           fullDurationSec={musicDurationSec}
           pxPerSec={pxPerSec}
-          cutBoundaries={outputCutBoundaries}
-          snapEnabled={snapToBeatEnabled}
+          getSnapContext={getSnapContext}
+          dragScroller={dragScroller}
           onChange={onCommitMusic}
           onDraftChange={onMusicDraft}
         />

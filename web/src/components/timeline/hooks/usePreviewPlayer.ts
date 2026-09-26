@@ -6,6 +6,7 @@ import {
   type CaptionLine,
   type EditTimeline
 } from '../../../lib/editorApi'
+import { bindPointerDrag, NO_SCROLLER, type DragScroller } from '../../../lib/pointerDrag'
 import {
   clamp,
   computeEditedDuration,
@@ -13,9 +14,33 @@ import {
   findSegmentAt,
   type EditedSegment
 } from '../../../lib/timelineMath'
+import {
+  quantizeToFrame,
+  snapScrub,
+  type SnapHit,
+  type SnapTarget
+} from '../../../lib/timelineSnap'
+import { FRAME_SEC, PLAY_AROUND_POST_SEC, PLAY_AROUND_PRE_SEC } from '../constants'
+import {
+  canSkim,
+  playAroundRange,
+  rangeStop,
+  sceneRange,
+  scrubSnapDecision,
+  type PlayRange
+} from '../playRange'
 import { editedTimeIn, resolveEditedPosition, sceneIsOver } from '../previewMath'
 import type { WorkingCut } from '../types'
 import type { TimelineViewportApi } from './useTimelineViewport'
+
+/** What the scrub needs to snap the playhead to an edge: the editor builds
+ * the targets for the view on screen and draws the guide through `report`. */
+export interface ScrubSnap {
+  active: boolean
+  targets: SnapTarget[]
+  tolSec: number
+  report(hit: SnapHit | null): void
+}
 
 /** Where a view was left, so switching back lands on the same frame. The
  * selection is not part of it: it is what the user picked to edit, and a
@@ -76,6 +101,31 @@ export interface PreviewPlayerApi {
   syncTimeFromVideo: () => void
   onVideoEnded: () => void
   onVideoPaused: () => void
+  // ---- hover skim (FCP skimmer / CapCut preview axis) ----
+  /** Show the frame under the pointer without moving the playhead; null =
+   * the pointer left, put the playhead's frame back. */
+  skimTo: (sec: number | null) => void
+  setSkimEnabled: (v: boolean) => void
+  // ---- play a range / a scene / around a cut, loop ----
+  playRange: (inSec: number, outSec: number, opts?: { loop?: boolean }) => void
+  /** Drop the active range (playback goes on to the end as usual). */
+  stopRange: () => void
+  playScene: (cutId: string) => void
+  /** ±1 s around `sec` (Shift+K on the nearest cut). */
+  playAround: (sec: number) => void
+  isLooping: boolean
+  /** Loop the active range when one is set, else the whole sequence. */
+  setLoop: (v: boolean) => void
+  // ---- two-up preview for a roll / slip ----
+  beginTwoUp: (cut: WorkingCut, outgoing?: WorkingCut) => void
+  /** Outgoing frame (source-local, left pane) and incoming frame (right pane). */
+  paintTwoUp: (leftSec: number, rightSec: number) => void
+  endTwoUp: () => void
+  twoUp: boolean
+  /** The element holding the incoming (right) frame while `twoUp` is on. */
+  twoUpIncoming: 'A' | 'B'
+  // ---- touch scrub (the viewport's swipe = scrub) ----
+  onTouchScrub: (t: number) => void
 }
 
 /**
@@ -100,6 +150,8 @@ export interface PreviewPlayerApi {
 /** The speeds L steps through. No 4x: the music track is a plain <audio> that
  * has to keep up, and past 2x it audibly gives up. */
 const SHUTTLE_RATES = [1, 1.5, 2]
+/** After the last touch-scrub event, playback resumes (if it was playing). */
+const TOUCH_SCRUB_RESUME_MS = 150
 
 function absoluteUrl(src: string): string {
   try {
@@ -133,6 +185,8 @@ export function usePreviewPlayer({
   getSourceDurationSec,
   getActiveDurationSec,
   viewport: { paintTime, followPlayhead, resumeFollow, revealPlayhead, timeAtClientX, pxPerSec },
+  getScrubSnap,
+  dragScroll = NO_SCROLLER,
   syncMusicAudio,
   setError,
   setErrorRetry
@@ -172,6 +226,11 @@ export function usePreviewPlayer({
     | 'timeAtClientX'
     | 'pxPerSec'
   >
+  /** Snap targets for the scrub, read once per drag frame (the playhead
+   * snaps to cut edges, voiceover lines, markers — MANDATORY #2). */
+  getScrubSnap?: () => ScrubSnap
+  /** The viewport's edge auto-scroll, so a scrub past the edge scrolls. */
+  dragScroll?: DragScroller
   syncMusicAudio: (t: number, allowPlay: boolean) => void
   setError: Dispatch<SetStateAction<string | null>>
   setErrorRetry: Dispatch<SetStateAction<'save' | null>>
@@ -221,12 +280,44 @@ export function usePreviewPlayer({
   const sourceViewStateRef = useRef<ViewModePlaybackState | null>(null)
   const editedViewStateRef = useRef<ViewModePlaybackState | null>(null)
   const [isPlaying, setIsPlaying] = useState(false)
+  // The range playback stops at (play scene / play around / I–O). On the
+  // active view's clock. Any user seek, a play toggle or a view switch drops
+  // it — Premiere/FCP behaviour.
+  const activeRangeRef = useRef<PlayRange | null>(null)
+  const [isLooping, setIsLooping] = useState(false)
+  const isLoopingRef = useRef(false)
+  // Hover skim: the frame under the pointer, shown without moving the clock.
+  const skimEnabledRef = useRef(true)
+  // undefined = nothing pending; null = a restore to the playhead's frame.
+  const skimPendingRef = useRef<number | null | undefined>(undefined)
+  const skimFrameRef = useRef(0)
+  // Two-up (roll / slip): which element was active when it began, so it can
+  // be put back, and the last frame each pane was asked for.
+  const [twoUp, setTwoUp] = useState(false)
+  // Which element shows the INCOMING (right) frame: the active one at
+  // beginTwoUp. PreviewPane lays the halves out from this, since the two
+  // <video> elements are absolutely positioned and would ignore flex order.
+  const [twoUpIncoming, setTwoUpIncoming] = useState<'A' | 'B'>('B')
+  const twoUpRef = useRef<{
+    leftSec: number | null
+    rightSec: number | null
+    frame: number
+  } | null>(null)
+  // Touch scrub: a swipe on the strip. Paused on the first event, resumed
+  // once the scrolling has been quiet for a moment.
+  const touchScrubTimerRef = useRef<number | undefined>(undefined)
+  const touchScrubFrameRef = useRef(0)
+  const touchScrubTRef = useRef(0)
 
   useEffect(() => {
     return () => {
       previewCache.current.forEach((v) => v.cleanup())
       previewCache.current.clear()
       window.clearTimeout(holdTimerRef.current)
+      window.clearTimeout(touchScrubTimerRef.current)
+      cancelAnimationFrame(skimFrameRef.current)
+      cancelAnimationFrame(touchScrubFrameRef.current)
+      if (twoUpRef.current?.frame) cancelAnimationFrame(twoUpRef.current.frame)
     }
   }, [])
 
@@ -281,10 +372,6 @@ export function usePreviewPlayer({
     const tick = () => {
       const v = activeVideo()
       if (v && !v.paused && !isScrubbingRef.current && !isSourceSwapPendingRef.current) {
-        if (viewMode === 'edited' && maybeAdvanceEditedSegment(v)) {
-          raf = requestAnimationFrame(tick)
-          return
-        }
         // Neither the selection nor the active scene is re-derived from `t`
         // here: `t` is computed FROM the active scene, and the selection is
         // the user's (see syncTimeFromVideo).
@@ -292,6 +379,16 @@ export function usePreviewPlayer({
           viewMode === 'edited'
             ? editedTimeOfVideo(v)
             : clamp(v.currentTime, 0, getActiveDurationSec())
+        // The range's end comes before the scene's: a scene that ends where
+        // the range does must not advance to the next one.
+        if (enforceRange(v, t)) {
+          raf = requestAnimationFrame(tick)
+          return
+        }
+        if (viewMode === 'edited' && maybeAdvanceEditedSegment(v)) {
+          raf = requestAnimationFrame(tick)
+          return
+        }
         currentTimeRef.current = t
         paintTime(t)
         followPlayhead(t)
@@ -493,12 +590,21 @@ export function usePreviewPlayer({
     const cut = currentEditedCut()
     if (!cut) return false
     if (!sceneIsOver(v.currentTime, cut, v.duration)) return false
-    const idx = cuts.findIndex((c) => c.id === cut.id)
-    const next = cuts[idx + 1]
+    // The scene after this one in PLAY order — editedSegments, not the raw
+    // cut list, so a scene with no segment (skipped) is jumped over.
+    const idx = editedSegments.findIndex((s) => s.cut.id === cut.id)
+    const next = editedSegments[idx + 1]?.cut
     if (!next) {
+      const dur = computeEditedDuration(cuts)
+      if (isLoopingRef.current && !activeRangeRef.current) {
+        // Loop the whole sequence: back to the start, still playing.
+        applyScrubTimeRef.current(0, true)
+        if (isSourceSwapPendingRef.current) resumePlaybackRef.current = true
+        else if (v.paused) void v.play()
+        return true
+      }
       v.pause()
       setIsPlaying(false)
-      const dur = computeEditedDuration(cuts)
       currentTimeRef.current = dur
       paintTime(dur)
       return true
@@ -558,6 +664,7 @@ export function usePreviewPlayer({
    * timeline sat perfectly still — which reads as a button that did nothing.
    */
   function jumpTo(sec: number): void {
+    activeRangeRef.current = null
     applyScrubTime(sec, true)
     // After the clamp, not the asked-for value.
     revealPlayhead(currentTimeRef.current)
@@ -635,6 +742,8 @@ export function usePreviewPlayer({
 
   function pauseForScrub() {
     const v = activeVideo()
+    // A scrub is a user seek: the play range it interrupts is over.
+    activeRangeRef.current = null
     if (!isScrubbingRef.current && v) {
       wasPlayingBeforeScrubRef.current = !v.paused
     }
@@ -660,35 +769,48 @@ export function usePreviewPlayer({
   const applyScrubTimeRef = useRef(applyScrubTime)
   applyScrubTimeRef.current = applyScrubTime
 
-  /** Ruler / playhead-grip drag: scrub while moving, commit + resume on release. */
+  /**
+   * One scrub frame: the time under the pointer, on the frame grid, pulled
+   * onto a nearby edge (cut, voiceover line, marker, playhead of the other
+   * view…) unless Alt or Shift says not to (MANDATORY #2). Snap targets are
+   * exact, so quantizing first never moves a snapped value off its edge.
+   */
+  function scrubFrame(clientX: number, mods: { altKey: boolean; shiftKey: boolean }): void {
+    const t = quantizeToFrame(timeAtClientX(clientX))
+    const snap = getScrubSnap?.()
+    const { sec, hit } = snap
+      ? scrubSnapDecision(
+          t,
+          { active: snap.active, altKey: mods.altKey, shiftKey: mods.shiftKey },
+          snap.targets,
+          snap.tolSec,
+          snapScrub
+        )
+      : { sec: t, hit: null }
+    snap?.report(hit)
+    applyScrubTimeRef.current(sec, true)
+  }
+
+  /** Ruler / playhead-grip drag: scrub while moving, commit + resume on
+   * release. On the shared binder (lib/pointerDrag): one seek per frame with
+   * the newest pointer — every move used to seek the video, set state and
+   * read layout, which is most of why scrubbing felt sticky — plus edge
+   * auto-scroll through `dragScroll` and Escape, which just ends it (a scrub
+   * has no start state to put back). */
   function onRulerPointerDown(e: React.PointerEvent) {
     if (e.button !== 0) return
-    e.preventDefault()
     pauseForScrub()
-    applyScrubTime(timeAtClientX(e.clientX), true)
-    // One seek per frame: every move used to seek the video, set state and
-    // read layout, which is most of why scrubbing felt sticky.
-    let lastX = e.clientX
-    let frame = 0
-    const onMove = (ev: PointerEvent) => {
-      lastX = ev.clientX
-      if (frame) return
-      frame = window.requestAnimationFrame(() => {
-        frame = 0
-        applyScrubTimeRef.current(timeAtClientX(lastX), true)
-      })
-    }
-    const onUp = (ev: PointerEvent) => {
-      window.removeEventListener('pointermove', onMove)
-      window.removeEventListener('pointerup', onUp)
-      window.removeEventListener('pointercancel', onUp)
-      if (frame) window.cancelAnimationFrame(frame)
-      applyScrubTimeRef.current(timeAtClientX(ev.clientX), true)
-      resumeAfterScrub()
-    }
-    window.addEventListener('pointermove', onMove)
-    window.addEventListener('pointerup', onUp)
-    window.addEventListener('pointercancel', onUp)
+    scrubFrame(e.clientX, { altKey: e.altKey, shiftKey: e.shiftKey })
+    bindPointerDrag({
+      e,
+      pxPerSec,
+      scroller: dragScroll,
+      onFrame: (f) => scrubFrame(f.clientX, f),
+      onEnd: () => {
+        getScrubSnap?.().report(null)
+        resumeAfterScrub()
+      }
+    })
   }
 
   /** Click on empty lane background = move the playhead there. Blocks and
@@ -876,15 +998,21 @@ export function usePreviewPlayer({
   function onTimeUpdate() {
     const v = activeVideo()
     if (
-      viewMode === 'edited' &&
       v &&
       !v.paused &&
       !isScrubbingRef.current &&
       !isSourceSwapPendingRef.current &&
-      !isCutBlockEditingRef.current &&
-      maybeAdvanceEditedSegment(v)
-    )
-      return
+      !isCutBlockEditingRef.current
+    ) {
+      // The source view has no frame loop of its own past the rAF tick; the
+      // range end is enforced here too so a paused tab still stops.
+      const t =
+        viewMode === 'edited'
+          ? editedTimeOfVideo(v)
+          : clamp(v.currentTime, 0, getActiveDurationSec())
+      if (enforceRange(v, t)) return
+      if (viewMode === 'edited' && maybeAdvanceEditedSegment(v)) return
+    }
     syncTimeFromVideo()
   }
 
@@ -908,6 +1036,12 @@ export function usePreviewPlayer({
       setIsPlaying(false)
       return
     }
+    if (wasPlaying && isLoopingRef.current && !activeRangeRef.current && v) {
+      // Loop the file: back to the start, still playing.
+      applyScrubTime(0, true)
+      void v.play()
+      return
+    }
     setIsPlaying(false)
     const dur = getActiveDurationSec()
     currentTimeRef.current = dur
@@ -921,9 +1055,9 @@ export function usePreviewPlayer({
    * just before `ended`, and onVideoEnded decides whether the edit goes on. */
   function onVideoPaused() {
     const v = activeVideo()
-    if (v?.ended && viewModeRef.current === 'edited') {
+    if (v?.ended) {
       endedWhilePlayingRef.current = true
-      return
+      if (viewModeRef.current === 'edited') return
     }
     if (isSourceSwapPendingRef.current && resumePlaybackRef.current) return
     setIsPlaying(false)
@@ -1023,6 +1157,8 @@ export function usePreviewPlayer({
   /** Switch view — each mode keeps its own playhead position and play/pause state. */
   function switchViewMode(next: 'source' | 'edited') {
     if (next === viewMode) return
+    // A range is on one view's clock; it means nothing on the other.
+    activeRangeRef.current = null
     captureViewModeState(viewMode)
     setViewMode(next)
     restoreViewModeState(next)
@@ -1031,6 +1167,8 @@ export function usePreviewPlayer({
   function togglePlay() {
     const v = activeVideo()
     if (!v) return
+    // Play/pause by hand ends a range play (play scene, loop the I–O span).
+    activeRangeRef.current = null
     // Mid-load the element is the OLD file, paused on purpose: play() on it
     // would play footage from the wrong file. The load starts or stays
     // stopped as asked.
@@ -1071,8 +1209,12 @@ export function usePreviewPlayer({
     void v.play()
   }
 
+  /** ←/→ and the like: a frame step lands ON the frame grid, so repeated
+   * presses from an off-grid position do not drift. (jumpTo does not
+   * quantize — cut boundaries are exact.) */
   function nudgePlayhead(deltaSec: number) {
-    applyScrubTime(currentTimeRef.current + deltaSec, true)
+    activeRangeRef.current = null
+    applyScrubTime(quantizeToFrame(currentTimeRef.current + deltaSec), true)
   }
 
   /** Source-lane background click: activate that file (if needed) and seek. */
@@ -1087,6 +1229,7 @@ export function usePreviewPlayer({
     // Clamped to the file clicked, not the one on screen.
     const dur = getSourceDurationSec(sourceId)
     const sec = timeAtClientX(e.clientX, dur)
+    activeRangeRef.current = null
     const v = activeVideo()
     if (v && !v.paused) v.pause()
     resumePlaybackRef.current = false
@@ -1095,6 +1238,280 @@ export function usePreviewPlayer({
     currentTimeRef.current = sec
     paintTime(sec)
     void loadPreviewFor(sourceId)
+  }
+
+  // ---- play range / scene / around / loop -----------------------------------
+
+  /**
+   * Playback reached `t` with a range set: stop at its end, or loop back to
+   * its start. True when the range took over this frame. The pure decision
+   * is rangeStop (playRange.ts).
+   */
+  function enforceRange(v: HTMLVideoElement, t: number): boolean {
+    const range = activeRangeRef.current
+    if (!range) return false
+    const verdict = rangeStop(t, range, isLoopingRef.current, FRAME_SEC)
+    if (!verdict) return false
+    if (verdict === 'restart') {
+      applyScrubTimeRef.current(range.in, true)
+      if (isSourceSwapPendingRef.current) resumePlaybackRef.current = true
+      else if (v.paused) void v.play()
+      return true
+    }
+    activeRangeRef.current = null
+    v.pause()
+    setIsPlaying(false)
+    applyScrubTimeRef.current(range.out, true)
+    return true
+  }
+
+  /** Start playing from wherever the clock is now (after a seek). */
+  function startPlayback(): void {
+    resumeFollow()
+    if (isSourceSwapPendingRef.current) {
+      resumePlaybackRef.current = true
+      setIsPlaying(true)
+      return
+    }
+    const v = activeVideo()
+    if (v) void v.play()
+  }
+
+  /** Play [inSec, outSec] on the active view's clock and stop at the end —
+   * or loop it. Shift+Space on a scene, Shift+K around a cut, the I–O span. */
+  function playRange(inSec: number, outSec: number, opts?: { loop?: boolean }): void {
+    const dur = getActiveDurationSec()
+    const start = clamp(inSec, 0, dur)
+    const end = clamp(outSec, start, dur)
+    if (end - start < FRAME_SEC) return
+    if (isScrubbingRef.current) return
+    // The seek first, then the range: applyScrubTime leaves the range alone
+    // (only the user's own seeks clear it — jumpTo, a scrub, a nudge).
+    applyScrubTime(start, true)
+    activeRangeRef.current = { in: start, out: end, loop: opts?.loop }
+    startPlayback()
+  }
+
+  function stopRange(): void {
+    activeRangeRef.current = null
+  }
+
+  /** Play one scene: its edited span, or its window in its own file (loading
+   * that file first when it is not the one on screen). */
+  function playScene(cutId: string): void {
+    const range = sceneRange(cutId, cutsRef.current, editedInById, viewModeRef.current)
+    if (!range) return
+    if (viewModeRef.current === 'source' && previewSource !== range.source) {
+      const cut = cutsRef.current.find((c) => c.id === cutId)
+      if (!cut) return
+      // The load lands on the first frame; the range and the resume ride on it.
+      showCutFrame(cut, cut.in)
+      activeRangeRef.current = { in: range.in, out: range.out }
+      resumePlaybackRef.current = true
+      resumeFollow()
+      setIsPlaying(true)
+      return
+    }
+    playRange(range.in, range.out)
+  }
+
+  function playAround(sec: number): void {
+    const r = playAroundRange(
+      sec,
+      getActiveDurationSec(),
+      PLAY_AROUND_PRE_SEC,
+      PLAY_AROUND_POST_SEC
+    )
+    playRange(r.in, r.out)
+  }
+
+  function setLoop(v: boolean): void {
+    isLoopingRef.current = v
+    setIsLooping(v)
+  }
+
+  // ---- hover skim ------------------------------------------------------------
+
+  function setSkimEnabled(v: boolean): void {
+    skimEnabledRef.current = v
+    if (!v) skimTo(null)
+  }
+
+  /** Seek the element to `t` on the active view's clock WITHOUT loading
+   * another file and without touching the clock — the skim and its restore.
+   * In the edited view, only when the scene at `t` is on the file on screen;
+   * the restore reads `t` through the scene the player is ON (the playhead
+   * parked on a boundary belongs to the scene ending there, which the
+   * segment lookup would hand to the next one). */
+  function seekVideoOnScreen(t: number, restore = false): void {
+    const v = activeVideo()
+    if (!v) return
+    let local: number
+    if (viewModeRef.current === 'edited') {
+      const active = restore ? currentEditedCut() : null
+      const activeIn = active ? editedInById.get(active.id) : undefined
+      const seg =
+        active && activeIn !== undefined
+          ? { cut: active, editedIn: activeIn }
+          : findSegmentAt(editedSegments, t)
+      if (!seg || seg.cut.source !== previewSource) return
+      local = clamp(seg.cut.in + (t - seg.editedIn), seg.cut.in, seg.cut.out)
+    } else {
+      local = clamp(t, 0, getActiveDurationSec())
+    }
+    // A seek the eye cannot see is a decode for nothing.
+    if (Math.abs(v.currentTime - local) < FRAME_SEC / 2) return
+    v.currentTime = local
+  }
+
+  /**
+   * The skimmer: hovering the timeline shows that frame in the preview while
+   * the playhead stays put (FCP's skimmer, CapCut's preview axis). One seek
+   * per animation frame with the newest position; never while the player is
+   * busy (canSkim); never loads another file — a scene on another file just
+   * does not skim. `null` (the pointer left) puts the playhead's frame back.
+   */
+  function skimTo(sec: number | null): void {
+    if (twoUpRef.current) return
+    const may = canSkim({
+      playing: isPlayingNow(),
+      scrubbing: isScrubbingRef.current,
+      editing: isCutBlockEditingRef.current,
+      swapPending: isSourceSwapPendingRef.current,
+      enabled: skimEnabledRef.current || sec === null
+    })
+    if (!may) return
+    skimPendingRef.current = sec
+    if (skimFrameRef.current) return
+    skimFrameRef.current = requestAnimationFrame(() => {
+      skimFrameRef.current = 0
+      const target = skimPendingRef.current
+      skimPendingRef.current = undefined
+      if (target === undefined) return
+      if (target === null) seekVideoOnScreen(currentTimeRef.current, true)
+      else seekVideoOnScreen(target)
+    })
+  }
+
+  // ---- two-up preview (roll / slip) ------------------------------------------
+
+  /**
+   * Show two frames side by side while a junction is dragged: the outgoing
+   * last frame in the inactive element, the incoming first frame in the
+   * active one. The inactive element is made to hold the outgoing scene's
+   * file (the pre-seeked next-scene buffer in it is spent — primeNextSegment
+   * re-primes after endTwoUp). Which element is the incoming (right) pane is
+   * published as `twoUpIncoming` for PreviewPane's two-up layout.
+   */
+  function beginTwoUp(cut: WorkingCut, outgoing?: WorkingCut): void {
+    if (twoUpRef.current) return
+    const v = activeVideo()
+    if (v && !v.paused) v.pause()
+    setIsPlaying(false)
+    skimPendingRef.current = undefined
+    twoUpRef.current = { leftSec: null, rightSec: null, frame: 0 }
+    bufferPrimedKeyRef.current = null
+    if (previewSource !== cut.source) showCutFrame(cut, cut.in)
+    const buf = inactiveVideo()
+    const leftSource = outgoing?.source ?? cut.source
+    setTwoUpIncoming(activeVideoKeyRef.current)
+    if (buf) {
+      // Both panes visible; PreviewPane puts the outgoing one on the left.
+      buf.style.opacity = '1'
+      buf.style.zIndex = '1'
+      void (async () => {
+        try {
+          const src = await ensureSourceSrc(leftSource)
+          if (!twoUpRef.current) return
+          if (buf.src !== absoluteUrl(src)) buf.src = src
+          const pending = twoUpRef.current.leftSec
+          if (pending !== null) {
+            const seekTo = (): void => {
+              buf.currentTime = pending
+            }
+            if (buf.readyState >= 1) seekTo()
+            else buf.addEventListener('loadedmetadata', seekTo, { once: true })
+          }
+        } catch {
+          /* the pane stays on whatever it had */
+        }
+      })()
+    }
+    setTwoUp(true)
+  }
+
+  function paintTwoUp(leftSec: number, rightSec: number): void {
+    const state = twoUpRef.current
+    if (!state) return
+    const changed = state.leftSec !== leftSec || state.rightSec !== rightSec
+    state.leftSec = leftSec
+    state.rightSec = rightSec
+    if (!changed || state.frame) return
+    // One seek per frame per element, skipping a time it is already on.
+    state.frame = requestAnimationFrame(() => {
+      state.frame = 0
+      if (twoUpRef.current !== state) return
+      const v = activeVideo()
+      const buf = inactiveVideo()
+      if (state.rightSec !== null) {
+        if (isSourceSwapPendingRef.current && playRangeRef.current) {
+          // The incoming file is still loading: it lands on the newest frame.
+          playRangeRef.current = { ...playRangeRef.current, in: state.rightSec }
+        } else if (v && Math.abs(v.currentTime - state.rightSec) >= FRAME_SEC / 2) {
+          v.currentTime = state.rightSec
+        }
+      }
+      if (
+        buf &&
+        state.leftSec !== null &&
+        buf.readyState >= 1 &&
+        Math.abs(buf.currentTime - state.leftSec) >= FRAME_SEC / 2
+      ) {
+        buf.currentTime = state.leftSec
+      }
+    })
+  }
+
+  function endTwoUp(): void {
+    const state = twoUpRef.current
+    if (!state) return
+    if (state.frame) cancelAnimationFrame(state.frame)
+    twoUpRef.current = null
+    applyVideoVisibility()
+    setTwoUp(false)
+    // The inactive element holds a file of the drag's choosing now.
+    bufferPrimedKeyRef.current = null
+    // Back to the playhead's frame through whatever scene is under it now.
+    seekActiveTime(currentTimeRef.current)
+    primeNextSegment()
+  }
+
+  // ---- touch scrub -----------------------------------------------------------
+
+  /**
+   * The strip was swiped under the pinned playhead (useTimelineViewport's
+   * onTouchScrub): pause on the first event, scrub once per frame, resume
+   * after the scrolling has been quiet for a moment — a swipe is a scrub,
+   * exactly CapCut mobile.
+   */
+  function onTouchScrub(t: number): void {
+    if (!isScrubbingRef.current) pauseForScrub()
+    touchScrubTRef.current = t
+    if (!touchScrubFrameRef.current) {
+      touchScrubFrameRef.current = requestAnimationFrame(() => {
+        touchScrubFrameRef.current = 0
+        applyScrubTimeRef.current(touchScrubTRef.current, true)
+      })
+    }
+    window.clearTimeout(touchScrubTimerRef.current)
+    touchScrubTimerRef.current = window.setTimeout(() => {
+      if (touchScrubFrameRef.current) {
+        cancelAnimationFrame(touchScrubFrameRef.current)
+        touchScrubFrameRef.current = 0
+        applyScrubTimeRef.current(touchScrubTRef.current, true)
+      }
+      resumeAfterScrub()
+    }, TOUCH_SCRUB_RESUME_MS)
   }
 
   return {
@@ -1135,6 +1552,20 @@ export function usePreviewPlayer({
     onVideoLoadedMetadata,
     syncTimeFromVideo,
     onVideoEnded,
-    onVideoPaused
+    onVideoPaused,
+    skimTo,
+    setSkimEnabled,
+    playRange,
+    stopRange,
+    playScene,
+    playAround,
+    isLooping,
+    setLoop,
+    beginTwoUp,
+    paintTwoUp,
+    endTwoUp,
+    twoUp,
+    twoUpIncoming,
+    onTouchScrub
   }
 }

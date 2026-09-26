@@ -28,9 +28,9 @@ function setup(initial: WorkingCut[]) {
     write(cuts: WorkingCut[]) {
       state = { ...state, cuts }
     },
-    /** What the editor's undo/redo does with the snapshot it gets back. */
-    apply(snap: EditorSnapshot | null) {
-      if (snap) state = snap
+    /** What the editor's undo/redo does with the step it gets back. */
+    apply(step: { snapshot: EditorSnapshot } | null) {
+      if (step) state = step.snapshot
     }
   }
 }
@@ -114,7 +114,11 @@ describe('createEditHistory', () => {
     ed.write([cut('abc')])
     ed.history.commitEdit()
     vi.runAllTimers()
-    expect(ed.history.undoStack.map((s) => s.cuts[0].voiceoverScript)).toEqual(['a', 'ab', 'ab'])
+    expect(ed.history.undoStack.map((s) => s.snapshot.cuts[0].voiceoverScript)).toEqual([
+      'a',
+      'ab',
+      'ab'
+    ])
     ed.apply(ed.history.undo())
     expect(ed.cuts).toEqual([cut('ab')])
   })
@@ -128,7 +132,7 @@ describe('createEditHistory', () => {
     ed.history.push({ cuts: ed.cuts, captionLines: null, captionStyle: null, music: null })
     ed.write([cut('ab')])
     vi.runAllTimers()
-    expect(ed.history.undoStack.map((s) => s.cuts.length)).toEqual([2, 2])
+    expect(ed.history.undoStack.map((s) => s.snapshot.cuts.length)).toEqual([2, 2])
     ed.apply(ed.history.undo())
     expect(ed.cuts).toHaveLength(2)
     expect(ed.cuts[0].voiceoverScript).toBe('ab')
@@ -142,5 +146,58 @@ describe('createEditHistory', () => {
     ed.write([cut('พิมพ์ค้างไว้')])
     ed.history.settleEdit()
     expect(ed.history.undoStack).toHaveLength(1)
+  })
+
+  // ---- named steps -------------------------------------------------------
+
+  it('a label rides along push, undo and redo', () => {
+    const ed = setup([cut('a')])
+    ed.history.push(
+      { cuts: [cut('')], captionLines: null, captionStyle: null, music: null },
+      'แยกฉาก'
+    )
+    expect(ed.history.undoStack[0].label).toBe('แยกฉาก')
+    const undone = ed.history.undo()
+    expect(undone?.label).toBe('แยกฉาก')
+    // The redo side is named the same: ทำซ้ำ: แยกฉาก.
+    expect(ed.history.redoStack[0].label).toBe('แยกฉาก')
+    ed.apply(undone)
+    const redone = ed.history.redo()
+    expect(redone?.label).toBe('แยกฉาก')
+    expect(ed.history.undoStack[0].label).toBe('แยกฉาก')
+  })
+
+  it('pushNow and an unnamed push record a null label', () => {
+    const ed = setup([cut('a')])
+    ed.history.pushNow('ตั้งค่าเพลง')
+    ed.history.push({ cuts: [cut('')], captionLines: null, captionStyle: null, music: null })
+    expect(ed.history.undoStack.map((s) => s.label)).toEqual(['ตั้งค่าเพลง', null])
+  })
+
+  it('a bracketed edit keeps the label it began with; one that changed nothing records no step', () => {
+    const ed = setup([cut('a')])
+    ed.history.beginEdit('ยืด–หดฉาก')
+    ed.history.commitEdit()
+    vi.runAllTimers()
+    expect(ed.history.undoStack).toHaveLength(0)
+    ed.history.beginEdit('ยืด–หดฉาก')
+    ed.write([{ ...cut('a'), out: 3 }])
+    ed.history.commitEdit()
+    vi.runAllTimers()
+    expect(ed.history.undoStack).toHaveLength(1)
+    expect(ed.history.undoStack[0].label).toBe('ยืด–หดฉาก')
+  })
+
+  it('an edit re-opened after a step keeps its name', () => {
+    const ed = setup([cut('a')])
+    ed.history.beginEdit('พิมพ์บท')
+    ed.write([cut('ab')])
+    // A delete lands while the box still has focus.
+    ed.history.push({ cuts: ed.cuts, captionLines: null, captionStyle: null, music: null }, 'ลบฉาก')
+    vi.runAllTimers()
+    ed.write([cut('abc')])
+    ed.history.commitEdit()
+    vi.runAllTimers()
+    expect(ed.history.undoStack.map((s) => s.label)).toEqual(['พิมพ์บท', 'ลบฉาก', 'พิมพ์บท'])
   })
 })

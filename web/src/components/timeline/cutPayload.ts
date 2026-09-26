@@ -1,10 +1,22 @@
 import type { EditCut } from '../../lib/editorApi'
-import { cutLineId } from '../../lib/timelineMath'
+import { cutLineId, isSkipped } from '../../lib/timelineMath'
 import type { WorkingCut } from './types'
 
+export interface CutPayloadOpts {
+  /** Leave skipped scenes (ข้ามฉาก, `meta.skipped`) out. The RENDER save
+   * passes true so ffmpeg never sees one; the draft save keeps the default,
+   * so the skip survives a reload through the `meta` carried below. */
+  dropSkipped?: boolean
+}
+
 /** The cut list in the shape both the draft save and the render save send. */
-export function cutPayload(list: WorkingCut[], isDub: boolean): EditCut[] {
-  return list.map(
+export function cutPayload(
+  list: WorkingCut[],
+  isDub: boolean,
+  opts: CutPayloadOpts = {}
+): EditCut[] {
+  const kept = opts.dropSkipped ? list.filter((c) => !isSkipped(c)) : list
+  return kept.map(
     (c) =>
       ({
         source: c.source,

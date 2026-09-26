@@ -66,6 +66,9 @@ export function useDraftAutosave({
     if (!draftDirtyRef.current) return
     if (editorPhase !== 'ready' || cutsRef.current.length === 0) return
     draftDirtyRef.current = false
+    // The DRAFT keeps skipped scenes (cutPayload's default): `meta.skipped`
+    // is how a skip survives a reload. Only the render save drops them
+    // (TimelineEditor handleSave passes dropSkipped) so ffmpeg never sees one.
     const run = editorApi
       .saveDraft(cutPayload(cutsRef.current, isDub), captionLinesRef.current ?? undefined)
       .then(() =>

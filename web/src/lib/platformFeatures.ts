@@ -35,12 +35,19 @@ export const canUseAiReedit = !isBrowser
  * Beat snapping needs a beat grid, and computing one is a server-side analysis
  * this build does not run.
  *
+ * This flag gates ONLY the beat SOURCE of snap targets (and the beat wording
+ * on the magnet's tooltip) — never the snap toggle itself. The editor's
+ * ดูดขอบ magnet is on every build: cut edges, the playhead, voiceover lines,
+ * captions, markers and the I/O range exist on every project, so there is
+ * always something to snap to. Beats are one more kind of target that this
+ * build simply never adds to the list.
+ *
  * The reason used to be stated as "the web build never uploads the music".
  * That stopped being true when the server became the home of a project's
  * files — `music/` is a synced root, so the track is already there. What is
- * actually missing is the analysis pass and the editor's snap control, and a
- * rationale that is no longer true is worse than none: it is the sentence the
- * next person reads before deciding whether the feature can be turned on.
+ * actually missing is the analysis pass, and a rationale that is no longer
+ * true is worse than none: it is the sentence the next person reads before
+ * deciding whether the feature can be turned on.
  */
 export const canSnapToBeat = !isBrowser
 

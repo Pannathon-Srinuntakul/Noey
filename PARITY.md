@@ -52,6 +52,7 @@ limits" at the bottom, which is a reference, not a to-do list.
 | Token billing — job progress "รอคิว" state for `step: "waiting_slot"` with the plan's concurrency (`JobProgressPage`, `jobs.tsx` publishing `waitingSlot`) and the limit error card's "ใช้ยอดเงินคงเหลือทำต่อ" (`ProjectGridCard`, `ProjectDetailPage` → `pipeline.continueOnWallet`) | web | desktop (UI half) | Same session. The desktop `useProjectPipeline` HAS `waitingSlot`, `continueOnWallet`, `billingStop` and the typed `pollJob` stop/queue handling; only the screens are missing here (`JobProgressPage.tsx`, `jobs.tsx`, `ProjectGridCard.tsx`, `ProjectDetailPage.tsx`). |
 | Token billing — styles + effects clients (`stylesApi.ts`, `effectsLocalApi.ts`) throw typed refusals via `errorFromResponse` | web | desktop | Same session. Desktop `api.ts` / `videosLocalApi.ts` already build refusals through `errorFromResponse`, and `apiError.ts` landed on desktop 2026-09-23; `stylesApi.ts` / `effectsLocalApi.ts` are missing from this tree. Neither side sends `allow_wallet` on `plan-effects` / `POST /effect-styles` yet — those features are hidden on web, so the desktop port should add it there. |
 | Token billing — `noLeaks.test.ts` "the UI never states usage in tokens" guard | web | desktop | Same session; desktop has no `noLeaks.test.ts` in this tree. |
+| Editor interaction standard (snap engine on every drag incl. VO lines/playhead/markers, Alt suppress + Shift+N toggle, guide line, roll/slip gestures, keyboard nudge/reorder/trim-to-playhead Q/W, multi-select + marquee + batch delete, copy/paste, named undo + toasts with undo on delete/reorder, context menu, markers, I/O range, skip scene, play scene/around/loop, skim, anchored + pinch zoom, fit toggle, drag auto-scroll, touch scrub + scene strip, ARIA listbox/slider/live region, reduced motion) | web | desktop | Built on web 2026-09-27 per the editor-standard plan; the desktop tree on this machine is partial (no `lib/timelineMath.ts`, `TimelineEditor.tsx` is the 4226-line pre-refactor monolith) so nothing ports here; port by function name (`snapTargets`, `selection`, `useEditorShortcuts`, the lane props) once the desktop editor is split like web's. Beat snapping stays desktop-only as a SOURCE of snap targets (`canSnapToBeat`: the web runs no beat analysis) — a platform limit, not a gap; the magnet itself (cut edges, playhead, VO lines, captions, markers, range) is on both once ported. |
 
 **Matched with different transports (not a gap):** รับวิดีโอจากมือถือ — the
 desktop receives over LAN (Electron main-process listener); the web receives
@@ -103,3 +104,125 @@ live on another machine): `main/tasteLog.ts`, `main/lanReceive.ts`,
 `main/prefs.ts`, `main/remoteAccess.ts`, `main/remotePage.ts`,
 `main/remoteApi.ts`, and the renderer screens the rows above name. `npm run
 typecheck` in `desktop/app` fails on the first three until that tree is whole.
+
+## 2026-09-27 — editor interaction standard, web only (itemised)
+
+The row under "Open gaps" summarises this; here is the full list, so the
+desktop port can be checked off one item at a time. Everything below landed
+on web on 2026-09-27 and none of it exists on desktop (the desktop
+`components/timeline/` tree is not in this checkout; its `TimelineEditor.tsx`
+is still the pre-refactor monolith, so port by the function and prop names
+given here once it is split like web's). Nothing in this list is a platform
+limit except where marked.
+
+**Snapping** (`lib/timelineSnap.ts`, `components/timeline/snapTargets.ts`,
+`GuideLines.tsx`)
+- One magnet toggle `ดูดขอบ` in the toolbar, never hidden or disabled,
+  remembered in `localStorage` (`noey.timeline.snapEnabled`), Shift+N toggles
+  it with a toast.
+- Targets on the output clock: every other scene's edges (edge-to-edge, own
+  edges excluded), the playhead, voiceover line starts and ends, caption chip
+  edges, the music block's edges, beats, markers, the I/O range, t=0 and the
+  sequence end. Source view: the lane's other cuts, the playhead when that
+  file is on screen, and the file end.
+- Alt held suppresses snapping for the rest of the drag (window-level
+  modifier tracker + the drag binder's per-frame `altKey`); a snap draws a
+  guide line with a triangle head; the scrub has a softer 6 px threshold and
+  Alt/Shift bypass; every drag result is frame-quantised before snapping.
+- Beat targets are the one platform limit: the web runs no beat analysis, so
+  `canSnapToBeat` gates only that SOURCE — the magnet itself must exist on
+  both.
+
+**Drag gestures** (`lib/pointerDrag.ts`, `lanes/EditedCutBlock.tsx`,
+`lanes/SourceLanes.tsx`, `lanes/TrimBar.tsx`, `lanes/MusicBlock.tsx`)
+- One window-level pointer-drag binder for every drag: one frame per rAF,
+  Escape cancels (values restored BEFORE the history bracket closes, so no
+  step is recorded), pointercancel ends, edge auto-scroll (quadratic, 40 px
+  band, 24 px max) with the scroll delta folded into the drag delta.
+- Roll: ⌘/Ctrl+drag a trim handle moves the boundary between two scenes,
+  total length unchanged (`rollCutBoundary`); two-up preview shows the
+  outgoing and incoming frames side by side (`beginTwoUp`/`paintTwoUp`/
+  `endTwoUp`, `PreviewPane twoUp` + `twoUpIncoming`).
+- Slip: Alt+drag a scene body moves its window inside the source, block stays
+  put (`slipCut`); source-view move is a snapped slip.
+- Trim handles: hover-revealed bars, coarse-aware grab zones (22 px), red
+  `หมดฟุตเทจ` when the footage end is hit, live readout pills (`DragReadout`:
+  `+0.40 วิ`, `เลื่อนรอยตัด ±`, `เลื่อนหน้าต่าง`, `เริ่มที่ 0:03.2`), a
+  tooltip with the AI's shot note, sticky play-order label.
+- Reorder: `DragOverlay` ghost with `ก่อนฉาก N`/`ท้ายสุด` caption, origin slot
+  dimmed, multi-drag moves a contiguous selection (`withReorderMany`), touch
+  reorder by long-press (300 ms).
+
+**Selection** (`components/timeline/selection.ts`, `lanes/marquee.ts`)
+- Multi-select: ⌘/Ctrl+click toggles, Shift+click ranges from the anchor,
+  Shift+drag on the lane background is a marquee (intersect, additive), ⌘A /
+  ⌘⇧A select all / none, Esc clears, context menu `เลือกตั้งแต่นี้ถึงท้าย`.
+- Batch delete in one undo step, `ลบ N ฉาก` labels in the inspector and
+  toolbar, `เลือก N ฉาก` chip, dashed ring for secondary selection, 2 px ring
+  for the primary; `พอดีฉาก` zooms to the selection.
+
+**Keyboard** (`components/timeline/shortcuts.ts`,
+`hooks/useEditorShortcuts.ts`, `dialogs/ShortcutsSheet.tsx`)
+- Full registry with a conflict-guard test; sheet in four groups
+  (เล่น / มุมมอง / เลือก / แก้ไข) with gesture rows and the Alt/Shift footer.
+- Added chords: Q/W trim to playhead, Alt+←/→ nudge one frame (+Shift = 10),
+  ,/. slip one frame (+Shift = 10), E extend edit, Alt+↑/↓ move scene, D
+  skip/unskip, ⌘D duplicate, ⌘C/⌘X/⌘V copy/cut/paste (fresh ids, meta
+  stripped; dub copies become angles of the line before), I/O set range,
+  Shift+I/Shift+O jump to range ends, Alt+X clear range, Shift+Delete removes
+  the range from the sequence (`withRangeRemoved`), Shift+M add marker,
+  Shift+↑/↓ jump between markers, ⌘1/⌘2 view switch, Shift+Z fit toggle, F
+  zoom to selection, Shift+K play around the nearest cut, Shift+L loop,
+  Shift+Space play the selected scene / I–O range, Shift+N snap toggle,
+  Home/End.
+- Key bursts within 400 ms are ONE undo step (`keyBurstIsNewStep`).
+
+**History and answers** (`lib/editorHistory.ts`, `hooks/useEditorHistory.ts`,
+`LiveRegion.tsx`)
+- Named undo steps: every step carries a label; undo/redo buttons say
+  `เลิกทำ: ลบฉาก`; toasts name the step and offer `เลิกทำ` on delete, move,
+  range delete and the AI re-edit; a trim toasts only when something changed.
+- Every answer also reaches assistive tech through an `aria-live` region.
+- `changedCutIds` flashes every scene an edit touched (both halves of a
+  split, every retimed scene of a batch), respecting `prefers-reduced-motion`.
+
+**Playback** (`hooks/usePreviewPlayer.ts`, `playRange.ts`, `PreviewPane.tsx`,
+`ui/VideoTransport.tsx`)
+- Play range (I/O), play scene, play around a cut (±1 s), loop (range or whole
+  sequence) with a transport button; skipped scenes are jumped over.
+- Hover skim (`แกนพรีวิว`): the frame under the pointer shows in the preview
+  while the playhead stays put; remembered in `localStorage`
+  (`noey.timeline.skim`); off on touch.
+- Timecode entry: clicking the transport clock opens an inline `m:ss:ff`
+  field (`parseFramesForm`).
+
+**Viewport** (`hooks/useTimelineViewport.ts`, `viewportMath.ts`,
+`TimelineRuler.tsx`, `Playhead.tsx`, `MarkerLayer.tsx`)
+- Anchored zoom: ⌘/Ctrl(+Alt)+wheel keeps the time under the pointer; Shift
+  or horizontal wheel scrolls; two-finger pinch on touch; `พอดีจอ` is a fit
+  toggle that remembers the previous zoom; zoom to range.
+- Ruler on `rulerTicks` (major + minor ticks that never collide), I/O range
+  band, marker flags (click seek / drag with snap / double-click rename /
+  right-click remove; per-project in `localStorage`, not in undo).
+- Playhead is a `role=slider` with `aria-valuenow`, coarse-width grab, and
+  sticky off-screen edge-hint pills.
+- Skip scene: `D` / context menu / inspector; skipped scenes render as a
+  zero-width stub, are dropped from the render save (`cutPayload dropSkipped`)
+  and kept in the draft.
+- Context menu on a scene (right-click or `⋯` on the strip) with the
+  inspector's action set, keyboard-walkable, focus restored on close.
+
+**Touch** (`lanes/SceneStrip.tsx`, viewport `touchScrub`/`leadPx`)
+- Phone model: a swipe on the timeline IS a scrub (playhead pinned at the
+  centre, axis padded by `leadPx`), layout toggle `ไทม์ไลน์ / ฉาก` with the
+  scene strip (64×40 tiles, tap select, double-tap open, long-press reorder,
+  `⋯` menu) as the default on touch; ruler 28 px tall on coarse pointers;
+  scroll container is `touch-action: pan-x pan-y` so a pinch reaches the
+  zoom listeners.
+
+**ARIA**
+- Lanes are `role=listbox` (`aria-multiselectable`), blocks `role=option`
+  with `aria-selected`, trim handles and caption edges `role=slider` with
+  value text, voiceover lines `aria-current` while speaking, roving
+  `tabIndex`, a real `:focus-visible` ring offset 3 px so it does not read as
+  a second selection border.

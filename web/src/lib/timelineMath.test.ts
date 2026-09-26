@@ -35,8 +35,24 @@ import {
   insertIndexOutsideLineRuns,
   lineScriptDraft,
   lineScriptFor,
-  MIN_CUT_SEC
+  MIN_CUT_SEC,
+  rollCutBoundary,
+  slipCut,
+  nudgeCutEdge,
+  withSceneMoved,
+  withReorderMany,
+  withCutsRemoved,
+  idsBetween,
+  pasteCuts,
+  withRangeRemoved,
+  isSkipped,
+  withSkipToggled,
+  fmtSignedSec,
+  fmtFrames,
+  fmtTimecodeFrames,
+  rulerTicks
 } from './timelineMath'
+import { FRAME_SEC, MAX_PX_PER_SEC, MIN_PX_PER_SEC } from '../components/timeline/constants'
 
 function cut(id: string, source: string, tIn: number, tOut: number, lineId?: number): EditCut {
   return {
@@ -900,5 +916,479 @@ describe('lineScriptDraft', () => {
     const blank = [{ ...cut('a', 's', 0, 2, 1), voiceoverScript: '  ' }]
     expect(lineScriptDraft(blank, 1)).toBe('  ')
     expect(lineScriptDraft(blank, 9)).toBe('')
+  })
+})
+
+// ── editor-standard batch (2026-09-27): roll, slip, nudge, keyboard reorder,
+// multi-move, batch delete, paste, range delete, skip, readouts, ruler ticks.
+
+describe('rollCutBoundary', () => {
+  // a plays 0–3 (source 2–5), b plays 3–5 (source 10–12); both clips 20 s long.
+  const base = (): EditCut[] => [cut('a', 's', 2, 5), cut('b', 't', 10, 12), cut('c', 's', 7, 8)]
+  const bounds = { leftMinIn: 0, leftMaxOut: 20, rightMinIn: 0, rightMaxOut: 20 }
+
+  it('moves the left out and the right in by the same delta, total length unchanged', () => {
+    const prev = base()
+    const next = rollCutBoundary(prev, 'a', 0.5, bounds)!
+    expect(next[0]).toMatchObject({ in: 2, out: 5.5 })
+    expect(next[1]).toMatchObject({ in: 10.5, out: 12 })
+    expect(next[2]).toBe(prev[2]) // the cut after the junction is untouched
+    expect(computeEditedDuration(next)).toBeCloseTo(computeEditedDuration(base()), 9)
+    const back = rollCutBoundary(base(), 'a', -0.5, bounds)!
+    expect(back[0].out).toBeCloseTo(4.5)
+    expect(back[1].in).toBeCloseTo(9.5)
+  })
+
+  it("is clamped by the left's source end, and both edges move by that smaller amount", () => {
+    const next = rollCutBoundary(base(), 'a', 3, { ...bounds, leftMaxOut: 6 })!
+    expect(next[0].out).toBe(6)
+    expect(next[1].in).toBe(11)
+    expect(computeEditedDuration(next)).toBeCloseTo(computeEditedDuration(base()), 9)
+  })
+
+  it('is clamped so the right scene keeps MIN_CUT_SEC', () => {
+    const next = rollCutBoundary(base(), 'a', 5, bounds)!
+    expect(next[1].out - next[1].in).toBeCloseTo(MIN_CUT_SEC)
+    expect(next[0].out).toBeCloseTo(5 + (2 - MIN_CUT_SEC))
+  })
+
+  it('is clamped so the left scene keeps MIN_CUT_SEC and the right stays past rightMinIn', () => {
+    const left = rollCutBoundary(base(), 'a', -5, bounds)!
+    expect(left[0].out - left[0].in).toBeCloseTo(MIN_CUT_SEC)
+    const neighbour = rollCutBoundary(base(), 'a', -5, { ...bounds, rightMinIn: 9.5 })!
+    expect(neighbour[1].in).toBe(9.5)
+    expect(neighbour[0].out).toBe(4.5)
+  })
+
+  it('has no junction after the last cut, and nothing to do for a zero delta', () => {
+    expect(rollCutBoundary(base(), 'c', 1, bounds)).toBeNull()
+    expect(rollCutBoundary(base(), 'zzz', 1, bounds)).toBeNull()
+    expect(rollCutBoundary(base(), 'a', 0, bounds)).toBeNull()
+    // Already at the limit: the clamp leaves nothing to move.
+    expect(rollCutBoundary(base(), 'a', 1, { ...bounds, leftMaxOut: 5 })).toBeNull()
+  })
+
+  it('does not disturb the input list', () => {
+    const prev = base()
+    rollCutBoundary(prev, 'a', 0.5, bounds)
+    expect(prev[0].out).toBe(5)
+    expect(prev[1].in).toBe(10)
+  })
+})
+
+describe('slipCut', () => {
+  const c = cut('a', 's', 4, 6)
+
+  it('shifts in and out together, keeping the duration', () => {
+    expect(slipCut(c, 0.4, { minIn: 0, maxOut: 20 })).toEqual({ in: 4.4, out: 6.4 })
+    expect(slipCut(c, -0.4, { minIn: 0, maxOut: 20 })).toEqual({ in: 3.6, out: 5.6 })
+  })
+
+  it('stops at both bounds', () => {
+    expect(slipCut(c, -10, { minIn: 1, maxOut: 20 })).toEqual({ in: 1, out: 3 })
+    expect(slipCut(c, 99, { minIn: 0, maxOut: 9 })).toEqual({ in: 7, out: 9 })
+  })
+
+  it('thirty frame-sized steps add up to a second, within float noise', () => {
+    let w = { in: 0, out: 1 }
+    for (let i = 0; i < 30; i += 1) w = slipCut(w, FRAME_SEC, { minIn: 0, maxOut: 10 })
+    expect(w.in).toBeCloseTo(1, 9)
+    expect(w.out).toBeCloseTo(2, 9)
+  })
+
+  it('leaves a window wider than its bounds alone', () => {
+    expect(slipCut(c, 1, { minIn: 4.5, maxOut: 5.5 })).toEqual({ in: 4, out: 6 })
+  })
+})
+
+describe('nudgeCutEdge', () => {
+  const list = (): EditCut[] => [cut('a', 's', 4, 6), cut('b', 's', 8, 9)]
+  const b = { minIn: 0, maxOut: 20 }
+
+  it('moves one edge by a signed amount and leaves the other cut alone', () => {
+    const right = nudgeCutEdge(list(), 'a', 'right', FRAME_SEC, b)!
+    expect(right[0].out).toBeCloseTo(6 + FRAME_SEC, 6)
+    expect(right[0].in).toBe(4)
+    expect(right[1]).toEqual(list()[1])
+    const left = nudgeCutEdge(list(), 'a', 'left', -10 * FRAME_SEC, b)!
+    expect(left[0].in).toBeCloseTo(4 - 10 * FRAME_SEC, 6)
+  })
+
+  it('respects MIN_CUT_SEC and the outer bounds', () => {
+    expect(nudgeCutEdge(list(), 'a', 'left', 5, b)![0].in).toBeCloseTo(6 - MIN_CUT_SEC)
+    expect(nudgeCutEdge(list(), 'a', 'right', -5, b)![0].out).toBeCloseTo(4 + MIN_CUT_SEC)
+    expect(nudgeCutEdge(list(), 'a', 'left', -5, { minIn: 3.5, maxOut: 20 })![0].in).toBe(3.5)
+    expect(nudgeCutEdge(list(), 'a', 'right', 50, { minIn: 0, maxOut: 7 })![0].out).toBe(7)
+  })
+
+  it('is null when nothing changes', () => {
+    expect(nudgeCutEdge(list(), 'a', 'right', 0, b)).toBeNull()
+    expect(nudgeCutEdge(list(), 'a', 'right', 1, { minIn: 0, maxOut: 6 })).toBeNull()
+    expect(nudgeCutEdge(list(), 'zzz', 'right', 1, b)).toBeNull()
+  })
+})
+
+describe('withSceneMoved / withReorderMany', () => {
+  const ids = (cuts: EditCut[] | null): string[] | null => cuts && cuts.map((c) => c.id)
+  const plain = (): EditCut[] => [
+    cut('a', 's', 0, 1),
+    cut('b', 's', 2, 3),
+    cut('c', 's', 4, 5),
+    cut('d', 's', 6, 7),
+    cut('e', 's', 8, 9)
+  ]
+  // L1 · L2 (two angles) · L3
+  const dub = (): EditCut[] => [
+    cut('a', 's', 0, 2, 1),
+    cut('b1', 's', 10, 12, 2),
+    { ...cut('b2', 's', 20, 22, 2), voiceoverScript: '' },
+    cut('c', 's', 30, 32, 3)
+  ]
+  const contiguous = (cuts: EditCut[]): boolean => {
+    const seen = new Set<number | null | undefined>()
+    return cuts.every((c, i) => {
+      const id = c.voiceoverLineId
+      if (i > 0 && cuts[i - 1].voiceoverLineId === id) return true
+      if (seen.has(id)) return false
+      seen.add(id)
+      return true
+    })
+  }
+
+  it('moves the first scene one slot later, and the last one cannot go later', () => {
+    expect(ids(withSceneMoved(plain(), 'a', 1, false))).toEqual(['b', 'a', 'c', 'd', 'e'])
+    expect(withSceneMoved(plain(), 'e', 1, false)).toBeNull()
+  })
+
+  it('moves a scene one slot earlier, and the first one cannot', () => {
+    expect(ids(withSceneMoved(plain(), 'c', -1, false))).toEqual(['a', 'c', 'b', 'd', 'e'])
+    expect(withSceneMoved(plain(), 'a', -1, false)).toBeNull()
+    expect(withSceneMoved(plain(), 'zzz', -1, false)).toBeNull()
+  })
+
+  it("a dub scene moved later jumps over the whole of the next line's angles", () => {
+    const next = withSceneMoved(dub(), 'a', 1, true)!
+    expect(ids(next)).toEqual(['b1', 'b2', 'a', 'c'])
+    expect(contiguous(next)).toBe(true)
+  })
+
+  it('a contiguous group of three moves before scene 1 as one unit', () => {
+    expect(ids(withReorderMany(plain(), ['c', 'd', 'e'], 'a', false))).toEqual([
+      'c',
+      'd',
+      'e',
+      'a',
+      'b'
+    ])
+    // Selection order does not matter, only play order.
+    expect(ids(withReorderMany(plain(), ['e', 'c', 'd'], 'a', false))).toEqual([
+      'c',
+      'd',
+      'e',
+      'a',
+      'b'
+    ])
+  })
+
+  it('a group moved later lands after the scene it was dropped on', () => {
+    expect(ids(withReorderMany(plain(), ['a', 'b'], 'd', false))).toEqual(['c', 'd', 'a', 'b', 'e'])
+  })
+
+  it('a non-contiguous selection is refused', () => {
+    expect(withReorderMany(plain(), ['a', 'c'], 'e', false)).toBeNull()
+  })
+
+  it('a single id is a plain reorder; dropping on itself or on nothing is null', () => {
+    expect(ids(withReorderMany(plain(), ['a'], 'c', false))).toEqual(
+      ids(withReorder(plain(), 'a', 'c', false))
+    )
+    expect(withReorderMany(plain(), ['b', 'c'], 'c', false)).toBeNull()
+    expect(withReorderMany(plain(), ['b', 'c'], 'zzz', false)).toBeNull()
+    expect(withReorderMany(plain(), [], 'a', false)).toBeNull()
+  })
+
+  it("a dub group keeps another line's angles contiguous", () => {
+    // a + b1 dragged onto b2's slot would split line 2 — the block lands past it.
+    const next = withReorderMany(dub(), ['a', 'b1'], 'b2', true)
+    expect(next).not.toBeNull()
+    expect(contiguous(next!)).toBe(true)
+    // Line 1 + line 3 dropped between line 2's angles: past the whole line.
+    const later = withReorderMany([...dub(), cut('d', 's', 40, 41, 4)], ['c', 'd'], 'b1', true)!
+    expect(ids(later)).toEqual(['a', 'c', 'd', 'b1', 'b2'])
+    expect(contiguous(later)).toBe(true)
+  })
+
+  it('part of a line carried away becomes its own line, script staying behind', () => {
+    // b2 + c moved to the front: b2 no longer touches b1, so it is a new line.
+    const next = withReorderMany(dub(), ['b2', 'c'], 'a', true)!
+    expect(ids(next)).toEqual(['b2', 'c', 'a', 'b1'])
+    expect(contiguous(next)).toBe(true)
+    expect(next[0]).toMatchObject({ voiceoverLineId: 4, voiceoverScript: '' })
+    expect(lineScriptFor(next, 2)).toBe('script 2')
+  })
+
+  it('a whole line moved as a block keeps its line id', () => {
+    const next = withReorderMany(dub(), ['b1', 'b2'], 'a', true)!
+    expect(ids(next)).toEqual(['b1', 'b2', 'a', 'c'])
+    expect(next[0].voiceoverLineId).toBe(2)
+    expect(next[1].voiceoverLineId).toBe(2)
+  })
+})
+
+describe('withCutsRemoved / idsBetween', () => {
+  const list = (): EditCut[] => [cut('a', 's', 0, 1), cut('b', 's', 2, 3), cut('c', 's', 4, 5)]
+
+  it('removes every matched id in one go', () => {
+    expect(withCutsRemoved(list(), new Set(['a', 'c']))?.map((c) => c.id)).toEqual(['b'])
+  })
+
+  it('is null when nothing matched', () => {
+    expect(withCutsRemoved(list(), new Set(['x']))).toBeNull()
+    expect(withCutsRemoved(list(), new Set())).toBeNull()
+  })
+
+  it('idsBetween is inclusive and order-independent', () => {
+    const order = ['a', 'b', 'c', 'd']
+    expect(idsBetween(order, 'b', 'd')).toEqual(['b', 'c', 'd'])
+    expect(idsBetween(order, 'd', 'b')).toEqual(['b', 'c', 'd'])
+    expect(idsBetween(order, 'c', 'c')).toEqual(['c'])
+    expect(idsBetween(order, 'zzz', 'c')).toEqual(['c'])
+    expect(idsBetween(order, 'zzz', 'yyy')).toEqual([])
+  })
+})
+
+describe('pasteCuts', () => {
+  const ids = (cuts: EditCut[]): string[] => cuts.map((c) => c.id)
+  const counter = (): (() => string) => {
+    let n = 0
+    return () => `p${(n += 1)}`
+  }
+  const clip = (): EditCut[] => [
+    { ...cut('x', 's', 0, 1), meta: { alternates: [{ note: 'x' }], skipped: true } },
+    cut('y', 't', 5, 6)
+  ]
+
+  it('inserts fresh, meta-free copies after the given cut', () => {
+    const prev = [cut('a', 's', 0, 1), cut('b', 's', 2, 3)]
+    const next = pasteCuts(prev, 'a', clip(), counter(), false)
+    expect(ids(next)).toEqual(['a', 'p1', 'p2', 'b'])
+    expect(next[1]).toMatchObject({ source: 's', in: 0, out: 1, label: 'x' })
+    expect(next[1].meta).toBeUndefined()
+    expect(isSkipped(next[1])).toBe(false)
+    expect(next[2]).toMatchObject({ source: 't', in: 5, out: 6 })
+    // The clipboard and the list are left alone.
+    expect(clip()[0].meta).toBeDefined()
+    expect(ids(prev)).toEqual(['a', 'b'])
+  })
+
+  it('prepends for a null anchor and appends for a vanished one', () => {
+    const prev = [cut('a', 's', 0, 1)]
+    expect(ids(pasteCuts(prev, null, clip(), counter(), false))).toEqual(['p1', 'p2', 'a'])
+    expect(ids(pasteCuts(prev, 'gone', clip(), counter(), false))).toEqual(['a', 'p1', 'p2'])
+    expect(pasteCuts(prev, 'a', [], counter(), false)).toBe(prev)
+  })
+
+  it('joins the dub line of the cut before the insertion point as new angles', () => {
+    const prev = [cut('a', 's', 0, 2, 1), cut('b1', 's', 10, 12, 2), cut('c', 's', 30, 32, 3)]
+    const next = pasteCuts(prev, 'b1', clip(), counter(), true)
+    expect(ids(next)).toEqual(['a', 'b1', 'p1', 'p2', 'c'])
+    expect(next[2]).toMatchObject({
+      voiceoverLineId: 2,
+      voiceoverScript: '',
+      label: 'บรรทัด 2 · มุม 2'
+    })
+    expect(next[3]).toMatchObject({ voiceoverLineId: 2, label: 'บรรทัด 2 · มุม 3' })
+    expect(voiceoverLineBlocks(next).map((b) => b.lineId)).toEqual([1, 2, 3])
+  })
+
+  it('prepended dub copies join the first line; an empty list opens a new one', () => {
+    const prev = [cut('a', 's', 0, 2, 1)]
+    const front = pasteCuts(prev, null, clip(), counter(), true)
+    expect(front.map((c) => c.voiceoverLineId)).toEqual([1, 1, 1])
+    const fresh = pasteCuts([], null, clip(), counter(), true)
+    expect(fresh.map((c) => c.voiceoverLineId)).toEqual([1, 1])
+  })
+})
+
+describe('withRangeRemoved', () => {
+  const ids = (cuts: EditCut[] | null): string[] | null => cuts && cuts.map((c) => c.id)
+  // Output: a 0–3 (source 2–5), b 3–5 (source 10–12), c 5–8 (source 20–23).
+  const list = (): EditCut[] => [cut('a', 's', 2, 5), cut('b', 's', 10, 12), cut('c', 's', 20, 23)]
+  const counter = (): (() => string) => {
+    let n = 0
+    return () => `n${(n += 1)}`
+  }
+
+  it('a range inside one scene leaves two pieces', () => {
+    const next = withRangeRemoved(list(), { inSec: 1, outSec: 2 }, counter())!
+    expect(ids(next)).toEqual(['a', 'n1', 'b', 'c'])
+    expect(next[0]).toMatchObject({ in: 2, out: 3 })
+    expect(next[1]).toMatchObject({ in: 4, out: 5 })
+    expect(computeEditedDuration(next)).toBeCloseTo(7)
+  })
+
+  it('a range spanning two scenes removes the middle', () => {
+    // 2 s into a … 1 s into c: the whole of b goes, a and c are trimmed and
+    // keep their ids (selection and filmstrip keys stay put).
+    const next = withRangeRemoved(list(), { inSec: 2, outSec: 6 }, counter())!
+    expect(ids(next)).toEqual(['a', 'c'])
+    expect(next[0]).toMatchObject({ in: 2, out: 4 })
+    expect(next[1]).toMatchObject({ source: 's', in: 21, out: 23 })
+    expect(computeEditedDuration(next)).toBeCloseTo(4)
+  })
+
+  it('a range on exact boundaries removes whole scenes and splits nothing', () => {
+    expect(ids(withRangeRemoved(list(), { inSec: 3, outSec: 5 }, counter()))).toEqual(['a', 'c'])
+    expect(ids(withRangeRemoved(list(), { inSec: 0, outSec: 8 }, counter()))).toEqual([])
+  })
+
+  it('accepts the two ends in either order', () => {
+    expect(ids(withRangeRemoved(list(), { inSec: 5, outSec: 3 }, counter()))).toEqual(['a', 'c'])
+  })
+
+  it('too short a range, or a remaining sliver, is refused', () => {
+    expect(withRangeRemoved(list(), { inSec: 1, outSec: 1.1 }, counter())).toBeNull()
+    // Would leave 0.1 s of a in front of the range.
+    expect(withRangeRemoved(list(), { inSec: 0.1, outSec: 2 }, counter())).toBeNull()
+    // Would leave 0.1 s of a after the range.
+    expect(withRangeRemoved(list(), { inSec: 1, outSec: 2.9 }, counter())).toBeNull()
+    // Nothing under the range at all.
+    expect(withRangeRemoved(list(), { inSec: 20, outSec: 30 }, counter())).toBeNull()
+  })
+
+  it('trims a sliver the range grazes instead of making it a scene', () => {
+    // 2.9–4: the last 0.1 s of a is trimmed off, the first 1 s of b removed.
+    const next = withRangeRemoved(list(), { inSec: 2.9, outSec: 4 }, counter())!
+    expect(ids(next)).toEqual(['a', 'b', 'c'])
+    expect(next[0].out).toBeCloseTo(4.9)
+    expect(next[1].in).toBeCloseTo(11)
+    expect(computeEditedDuration(next)).toBeCloseTo(8 - 1.1)
+  })
+
+  it('makes up ids no cut has when the caller passes no counter', () => {
+    const next = withRangeRemoved([...list(), cut('range-1', 's', 40, 41)], {
+      inSec: 1,
+      outSec: 2
+    })!
+    const all = next.map((c) => c.id)
+    expect(new Set(all).size).toBe(all.length)
+  })
+
+  it('leaves skipped scenes where they are', () => {
+    const skipped = withSkipToggled(list(), 'b')
+    // Output is now a 0–3, c 3–6.
+    const next = withRangeRemoved(skipped, { inSec: 2, outSec: 4 }, counter())!
+    expect(ids(next)).toEqual(['a', 'b', 'c'])
+    expect(isSkipped(next[1])).toBe(true)
+    expect(next[0].out).toBe(4)
+    expect(next[2].in).toBe(21)
+  })
+})
+
+describe('skipped scenes', () => {
+  const list = (): EditCut[] => [cut('a', 's', 0, 2), cut('b', 's', 10, 13), cut('c', 's', 20, 21)]
+
+  it('a skipped scene has no segment and later scenes start earlier', () => {
+    const next = withSkipToggled(list(), 'b')
+    const segs = computeEditedSegments(next)
+    expect(segs.map((s) => s.cut.id)).toEqual(['a', 'c'])
+    expect(segs[1]).toMatchObject({ editedIn: 2, editedOut: 3 })
+    expect(new Map(segs.map((s) => [s.cut.id, s.editedIn])).get('b')).toBeUndefined()
+    expect(computeEditedDuration(next)).toBe(3)
+    expect(cutBoundariesSec(next)).toEqual([0, 2, 3])
+    expect(findEditedSegment(next, 2.5)?.cut.id).toBe('c')
+    expect(mapSourceTimeToOutput(next, 11)).toBeNull()
+  })
+
+  it('a skipped angle drops out of its voiceover line block and its caption chips', () => {
+    const dub = [cut('a', 's', 0, 2, 1), cut('b', 's', 10, 13, 1), cut('c', 's', 20, 21, 2)]
+    const next = withSkipToggled(dub, 'b')
+    expect(voiceoverLineBlocks(next)[0]).toMatchObject({ lineId: 1, durationSec: 2, cutCount: 1 })
+    expect(captionChipSpans(next, [{ id: 'x', text: 'x', start: 11, end: 12 }])).toEqual([])
+    expect(
+      captionChipSpansFromOutput(next, [{ id: 'y', text: 'y', start: 2, end: 3 }])[0]
+    ).toMatchObject({
+      outStart: 2,
+      durationSec: 1
+    })
+  })
+
+  it('toggling twice restores the cut byte for byte', () => {
+    const prev = list()
+    const once = withSkipToggled(prev, 'b')
+    expect(isSkipped(once[1])).toBe(true)
+    expect(isSkipped(once[0])).toBe(false)
+    expect(withSkipToggled(once, 'b')).toEqual(prev)
+    expect('meta' in withSkipToggled(once, 'b')[1]).toBe(true)
+    expect(withSkipToggled(once, 'b')[1].meta).toBeUndefined()
+  })
+
+  it('keeps the rest of meta across a skip and back', () => {
+    const withMeta = [{ ...cut('a', 's', 0, 2), meta: { alternates: [{ note: 'x' }] } }]
+    const on = withSkipToggled(withMeta, 'a')
+    expect(on[0].meta).toEqual({ alternates: [{ note: 'x' }], skipped: true })
+    expect(withSkipToggled(on, 'a')[0].meta).toEqual({ alternates: [{ note: 'x' }] })
+    expect(withSkipToggled(withMeta, 'zzz')).toEqual(withMeta)
+  })
+})
+
+describe('frame and delta formatting', () => {
+  it('fmtSignedSec', () => {
+    expect(fmtSignedSec(0.4)).toBe('+0.40 วิ')
+    expect(fmtSignedSec(-0.07)).toBe('−0.07 วิ')
+    expect(fmtSignedSec(0)).toBe('0.00 วิ')
+    expect(fmtSignedSec(-0.001)).toBe('0.00 วิ')
+    expect(fmtSignedSec(NaN)).toBe('0.00 วิ')
+  })
+
+  it('fmtFrames rounds to whole frames', () => {
+    expect(fmtFrames(0.4)).toBe('+12 เฟรม')
+    expect(fmtFrames(-FRAME_SEC)).toBe('−1 เฟรม')
+    expect(fmtFrames(0)).toBe('0 เฟรม')
+    expect(fmtFrames(29 / 30)).toBe('+29 เฟรม')
+    expect(fmtFrames(0.5, 25)).toBe('+13 เฟรม')
+  })
+
+  it('fmtTimecodeFrames is m:ss:ff with frame 29 the last of a second', () => {
+    expect(fmtTimecodeFrames(0)).toBe('0:00:00')
+    expect(fmtTimecodeFrames(7.4)).toBe('0:07:12')
+    expect(fmtTimecodeFrames(29 / 30)).toBe('0:00:29')
+    expect(fmtTimecodeFrames(29.5 / 30)).toBe('0:01:00')
+    expect(fmtTimecodeFrames(65 + 5 / 30)).toBe('1:05:05')
+    expect(fmtTimecodeFrames(-1)).toBe('0:00:00')
+    expect(fmtTimecodeFrames(NaN)).toBe('0:00:00')
+  })
+})
+
+describe('rulerTicks', () => {
+  it('keeps rulerStepSec for the labels', () => {
+    expect(rulerTicks(40, 10).stepSec).toBe(rulerStepSec(40))
+    expect(rulerTicks(40, 10).majors).toEqual([0, 5, 10])
+    expect(rulerTicks(40, 11).majors).toEqual([0, 5, 10, 15])
+  })
+
+  it('subdivides so there is something between labels at 160 px/s', () => {
+    const t = rulerTicks(MAX_PX_PER_SEC, 2)
+    expect(t.stepSec).toBe(1)
+    expect(t.subStepSec).toBeCloseTo(0.1)
+    expect(t.minors.length).toBeGreaterThan(t.majors.length)
+  })
+
+  it('minors never coincide with majors and stay ≥ 6 px apart at every zoom', () => {
+    for (const px of [MIN_PX_PER_SEC, 8.7, 20, 40, 80, MAX_PX_PER_SEC]) {
+      const t = rulerTicks(px, 90)
+      const majors = new Set(t.majors)
+      for (const m of t.minors) expect(majors.has(m)).toBe(false)
+      expect(t.subStepSec * px).toBeGreaterThanOrEqual(6)
+      for (let i = 1; i < t.minors.length; i += 1) {
+        expect((t.minors[i] - t.minors[i - 1]) * px).toBeGreaterThanOrEqual(6 - 1e-6)
+      }
+      expect(Math.max(...t.majors)).toBeGreaterThanOrEqual(90)
+    }
+  })
+
+  it('has one label and no minors for an empty edit', () => {
+    expect(rulerTicks(40, 0)).toMatchObject({ majors: [0], minors: [] })
+    expect(rulerTicks(40, NaN).majors).toEqual([0])
   })
 })

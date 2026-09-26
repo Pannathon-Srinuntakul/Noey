@@ -21,6 +21,8 @@ export const EditorHeader = memo(function EditorHeader({
   ready,
   canUndo,
   canRedo,
+  undoLabel,
+  redoLabel,
   onBack,
   onUndo,
   onRedo,
@@ -39,6 +41,10 @@ export const EditorHeader = memo(function EditorHeader({
   ready: boolean
   canUndo: boolean
   canRedo: boolean
+  /** The named step undo / redo would take ('ลบฉาก', 'ยืด–หดฉาก') — the
+   * Premiere History / FCP "Undo Trim" answer to "what will this undo?" */
+  undoLabel?: string | null
+  redoLabel?: string | null
   onBack: () => void
   onUndo: () => void
   onRedo: () => void
@@ -64,7 +70,7 @@ export const EditorHeader = memo(function EditorHeader({
           <Button
             icon={<Undo2 size={15} />}
             onClick={onUndo}
-            title={withShortcut('เลิกทำ', 'undo')}
+            title={withShortcut(undoLabel ? `เลิกทำ: ${undoLabel}` : 'เลิกทำ', 'undo')}
           >
             เลิกทำ
           </Button>
@@ -79,7 +85,11 @@ export const EditorHeader = memo(function EditorHeader({
           </Button>
         )}
         {canRedo ? (
-          <Button icon={<Redo2 size={15} />} onClick={onRedo} title={withShortcut('ทำซ้ำ', 'redo')}>
+          <Button
+            icon={<Redo2 size={15} />}
+            onClick={onRedo}
+            title={withShortcut(redoLabel ? `ทำซ้ำ: ${redoLabel}` : 'ทำซ้ำ', 'redo')}
+          >
             ทำซ้ำ
           </Button>
         ) : (

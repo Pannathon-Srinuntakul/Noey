@@ -8,6 +8,10 @@
  */
 import type { CaptionLine, EditCut } from './editorApi'
 
+/** Re-exported so the timeline modules built on this math (snap targets,
+ * selection, …) can take the cut type from the same place as the functions. */
+export type { EditCut } from './editorApi'
+
 export const MIN_CUT_SEC = 0.2
 export const DEFAULT_NEW_CUT_SEC = 2
 /** Base scale filmstrip tile math is anchored to — the on-screen zoom
@@ -16,6 +20,40 @@ export const BASE_PX_PER_SEC = 40
 
 export function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v))
+}
+
+/** Round a DECIMAL grid value (ruler ticks: i × 0.1) away from float noise.
+ * Never used on cut times: the nudge unit is 1/30 s, which no decimal
+ * rounding represents — thirty rounded steps drift off 1.0 instead of
+ * landing on it. */
+function r9(n: number): number {
+  return Math.round(n * 1e9) / 1e9
+}
+
+// ---- skipped scenes (ข้ามฉาก) --------------------------------------------------
+
+/** A scene the user parked without deleting it: it keeps its place in the
+ * list (and survives a reload through `meta.skipped`, which cutPayload carries)
+ * but has no span on the output clock — no segment, no boundary, no caption
+ * chip, and the render save drops it (`cutPayload(..., { dropSkipped })`). */
+export function isSkipped(cut: Pick<EditCut, 'meta'>): boolean {
+  return cut.meta?.skipped === true
+}
+
+/** The list with cut `id` skipped, or un-skipped when it already was. A cut
+ * that is not in the list comes back unchanged. Un-skipping removes the key
+ * (and an emptied `meta` altogether) so the saved segment is byte-for-byte
+ * what it was before the skip. */
+export function withSkipToggled(cuts: EditCut[], id: string): EditCut[] {
+  return cuts.map((c) => {
+    if (c.id !== id) return c
+    if (isSkipped(c)) {
+      const rest: Record<string, unknown> = { ...c.meta }
+      delete rest.skipped
+      return { ...c, meta: Object.keys(rest).length ? rest : undefined }
+    }
+    return { ...c, meta: { ...(c.meta ?? {}), skipped: true } }
+  })
 }
 
 export function fmtTime(sec: number): string {
@@ -33,6 +71,44 @@ export function fmtTimeTenths(sec: number): string {
   const whole = Math.floor(s)
   const tenths = Math.floor((s - whole) * 10)
   return `${m}:${String(whole).padStart(2, '0')}.${tenths}`
+}
+
+/** Sign of a delta for the readouts: a real minus sign (U+2212), and nothing
+ * for a delta that rounds to zero at the shown precision — "−0.00" is a lie. */
+function signOf(n: number, unit: number): '+' | '−' | '' {
+  if (n >= unit / 2) return '+'
+  if (n <= -unit / 2) return '−'
+  return ''
+}
+
+/** A signed delta for the drag readout — "+0.40 วิ" / "−0.07 วิ" / "0.00 วิ". */
+export function fmtSignedSec(deltaSec: number): string {
+  if (!Number.isFinite(deltaSec)) return '0.00 วิ'
+  const sign = signOf(deltaSec, 0.01)
+  return `${sign}${Math.abs(deltaSec).toFixed(2)} วิ`
+}
+
+/** A signed delta in whole frames — "+12 เฟรม" / "−1 เฟรม" / "0 เฟรม". Only the
+ * drag readout and the timecode entry speak in frames; the transport clock
+ * stays fmtTimeTenths. */
+export function fmtFrames(deltaSec: number, fps = 30): string {
+  if (!Number.isFinite(deltaSec)) return '0 เฟรม'
+  const frames = Math.round(deltaSec * fps)
+  const sign = frames > 0 ? '+' : frames < 0 ? '−' : ''
+  return `${sign}${Math.abs(frames)} เฟรม`
+}
+
+/** Frame-accurate timecode "m:ss:ff" (ff = frame within the second, 00–29 at
+ * 30 fps). Rounds to the nearest frame, so 29.5 frames carries into the next
+ * second rather than printing a frame 30 that does not exist. */
+export function fmtTimecodeFrames(sec: number, fps = 30): string {
+  if (!Number.isFinite(sec) || sec < 0 || !(fps > 0)) return '0:00:00'
+  const totalFrames = Math.round(sec * fps)
+  const ff = totalFrames % fps
+  const wholeSec = Math.floor(totalFrames / fps)
+  const m = Math.floor(wholeSec / 60)
+  const s = wholeSec % 60
+  return `${m}:${String(s).padStart(2, '0')}:${String(ff).padStart(2, '0')}`
 }
 
 /**
@@ -70,25 +146,66 @@ export function rulerStepSec(pxPerSec: number): number {
   return 600
 }
 
+export interface RulerTicks {
+  /** Label step — rulerStepSec. */
+  stepSec: number
+  /** Minor tick step: a fifth of the label step, or a tenth when tenths are
+   * still ≥ 12 px apart (they always are at rulerStepSec's ≥ 140 px labels,
+   * but the rule is written down so a cheaper label step keeps ticks legible). */
+  subStepSec: number
+  /** Labelled ticks, 0 first, running to the first step at or past the end. */
+  majors: number[]
+  /** Unlabelled ticks between the majors — never on a major. */
+  minors: number[]
+}
+
+/** The ruler's tick grid: something to aim at between the labels. With only
+ * one tick per label, at 160 px/s a label every 160 px left a 1 s stretch
+ * with no mark to line a trim up against. */
+export function rulerTicks(pxPerSec: number, durationSec: number): RulerTicks {
+  const stepSec = rulerStepSec(pxPerSec)
+  const divs = (stepSec / 10) * pxPerSec >= 12 ? 10 : 5
+  const subStepSec = stepSec / divs
+  const dur = Number.isFinite(durationSec) && durationSec > 0 ? durationSec : 0
+  // Same count the ruler has always drawn: every step up to and including the
+  // first one at or past the end.
+  const majorCount = Math.max(1, Math.ceil(dur / stepSec) + 1)
+  const majors: number[] = []
+  for (let i = 0; i < majorCount; i += 1) majors.push(r9(i * stepSec))
+  const minors: number[] = []
+  const lastIdx = (majorCount - 1) * divs
+  for (let i = 1; i < lastIdx; i += 1) {
+    if (i % divs === 0) continue
+    minors.push(r9(i * subStepSec))
+  }
+  return { stepSec, subStepSec, majors, minors }
+}
+
 export interface EditedSegment {
   cut: EditCut
   editedIn: number
   editedOut: number
 }
 
-/** Map cuts onto one continuous "edited" timeline — strict back-to-back, no overlap. */
+/** Map cuts onto one continuous "edited" timeline — strict back-to-back, no
+ * overlap. A skipped scene (isSkipped) has NO segment: the scenes after it
+ * start earlier, exactly as the render will lay them, and a lookup of its id
+ * in the result is undefined — the lane draws it as a stub, the player never
+ * reaches it. */
 export function computeEditedSegments(cuts: EditCut[]): EditedSegment[] {
   let acc = 0
-  return cuts.map((c) => {
+  const segs: EditedSegment[] = []
+  for (const c of cuts) {
+    if (isSkipped(c)) continue
     const dur = Math.max(c.out - c.in, 0)
-    const seg: EditedSegment = { cut: c, editedIn: acc, editedOut: acc + dur }
+    segs.push({ cut: c, editedIn: acc, editedOut: acc + dur })
     acc += dur
-    return seg
-  })
+  }
+  return segs
 }
 
 export function computeEditedDuration(cuts: EditCut[]): number {
-  return cuts.reduce((sum, c) => sum + Math.max(c.out - c.in, 0), 0)
+  return cuts.reduce((sum, c) => (isSkipped(c) ? sum : sum + Math.max(c.out - c.in, 0)), 0)
 }
 
 /** Find which cut a position on the concatenated edited timeline falls into. */
@@ -300,6 +417,11 @@ export interface BeatSnapTrimInput {
  * Only the cut's END lands on a new output position when trimmed — its start is
  * fixed by the cumulative duration of the cuts before it — so whichever edge is
  * dragged, it is the END that is snapped to a beat.
+ *
+ * @deprecated Beats are one SnapTarget kind among many now — use
+ * `snapTrimPatch` in `lib/timelineSnap.ts` (same clamp-after-snap rule, every
+ * target kind, a pixel-based tolerance). Kept for the pinned regression tests
+ * and any straggling caller; not deleted this round.
  */
 export function snapTrimToBeat({
   patch,
@@ -529,6 +651,119 @@ export function withReorder(
   })
 }
 
+/** Alt+↑/↓ — cut `id` swapped with its neighbour one slot earlier (−1) or
+ * later (+1), through withReorder so a dub line's run is jumped over rather
+ * than split. Null at either end of the list, or for an unknown id. */
+export function withSceneMoved(
+  cuts: EditCut[],
+  id: string,
+  dir: -1 | 1,
+  isDub: boolean
+): EditCut[] | null {
+  const idx = cuts.findIndex((c) => c.id === id)
+  if (idx < 0) return null
+  const neighbour = cuts[idx + dir]
+  if (!neighbour) return null
+  return withReorder(cuts, id, neighbour.id, isDub)
+}
+
+/**
+ * A multi-selection dragged as one block onto `overId`'s slot. `ids` must be
+ * contiguous in play order — a scattered selection has no single slot to
+ * move to, so it is null and the caller says 'เลือกฉากที่ติดกันเพื่อย้ายพร้อมกัน'.
+ * The block lands where withReorder would put its FIRST member: after the
+ * scene at `overId` when moving later, before it when moving earlier. In a
+ * dub project another line's run is jumped over (insertIndexOutsideLineRuns),
+ * and a part of a line carried away from the rest of it becomes a line of
+ * its own — with the line's script left on the angles that stayed, as
+ * withReorder does. Null when nothing moves. A single id is withReorder.
+ */
+export function withReorderMany(
+  cuts: EditCut[],
+  ids: readonly string[],
+  overId: string,
+  isDub: boolean
+): EditCut[] | null {
+  const wanted = new Set(ids)
+  const positions: number[] = []
+  cuts.forEach((c, i) => {
+    if (wanted.has(c.id)) positions.push(i)
+  })
+  if (positions.length === 0) return null
+  if (positions.length === 1) return withReorder(cuts, cuts[positions[0]].id, overId, isDub)
+  for (let i = 1; i < positions.length; i += 1) {
+    if (positions[i] !== positions[i - 1] + 1) return null
+  }
+  const from = positions[0]
+  const len = positions.length
+  const to = cuts.findIndex((c) => c.id === overId)
+  if (to < 0 || (to >= from && to < from + len)) return null
+
+  const block = cuts.slice(from, from + len)
+  const rest = [...cuts.slice(0, from), ...cuts.slice(from + len)]
+  // Moving later: land right after the scene dropped on (it sits at to − len
+  // in `rest`). Moving earlier: land right before it (still at `to`).
+  let at = to > from ? to - len + 1 : to
+  if (isDub && at > 0 && at < rest.length) {
+    const splitLine = cutLineId(rest[at - 1])
+    const blockLines = new Set(block.map(cutLineId))
+    if (splitLine !== 0 && !blockLines.has(splitLine) && cutLineId(rest[at]) === splitLine) {
+      if (to > from) {
+        at = insertIndexOutsideLineRuns(rest, at)
+      } else {
+        while (at > 0 && cutLineId(rest[at - 1]) === splitLine) at -= 1
+      }
+    }
+  }
+  if (at === from) return null
+  let next = [...rest.slice(0, at), ...block, ...rest.slice(at)]
+  if (!isDub) return next
+
+  // A line whose angles are only partly in the block sits at one of the
+  // block's ends (lines are contiguous runs, and so is the block). A part
+  // that no longer touches the rest of its line becomes a new line; the
+  // line's script stays with the angles left behind (as withReorder).
+  const detachLine = (line: number, touchesOwn: boolean): void => {
+    if (line === 0 || touchesOwn) return
+    const others = rest.filter((c) => cutLineId(c) === line)
+    if (others.length === 0) return
+    const movedOfLine = block.filter((c) => cutLineId(c) === line)
+    const newLineId = nextVoiceoverLineId(next)
+    const carried = lineScriptFor(movedOfLine, line)
+    const keeperId = others[0].id
+    const keeperNeedsScript = !lineScriptFor(others, line) && carried !== ''
+    const movedIds = new Set(movedOfLine.map((c) => c.id))
+    next = next.map((c) => {
+      if (movedIds.has(c.id)) {
+        const angle = movedOfLine.findIndex((m) => m.id === c.id) + 1
+        return {
+          ...c,
+          label:
+            movedOfLine.length > 1 ? `บรรทัด ${newLineId} · มุม ${angle}` : `บรรทัด ${newLineId}`,
+          voiceoverLineId: newLineId,
+          voiceoverScript: ''
+        }
+      }
+      if (keeperNeedsScript && c.id === keeperId) return { ...c, voiceoverScript: carried }
+      return c
+    })
+  }
+  const firstLine = cutLineId(block[0])
+  const lastLine = cutLineId(block[len - 1])
+  const before = next[at - 1]
+  const after = next[at + len]
+  const leftTouch = !!before && cutLineId(before) === firstLine
+  const rightTouch = !!after && cutLineId(after) === lastLine
+  if (firstLine === lastLine) {
+    // Same line at both ends means the whole block is that line.
+    detachLine(firstLine, leftTouch || rightTouch)
+  } else {
+    detachLine(firstLine, leftTouch)
+    detachLine(lastLine, rightTouch)
+  }
+  return next
+}
+
 export function cutIndexInLine(cuts: EditCut[], cut: EditCut): number {
   const idx = cutsInLine(cuts, cutLineId(cut)).findIndex((c) => c.id === cut.id)
   return idx >= 0 ? idx + 1 : 1
@@ -598,6 +833,249 @@ export function splitCutAt(
   // copy on both halves would offer the same backups twice in ปรับช็อต.
   const second: EditCut = { ...cut, id: newId, in: atSrcSec, voiceoverScript: '', meta: undefined }
   return [...cuts.slice(0, idx), first, second, ...cuts.slice(idx + 1)]
+}
+
+export interface EdgeBounds {
+  /** How far the cut's `in` may go back — 0 or the lane neighbour's out. */
+  minIn: number
+  /** How far the cut's `out` may go — the source length or the lane neighbour's in. */
+  maxOut: number
+}
+
+export interface RollBounds {
+  /** Bounds of the left cut (its `in` never moves; `leftMinIn` is accepted so
+   * the caller can pass the same shape it passes to a trim). */
+  leftMinIn: number
+  leftMaxOut: number
+  /** Bounds of the right cut (its `out` never moves). */
+  rightMinIn: number
+  rightMaxOut: number
+}
+
+/**
+ * Roll edit — "give this beat to the other shot". The boundary between cut
+ * `leftId` and the cut AFTER it in play order moves by `deltaSec`: left.out
+ * and right.in shift by ONE shared, clamped delta, so the total edited length
+ * is unchanged and nothing after the pair moves on the output clock. Both
+ * neighbours are windows into different source moments, so each is clamped
+ * on its own footage: the left keeps ≥ MIN_CUT_SEC and stays ≤ leftMaxOut,
+ * the right keeps ≥ MIN_CUT_SEC and stays ≥ rightMinIn — the tighter one
+ * wins for both. Null when `leftId` is the last cut (no junction), unknown,
+ * or the clamped delta is 0.
+ */
+export function rollCutBoundary(
+  cuts: EditCut[],
+  leftId: string,
+  deltaSec: number,
+  bounds: RollBounds
+): EditCut[] | null {
+  const idx = cuts.findIndex((c) => c.id === leftId)
+  if (idx < 0 || idx >= cuts.length - 1 || !Number.isFinite(deltaSec)) return null
+  const left = cuts[idx]
+  const right = cuts[idx + 1]
+  const dMax = Math.min(bounds.leftMaxOut - left.out, right.out - MIN_CUT_SEC - right.in)
+  const dMin = Math.max(left.in + MIN_CUT_SEC - left.out, bounds.rightMinIn - right.in)
+  if (dMin > dMax + 1e-9) return null // already outside its bounds — do not make it worse
+  const d = clamp(deltaSec, dMin, dMax)
+  if (Math.abs(d) < 1e-9) return null
+  const next = [...cuts]
+  next[idx] = { ...left, out: left.out + d }
+  next[idx + 1] = { ...right, in: right.in + d }
+  return next
+}
+
+/**
+ * Slip — the window moves inside its source, the block does not move on the
+ * output clock: `in` and `out` shift together by `deltaSec`, duration kept,
+ * clamped so in ≥ minIn and out ≤ maxOut (the same arithmetic the source
+ * view's block drag did inline). A window wider than its bounds is returned
+ * unchanged rather than squeezed.
+ */
+export function slipCut(
+  cut: Pick<EditCut, 'in' | 'out'>,
+  deltaSec: number,
+  bounds: EdgeBounds
+): { in: number; out: number } {
+  const lo = bounds.minIn - cut.in
+  const hi = bounds.maxOut - cut.out
+  if (!Number.isFinite(deltaSec) || lo > hi + 1e-9) return { in: cut.in, out: cut.out }
+  const d = clamp(deltaSec, lo, hi)
+  return { in: cut.in + d, out: cut.out + d }
+}
+
+/**
+ * One edge of cut `id` moved by a signed amount (callers pass FRAME_SEC
+ * multiples — Alt+←/→), with the same clamps a trim handle has: the left
+ * edge stays in [minIn, out − MIN_CUT_SEC], the right in
+ * [in + MIN_CUT_SEC, maxOut]. Null when the edge cannot move (already at its
+ * limit, unknown id, zero delta) so the caller records no undo step.
+ */
+export function nudgeCutEdge(
+  cuts: EditCut[],
+  id: string,
+  edge: TrimEdge,
+  deltaSec: number,
+  bounds: EdgeBounds
+): EditCut[] | null {
+  const idx = cuts.findIndex((c) => c.id === id)
+  if (idx < 0 || !Number.isFinite(deltaSec)) return null
+  const cut = cuts[idx]
+  const patch =
+    edge === 'left'
+      ? { in: clamp(cut.in + deltaSec, bounds.minIn, cut.out - MIN_CUT_SEC) }
+      : { out: clamp(cut.out + deltaSec, cut.in + MIN_CUT_SEC, bounds.maxOut) }
+  const before = edge === 'left' ? cut.in : cut.out
+  const after = edge === 'left' ? patch.in! : patch.out!
+  if (Math.abs(after - before) < 1e-9) return null
+  const next = [...cuts]
+  next[idx] = { ...cut, ...patch }
+  return next
+}
+
+/** The list without every cut whose id is in `ids` — one undo step for a
+ * multi-selection's Delete. Null when none of them is in the list. */
+export function withCutsRemoved(cuts: EditCut[], ids: ReadonlySet<string>): EditCut[] | null {
+  const next = cuts.filter((c) => !ids.has(c.id))
+  return next.length === cuts.length ? null : next
+}
+
+/** The ids from `a` to `b` inclusive in `orderedIds`, whichever comes first —
+ * a Shift+click range. When only one of them is in the list, that one; when
+ * neither, nothing. */
+export function idsBetween(orderedIds: readonly string[], a: string, b: string): string[] {
+  const ia = orderedIds.indexOf(a)
+  const ib = orderedIds.indexOf(b)
+  if (ia < 0 && ib < 0) return []
+  if (ia < 0) return [b]
+  if (ib < 0) return [a]
+  return orderedIds.slice(Math.min(ia, ib), Math.max(ia, ib) + 1)
+}
+
+/**
+ * วาง (⌘V) — the list with copies of `clipboard` inserted after `afterId`
+ * (at the front when null; at the end when the id is gone). Every copy gets
+ * a fresh id from `nextId()` and, as withDuplicate does, loses the AI's
+ * per-shot `meta` — a pasted shot must not offer the original's alternates a
+ * second time, and never arrives skipped. In a dub project the copies become
+ * angles of the line of the cut before the insertion point (the first cut's
+ * line when prepending), so no line's run is ever split; an empty list opens
+ * a new line. An angle's script is empty — the line's lives on its first cut.
+ */
+export function pasteCuts(
+  cuts: EditCut[],
+  afterId: string | null,
+  clipboard: EditCut[],
+  nextId: () => string,
+  isDub: boolean
+): EditCut[] {
+  if (clipboard.length === 0) return cuts
+  let at = cuts.length
+  if (afterId === null) {
+    at = 0
+  } else {
+    const idx = cuts.findIndex((c) => c.id === afterId)
+    if (idx >= 0) at = idx + 1
+  }
+  let lineId: number | undefined
+  if (isDub) {
+    const neighbour = at > 0 ? cuts[at - 1] : cuts[0]
+    lineId = neighbour ? cutLineId(neighbour) : 0
+    if (lineId === 0) lineId = nextVoiceoverLineId(cuts)
+  }
+  const angleBase = isDub ? cutsInLine(cuts, lineId!).length : 0
+  const copies = clipboard.map((src, i) => {
+    const copy: EditCut = { ...src, id: nextId(), meta: undefined }
+    if (isDub) {
+      copy.label = `บรรทัด ${lineId} · มุม ${angleBase + i + 1}`
+      copy.voiceoverLineId = lineId
+      copy.voiceoverScript = ''
+    }
+    return copy
+  })
+  return [...cuts.slice(0, at), ...copies, ...cuts.slice(at)]
+}
+
+/** A fresh id for a piece withRangeRemoved splits off when the caller has no
+ * counter of its own: the parent's id with a suffix no cut has yet. */
+function defaultSplitId(cuts: EditCut[]): () => string {
+  const taken = new Set(cuts.map((c) => c.id))
+  let n = 0
+  return () => {
+    let id: string
+    do {
+      n += 1
+      id = `range-${n}`
+    } while (taken.has(id))
+    taken.add(id)
+    return id
+  }
+}
+
+/**
+ * Shift+Delete — the list with the OUTPUT-clock range [inSec, outSec] taken
+ * out: every scene whose span lies inside the range is dropped, and the
+ * scene under each end is cut there. A range inside ONE scene splits it with
+ * splitCutAt (the first half keeps the id, the tail past outSec gets one
+ * from `nextId`); a scene the range only overlaps at one end is trimmed to
+ * the part it keeps, so it keeps its id (selection, filmstrip keys). Skipped
+ * scenes take no output time, so they stay where they are.
+ *
+ * Null when the range is shorter than MIN_CUT_SEC, when a piece that would
+ * remain is shorter than MIN_CUT_SEC (the edit is refused whole rather than
+ * leaving a sliver), or when nothing lies under the range.
+ */
+export function withRangeRemoved(
+  cuts: EditCut[],
+  range: { inSec: number; outSec: number },
+  nextId: () => string = defaultSplitId(cuts)
+): EditCut[] | null {
+  const inSec = Math.min(range.inSec, range.outSec)
+  const outSec = Math.max(range.inSec, range.outSec)
+  if (!Number.isFinite(inSec) || !Number.isFinite(outSec)) return null
+  if (outSec - inSec < MIN_CUT_SEC - 1e-9) return null
+  const EPS = 1e-6
+  const strictlyInside = (s: EditedSegment, t: number): boolean =>
+    t > s.editedIn + EPS && t < s.editedOut - EPS
+
+  // Judged on the ORIGINAL layout: the edits below shorten the clock after
+  // each end, which would pull a kept piece into the range if judged later.
+  const segs = computeEditedSegments(cuts)
+  const inside = new Set(
+    segs
+      .filter((s) => s.editedIn >= inSec - EPS && s.editedOut <= outSec + EPS)
+      .map((s) => s.cut.id)
+  )
+  const outSeg = segs.find((s) => strictlyInside(s, outSec))
+  const inSegBefore = segs.find((s) => strictlyInside(s, inSec))
+  if (inside.size === 0 && !outSeg && !inSegBefore) return null
+
+  // The out end: the scene under it keeps its part AFTER outSec. When that
+  // scene also reaches back past inSec the range is inside it — split, so
+  // the part before inSec survives too.
+  let list = cuts
+  if (outSeg) {
+    const srcAt = outSeg.cut.in + (outSec - outSeg.editedIn)
+    if (outSeg.cut.out - srcAt < MIN_CUT_SEC - 1e-9) return null
+    if (outSeg.editedIn < inSec - EPS) {
+      const split = splitCutAt(cuts, outSeg.cut.id, srcAt, nextId())
+      if (!split) return null
+      list = split
+    } else {
+      list = cuts.map((c) => (c.id === outSeg.cut.id ? { ...c, in: srcAt } : c))
+    }
+  }
+
+  // The in end: the scene under it keeps its part BEFORE inSec — the rest is
+  // inside the range, since the out end is already cut. Found again on the
+  // edited list so the single-scene case sees the first half.
+  const inSeg = computeEditedSegments(list).find((s) => strictlyInside(s, inSec))
+  if (inSeg) {
+    const srcAt = inSeg.cut.in + (inSec - inSeg.editedIn)
+    if (srcAt - inSeg.cut.in < MIN_CUT_SEC - 1e-9) return null
+    list = list.map((c) => (c.id === inSeg.cut.id ? { ...c, out: srcAt } : c))
+  }
+
+  return list.filter((c) => !inside.has(c.id))
 }
 
 /** เพิ่มฉาก (N) — the list with a new scene [start, end) of `source`. It goes
@@ -876,7 +1354,12 @@ export function snapCaptionEdge(
 export type TrimEdge = 'left' | 'right'
 
 /** Window-level trim drag — reliable even when the pointer leaves the handle.
- * `pxPerSec` is passed per-call because zoom made it state, not a constant. */
+ * `pxPerSec` is passed per-call because zoom made it state, not a constant.
+ *
+ * @deprecated Use `bindPointerDrag` in `lib/pointerDrag.ts` (the one shared
+ * drag loop: Escape cancels, Alt re-runs a frame, edge auto-scroll) with the
+ * per-frame arithmetic in the lane. Kept so existing callers still compile;
+ * not deleted this round. */
 export function bindTrimDrag(opts: {
   e: { stopPropagation(): void; preventDefault(): void; clientX: number }
   edge: TrimEdge

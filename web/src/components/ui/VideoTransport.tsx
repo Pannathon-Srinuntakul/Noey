@@ -1,8 +1,9 @@
-import { useEffect } from 'react'
-import { Pause, Play, SkipBack, SkipForward } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Pause, Play, Repeat, SkipBack, SkipForward, SquarePlay } from 'lucide-react'
 import { cn } from '../../lib/cn'
 import { paintSeekProgress, seekProgressBackground } from '../../lib/seekProgress'
 import { fmtTime, fmtTimeTenths } from '../../lib/timelineMath'
+import { TimecodeInput } from '../timeline/inspector/TimecodeInput'
 
 /**
  * The app's ONE transport bar — the timeline editor's, extracted so every
@@ -44,6 +45,24 @@ export interface VideoTransportProps {
   timeLabelRef?: React.RefObject<HTMLSpanElement | null>
   className?: string
   visible?: boolean
+  // ---- editor extras (all optional; VideoPlayer / VideoModal pass none) ----
+  /** Loop the active range (or the whole sequence). Shown when `onToggleLoop`
+   * is given. */
+  loop?: boolean
+  onToggleLoop?: () => void
+  loopTitle?: string
+  /** Play the selected scene / the I–O range. Shown when given; disabled with
+   * its reason while nothing is selected. */
+  onPlayScene?: () => void
+  canPlayScene?: boolean
+  playSceneTitle?: string
+  playSceneDisabledReason?: string
+  /** Clicking the clock swaps it for a timecode field (m:ss.s · h:mm:ss ·
+   * m:ss:ff · seconds); Enter commits through `onSeek`. Shown only when
+   * `timeEditable`. The driver stops painting the label between these two. */
+  timeEditable?: boolean
+  onTimeEditStart?: () => void
+  onTimeEditEnd?: () => void
 }
 
 /** Arrow-key seek unit. One second is what a person means by "back a bit". */
@@ -66,9 +85,25 @@ export function VideoTransport({
   seekRef,
   timeLabelRef,
   className,
-  visible = true
+  visible = true,
+  loop = false,
+  onToggleLoop,
+  loopTitle = 'เล่นวน',
+  onPlayScene,
+  canPlayScene = false,
+  playSceneTitle = 'เล่นฉากนี้',
+  playSceneDisabledReason = 'เลือกฉากก่อน',
+  timeEditable = false,
+  onTimeEditStart,
+  onTimeEditEnd
 }: VideoTransportProps): React.JSX.Element {
   const dur = Math.max(durationSec, 0.1)
+  // The clock's value when the field opened, or null while it is a label. In
+  // imperative mode the live position is in the seek input, not in props, so
+  // it is read in the click handler and carried in state.
+  const [editingTime, setEditingTime] = useState<number | null>(null)
+  const openTimeEdit = (): void =>
+    setEditingTime(seekRef?.current ? Number(seekRef.current.value) : currentSec)
   const stepBack = onStepBack ?? (() => onSeek(Math.max(0, currentSec - 1)))
   const stepForward = onStepForward ?? (() => onSeek(Math.min(dur, currentSec + 1)))
   const playedPct = (Math.min(currentSec, dur) / dur) * 100
@@ -163,9 +198,83 @@ export function VideoTransport({
         >
           <SkipForward size={15} />
         </button>
+        {onPlayScene ? (
+          canPlayScene ? (
+            <button
+              type="button"
+              onClick={onPlayScene}
+              title={playSceneTitle}
+              aria-label={playSceneTitle}
+              className="rounded p-1.5 text-[rgb(243_242_242_/_0.75)] transition-colors duration-state hover:text-ink"
+            >
+              <SquarePlay size={15} />
+            </button>
+          ) : (
+            <span
+              className="rounded p-1.5 text-[rgb(243_242_242_/_0.4)]"
+              title={playSceneDisabledReason}
+              aria-label={`${playSceneTitle} — ${playSceneDisabledReason}`}
+            >
+              <SquarePlay size={15} />
+            </span>
+          )
+        ) : null}
+        {onToggleLoop ? (
+          <button
+            type="button"
+            onClick={onToggleLoop}
+            title={loopTitle}
+            aria-label={loopTitle}
+            aria-pressed={loop}
+            className={cn(
+              'rounded p-1.5 transition-colors duration-state hover:text-ink',
+              loop ? 'text-accent' : 'text-[rgb(243_242_242_/_0.75)]'
+            )}
+          >
+            <Repeat size={15} />
+          </button>
+        ) : null}
+        {editingTime !== null ? (
+          <span className="ml-auto flex items-center gap-1 text-[13px] tabular-nums text-[rgb(243_242_242_/_0.75)]">
+            <TimecodeInput
+              value={editingTime}
+              autoFocus
+              ariaLabel="ไปที่เวลา"
+              className="h-7 w-[84px] border-[rgb(243_242_242_/_0.35)] bg-[rgb(0_0_0_/_0.45)] px-1.5 py-0 text-[13px]"
+              onFocus={() => onTimeEditStart?.()}
+              onCommit={(sec) => onSeek(Math.min(dur, Math.max(0, sec)))}
+              onSettled={() => {
+                setEditingTime(null)
+                onTimeEditEnd?.()
+              }}
+            />
+            <span>/ {fmtTime(durationSec)}</span>
+          </span>
+        ) : null}
+        {/* The label stays mounted (hidden) while the field is open, so the
+          driver's per-frame writes land somewhere and the text is current
+          the moment the field closes. */}
         <span
           ref={timeLabelRef}
-          className="ml-auto text-[13px] tabular-nums text-[rgb(243_242_242_/_0.75)]"
+          className={cn(
+            'ml-auto text-[13px] tabular-nums text-[rgb(243_242_242_/_0.75)]',
+            timeEditable && 'cursor-text rounded px-1 hover:bg-[rgb(243_242_242_/_0.1)]',
+            editingTime !== null && 'hidden'
+          )}
+          title={timeEditable ? 'คลิกเพื่อพิมพ์เวลา (m:ss.s หรือ m:ss:ff)' : undefined}
+          role={timeEditable ? 'button' : undefined}
+          tabIndex={timeEditable ? 0 : undefined}
+          onClick={timeEditable ? openTimeEdit : undefined}
+          onKeyDown={
+            timeEditable
+              ? (e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault()
+                    openTimeEdit()
+                  }
+                }
+              : undefined
+          }
         >
           {fmtTimeTenths(currentSec)} / {fmtTime(durationSec)}
         </span>

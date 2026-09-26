@@ -26,6 +26,22 @@ describe('cutPayload (draft + render save)', () => {
     expect('meta' in cutPayload([cut()], true)[0]).toBe(false)
   })
 
+  it('drops skipped scenes only when asked — the render save, never the draft', () => {
+    const list = [
+      cut(),
+      cut({ id: 'cut1', in: 4, out: 6, meta: { skipped: true } }),
+      cut({ id: 'cut2', in: 8, out: 9 })
+    ]
+    const rendered = cutPayload(list, true, { dropSkipped: true })
+    expect(rendered.map((c) => c.in)).toEqual([1, 8])
+    expect(rendered.some((c) => c.meta?.skipped)).toBe(false)
+    // The draft keeps it, with the flag, so the skip survives a reload.
+    const draft = cutPayload(list, true)
+    expect(draft.map((c) => c.in)).toEqual([1, 4, 8])
+    expect(draft[1].meta).toEqual({ skipped: true })
+    expect(cutPayload(list, false, {}).length).toBe(3)
+  })
+
   it('never sends the editor-local id', () => {
     for (const isDub of [true, false]) {
       expect('id' in cutPayload([cut()], isDub)[0]).toBe(false)

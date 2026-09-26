@@ -15,6 +15,7 @@ export const VoiceoverLane = memo(function VoiceoverLane({
   selectedLineId,
   pxPerSec,
   contentW,
+  leadPx = 0,
   onLaneBackgroundPointerDown,
   onPickLine
 }: {
@@ -25,6 +26,7 @@ export const VoiceoverLane = memo(function VoiceoverLane({
   selectedLineId: number | null
   pxPerSec: number
   contentW: number
+  leadPx?: number
   onLaneBackgroundPointerDown: (e: React.PointerEvent) => void
   /** A line was clicked: select its first scene and play from where the line
    * starts. Clicking a line means "show me this one", so it seeks — unlike a
@@ -37,6 +39,8 @@ export const VoiceoverLane = memo(function VoiceoverLane({
       label="บทพากย์"
       laneClassName="relative h-full rounded-md bg-surface"
       contentW={contentW}
+      leadPx={leadPx}
+      ariaLabel="บทพากย์"
       onLanePointerDown={onLaneBackgroundPointerDown}
     >
       {voBlocks.map((b) => {
@@ -50,6 +54,8 @@ export const VoiceoverLane = memo(function VoiceoverLane({
             onPointerDown={(e) => e.stopPropagation()}
             onClick={() => onPickLine(b.firstCutId, b.outStart)}
             title={b.script || `ประโยค ${b.lineId}`}
+            aria-label={`ประโยค ${b.lineId}${b.script ? `: ${b.script}` : ''}`}
+            aria-current={isSpeaking ? 'true' : undefined}
             className={`absolute inset-y-0.5 overflow-hidden rounded border px-2 text-left text-[13px] transition-colors duration-state ${
               isActive
                 ? 'border-accent bg-accent-nav text-accent'
