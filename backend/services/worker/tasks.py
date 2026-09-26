@@ -204,6 +204,7 @@ async def _write_job(
             # re-SELECT the row — in a context that has no greenlet, so it does
             # not merely cost a query, it raises.
             cached_tenant_id = int(job.tenant_id)
+            cached_user_id = int(job.user_id) if job.user_id is not None else None
             cached_type = str(job.type)
             cached_status = str(job.status)
             cached_progress = int(job.progress)
@@ -220,6 +221,7 @@ async def _write_job(
             await job_cache.put(
                 job_id,
                 tenant_id=cached_tenant_id,
+                user_id=cached_user_id,
                 job_type=cached_type,
                 status=cached_status,
                 progress=cached_progress,

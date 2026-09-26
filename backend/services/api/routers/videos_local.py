@@ -54,6 +54,20 @@ a run priced on that stage. It locks the project row for the whole decision, so
 a double click answers ``already_running`` instead of starting a second, billed
 copy. If the window still has not rolled, the resumed run simply pauses again —
 that is the designed outcome, not an error.
+
+Starting exactly once (2026-09-27)
+----------------------------------
+Every start route (analyze-frames, analyze-video, transcribe-audio,
+reedit-dub-scenes, plan-effects, plan-dub) now takes the same row lock
+``/resume`` does, so a simultaneous second start answers the usual "ยังทำงานอยู่"
+400 instead of opening a second paid run. A RETRIED start is handled by an
+optional ``Idempotency-Key`` header (``[A-Za-z0-9._:-]{1,128}``): the row
+remembers the key of the start it accepted (``local_meta.idempotency``, per
+route, for 24 h) and a repeat with the same key on the same route gets the same
+``202 {job_id}`` back — whether the first run is still going or has finished —
+without starting again. A different key, or no key, is a new start; a start
+without a key forgets the previous key. A start whose enqueue fails is put back
+to ``error`` (restartable) rather than left on ``processing``.
 """
 
 from __future__ import annotations
@@ -73,7 +87,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from packages.core.errors import format_exception_message
+from packages.core.errors import format_exception_message, validation_error_fields
 from packages.core.logging import get_logger
 from packages.core.settings import get_settings
 from packages.db.models.core_auth import Job, User
@@ -110,7 +124,16 @@ from packages.billing import resume as resume_mod
 from packages.billing import runs
 from services.api.billing_start import load_run, release_on_error, settle_run, start_paid_run
 from services.api.deps import CurrentUser, db_session
-from services.api.routers.videos import _enqueue, _get_project
+from services.api.routers.videos import (
+    _enqueue,
+    _get_project,
+    _mark_start_failed,
+    declared_upload_size,
+    human_bytes,
+    receive_upload,
+    refuse_oversized_body,
+    upload_too_large,
+)
 
 # Statuses a run may be (re)started from. "cancelled" is what pressing หยุดงาน
 # leaves behind, so leaving it out made a stopped project permanently
@@ -326,11 +349,12 @@ async def _stage_proxies(
     folder = data_root() / "video_outputs" / uid / f".incoming-{uuid.uuid4().hex}"
     folder.mkdir(parents=True, exist_ok=True)
     records: list[dict] = []
+    cap = get_settings().max_media_upload_bytes
     try:
         for idx, (entry, upload) in enumerate(uploads):
             stored = f"proxy_{idx:03d}.mp4"
             dest = folder / stored
-            dest.write_bytes(await upload.read())
+            await receive_upload(upload, dest, limit=cap, label="พรีวิวคลิป")
             seconds = await _measure_upload(dest, label="พรีวิวคลิป", max_short_side=PROXY_MAX_SHORT_SIDE)
             # The worker reads the file back through the manifest, so record the
             # name that actually exists on disk.
@@ -378,11 +402,158 @@ def _safe_upload_name(name: str) -> str:
     return name
 
 
-async def _get_local_project(session: AsyncSession, uid: str, user_id: int) -> VideoProject:
-    proj = await _get_project(session, uid, user_id)
+async def _get_local_project(
+    session: AsyncSession, uid: str, user_id: int, *, for_update: bool = False
+) -> VideoProject:
+    """``for_update`` — see ``videos._get_project``: every route that turns
+    a project ``processing`` takes the lock, so a second copy of the same
+    request waits and then sees the first one's status."""
+    proj = await _get_project(session, uid, user_id, for_update=for_update)
     if proj.origin != "local":
         raise HTTPException(400, "endpoint นี้ใช้ได้เฉพาะโปรเจกต์ local-render")
     return proj
+
+
+def _refuse_running(proj: VideoProject) -> None:
+    """The one answer a start gets while the project is busy. 400 — what the
+    clients have matched on since 2026-08; the lock in ``_get_local_project``
+    is what makes it reliable rather than a race."""
+    if proj.status not in RESTARTABLE_STATUSES:
+        raise HTTPException(
+            400, f"โปรเจกต์นี้ยังทำงานอยู่ (สถานะ {proj.status}) — กดหยุดงานก่อนถ้าจะเริ่มใหม่"
+        )
+
+
+# ── idempotent starts ─────────────────────────────────────────────────────────
+#
+# The row lock makes a simultaneous double start answer "already running";
+# a RETRIED start is the other half. A client whose response was dropped (a
+# mobile network, a tab that reloaded) cannot tell whether the first request
+# was accepted, and re-sending it after the first run has finished starts a
+# second, billed one. `Idempotency-Key` closes that: the client puts the same
+# key on the retry, the row remembers the key of the start it accepted, and
+# the retry gets the same 202 back. Kept on the project row (`local_meta`),
+# where the lock already serialises reads and writes of it, rather than in
+# Redis — a second store would need its own locking.
+
+IDEMPOTENCY_HEADER = "Idempotency-Key"
+#: How long a remembered key answers a repeat. A day covers any realistic
+#: retry; longer and a key a client reuses by mistake would silently skip
+#: a start the user meant.
+IDEMPOTENCY_TTL_SEC = 24 * 60 * 60
+_IDEMPOTENCY_KEY_RE = re.compile(r"[A-Za-z0-9._:-]{1,128}")
+
+
+def _idempotency_key(request: Request) -> str | None:
+    raw = request.headers.get(IDEMPOTENCY_HEADER, "").strip()
+    if not raw:
+        return None
+    if not _IDEMPOTENCY_KEY_RE.fullmatch(raw):
+        raise HTTPException(422, "Idempotency-Key ต้องเป็นตัวอักษร/ตัวเลข/._:- ไม่เกิน 128 ตัว")
+    return raw
+
+
+def _replay_start(proj: VideoProject, request: Request, route: str) -> AnalyzeFramesOut | None:
+    """The 202 an already-accepted start answered with, when this request
+    carries the key it was accepted under — else None and the start goes
+    ahead. ``route`` is part of the match: a key is per operation, and the
+    same key on a different route must not replay a job it never started."""
+    from datetime import UTC, datetime
+
+    key = _idempotency_key(request)
+    if key is None:
+        return None
+    seen = (proj.local_meta or {}).get("idempotency") or {}
+    if seen.get("key") != key or seen.get("route") != route or not seen.get("job_id"):
+        return None
+    try:
+        at = datetime.fromisoformat(str(seen.get("at") or ""))
+    except ValueError:
+        return None
+    if (datetime.now(UTC) - at).total_seconds() > IDEMPOTENCY_TTL_SEC:
+        return None
+    log.info("local_start_replayed", uid=proj.uid, route=route, job_id=seen["job_id"])
+    return AnalyzeFramesOut(job_id=str(seen["job_id"]))
+
+
+def _remember_start(proj: VideoProject, request: Request, route: str, job_id: str) -> None:
+    """Record the key this start was accepted under (the caller commits). A
+    start WITHOUT a key forgets the previous one: it is a newer start, and a
+    late retry of the older request must not replay over it. A new dict,
+    not a mutation — JSONB change detection needs the assignment."""
+    from datetime import UTC, datetime
+
+    key = _idempotency_key(request)
+    meta = dict(proj.local_meta or {})
+    if key is None:
+        meta.pop("idempotency", None)
+    else:
+        meta["idempotency"] = {
+            "key": key, "route": route, "job_id": job_id, "at": datetime.now(UTC).isoformat(),
+        }
+    proj.local_meta = meta
+
+
+def _parse_manifest(raw: str, model: type[BaseModel], *, label: str = "manifest", many: bool = True) -> list:
+    """The JSON a multipart field carries, validated — or 422 that names the
+    field and the kind of problem and NOTHING ELSE. ``str(exc)`` for a
+    pydantic error quotes the offending input, and for a JSON error a slice
+    of the document; both used to be the ``detail``. The full text goes to
+    the log, where it is useful."""
+    from pydantic import TypeAdapter
+
+    try:
+        data = json.loads(raw)
+        if many:
+            # One adapter over the list, so an error names its row ("0.file").
+            return list(TypeAdapter(list[model]).validate_python(data))  # type: ignore[valid-type]
+        return [model.model_validate(data)]
+    except (json.JSONDecodeError, ValueError) as exc:
+        log.info("manifest_rejected", field=label, error=str(exc)[:300])
+        raise HTTPException(
+            422, {"message": f"{label} ไม่ถูกต้อง", "errors": validation_error_fields(exc)},
+        ) from exc
+
+
+async def _queue_job_row(session: AsyncSession, auth: CurrentUser, job_id: str, queued: dict) -> None:
+    """Upsert the ``core.jobs`` row a client polls, then re-bind the tenant
+    search path. The owner is (re)stamped even on a row that already exists:
+    job ids repeat per project, and a row from before ``user_id`` existed is
+    the same row this start reuses."""
+    await session.execute(text("SET search_path TO core, public"))
+    existing = await session.get(Job, job_id)
+    if existing:
+        existing.status = "queued"
+        existing.progress = 2
+        existing.result = queued
+        existing.error = None
+        existing.user_id = auth.user_id
+    else:
+        session.add(Job(
+            id=job_id,
+            tenant_id=auth.tenant_id,
+            user_id=auth.user_id,
+            type="video_edit",
+            status="queued",
+            progress=2,
+            result=queued,
+        ))
+    await bind_tenant_search_path(session, auth.tenant_slug)
+
+
+async def _enqueue_start(
+    session: AsyncSession, auth: CurrentUser, proj: VideoProject, job_id: str, fn: str, **kwargs: object
+) -> None:
+    """``_enqueue`` for a start that has already committed ``processing``: if
+    the queue refuses the job, the project is put back to a restartable
+    ``error`` (with the reason) before the 503 goes out — otherwise it sat
+    on ``processing`` for work no worker would ever pick up. The run is
+    released by the surrounding ``release_on_error``."""
+    try:
+        await _enqueue(job_id, fn, user=auth.user, **kwargs)
+    except BaseException:
+        await _mark_start_failed(session, proj, job_id, tenant_slug=auth.tenant_slug)
+        raise
 
 
 async def enforce_new_project(
@@ -619,17 +790,18 @@ async def analyze_frames(
     music_trim_out_sec: float | None = Form(None, gt=0),
     allow_wallet: bool = Form(False),
 ) -> AnalyzeFramesOut:
-    proj = await _get_local_project(session, uid, auth.user_id)
+    cap = get_settings().max_media_upload_bytes
+    refuse_oversized_body(request, cap, "เฟรม", files=len(files))
+    proj = await _get_local_project(session, uid, auth.user_id, for_update=True)
     if proj.mode not in ("dub_first", "highlight"):
         raise HTTPException(400, "analyze-frames ใช้ได้เฉพาะโหมด dub_first / highlight")
+    replay = _replay_start(proj, request, "analyze-frames")
+    if replay is not None:
+        return replay
     music_window = _music_window_kwargs(music_offset_sec, music_trim_in_sec, music_trim_out_sec)
-    if proj.status not in RESTARTABLE_STATUSES:
-        raise HTTPException(400, f"โปรเจกต์นี้ยังทำงานอยู่ (สถานะ {proj.status}) — กดหยุดงานก่อนถ้าจะเริ่มใหม่")
+    _refuse_running(proj)
 
-    try:
-        entries = [FrameManifestEntry.model_validate(e) for e in json.loads(manifest)]
-    except (json.JSONDecodeError, ValueError) as exc:
-        raise HTTPException(422, f"manifest ไม่ถูกต้อง: {exc}") from exc
+    entries = _parse_manifest(manifest, FrameManifestEntry)
 
     by_name = {e.name: e for e in entries}
     uploaded_names = [f.filename for f in files]
@@ -659,7 +831,7 @@ async def analyze_frames(
             entry = by_name[f.filename or ""]
             safe_name = f"{entry.clip_id}_{entry.time:.2f}.jpg".replace("/", "_")
             dest = frames_dir / safe_name
-            dest.write_bytes(await f.read())
+            await receive_upload(f, dest, limit=cap, label="เฟรม")
             manifest_records.append({**entry.model_dump(), "file": f"frames/{safe_name}"})
 
         (frames_dir / "frames_manifest.json").write_text(
@@ -668,25 +840,13 @@ async def analyze_frames(
         await push_project_files(uid)  # JPEGs + manifest only — no video bytes
 
         job_id = f"vlocal_{uid[:8]}"
-        await session.execute(text("SET search_path TO core, public"))
-        existing = await session.get(Job, job_id)
-        if existing:
-            existing.status = "queued"
-            existing.progress = 2
-            existing.result = {"step": "queued", "message": "รับ frames แล้ว รอ worker วิเคราะห์…"}
-            existing.error = None
-        else:
-            session.add(Job(
-                id=job_id,
-                tenant_id=auth.tenant_id,
-                type="video_edit",
-                status="queued",
-                progress=2,
-                result={"step": "queued", "message": "รับ frames แล้ว รอ worker วิเคราะห์…"},
-            ))
-        await bind_tenant_search_path(session, auth.tenant_slug)
+        await _queue_job_row(
+            session, auth, job_id,
+            {"step": "queued", "message": "รับ frames แล้ว รอ worker วิเคราะห์…"},
+        )
         proj.status = "processing"
         proj.job_id = job_id
+        _remember_start(proj, request, "analyze-frames", job_id)
         _open_stage(
             proj, stage="analyze", est=est, done_stage="proxy", frame_count=len(files),
             task="analyze_dub_local", job_id=job_id,
@@ -694,9 +854,9 @@ async def analyze_frames(
         )
         await session.commit()
 
-        await _enqueue(
-            job_id, "analyze_dub_local",
-            project_uid=uid, tenant_slug=auth.tenant_slug, run_id=run_id, **music_window, user=auth.user,
+        await _enqueue_start(
+            session, auth, proj, job_id, "analyze_dub_local",
+            project_uid=uid, tenant_slug=auth.tenant_slug, run_id=run_id, **music_window,
         )
     return AnalyzeFramesOut(job_id=job_id)
 
@@ -740,12 +900,15 @@ async def analyze_video(
     contract on analyze-frames and reedit-dub-scenes; defaults = untrimmed
     track at 0.
     """
-    proj = await _get_local_project(session, uid, auth.user_id)
+    refuse_oversized_body(request, get_settings().max_media_upload_bytes, "พรีวิวคลิป", files=len(files))
+    proj = await _get_local_project(session, uid, auth.user_id, for_update=True)
     if proj.mode not in ("dub_first", "highlight"):
         raise HTTPException(400, "analyze-video ใช้ได้เฉพาะโหมด dub_first / highlight")
+    replay = _replay_start(proj, request, "analyze-video")
+    if replay is not None:
+        return replay
     music_window = _music_window_kwargs(music_offset_sec, music_trim_in_sec, music_trim_out_sec)
-    if proj.status not in RESTARTABLE_STATUSES:
-        raise HTTPException(400, f"โปรเจกต์นี้ยังทำงานอยู่ (สถานะ {proj.status}) — กดหยุดงานก่อนถ้าจะเริ่มใหม่")
+    _refuse_running(proj)
 
     new_brief = brief.strip()
     if new_brief and new_brief != (proj.brief or ""):
@@ -794,10 +957,7 @@ async def analyze_video(
                 style_name=style.name,
             )
 
-    try:
-        entries = [ProxyManifestEntry.model_validate(e) for e in json.loads(manifest)]
-    except (json.JSONDecodeError, ValueError) as exc:
-        raise HTTPException(422, f"manifest ไม่ถูกต้อง: {exc}") from exc
+    entries = _parse_manifest(manifest, ProxyManifestEntry)
 
     by_file = {_safe_upload_name(e.file): e for e in entries}
     uploaded_names = [f.filename for f in files]
@@ -830,30 +990,17 @@ async def analyze_video(
         await push_project_files(uid)  # proxy MP4s + manifest only
 
         job_id = f"vlocal_{uid[:8]}"
-        await session.execute(text("SET search_path TO core, public"))
-        existing = await session.get(Job, job_id)
-        queued = {
-            "step": "queued",
-            "message": "รับวิดีโอแล้ว รอ worker วิเคราะห์…",
-            "style_uid": chosen_style_uid or None,
-        }
-        if existing:
-            existing.status = "queued"
-            existing.progress = 2
-            existing.result = queued
-            existing.error = None
-        else:
-            session.add(Job(
-                id=job_id,
-                tenant_id=auth.tenant_id,
-                type="video_edit",
-                status="queued",
-                progress=2,
-                result=queued,
-            ))
-        await bind_tenant_search_path(session, auth.tenant_slug)
+        await _queue_job_row(
+            session, auth, job_id,
+            {
+                "step": "queued",
+                "message": "รับวิดีโอแล้ว รอ worker วิเคราะห์…",
+                "style_uid": chosen_style_uid or None,
+            },
+        )
         proj.status = "processing"
         proj.job_id = job_id
+        _remember_start(proj, request, "analyze-video", job_id)
         _open_stage(
             proj, stage="analyze", est=est, done_stage="proxy",
             task="analyze_dub_video_local", job_id=job_id,
@@ -866,14 +1013,13 @@ async def analyze_video(
 
         # style_uid travels with the job; the worker resolves the prose from the
         # DB at run time (DB is the only source — no style file on disk/S3).
-        await _enqueue(
-            job_id,
-            "analyze_dub_video_local",
+        await _enqueue_start(
+            session, auth, proj, job_id, "analyze_dub_video_local",
             project_uid=uid,
             tenant_slug=auth.tenant_slug,
             style_uid=chosen_style_uid,
             run_id=run_id,
-            **music_window, user=auth.user,
+            **music_window,
         )
     return AnalyzeFramesOut(job_id=job_id)
 
@@ -886,7 +1032,11 @@ async def plan_dub(
     request: Request,
     session: AsyncSession = Depends(db_session),
 ) -> dict:
-    proj = await _get_local_project(session, uid, auth.user_id)
+    # Locked while the ticket is written: two planning calls for one project
+    # at once would each write a ticket over the other's. (The lock ends at
+    # the commit below, before the model call — a row lock is not the place
+    # to hold a 30-second wait.)
+    proj = await _get_local_project(session, uid, auth.user_id, for_update=True)
     if not proj.edit_script_path:
         raise HTTPException(400, "ยังไม่มี edit script — ต้อง analyze ก่อน")
     # Validation only — the values go to plan_dub_timeline_cuts directly.
@@ -1062,13 +1212,22 @@ def _safe_token(token: str) -> str:
 @router.post("/transcode", response_model=TranscodeOut, status_code=202)
 async def transcode_clip(
     auth: CurrentUser,
+    request: Request,
     session: AsyncSession = Depends(db_session),
     file: UploadFile = File(...),
 ) -> TranscodeOut:
     enforce_feature(auth.user, "transcode")
+    cap = get_settings().max_upload_bytes
+    refuse_oversized_body(request, cap, "วิดีโอ")
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in _TRANSCODE_SUFFIXES:
         raise HTTPException(422, f"ไฟล์ประเภทนี้ไม่รองรับ ({suffix or 'ไม่ทราบนามสกุล'})")
+    # The converted clip lands in a project through PUT /files, where the
+    # plan's storage is enforced — so an account that could not keep the
+    # result is refused here, before a whole camera file is converted for
+    # nothing. The scratch itself is never counted: it is gone the moment
+    # the browser collects the result.
+    await enforce_storage_quota(session, auth.user_id, declared_upload_size(file))
 
     token = uuid.uuid4().hex
     base = _transcode_dir(auth.user_id, token)
@@ -1078,11 +1237,13 @@ async def transcode_clip(
     dest = base / name
     # Streamed in chunks: these are whole camera files, and reading one into
     # memory to write it straight back out is a needless copy of hundreds of MB.
-    size = 0
-    with dest.open("wb") as out:
-        while chunk := await file.read(1024 * 1024):
-            size += len(chunk)
-            out.write(chunk)
+    try:
+        size = await receive_upload(file, dest, limit=cap, label="วิดีโอ")
+    except BaseException:
+        import shutil
+
+        shutil.rmtree(base, ignore_errors=True)
+        raise
 
     # The worker may be a different machine (Railway runs api and worker as
     # separate services). No-op on a single host.
@@ -1092,6 +1253,7 @@ async def transcode_clip(
     session.add(Job(
         id=job_id,
         tenant_id=auth.tenant_id,
+        user_id=auth.user_id,
         type="video_transcode",
         status="queued",
         progress=2,
@@ -1106,7 +1268,7 @@ async def transcode_clip(
         token=token,
         filename=name, user=auth.user,
     )
-    log.info("transcode_queued", user_id=auth.user_id, token=token, bytes=size)
+    log.info("transcode_queued", user_id=auth.user_id, token=token[:8], bytes=size)
     return TranscodeOut(job_id=job_id, token=token)
 
 
@@ -1131,7 +1293,7 @@ async def drop_transcoded(token: str, auth: CurrentUser) -> Response:
     # Both copies, always — the local tree may be empty on this host while the
     # objects are still costing storage.
     await delete_scratch(auth.user_id, _safe_token(token))
-    log.info("transcode_dropped", user_id=auth.user_id, token=token)
+    log.info("transcode_dropped", user_id=auth.user_id, token=token[:8])
     return Response(status_code=204)
 
 
@@ -1251,14 +1413,9 @@ def _rel_of(path: Path, uid: str) -> str:
     return path.relative_to((data_root() / "video_outputs" / uid).resolve()).as_posix()
 
 
-def _human_bytes(n: int) -> str:
-    """A size a person can read. Picks the unit rather than assuming GB — a
-    quota set in MB rendered as "0 GB", which reads as a bug rather than a
-    limit."""
-    for unit, step in (("GB", 1024**3), ("MB", 1024**2), ("KB", 1024)):
-        if n >= step:
-            return f"{n / step:.1f} {unit}"
-    return f"{n} B"
+#: Lives in videos.py now (the upload caps there print sizes too); the name
+#: stays for the quota messages below and the tests that import it.
+_human_bytes = human_bytes
 
 
 class StorageOut(BaseModel):
@@ -1457,9 +1614,12 @@ async def put_web_file(
     uid: str,
     rel: str,
     auth: CurrentUser,
+    request: Request,
     session: AsyncSession = Depends(db_session),
     file: UploadFile = File(...),
 ) -> WebFileEntry:
+    cap = get_settings().max_upload_bytes
+    refuse_oversized_body(request, cap, "")
     await _get_local_project(session, uid, auth.user_id)
     dest = _web_file_path(uid, rel)
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -1473,16 +1633,23 @@ async def put_web_file(
     # file of every sync, which made saving a render O(projects × files).
     quota, plan = await _quota_for(session, auth.user_id)
     replacing = dest.stat().st_size if dest.is_file() else 0
+    # Against the size the parser measured, before a byte reaches the disk:
+    # the exact check after the write stays (it is the one that counts what
+    # actually landed), but a file that cannot fit must not be written first
+    # and deleted after — that is a whole render's worth of disk and time for
+    # a refusal the request already carried the answer to.
+    declared = declared_upload_size(file)
+    if declared > cap:
+        raise upload_too_large(cap, "")
+    if declared:
+        await _storage_check(session, auth.user_id, declared, replacing)
 
     # Staged then renamed: a half-written file that another browser starts
     # streaming would be indistinguishable from a complete one.
     tmp = dest.with_name(f".{dest.name}.part")
     size = 0
     try:
-        with tmp.open("wb") as out:
-            while chunk := await file.read(1024 * 1024):
-                size += len(chunk)
-                out.write(chunk)
+        size = await receive_upload(file, tmp, limit=cap, label="")
 
         if quota:
             # `_project_files` skips dot-prefixed names, so the staged `.part`
@@ -1596,6 +1763,9 @@ async def create_direct_upload(
     await _get_local_project(session, uid, auth.user_id)
     dest = _web_file_path(uid, body.path)
     rel = _rel_of(dest, uid)
+    cap = get_settings().max_upload_bytes
+    if body.bytes > cap:
+        raise upload_too_large(cap, "")
     replacing = await _stored_size(uid, rel, dest)
     await _storage_check(session, auth.user_id, body.bytes, replacing)
     content_type = body.content_type.strip() if body.content_type else ""
@@ -1630,6 +1800,11 @@ async def complete_direct_upload(
     # copy of the same path — which the walk did count — is subtracted.
     replacing = dest.stat().st_size if dest.is_file() else 0
     try:
+        # The per-file cap too: the signed URL was issued for a declared size,
+        # and the object is what the browser actually wrote.
+        cap = get_settings().max_upload_bytes
+        if size > cap:
+            raise upload_too_large(cap, "")
         await _storage_check(session, auth.user_id, size, replacing)
     except HTTPException:
         await delete_output_file(uid, rel)
@@ -1711,16 +1886,18 @@ async def transcribe_audio(
     still attach ``video_files`` are unaffected — FastAPI ignores multipart
     fields the signature does not declare.
     """
-    proj = await _get_local_project(session, uid, auth.user_id)
+    cap = get_settings().max_audio_upload_bytes
+    refuse_oversized_body(request, cap, "เสียง", files=len(files))
+    proj = await _get_local_project(session, uid, auth.user_id, for_update=True)
     speech_modes = ("talking_head", "speech_scenes", "speech_highlights")
     if proj.mode not in speech_modes:
         raise HTTPException(
             400, f"transcribe-audio ใช้ได้เฉพาะโหมดที่ตัดจากเสียง ({', '.join(speech_modes)})"
         )
-    if proj.status not in RESTARTABLE_STATUSES:
-        raise HTTPException(400, f"โปรเจกต์นี้ยังทำงานอยู่ (สถานะ {proj.status}) — กดหยุดงานก่อนถ้าจะเริ่มใหม่")
-
-    import re
+    replay = _replay_start(proj, request, "transcribe-audio")
+    if replay is not None:
+        return replay
+    _refuse_running(proj)
 
     name_re = re.compile(r"^audio_\d{3}\.wav$")
     for f in files:
@@ -1737,7 +1914,7 @@ async def transcribe_audio(
         audio_secs: list[float] = []
         for f in files:
             dest = staging / str(f.filename)
-            dest.write_bytes(await f.read())
+            await receive_upload(f, dest, limit=cap, label="เสียง")
             audio_secs.append(await _measure_upload(dest, label="เสียง"))
         est = estimator.estimate_run(
             kind="transcribe_audio", engine=proj.engine, precision=proj.precision,
@@ -1767,25 +1944,13 @@ async def transcribe_audio(
         await push_project_files(uid)  # WAVs only
 
         job_id = f"vlocal_{uid[:8]}"
-        await session.execute(text("SET search_path TO core, public"))
-        existing = await session.get(Job, job_id)
-        if existing:
-            existing.status = "queued"
-            existing.progress = 2
-            existing.result = {"step": "queued", "message": "รับไฟล์เสียงแล้ว รอ worker ถอดเสียง…"}
-            existing.error = None
-        else:
-            session.add(Job(
-                id=job_id,
-                tenant_id=auth.tenant_id,
-                type="video_edit",
-                status="queued",
-                progress=2,
-                result={"step": "queued", "message": "รับไฟล์เสียงแล้ว รอ worker ถอดเสียง…"},
-            ))
-        await bind_tenant_search_path(session, auth.tenant_slug)
+        await _queue_job_row(
+            session, auth, job_id,
+            {"step": "queued", "message": "รับไฟล์เสียงแล้ว รอ worker ถอดเสียง…"},
+        )
         proj.status = "processing"
         proj.job_id = job_id
+        _remember_start(proj, request, "transcribe-audio", job_id)
         # talking_head stops at `transcribe`; the speech modes carry on into the
         # selection pass inside the SAME task, so their boundary is `select`.
         _open_stage(
@@ -1805,13 +1970,14 @@ async def transcribe_audio(
         await session.commit()
 
         if proj.mode == "talking_head":
-            await _enqueue(
-                job_id, "plan_talking_local", project_uid=uid, tenant_slug=auth.tenant_slug, run_id=run_id, user=auth.user,
+            await _enqueue_start(
+                session, auth, proj, job_id, "plan_talking_local",
+                project_uid=uid, tenant_slug=auth.tenant_slug, run_id=run_id,
             )
         else:
-            await _enqueue(
-                job_id, "plan_speech_local",
-                project_uid=uid, tenant_slug=auth.tenant_slug, style_uid=style_uid.strip(), run_id=run_id, user=auth.user,
+            await _enqueue_start(
+                session, auth, proj, job_id, "plan_speech_local",
+                project_uid=uid, tenant_slug=auth.tenant_slug, style_uid=style_uid.strip(), run_id=run_id,
             )
     return AnalyzeFramesOut(job_id=job_id)
 
@@ -2058,19 +2224,7 @@ async def resume_project(
         )
         async with release_on_error(run_id):
             queued = {"step": "queued", "message": "ทำงานต่อจากจุดที่หยุดไว้…", "resumed": True}
-            await session.execute(text("SET search_path TO core, public"))
-            existing = await session.get(Job, job_id)
-            if existing:
-                existing.status = "queued"
-                existing.progress = 2
-                existing.result = queued
-                existing.error = None
-            else:
-                session.add(Job(
-                    id=job_id, tenant_id=auth.tenant_id, type="video_edit",
-                    status="queued", progress=2, result=queued,
-                ))
-            await bind_tenant_search_path(session, auth.tenant_slug)
+            await _queue_job_row(session, auth, job_id, queued)
             proj.status = "processing"
             proj.job_id = job_id
             proj.error_msg = None
@@ -2086,8 +2240,8 @@ async def resume_project(
                 "resumed_run_id": run_id,
             }
             await session.commit()
-            await _enqueue(
-                job_id, task, run_id=run_id, user=auth.user, **dict((state or {}).get("kwargs") or {}),
+            await _enqueue_start(
+                session, auth, proj, job_id, task, run_id=run_id, **dict((state or {}).get("kwargs") or {}),
             )
         quota, _, source = await _resume_quota(session, auth, proj, state, next_st)
         view = _resume_view(proj, proj.resume_state, reached, next_st)
@@ -2141,7 +2295,11 @@ async def put_local_edit_script(
     try:
         edit_script = normalize_dub_edit_script(body)
     except Exception as exc:
-        raise HTTPException(422, f"edit script ไม่ถูกต้อง: {exc}") from exc
+        # The normaliser's message quotes what it choked on; the log gets it.
+        log.info("edit_script_rejected", uid=uid, error=str(exc)[:300])
+        raise HTTPException(
+            422, {"message": "edit script ไม่ถูกต้อง", "errors": validation_error_fields(exc)},
+        ) from exc
     if not edit_script.get("segments"):
         raise HTTPException(422, "edit script ต้องมีอย่างน้อย 1 segment")
 
@@ -2176,6 +2334,7 @@ class MusicBeatsOut(BaseModel):
 async def upload_music(
     uid: str,
     auth: CurrentUser,
+    request: Request,
     session: AsyncSession = Depends(db_session),
     file: UploadFile = File(...),
 ) -> MusicBeatsOut:
@@ -2192,8 +2351,14 @@ async def upload_music(
     numba compilation on the first call in a process's lifetime can take
     30s+ on its own.
     """
-    enforce_feature(auth.user, "music")
+    # The audio cap even for a video: the file is here for its soundtrack
+    # only, and a whole camera file to get at a music bed is the wrong tool.
+    cap = get_settings().max_audio_upload_bytes
+    refuse_oversized_body(request, cap, "เพลง")
+    # Ownership before the plan check: a project that is not this user's
+    # answers 404 whatever the plan says.
     proj = await _get_local_project(session, uid, auth.user_id)
+    enforce_feature(auth.user, "music")
     if proj.mode not in ("dub_first", "highlight"):
         raise HTTPException(400, "เพลงประกอบใช้ได้เฉพาะโหมด dub_first / highlight")
 
@@ -2208,22 +2373,25 @@ async def upload_music(
         stale.unlink(missing_ok=True)
 
     raw_path = music_dir / f"upload{suffix}"
-    raw_path.write_bytes(await file.read())
+    await receive_upload(file, raw_path, limit=cap, label="เพลง")
 
     import asyncio
 
     from packages.video.beat_analysis import detect_beats, extract_audio_for_analysis
 
-    if suffix in _MUSIC_VIDEO_SUFFIXES:
-        analysis_path = music_dir / "track.wav"
-        await asyncio.to_thread(extract_audio_for_analysis, raw_path, analysis_path)
-    else:
-        analysis_path = raw_path
-
     try:
+        if suffix in _MUSIC_VIDEO_SUFFIXES:
+            analysis_path = music_dir / "track.wav"
+            await asyncio.to_thread(extract_audio_for_analysis, raw_path, analysis_path)
+        else:
+            analysis_path = raw_path
         beats = await asyncio.to_thread(detect_beats, analysis_path)
     except Exception as exc:
-        raise HTTPException(422, f"วิเคราะห์จังหวะเพลงไม่สำเร็จ: {exc}") from exc
+        # librosa / ffmpeg word their failures with file paths and library
+        # internals; the user learns the file could not be read, the log
+        # learns why.
+        log.warning("dub_music_analysis_failed", uid=uid, suffix=suffix, error=str(exc)[:300])
+        raise HTTPException(422, "วิเคราะห์จังหวะเพลงไม่สำเร็จ — กรุณาลองไฟล์เพลงอื่น") from exc
 
     # The BEATS are what the pipeline uses from here on (worker tasks read
     # `music_beats`; the mix happens on the client, from the client's own copy
@@ -2297,12 +2465,16 @@ async def reedit_dub_scenes(
     worker resolves the prose from the DB at run time — nothing is persisted
     to disk/S3.
     """
-    proj = await _get_local_project(session, uid, auth.user_id)
+    cap = get_settings().max_media_upload_bytes
+    refuse_oversized_body(request, cap, "พรีวิว", files=1 + len(proxies))
+    proj = await _get_local_project(session, uid, auth.user_id, for_update=True)
     if proj.mode not in ("dub_first", "highlight"):
         raise HTTPException(400, "reedit-dub-scenes ใช้ได้เฉพาะโหมด dub_first / highlight")
+    replay = _replay_start(proj, request, "reedit-dub-scenes")
+    if replay is not None:
+        return replay
     music_window = _music_window_kwargs(music_offset_sec, music_trim_in_sec, music_trim_out_sec)
-    if proj.status not in RESTARTABLE_STATUSES:
-        raise HTTPException(400, f"โปรเจกต์นี้ยังทำงานอยู่ (สถานะ {proj.status}) — กดหยุดงานก่อนถ้าจะเริ่มใหม่")
+    _refuse_running(proj)
     if not proj.edit_script_path:
         raise HTTPException(400, "ยังไม่มี edit script — ต้อง analyze ก่อน")
 
@@ -2333,10 +2505,7 @@ async def reedit_dub_scenes(
                 style_name=style.name,
             )
 
-    try:
-        body = ReeditManifestIn.model_validate(json.loads(manifest))
-    except (json.JSONDecodeError, ValueError) as exc:
-        raise HTTPException(422, f"manifest ไม่ถูกต้อง: {exc}") from exc
+    body = _parse_manifest(manifest, ReeditManifestIn, many=False)[0]
 
     root = data_root()
     output_dir = root / "video_outputs" / uid
@@ -2348,10 +2517,7 @@ async def reedit_dub_scenes(
     # the live preview. Uploads wait in staging until the run is reserved.
     staged: _StagedProxies | None = None
     if proxies:
-        try:
-            proxy_entries = [ProxyManifestEntry.model_validate(e) for e in json.loads(proxy_manifest)]
-        except (json.JSONDecodeError, ValueError) as exc:
-            raise HTTPException(422, f"proxy_manifest ไม่ถูกต้อง: {exc}") from exc
+        proxy_entries = _parse_manifest(proxy_manifest, ProxyManifestEntry, label="proxy_manifest")
         by_name = {f.filename: f for f in proxies}
         pairs: list[tuple[ProxyManifestEntry, UploadFile]] = []
         for entry in proxy_entries:
@@ -2369,7 +2535,7 @@ async def reedit_dub_scenes(
     preview_stage = output_dir / f".incoming-preview-{uuid.uuid4().hex}.mp4"
     try:
         output_dir.mkdir(parents=True, exist_ok=True)
-        preview_stage.write_bytes(await preview.read())
+        await receive_upload(preview, preview_stage, limit=cap, label="พรีวิว")
         preview_sec = await _measure_upload(preview_stage, label="พรีวิว", max_short_side=PROXY_MAX_SHORT_SIDE)
         est = estimator.estimate_run(
             # The re-edit call samples every file at the provider default,
@@ -2401,30 +2567,17 @@ async def reedit_dub_scenes(
         await push_project_files(uid)  # preview MP4 + request JSON only
 
         job_id = f"vlocal_{uid[:8]}"
-        await session.execute(text("SET search_path TO core, public"))
-        existing = await session.get(Job, job_id)
-        queued = {
-            "step": "queued",
-            "message": "รับคำสั่งแก้ไขแล้ว รอ AI ประมวลผล…",
-            "style_uid": chosen_style_uid or None,
-        }
-        if existing:
-            existing.status = "queued"
-            existing.progress = 2
-            existing.result = queued
-            existing.error = None
-        else:
-            session.add(Job(
-                id=job_id,
-                tenant_id=auth.tenant_id,
-                type="video_edit",
-                status="queued",
-                progress=2,
-                result=queued,
-            ))
-        await bind_tenant_search_path(session, auth.tenant_slug)
+        await _queue_job_row(
+            session, auth, job_id,
+            {
+                "step": "queued",
+                "message": "รับคำสั่งแก้ไขแล้ว รอ AI ประมวลผล…",
+                "style_uid": chosen_style_uid or None,
+            },
+        )
         proj.status = "processing"
         proj.job_id = job_id
+        _remember_start(proj, request, "reedit-dub-scenes", job_id)
         # A re-cut redoes the analyze boundary, so it never advances `stage`;
         # it still gets a ticket, so a pause here is resumable like any other.
         _open_stage(
@@ -2439,14 +2592,13 @@ async def reedit_dub_scenes(
 
         # style_uid travels with the job; the worker resolves the prose from the
         # DB at run time (DB is the only source — no style file on disk/S3).
-        await _enqueue(
-            job_id,
-            "reedit_dub_scenes_local",
+        await _enqueue_start(
+            session, auth, proj, job_id, "reedit_dub_scenes_local",
             project_uid=uid,
             tenant_slug=auth.tenant_slug,
             style_uid=chosen_style_uid,
             run_id=run_id,
-            **music_window, user=auth.user,
+            **music_window,
         )
     return AnalyzeFramesOut(job_id=job_id)
 
@@ -2497,14 +2649,25 @@ async def plan_effects(
     uploaded for the AI to watch (parallel to dub's proxy upload). Effects are a
     layer on top; the cut/timeline is untouched.
     """
-    proj = await _get_local_project(session, uid, auth.user_id)
+    cap = get_settings().max_media_upload_bytes
+    refuse_oversized_body(request, cap, "วิดีโอที่ตัดแล้ว", files=2 if reference is not None else 1)
+    proj = await _get_local_project(session, uid, auth.user_id, for_update=True)
+    replay = _replay_start(proj, request, "plan-effects")
+    if replay is not None:
+        return replay
     if proj.status not in ("done", "waiting_vo", "error", "cancelled"):
         raise HTTPException(400, "ต้องมีวิดีโอที่ตัดเสร็จแล้วก่อนจึงจะวางเอฟเฟกต์ได้")
+    # This route leaves the project's status alone (the cut is finished; the
+    # placement runs beside it), so the status guard above cannot tell that a
+    # placement is ALREADY running. The job row can — and the row lock makes
+    # this read and the enqueue below one decision.
+    if await _job_busy(session, auth, f"vlocal_{uid[:8]}"):
+        raise HTTPException(400, "กำลังวางเอฟเฟกต์อยู่แล้ว — รอให้รอบนี้เสร็จก่อน")
 
     root = data_root()
     effects_dir = root / "video_outputs" / uid / "effects"
     effects_dir.mkdir(parents=True, exist_ok=True)
-    (effects_dir / "cut_proxy.mp4").write_bytes(await proxy.read())
+    await receive_upload(proxy, effects_dir / "cut_proxy.mp4", limit=cap, label="วิดีโอที่ตัดแล้ว")
     (effects_dir / "prompt.txt").write_text(prompt or "", encoding="utf-8")
     (effects_dir / "script.txt").write_text(script or "", encoding="utf-8")
 
@@ -2523,7 +2686,7 @@ async def plan_effects(
             if not re.fullmatch(r"\.[a-z0-9]{1,5}", ref_suffix):
                 raise HTTPException(422, "นามสกุลไฟล์อ้างอิงไม่ถูกต้อง")
             staged_ref = effects_dir / f".incoming-reference{ref_suffix}"
-            staged_ref.write_bytes(await reference.read())
+            await receive_upload(reference, staged_ref, limit=cap, label="อ้างอิง")
             if ref_suffix in _REFERENCE_IMAGE_SUFFIXES:
                 image_refs = 1
             else:
@@ -2614,38 +2777,81 @@ async def plan_effects(
         await push_project_files(uid)  # proxy MP4 + prompt + script + optional reference
 
         job_id = f"vlocal_{uid[:8]}"
-        await session.execute(text("SET search_path TO core, public"))
-        existing = await session.get(Job, job_id)
-        queued = {
-            "step": "queued",
-            "message": "รับวิดีโอแล้ว รอ AI วางเอฟเฟกต์…",
-            "style_uid": chosen_style_uid or None,
-        }
-        if existing:
-            existing.status = "queued"
-            existing.progress = 2
-            existing.result = queued
-            existing.error = None
-        else:
-            session.add(Job(
-                id=job_id, tenant_id=auth.tenant_id, type="video_edit",
-                status="queued", progress=2, result=queued,
-            ))
+        await _queue_job_row(
+            session, auth, job_id,
+            {
+                "step": "queued",
+                "message": "รับวิดีโอแล้ว รอ AI วางเอฟเฟกต์…",
+                "style_uid": chosen_style_uid or None,
+            },
+        )
+        # The project's own status is untouched: effects placement runs
+        # beside a finished cut, and the client polls the job, not the
+        # project. The accepted key still has to be remembered — a retried
+        # placement is a second paid pass like any other.
+        _remember_start(proj, request, "plan-effects", job_id)
         await session.commit()
 
         # style_uid travels with the job so the worker can re-apply from DB AFTER
         # s3_pull (belt-and-suspenders against a stale style.txt resurrected from
         # an older outputs/ prefix).
-        await _enqueue(
-            job_id,
-            "plan_effects_local",
-            project_uid=uid,
-            tenant_slug=auth.tenant_slug,
-            style_uid=chosen_style_uid,
-            use_previous=use_previous,
-            run_id=run_id, user=auth.user,
-        )
+        try:
+            await _enqueue(
+                job_id,
+                "plan_effects_local",
+                project_uid=uid,
+                tenant_slug=auth.tenant_slug,
+                style_uid=chosen_style_uid,
+                use_previous=use_previous,
+                run_id=run_id, user=auth.user,
+            )
+        except BaseException:
+            # No project status to put back here; the job row is what the
+            # client is polling, so it is what says the start failed.
+            await _fail_job_row(session, auth, job_id)
+            raise
     return AnalyzeFramesOut(job_id=job_id)
+
+
+async def _job_busy(session: AsyncSession, auth: CurrentUser, job_id: str) -> bool:
+    """Is this job queued or running, as far as a live worker is concerned?
+    A row a dead worker left ``running`` is not busy once it is older than
+    the stale window ``GET /jobs`` reaps at — the same rule, so the two never
+    disagree about whether a start may go ahead."""
+    from datetime import UTC, datetime
+
+    from services.api.routers.jobs import _STALE_AFTER
+
+    await session.execute(text("SET search_path TO core, public"))
+    try:
+        job = await session.get(Job, job_id)
+    finally:
+        await bind_tenant_search_path(session, auth.tenant_slug)
+    if job is None or str(job.status) not in ("queued", "running"):
+        return False
+    updated = job.updated_at
+    if updated is None:
+        return True
+    if updated.tzinfo is None:
+        updated = updated.replace(tzinfo=UTC)
+    return datetime.now(UTC) - updated <= _STALE_AFTER
+
+
+async def _fail_job_row(session: AsyncSession, auth: CurrentUser, job_id: str) -> None:
+    """Mark the polled job row ``error`` after a failed enqueue (never raises)."""
+    from services.api.routers.videos import ENQUEUE_FAILED_MESSAGE
+
+    try:
+        await session.execute(text("SET search_path TO core, public"))
+        job = await session.get(Job, job_id)
+        if job is not None:
+            job.status = "error"
+            job.progress = 0
+            job.error = ENQUEUE_FAILED_MESSAGE
+        await bind_tenant_search_path(session, auth.tenant_slug)
+        await session.commit()
+    except Exception as exc:  # noqa: BLE001 — the reaper is the fallback
+        log.error("enqueue_failed_mark_job_failed", job_id=job_id, error=str(exc)[:200])
 
 
 @router.get("/{uid}/effects")

@@ -1,11 +1,14 @@
 """FastAPI application factory for Noey Tiktok."""
 
+import asyncio
+import contextlib
 import pathlib
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from packages.core.logging import configure_logging, get_logger
 from packages.core.settings import (
@@ -14,6 +17,8 @@ from packages.core.settings import (
     assert_production_secrets,
     get_settings,
 )
+from services.api.arq_pool import close_arq_pool, warm_arq_pool
+from services.api.middleware import BodySizeLimitMiddleware, RequestContextMiddleware
 from services.api.routers import (
     admin,
     auth,
@@ -93,7 +98,67 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         log.info("seed_start")
         await _seed()
         log.info("seed_done")
-    yield
+    # One arq pool for the life of the process (services/api/arq_pool.py) —
+    # warmed here so the first enqueue does not pay the connect, closed on
+    # shutdown so uvicorn's graceful stop is not held up by an open socket.
+    app.state.arq_pool_ready = await warm_arq_pool()
+    try:
+        yield
+    finally:
+        await close_arq_pool()
+
+
+#: How long each readiness probe may take. Railway polls the health path every
+#: few seconds and treats a slow answer as a failure, and a probe that waits
+#: on a hung dependency would itself hide the outage it is meant to report.
+_READY_TIMEOUT_SEC = 1.0
+
+
+async def _db_ready() -> bool:
+    """``SELECT 1`` on the lifeline (NullPool) engine.
+
+    Deliberately not the request pool: a probe that queues behind a saturated
+    pool reports "down" for a database that is fine, and — worse — takes a
+    connection from a request that needed it. The lifeline opens its own.
+    """
+    from sqlalchemy import text
+
+    from packages.db.session import get_lifeline_engine
+
+    try:
+        async with asyncio.timeout(_READY_TIMEOUT_SEC):
+            async with get_lifeline_engine().connect() as conn:
+                await conn.execute(text("SELECT 1"))
+    except Exception as exc:  # noqa: BLE001 — any failure is "not ready"
+        log.warning("ready_db_failed", error=str(exc)[:200])
+        return False
+    return True
+
+
+async def _redis_ready() -> bool:
+    """``PING`` the arq Redis (REDIS_URL) on a throwaway client.
+
+    A fresh client per probe, not the shared arq pool: the pool may not exist
+    yet (its warm-up is best effort) and a probe must never be the thing that
+    first opens it. One connect per poll interval is nothing.
+    """
+    import redis.asyncio as aioredis
+
+    client = aioredis.from_url(
+        get_settings().redis_url,
+        socket_timeout=_READY_TIMEOUT_SEC,
+        socket_connect_timeout=_READY_TIMEOUT_SEC,
+    )
+    try:
+        async with asyncio.timeout(_READY_TIMEOUT_SEC):
+            return bool(await client.ping())
+    except Exception as exc:  # noqa: BLE001
+        log.warning("ready_redis_failed", error=str(exc)[:200])
+        return False
+    finally:
+        # Closing a client whose connect already failed is not news.
+        with contextlib.suppress(Exception):
+            await client.aclose()
 
 
 def create_app() -> FastAPI:
@@ -126,6 +191,12 @@ def create_app() -> FastAPI:
         openapi_url="/openapi.json" if cfg.api_docs_enabled else None,
     )
 
+    # Added first = innermost of ours, so CORS and the request id still wrap
+    # the 413 it sends. 5% over the largest per-file cap covers multipart
+    # framing and the small parts (manifests, forms) that ride along with a clip.
+    app.add_middleware(
+        BodySizeLimitMiddleware, limit_bytes=int(get_settings().max_upload_bytes * 1.05)
+    )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=cfg.cors_origins,
@@ -140,12 +211,43 @@ def create_app() -> FastAPI:
         # invisible, and a video that would not start).
         # Retry-After rides on every 429 from the rate limiter
         # (services/api/ratelimit.py); without it here a browser cannot read it.
-        expose_headers=["Content-Range", "Content-Length", "Accept-Ranges", "Retry-After"],
+        # X-Request-ID so a browser client can quote the id of a failed call.
+        expose_headers=[
+            "Content-Range",
+            "Content-Length",
+            "Accept-Ranges",
+            "Retry-After",
+            "X-Request-ID",
+        ],
     )
+    # Added AFTER CORS, which makes it the OUTER layer: `add_middleware` wraps
+    # the app inside-out, so the last one added sees the request first and the
+    # response last. Outer is what it has to be — CORS answers preflights
+    # itself without calling further in, and those replies still need the
+    # request id and the security headers. CORS's own headers are untouched
+    # either way; only `http.response.start` headers are added to.
+    app.add_middleware(RequestContextMiddleware)
 
     @app.get("/health", tags=["meta"])
     async def health() -> dict:
+        """Liveness: the process is up and serving. Touches nothing."""
         return {"status": "ok"}
+
+    @app.get("/health/ready", tags=["meta"])
+    async def health_ready() -> JSONResponse:
+        """Readiness: the dependencies this process needs to do real work.
+
+        Railway's health-check path (docs/railway-deploy.md) — a deploy only
+        takes traffic once it can reach both. 503 names which one failed so
+        the dashboard says "redis" rather than "unhealthy".
+        """
+        db_ok, redis_ok = await asyncio.gather(_db_ready(), _redis_ready())
+        body = {
+            "status": "ok" if db_ok and redis_ok else "fail",
+            "db": "ok" if db_ok else "fail",
+            "redis": "ok" if redis_ok else "fail",
+        }
+        return JSONResponse(body, status_code=200 if db_ok and redis_ok else 503)
 
     for r in (
         admin,

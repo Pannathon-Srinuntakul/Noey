@@ -1,0 +1,101 @@
+# Backend (ruff, mypy, pytest against real Postgres + Redis) and web
+# (typecheck, lint, vitest). `main` auto-deploys to Railway, so this is the
+# gate a push has to clear; the two jobs are independent and run in parallel.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      # Same image + credentials as docker-compose.yml, and the settings
+      # defaults (packages/core/settings.py) already point at localhost with
+      # these, so the tests need no .env.
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: noey
+          POSTGRES_PASSWORD: change_me
+          POSTGRES_DB: noey_tiktok
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U noey -d noey_tiktok"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: noey
+      POSTGRES_PASSWORD: change_me
+      POSTGRES_DB: noey_tiktok
+      REDIS_URL: redis://localhost:6379/0
+      # The seed the API tests log in with (tests/test_auth.py) — the same
+      # defaults scripts/migrate_to_multitenant.py uses, spelled out so a
+      # change there fails here loudly rather than by a mystery 401.
+      SEED_EMAIL: admin@noey.local
+      ADMIN_PASSWORD: ChangeMe123!
+      SENDGRID_API_KEY: ""
+      WALLET_MOCK_TOPUP: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.lock
+      # The video tests shell out to ffmpeg/ffprobe (packages/video/ffmpeg_bin.py).
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      # Exactly what the image installs, plus the dev extras on top.
+      - run: pip install --no-deps -r requirements.lock && pip install --no-deps -e . && pip check
+      # Pinned to what the venv ran on 2026-09-27: ruff widened its default
+      # rule set across 0.x releases, so an unpinned ruff moves the goalposts.
+      - run: pip install "pytest==9.1.1" "pytest-asyncio==1.4.0" "ruff==0.16.7" "mypy==2.3.1"
+      # ADVISORY until the baseline is clean: on 2026-09-27 `ruff check .`
+      # reported ~400 pre-existing findings (mostly I001/UP007/B008/RUF100)
+      # and `mypy .` stops at "scripts/migrate_to_multitenant.py found twice
+      # under different module names" (scripts/ has no __init__.py, so the
+      # file is both `scripts.migrate_to_multitenant` and a top-level module).
+      # Fix those, then drop `continue-on-error` so they gate like pytest.
+      - run: ruff check .
+        continue-on-error: true
+      - run: mypy .
+        continue-on-error: true
+      # Migrate + seed once, up front: the tests use ASGITransport, which does
+      # not run the app lifespan, so nothing else creates the tables or the
+      # admin account they expect.
+      - run: alembic upgrade head
+      - run: python -m scripts.migrate_to_multitenant
+      - run: pytest -q
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npx vitest run

@@ -58,12 +58,17 @@ async def get_job(
 ) -> JobOut:
     """One job's status.
 
-    Authenticated AND tenant-scoped. Both were missing: nothing in the app
-    applies global auth (main.py mounts every router bare), and job ids are
-    derived from the project uid (``vlocal_<uid[:8]>``), not random — so anyone
-    who could reach the port could read another tenant's AI output, which for a
-    re-edit includes the whole edit script with its voiceover text. A wrong
-    tenant gets 404 rather than 403 so ids stay unenumerable.
+    Authenticated, tenant-scoped AND owner-scoped. The first two were missing
+    once: nothing in the app applies global auth (main.py mounts every router
+    bare), and job ids are derived from the project uid (``vlocal_<uid[:8]>``),
+    not random — so anyone who could reach the port could read another
+    tenant's AI output, which for a re-edit includes the whole edit script
+    with its voiceover text. The third came later: every account shares
+    tenant ``default``, so the tenant check alone still let any signed-in
+    user read any other user's job. ``core.jobs.user_id`` (nullable — rows
+    from before it, and housekeeping jobs, stay tenant-scoped only) closes
+    that. A wrong tenant or owner gets 404 rather than 403 so ids stay
+    unenumerable.
     """
     # Redis first: this endpoint is the single busiest one in the app (76% of
     # requests under load, 2026-09-22), and a cached hit costs no database
@@ -73,7 +78,16 @@ async def get_job(
     if cached is not None:
         try:
             same_tenant = int(cached.get("tenant_id", -1)) == auth.tenant_id
-            fresh = same_tenant and _is_fresh(cached.get("status"), cached.get("updated_at"))
+            # An entry that names an owner is refused to anyone else the way
+            # the row is (falls through to the row, which answers 404). One
+            # that does not — written before the field existed — is served on
+            # the tenant check alone, exactly like a row with a NULL owner.
+            owner = cached.get("user_id")
+            same_owner = owner is None or int(owner) == auth.user_id
+            fresh = (
+                same_tenant and same_owner
+                and _is_fresh(cached.get("status"), cached.get("updated_at"))
+            )
             out = (
                 JobOut(
                     id=str(cached.get("id") or job_id),
@@ -97,6 +111,8 @@ async def get_job(
         await session.execute(select(Job).where(Job.id == job_id))
     ).scalar_one_or_none()
     if job is None or int(job.tenant_id) != auth.tenant_id:
+        raise HTTPException(404, "job not found")
+    if job.user_id is not None and int(job.user_id) != auth.user_id:
         raise HTTPException(404, "job not found")
 
     # A worker that is killed (crash, redeploy, OOM) never writes a terminal

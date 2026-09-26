@@ -1,0 +1,125 @@
+# Pinned runtime dependency closure of pyproject.toml — what the Docker image
+# installs. GENERATED, do not hand-edit versions.
+#
+# Why: pyproject.toml holds only `>=` floors, so `pip install .` at image build
+# time took whatever litellm / fastapi / sqlalchemy happened to be newest that
+# day — a push to main (which IS a production deploy) could pull a breaking
+# release nobody had run. The Dockerfile installs THIS file with `--no-deps`
+# and then the project with `--no-deps`, so the image only ever contains what
+# is written here, and `pip check` in the build fails if the set is incomplete.
+#
+# Regenerate (from backend/, in the venv that has the versions you tested):
+#   .venv/bin/python scripts/lock_requirements.py > requirements.lock
+# The script walks Requires-Dist from pyproject's runtime deps with markers
+# evaluated for the image (Linux / CPython 3.12), so dev extras (pytest, ruff,
+# mypy) and their private deps are left out. Bumping a dependency = bump it in
+# the venv, run the tests, regenerate, commit both.
+aiohappyeyeballs==2.7.1
+aiohttp==3.14.3
+aiosignal==1.4.0
+alembic==1.20.0
+annotated-doc==0.0.5
+annotated-types==0.8.0
+anyio==4.15.1
+arq==0.28.0
+asyncpg==0.31.0
+attrs==26.1.0
+bcrypt==5.0.0
+boto3==1.43.93
+botocore==1.43.93
+certifi==2026.7.22
+cffi==2.1.1
+charset-normalizer==3.5.1
+click==8.5.0
+cloudpickle==3.1.2
+cryptography==50.0.1
+decorator==5.3.1
+distro==1.9.0
+dnspython==2.8.0
+email-validator==2.3.0
+fastapi==0.141.1
+fastuuid==0.14.0
+ffmpeg-python==0.2.0
+filelock==3.32.6
+frozenlist==1.8.0
+fsspec==2026.7.0
+future==1.0.0
+greenlet==3.5.5
+h11==0.16.0
+hf-xet==1.6.0
+hiredis==3.4.1
+httpcore==1.0.9
+httptools==0.8.0
+httpx==0.28.1
+huggingface-hub==1.31.0
+idna==3.19
+importlib-metadata==8.9.0
+jinja2==3.1.6
+jiter==0.17.0
+jmespath==1.1.0
+joblib==1.6.0
+jsonschema==4.26.0
+jsonschema-specifications==2025.9.1
+lazy-loader==0.5
+librosa==1.0.0
+litellm==1.100.1
+llvmlite==0.49.0
+mako==1.4.1
+markupsafe==3.0.3
+msgpack==1.2.2
+multidict==6.8.0
+narwhals==2.26.0
+numba==0.67.0
+numpy==2.5.3
+openai==2.54.0
+opencv-python==5.0.0.93
+packaging==26.3
+passlib==1.7.4
+pillow==12.3.0
+platformdirs==4.11.8
+playwright==1.62.0
+pooch==1.9.0
+propcache==0.5.2
+psycopg==3.3.5
+psycopg-binary==3.3.5
+pycparser==3.0
+pydantic==2.13.5
+pydantic-core==2.46.5
+pydantic-settings==2.15.0
+pyee==13.0.1
+pyjwt==2.14.0
+pythainlp==5.3.7
+python-dateutil==2.9.0.post0
+python-dotenv==1.2.3
+python-multipart==0.0.32
+pyyaml==6.0.3
+redis==5.3.1
+referencing==0.37.0
+regex==2026.9.10
+requests==2.34.2
+rpds-py==2026.6.3
+s3transfer==0.19.2
+scenedetect==0.7.1
+scikit-learn==1.9.1
+scipy==1.18.1
+six==1.17.0
+sniffio==1.3.1
+soundfile==0.14.0
+soxr==1.1.0
+sqlalchemy==2.0.52
+starlette==1.6.0
+stripe==15.6.1
+structlog==26.1.0
+threadpoolctl==3.6.0
+tiktoken==0.14.0
+tokenizers==0.23.2
+tqdm==4.70.1
+typing-extensions==4.16.0
+typing-inspection==0.4.4
+urllib3==2.7.0
+uvicorn==0.52.4
+uvloop==0.22.1
+watchfiles==1.2.0
+websockets==17.1
+yarl==1.24.5
+zipp==4.1.0

@@ -11,11 +11,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.auth.tokens import decode, token_version_matches
 from packages.db.models.core_auth import Membership, Tenant, User
-from packages.db.session import get_sessionmaker, bind_tenant_search_path
+from packages.db.session import bind_tenant_search_path, get_sessionmaker
 from packages.email.client import email_config_problem, get_mailer
 from packages.email.message import Mailer
 from services.api.ai_gate import enforce_ai_gate
-
+from services.api.middleware import bind_request_user
 
 # ── core (auth) session ───────────────────────────────────────────────────────
 
@@ -129,6 +129,10 @@ async def current_user(
     # Unverified accounts may not START paid AI work — the central list is in
     # services/api/ai_gate.py; every other route passes straight through.
     enforce_ai_gate(request, user)
+
+    # From here every log line of this request carries who it was for
+    # (services/api/middleware.py owns the request id and clears both at the end).
+    bind_request_user(int(user.id), int(tenant.id))
 
     return AuthUser(user=user, tenant=tenant)
 

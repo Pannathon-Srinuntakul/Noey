@@ -23,6 +23,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.core.logging import get_logger
+from packages.core.settings import get_settings
 from packages.db.models.core_auth import Job
 from packages.db.models.effect_style import (
     CUT_STYLE_PLATFORMS,
@@ -33,7 +34,11 @@ from packages.video.storage import data_root
 from packages.billing import estimate as estimator
 from services.api.billing_start import release_run, start_paid_run
 from services.api.deps import CurrentUser, db_session
-from services.api.routers.videos import _enqueue
+from services.api.routers.videos import (
+    _enqueue,
+    receive_upload,
+    refuse_oversized_body,
+)
 
 router = APIRouter(prefix="/effect-styles", tags=["effect-styles"])
 log = get_logger(__name__)
@@ -77,8 +82,13 @@ class StyleUpdateIn(BaseModel):
 
 # ── helpers ─────────────────────────────────────────────────────────────────
 
-async def _get_style(session: AsyncSession, uid: str, user_id: int) -> EffectStyle:
-    style = await session.get(EffectStyle, uid)
+async def _get_style(
+    session: AsyncSession, uid: str, user_id: int, *, for_update: bool = False
+) -> EffectStyle:
+    """The user's style, or 404 (the same answer for someone else's).
+    ``for_update`` locks the row for a route that starts a paid run on it —
+    see ``videos._get_project``."""
+    style = await session.get(EffectStyle, uid, with_for_update=for_update)
     if style is None or style.user_id != user_id:
         raise HTTPException(404, "ไม่พบสไตล์นี้")
     return style
@@ -112,9 +122,10 @@ async def _create_distill_job(session: AsyncSession, style: EffectStyle, auth: C
         existing.progress = 2
         existing.result = queued
         existing.error = None
+        existing.user_id = auth.user_id
     else:
         session.add(Job(
-            id=job_id, tenant_id=auth.tenant_id, type="style_distill",
+            id=job_id, tenant_id=auth.tenant_id, user_id=auth.user_id, type="style_distill",
             status="queued", progress=2, result=queued,
         ))
     return job_id
@@ -200,6 +211,9 @@ async def create_style(
             raise HTTPException(400, "platform ไม่ถูกต้อง")
     if not (description.strip() or reference is not None):
         raise HTTPException(400, "ต้องมีคำอธิบายสไตล์ หรือคลิปอ้างอิงอย่างน้อยหนึ่งอย่าง")
+    cap = get_settings().max_media_upload_bytes
+    if reference is not None:
+        refuse_oversized_body(request, cap, "อ้างอิง")
 
     style_uid = str(_uuid.uuid4())
     ref_rel: str | None = None
@@ -213,7 +227,11 @@ async def create_style(
         d = _style_dir(style_uid)
         d.mkdir(parents=True, exist_ok=True)
         ref_path = d / f"reference{suffix}"
-        ref_path.write_bytes(await reference.read())
+        try:
+            await receive_upload(reference, ref_path, limit=cap, label="อ้างอิง")
+        except BaseException:
+            shutil.rmtree(d, ignore_errors=True)
+            raise
         ref_rel = f"effect_styles/{style_uid}/reference{suffix}"
 
     # The reference is measured (and capped at settings.reference_max_sec —
@@ -255,12 +273,21 @@ async def list_styles(
     auth: CurrentUser,
     session: AsyncSession = Depends(db_session),
     kind: str | None = None,
+    limit: int = 200,
+    offset: int = 0,
 ) -> list[StyleSummary]:
+    # Paged like GET /videos: the studio lists every style the account has,
+    # and an unbounded SELECT is a whole table for an account that kept
+    # making them. 200 is far past what a picker can show; a client that
+    # wants more pages.
+    limit = max(1, min(limit, 200))
     stmt = select(EffectStyle).where(EffectStyle.user_id == auth.user_id)
     if kind:
         stmt = stmt.where(EffectStyle.kind == kind)
     rows = (
-        await session.execute(stmt.order_by(EffectStyle.updated_at.desc()))
+        await session.execute(
+            stmt.order_by(EffectStyle.updated_at.desc()).offset(max(0, offset)).limit(limit)
+        )
     ).scalars().all()
     return [_summary(s) for s in rows]
 
@@ -313,10 +340,22 @@ async def regenerate_style(
     session: AsyncSession = Depends(db_session),
     allow_wallet: bool = Form(False),
 ) -> StyleCreateOut:
-    """Re-run distillation from the stored reference clip and/or description."""
-    style = await _get_style(session, uid, auth.user_id)
+    """Re-run distillation from the stored reference clip and/or description.
+
+    The style row is locked for the request and a distillation that is still
+    queued or running is refused (409): two clicks used to open two paid
+    runs on the same reference. ``pending`` alone is not the test — a worker
+    that died leaves the style pending forever — so it is the JOB row that
+    decides, with the same stale window ``GET /jobs`` reaps at.
+    """
+    style = await _get_style(session, uid, auth.user_id, for_update=True)
     if not (style.description or style.reference_clip_path):
         raise HTTPException(400, "สไตล์นี้ไม่มีคำอธิบายหรือคลิปอ้างอิงให้วิเคราะห์ใหม่")
+    if style.status == "pending":
+        from services.api.routers.videos_local import _job_busy
+
+        if await _job_busy(session, auth, f"style_{style.uid[:8]}"):
+            raise HTTPException(409, "สไตล์นี้กำลังวิเคราะห์อยู่แล้ว — รอให้รอบนี้เสร็จก่อน")
     run_id = await _reserve_distill(
         auth, request, style, style.uid, style.kind, style.reference_clip_path, allow_wallet,
     )

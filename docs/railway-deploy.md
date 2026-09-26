@@ -42,8 +42,21 @@ Railway Project
 > Railway กำหนด `$PORT` ให้ — อย่า hardcode 8000 บน api
 
 **ไม่ต้องตั้ง release command** — `alembic upgrade head` และการ seed tenant/admin
-รันเองตอน API start (`lifespan` ใน `services/api/main.py`)
-เพราะรันตอน start ให้ **pin api ไว้ที่ 1 replica** ไม่งั้น replica หลายตัวจะแย่งกัน migrate
+รันเองตอน API start (`lifespan` ใน `services/api/main.py`) ภายใต้ Postgres advisory
+lock (`_startup_lock`) — process แรกที่ได้ lock เป็นคน migrate ที่เหลือรอแล้วพบว่าไม่มีอะไรต้องทำ
+ดังนั้น **api หลาย replica (และ `API_WORKERS` > 1) start พร้อมกันได้** ไม่ต้อง pin ไว้ที่ 1
+
+### Healthcheck path (api)
+
+ตั้ง **Deploy → Healthcheck Path = `/health/ready`** (timeout 300 s พอ — migrate + seed
+รันก่อนพอร์ตเปิด) Railway จะสลับ traffic ไป deployment ใหม่ก็ต่อเมื่อ path นี้ตอบ 200
+ซึ่งหมายถึง process นั้น `SELECT 1` ผ่าน Postgres และ `PING` Redis ได้จริง (แต่ละอย่าง
+timeout 1 s) ถ้าอันใดอันหนึ่งล้มจะได้ 503 พร้อม `{"db": "ok|fail", "redis": "ok|fail"}`
+บอกว่าตัวไหน — ส่วน `/health` เป็น liveness เฉย ๆ (ตอบ 200 เสมอเมื่อ process ขึ้น)
+ห้ามใช้เป็น healthcheck path เพราะ deploy ที่ต่อ Redis ไม่ได้ก็จะผ่าน
+
+`HEALTHCHECK` ใน `backend/Dockerfile` (probe `/health`) มีไว้ให้ `docker compose`
+Railway ไม่อ่านค่านั้น
 
 ### web: build argument
 
@@ -118,7 +131,11 @@ mount volume ที่ path เดียวกันทั้งสอง servic
 
 ```env
 DATA_DIR=/data
+RAILWAY_RUN_UID=0   # image รันเป็น user `app` (ไม่ใช่ root) แต่ Railway mount volume เป็นของ root
 ```
+
+ถ้าไม่ตั้ง `RAILWAY_RUN_UID=0` ทุกการเขียนลง volume จะได้ Permission denied
+(docs.railway.com/volumes#permissions) แบบ B ไม่ต้องตั้ง
 
 **แบบ B — S3 / Cloudflare R2 (จำเป็นเมื่อ worker หลาย replica)**
 
@@ -153,6 +170,19 @@ CORS_EXTRA_ORIGINS=https://<origin อื่น ถ้ามี>,https://...
 
 origin ที่ไม่อยู่ในสองตัวนี้จะถูก block ทุก request
 settings ถูก cache ไว้ → **แก้ CORS ต้อง restart api**
+
+### IP ของ client หลัง proxy (rate limit)
+
+```env
+TRUSTED_PROXY_HOPS=1
+```
+
+จำนวน reverse proxy ที่เชื่อถือได้ซึ่งต่อท้าย `X-Forwarded-For` ก่อนถึง api
+(`services/api/ratelimit.py:client_ip`) — บน Railway มี edge proxy ของ Railway หนึ่งชั้น
+จึงเป็น **1**: api จะอ่าน IP จากรายการที่ 1 นับจากขวา ค่า default `0` ใช้ IP ของ socket
+ซึ่งบน Railway คือ proxy เอง → ทุกคนกลายเป็น IP เดียวกันและ rate limit ต่อ IP
+(login/register/contact) จะล็อกผู้ใช้ทั้งหมดพร้อมกัน ตั้งมากกว่าจำนวน proxy จริง
+ก็อันตรายเช่นกัน: client ปลอม header แล้วเลือก IP ตัวเองได้
 
 ### Optional
 
@@ -191,7 +221,9 @@ PLAN_FREE_STORAGE_BYTES=10737418240   # 10 GB (default ทุกแพลน)
 - [ ] `FRONTEND_URL` = origin ของ web จริง
 - [ ] `VITE_BACKEND_URL` ตอน build web = origin ของ api จริง
 - [ ] `VITE_UPLOAD_ORIGIN` ตอน build web = origin ของ bucket และรัน `set_bucket_cors.py` แล้ว
-- [ ] api pin ไว้ 1 replica (migration รันตอน start)
+- [ ] api: Healthcheck Path = `/health/ready` (replica กี่ตัวก็ได้ — migrate อยู่ใต้ advisory lock)
+- [ ] `TRUSTED_PROXY_HOPS=1` บน api (ไม่งั้น rate limit ต่อ IP เห็นทุกคนเป็น proxy)
+- [ ] `RAILWAY_RUN_UID=0` บน api + worker ถ้าใช้ Railway Volume (แบบ A)
 - [ ] api และ web เป็น HTTPS ทั้งคู่
 - [ ] `ENCRYPTION_KEY` ตั้ง ถ้าจะเก็บ AI key ใน DB
 - [ ] smoke test: login → import คลิป → ตัด → เปิดโปรเจกต์เดิมจากอีกเบราว์เซอร์

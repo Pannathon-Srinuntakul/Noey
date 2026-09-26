@@ -113,6 +113,14 @@ class Job(Base):
     tenant_id: Mapped[int] = mapped_column(
         ForeignKey(f"{CORE_SCHEMA}.tenants.id", ondelete="CASCADE"), index=True
     )
+    # Whose job this is. Every account shares tenant `default`, so the tenant
+    # check alone let any signed-in user read any other user's job — and the
+    # ids are derived from the project uid, not random. Nullable: rows from
+    # before the column, and the worker's own housekeeping jobs, have no
+    # owner; ``GET /jobs/{id}`` treats those as tenant-scoped only.
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey(f"{CORE_SCHEMA}.users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     type: Mapped[str] = mapped_column(String(32))  # csv_export|csv_import|ai|summary_rebuild
     status: Mapped[str] = mapped_column(String(16), default="queued")  # queued|running|ok|error
     progress: Mapped[int] = mapped_column(BigInteger, default=0)  # 0-100

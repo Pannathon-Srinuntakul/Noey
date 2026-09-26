@@ -384,6 +384,23 @@ class Settings(BaseSettings):
     #: Longest style-reference clip accepted (seconds) — cut / effects styles
     #: and the plan-effects reference: every second is billed video input.
     reference_max_sec: int = 1200
+
+    # --- Upload size caps (services/api/routers/videos.py: receive_upload) ---
+    # Per FILE, whatever the plan — an unlimited account still gets the cap,
+    # because the cap is about what one request may do to a host (disk, time
+    # on the link, a spooled multipart body), not about what the plan allows.
+    # Three tiers because the files differ by orders of magnitude and one
+    # ceiling for all of them is no ceiling for the small ones.
+    #: Whole camera files: a project's source clip (POST /videos), a web
+    #: project file (PUT /videos/{uid}/files), a transcode source, a phone
+    #: transfer. A long 4K phone clip is real, so 4 GB.
+    max_upload_bytes: int = 4 * 1024**3
+    #: Audio only: music, voiceover, the speech WAVs. 200 MB is over an hour
+    #: of 16 kHz WAV — anything bigger is not audio.
+    max_audio_upload_bytes: int = 200 * 1024**2
+    #: What the clients send FOR THE MODEL: frame JPEGs, 480 px cut proxies,
+    #: the re-edit preview, the effects proxy, a style reference. 512 MB.
+    max_media_upload_bytes: int = 512 * 1024**2
     #: Mock top-up (credits the wallet without a payment) — explicit opt-in,
     #: and even then only with the database on loopback. Refused at startup on
     #: a real deployment (assert_production_secrets).

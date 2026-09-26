@@ -55,11 +55,19 @@ async def put(
     result: dict | None,
     error: str | None,
     updated_at: str,
+    user_id: int | None = None,
 ) -> None:
-    """Cache one job's state. Never raises — a cache that is down is not an error."""
+    """Cache one job's state. Never raises — a cache that is down is not an error.
+
+    ``user_id`` is the row's owner (``core.jobs.user_id``), so a cache hit can
+    be refused to another user the way the row is. Optional only because
+    rows from before the column have none; a writer that HAS the value must
+    pass it — an entry without it is served on the tenant check alone.
+    """
     payload = {
         "id": job_id,
         "tenant_id": int(tenant_id),
+        "user_id": int(user_id) if user_id is not None else None,
         "type": job_type,
         "status": status,
         "progress": int(progress),

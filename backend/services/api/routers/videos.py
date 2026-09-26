@@ -14,8 +14,9 @@ GET  /videos/{uid}/export/capcut     — stream CapCut ZIP bundle
 from __future__ import annotations
 
 import pathlib
+import re
 import uuid
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse, Response
@@ -77,15 +78,154 @@ def _to_out(p: VideoProject) -> VideoProjectOut:
     )
 
 
-async def _get_project(session: AsyncSession, uid: str, user_id: int) -> VideoProject:
-    proj = (
-        await session.execute(
-            select(VideoProject).where(VideoProject.uid == uid, VideoProject.user_id == user_id)
-        )
-    ).scalar_one_or_none()
+async def _get_project(
+    session: AsyncSession, uid: str, user_id: int, *, for_update: bool = False
+) -> VideoProject:
+    """The user's project, or 404 — the same answer for "no such project" and
+    "someone else's", so uids stay unenumerable.
+
+    ``for_update`` locks the row until the session commits. Every route that
+    STARTS work reads ``status`` and then writes ``processing`` — two
+    requests for the same project that both read ``pending`` both open a paid
+    run and both enqueue (a double click, a retried request after a dropped
+    response). With the lock the second SELECT waits for the first commit and
+    sees ``processing``; ``POST /resume`` has done this since it existed, and
+    the start routes now do the same.
+    """
+    stmt = select(VideoProject).where(VideoProject.uid == uid, VideoProject.user_id == user_id)
+    if for_update:
+        stmt = stmt.with_for_update()
+    proj = (await session.execute(stmt)).scalar_one_or_none()
     if proj is None:
         raise HTTPException(404, "video project not found")
     return proj
+
+
+# ── uploads: one way to receive a file ───────────────────────────────────────
+#
+# Every UploadFile route used to do its own `dest.write_bytes(await f.read())`
+# — the whole file in RAM, no ceiling on how big, and for the routes that keep
+# the bytes the storage quota checked only AFTER the file was on disk. The cap
+# is per file and applies to every plan: it is about what one request may do
+# to a host, not about what the plan allows (packages/core/settings.py).
+#
+# FastAPI parses the multipart body before the route runs (each part is
+# spooled to a temp file), so a refusal here cannot stop the bytes crossing
+# the wire; it stops them reaching data_root, the quota, the bucket, ffprobe
+# and the model. Refusing on Content-Length at the top of the route is still
+# the earliest a route can say no, and it is what `refuse_oversized_body` does.
+
+#: Multipart framing around one file part — boundary lines and part headers.
+#: A body this far over the cap can still carry a file that is under it.
+_MULTIPART_SLACK = 64 * 1024
+
+#: One read per loop turn; the same size transfer.py and the transcode route
+#: settled on. Big enough that a 4 GB file is not 4 million awaits, small
+#: enough that one request never holds much more than this in RAM.
+UPLOAD_CHUNK = 1024 * 1024
+
+
+def human_bytes(n: int) -> str:
+    """A size a person can read. Picks the unit rather than assuming GB — a
+    quota set in MB rendered as "0 GB", which reads as a bug rather than a
+    limit."""
+    for unit, step in (("GB", 1024**3), ("MB", 1024**2), ("KB", 1024)):
+        if n >= step:
+            return f"{n / step:.1f} {unit}"
+    return f"{n} B"
+
+
+def upload_too_large(limit: int, label: str) -> HTTPException:
+    """The one 413 every cap raises, so the client reads one shape."""
+    return HTTPException(
+        413, f"ไฟล์{label}ใหญ่เกินไป (สูงสุด {human_bytes(limit)} ต่อไฟล์)"
+    )
+
+
+def refuse_oversized_body(
+    request: Request | None, limit: int, label: str, *, files: int = 1
+) -> None:
+    """413 from the request's Content-Length alone, before anything is
+    measured, staged or written. ``files`` is how many file parts the body
+    may carry: a manifest of forty frames is forty files, each under the cap,
+    in one body that is not."""
+    if request is None:
+        return
+    raw = request.headers.get("content-length")
+    if not raw:
+        return
+    try:
+        declared = int(raw)
+    except ValueError:
+        return
+    if declared > max(1, files) * (limit + _MULTIPART_SLACK):
+        raise upload_too_large(limit, label)
+
+
+def declared_upload_size(file: UploadFile) -> int:
+    """What the multipart parser measured for this part (exact once the body
+    is parsed, which it is by the time a route runs); 0 when unknown."""
+    size = getattr(file, "size", None)
+    return int(size) if isinstance(size, int) and size > 0 else 0
+
+
+async def receive_upload(
+    file: UploadFile, dest: pathlib.Path, *, limit: int, label: str
+) -> int:
+    """Stream one upload to ``dest`` in ``UPLOAD_CHUNK`` reads, counting as it
+    goes; past ``limit`` the partial file is deleted and the request gets the
+    same 413 the Content-Length check raises. Returns the bytes written.
+
+    The size the parser measured is checked FIRST, so an oversized part costs
+    no write at all; the count in the loop is the guarantee for a parser that
+    did not report one."""
+    if declared_upload_size(file) > limit:
+        raise upload_too_large(limit, label)
+    size = 0
+    try:
+        with dest.open("wb") as out:
+            while chunk := await file.read(UPLOAD_CHUNK):
+                size += len(chunk)
+                if size > limit:
+                    raise upload_too_large(limit, label)
+                out.write(chunk)
+    except BaseException:
+        dest.unlink(missing_ok=True)
+        raise
+    return size
+
+
+async def _mark_start_failed(
+    session: AsyncSession, proj: VideoProject, job_id: str | None, *, tenant_slug: str
+) -> None:
+    """A start that got as far as ``processing`` and then could not enqueue.
+
+    The run is released by the caller; what was left behind was a project
+    row saying ``processing`` for work no worker will ever pick up — and
+    ``processing`` is the one status a start refuses to start over, so the
+    project was stuck until the stale reaper noticed (30 min) or the user
+    pressed หยุดงาน. Mark it ``error`` with the reason instead: restartable
+    at once, and honest about what happened. The job row gets the same, so a
+    client already polling it stops. Never raises — the enqueue failure is
+    the error the caller is about to report.
+    """
+    try:
+        proj.status = "error"
+        proj.error_msg = "ส่งงานเข้าคิวไม่สำเร็จ — กดเริ่มใหม่อีกครั้ง"
+        proj.resume_state = None
+        await session.flush()
+        if job_id:
+            await session.execute(text("SET search_path TO core, public"))
+            with session.no_autoflush:
+                job = await session.get(Job, job_id)
+                if job is not None:
+                    job.status = "error"
+                    job.progress = 0
+                    job.error = proj.error_msg
+            await bind_tenant_search_path(session, tenant_slug)
+        await session.commit()
+    except Exception as exc:  # noqa: BLE001 — the reaper is the fallback
+        log.error("start_failed_mark_error_failed", uid=proj.uid, error=str(exc)[:200])
 
 
 async def _redirect_presigned_output(project_uid: str, filename: str) -> RedirectResponse:
@@ -115,10 +255,8 @@ async def _enqueue(job_id: str, fn: str, *, user: Any = None, **kwargs) -> None:
     job gets its plan's queue priority."""
     import asyncio
 
-    from arq import create_pool
-    from arq.connections import RedisSettings
-
     from packages.db import job_cache
+    from services.api.arq_pool import get_arq_pool
 
     # Job ids are derived from the project uid (``vlocal_<uid[:8]>``), so
     # starting the SAME project again reuses the id. Without this the cached
@@ -127,22 +265,26 @@ async def _enqueue(job_id: str, fn: str, *, user: Any = None, **kwargs) -> None:
     # finished job with the old result before the worker wrote anything.
     await job_cache.drop(job_id)
 
-    settings = get_settings()
-    redis = RedisSettings.from_dsn(settings.redis_url)
-    redis.conn_timeout = 5
-    redis.conn_retries = 3
-    log.info("video_enqueue_start", job_id=job_id, fn=fn, redis_host=redis.host)
+    log.info("video_enqueue_start", job_id=job_id, fn=fn)
     try:
-        pool = await asyncio.wait_for(create_pool(redis), timeout=15.0)
+        # One pool per process (services/api/arq_pool.py) — a connect and a
+        # handshake per enqueue was what this used to cost.
+        pool = await asyncio.wait_for(get_arq_pool(), timeout=15.0)
         await pool.enqueue_job(fn, job_id=job_id, **queue_priority_kwargs(user), **kwargs)
-        await pool.close()
     except TimeoutError as exc:
-        log.error("video_enqueue_redis_timeout", job_id=job_id, redis_url=settings.redis_url)
-        raise HTTPException(503, "Redis unavailable — check REDIS_URL on api service") from exc
+        log.error("video_enqueue_redis_timeout", job_id=job_id)
+        raise HTTPException(503, ENQUEUE_FAILED_MESSAGE) from exc
     except Exception as exc:
-        log.error("video_enqueue_failed", job_id=job_id, error=str(exc))
-        raise HTTPException(503, f"Failed to enqueue job: {exc}") from exc
+        # The reason goes to the log, never to the client: a Redis error names
+        # the host, the port and sometimes the URL with its password.
+        log.error("video_enqueue_failed", job_id=job_id, error=str(exc)[:300])
+        raise HTTPException(503, ENQUEUE_FAILED_MESSAGE) from exc
     log.info("video_enqueue_done", job_id=job_id, fn=fn)
+
+
+#: What a client is told when the queue could not take the job. Fixed text —
+#: the exception behind it is logged with the job id and looked up there.
+ENQUEUE_FAILED_MESSAGE = "ส่งงานเข้าคิวไม่สำเร็จ — กรุณาลองใหม่อีกครั้งในอีกสักครู่"
 
 
 async def _mark_job_cancelled(job_id: str) -> None:
@@ -265,7 +407,9 @@ async def _save_upload_clip(
 ) -> str:
     ext = pathlib.Path(upload_file.filename or "clip.mp4").suffix or ".mp4"
     dest = upload_dir_path / f"clip_{index:03d}{ext}"
-    dest.write_bytes(await upload_file.read())
+    await receive_upload(
+        upload_file, dest, limit=get_settings().max_upload_bytes, label="คลิป"
+    )
     return str(dest.relative_to(data_root_path))
 
 
@@ -303,6 +447,7 @@ async def _create_video_project(
     job = Job(
         id=job_id,
         tenant_id=auth.tenant_id,
+        user_id=auth.user_id,
         type="video_edit",
         status="queued",
         progress=2,
@@ -316,9 +461,9 @@ async def _create_video_project(
 # ── endpoints ─────────────────────────────────────────────────────────────────
 
 # Only "full" remains — talking_head's highlight/custom mode was removed
-# (Gemini reviews every clip now regardless of mode). Kept as a set (not a
-# literal) so legacy rows/clients sending "auto"/"custom" degrade to a clear
-# 400 instead of silently doing something unexpected server-side.
+# (Gemini reviews every clip now regardless of mode). The Literal on the form
+# field is what refuses a legacy "auto"/"custom"; the tuple stays for the
+# tests that assert the set.
 DURATION_MODES = ("full",)
 
 
@@ -327,10 +472,13 @@ async def upload_video(
     auth: CurrentUser,
     request: Request,
     files: list[UploadFile] = File(...),
-    mode: str = Form(default="talking_head"),
-    upload_mode: str = Form(default="merge"),
-    duration_mode: str = Form(default="full"),
-    target_duration_sec: int | None = Form(default=None),
+    # Literal, not free strings checked by hand: the framework refuses a value
+    # outside the set (422, naming the field) before the multipart files are
+    # looked at, and the OpenAPI schema says what is accepted.
+    mode: Literal["talking_head", "dub_first"] = Form(default="talking_head"),
+    upload_mode: Literal["merge", "separate"] = Form(default="merge"),
+    duration_mode: Literal["full"] = Form(default="full"),
+    target_duration_sec: int | None = Form(default=None, ge=15, le=600),
     brief: str | None = Form(default=None),
     user_script: str | None = Form(default=None),
     allow_wallet: bool = Form(default=False),
@@ -349,24 +497,20 @@ async def upload_video(
         mode=mode,
         upload_mode=upload_mode,
     )
-    if mode not in ("talking_head", "dub_first"):
-        raise HTTPException(400, f"Unsupported mode '{mode}'. Use 'talking_head' or 'dub_first'.")
-    if upload_mode not in UPLOAD_MODES:
-        raise HTTPException(400, f"upload_mode must be one of: {', '.join(UPLOAD_MODES)}")
-    if duration_mode not in DURATION_MODES:
-        raise HTTPException(400, f"duration_mode must be one of: {', '.join(DURATION_MODES)}")
     if not files:
         raise HTTPException(400, "At least one video file required")
-    if target_duration_sec is not None:
-        if target_duration_sec < 15 or target_duration_sec > 600:
-            raise HTTPException(400, "target_duration_sec must be between 15 and 600")
+    cap = get_settings().max_upload_bytes
+    refuse_oversized_body(request, cap, "คลิป", files=len(files))
+    for f in files:
+        if declared_upload_size(f) > cap:
+            raise upload_too_large(cap, "คลิป")
 
     from services.api.routers.videos_local import enforce_new_project, enforce_storage_quota
 
     await enforce_new_project(
         session, auth.user, adding=len(files) if upload_mode == "separate" and len(files) > 1 else 1
     )
-    await enforce_storage_quota(session, auth.user_id, sum(int(f.size or 0) for f in files))
+    await enforce_storage_quota(session, auth.user_id, sum(declared_upload_size(f) for f in files))
 
     data_root_path = data_root()
     created: list[UploadProjectItem] = []
@@ -414,6 +558,7 @@ async def upload_video(
     # dub_first's server chain reads sampled frames; talking_head transcribes
     # and plans (packages/billing/estimate.py MODE_PROFILES).
     run_ids: dict[str, str] = {}
+    committed = False
     try:
         for item in created:
             clips = sorted((data_root_path / "video_uploads" / item.project_uid).glob("clip_*"))
@@ -425,6 +570,7 @@ async def upload_video(
             )
 
         await session.commit()
+        committed = True
         log.info("video_upload_saved", projects=[c.project_uid for c in created])
 
         # Push uploaded files to S3 (no-op when S3 not fully configured)
@@ -446,6 +592,16 @@ async def upload_video(
             await release_run(run_id)
         for item in created:
             _drop_upload_dir(data_root_path, item.project_uid)
+        if committed:
+            # Past the commit: the rows exist and say ``processing``. Their
+            # clips are gone (above), so mark them the way any other start
+            # that could not enqueue is marked — restartable, with the reason.
+            for item in created:
+                try:
+                    proj = await _get_project(session, item.project_uid, auth.user_id)
+                except HTTPException:
+                    continue
+                await _mark_start_failed(session, proj, item.job_id, tenant_slug=auth.tenant_slug)
         raise
     log.info("video_upload_enqueued", job_ids=[c.job_id for c in created])
 
@@ -650,21 +806,30 @@ def _normalized_clip_path(output_dir_path: pathlib.Path, source_id: str) -> path
     norm_files = sorted((output_dir_path / "normalized").glob("norm_*.mp4"))
     if not norm_files:
         raise FileNotFoundError("normalized clips not found")
-    if not source_id.startswith("clip"):
+    # fullmatch, not startswith + replace: "clipclip1" passed the prefix test
+    # and `replace` turned it into "1"; "clip-1" indexed from the end.
+    m = re.fullmatch(r"clip(\d+)", source_id)
+    if m is None:
         raise ValueError(f"unknown source id '{source_id}'")
-    idx = int(source_id.replace("clip", ""))
+    idx = int(m.group(1))
     if idx >= len(norm_files):
         raise ValueError(f"source id '{source_id}' out of range")
     return norm_files[idx]
 
 
+#: What a client is told when a source id does not resolve. The exception's
+#: own text used to be the detail; it is the server's wording about its own
+#: files and is logged instead.
+SOURCE_NOT_FOUND = "ไม่พบคลิปต้นฉบับนี้"
+
+
 async def _load_edit_timeline_state(
-    session: AsyncSession, uid: str, auth: CurrentUser
+    session: AsyncSession, uid: str, auth: CurrentUser, *, for_update: bool = False
 ) -> tuple[VideoProject, str, dict, list[dict]]:
     """Load project + resolved edit target + raw file content + source list ({id, durationSec})."""
     import json as _json
 
-    p = await _get_project(session, uid, auth.user_id)
+    p = await _get_project(session, uid, auth.user_id, for_update=for_update)
     if p.status != "done":
         raise HTTPException(400, f"Project not ready for editing (status: {p.status})")
 
@@ -746,7 +911,9 @@ async def save_edit_timeline(
     """Apply a manually-edited cut list and re-render — never re-invokes the AI."""
     import json as _json
 
-    p, target, raw, sources = await _load_edit_timeline_state(session, uid, auth)
+    # Locked: this flips the project to ``processing`` and enqueues a render,
+    # so two saves racing each other would render twice (see _get_project).
+    p, target, raw, sources = await _load_edit_timeline_state(session, uid, auth, for_update=True)
     if p.origin == "local":
         # Local-render projects have no normalized files on the server — the
         # desktop app edits + re-renders locally (PUT /videos/{uid}/local-edit-script).
@@ -825,6 +992,7 @@ async def save_edit_timeline(
             existing = Job(
                 id=job_id,
                 tenant_id=auth.tenant_id,
+                user_id=auth.user_id,
                 type="video_edit",
                 status="queued",
                 progress=2,
@@ -835,7 +1003,11 @@ async def save_edit_timeline(
     await session.commit()
 
     await push_project_files(uid)
-    await _enqueue(job_id, render_task, project_uid=uid, tenant_slug=auth.tenant_slug, user=auth.user)
+    try:
+        await _enqueue(job_id, render_task, project_uid=uid, tenant_slug=auth.tenant_slug, user=auth.user)
+    except BaseException:
+        await _mark_start_failed(session, p, job_id, tenant_slug=auth.tenant_slug)
+        raise
     return UploadProjectItem(project_uid=uid, job_id=job_id)
 
 
@@ -855,7 +1027,8 @@ async def get_source_url(
     try:
         clip_path = _normalized_clip_path(output_dir_path, source)
     except (FileNotFoundError, ValueError) as exc:
-        raise HTTPException(404, str(exc)) from exc
+        log.info("source_clip_unresolved", uid=uid, source=source[:40], error=str(exc)[:120])
+        raise HTTPException(404, SOURCE_NOT_FOUND) from exc
     rel_name = f"normalized/{clip_path.name}"
     if s3_enabled():
         url = await output_presigned_url(uid, rel_name)
@@ -879,7 +1052,8 @@ async def get_source_file(
     try:
         clip_path = _normalized_clip_path(output_dir_path, source)
     except (FileNotFoundError, ValueError) as exc:
-        raise HTTPException(404, str(exc)) from exc
+        log.info("source_clip_unresolved", uid=uid, source=source[:40], error=str(exc)[:120])
+        raise HTTPException(404, SOURCE_NOT_FOUND) from exc
     if not clip_path.is_file():
         raise HTTPException(404, "File not found")
     return FileResponse(str(clip_path), media_type="video/mp4", filename=clip_path.name)
@@ -895,7 +1069,11 @@ async def upload_voiceover(
     session: AsyncSession = Depends(db_session),
 ) -> VideoProjectOut:
     """Upload voiceover file for a dub_first project. Triggers plan_dub_timeline."""
-    p = await _get_project(session, uid, auth.user_id)
+    settings = get_settings()
+    refuse_oversized_body(request, settings.max_audio_upload_bytes, "เสียงพากย์")
+    # Locked for the whole request: the status check below is what stops a
+    # second upload starting a second paid planning run (see _get_project).
+    p = await _get_project(session, uid, auth.user_id, for_update=True)
     if p.origin == "local":
         # Local-render projects keep VO on the user's machine — the desktop app
         # measures it and calls POST /videos/{uid}/plan-dub instead.
@@ -935,7 +1113,9 @@ async def _store_voiceover_and_plan(
     vo_dir = data_root() / "video_uploads" / uid
     vo_dir.mkdir(parents=True, exist_ok=True)
     vo_path = vo_dir / f"voiceover{ext}"
-    vo_path.write_bytes(await file.read())
+    await receive_upload(
+        file, vo_path, limit=get_settings().max_audio_upload_bytes, label="เสียงพากย์"
+    )
 
     rel_vo = str(vo_path.relative_to(data_root()))
     p.voiceover_path = rel_vo
@@ -959,7 +1139,11 @@ async def _store_voiceover_and_plan(
     await bind_tenant_search_path(session, auth.tenant_slug)
     await session.commit()
 
-    await _enqueue(job_id, "plan_dub_timeline", project_uid=uid, tenant_slug=auth.tenant_slug, run_id=run_id, user=auth.user)
+    try:
+        await _enqueue(job_id, "plan_dub_timeline", project_uid=uid, tenant_slug=auth.tenant_slug, run_id=run_id, user=auth.user)
+    except BaseException:
+        await _mark_start_failed(session, p, job_id, tenant_slug=auth.tenant_slug)
+        raise
     return _to_out(p)
 
 

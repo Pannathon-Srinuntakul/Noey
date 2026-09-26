@@ -287,6 +287,37 @@ def _classify_technical_error(message: str) -> str:
     return text
 
 
+def validation_error_fields(exc: BaseException) -> list[dict[str, str]]:
+    """What a client may be told about a body that failed to parse: WHICH
+    field and WHAT KIND of problem, and nothing else.
+
+    ``str(ValidationError)`` carries the offending input value verbatim
+    ("Input should be greater than 0 [input_value='…']") and, for a JSON
+    error, a slice of the raw document — both were going straight into an
+    HTTP ``detail``. A route that wants to say more than "manifest ไม่ถูกต้อง"
+    attaches this list instead: ``[{"field": "0.durationSec", "type":
+    "greater_than"}]`` is enough to fix a client and says nothing about what
+    the request contained.
+    """
+    errors = getattr(exc, "errors", None)
+    if callable(errors):
+        try:
+            raw = errors()
+        except Exception:  # noqa: BLE001 — a malformed error is still just "invalid"
+            raw = []
+        out: list[dict[str, str]] = []
+        for item in raw if isinstance(raw, list) else []:
+            if not isinstance(item, dict):
+                continue
+            loc = item.get("loc") or ()
+            field = ".".join(str(p) for p in loc) if isinstance(loc, (list, tuple)) else str(loc)
+            out.append({"field": field, "type": str(item.get("type") or "invalid")})
+        return out
+    if isinstance(exc, json.JSONDecodeError):
+        return [{"field": "", "type": "json_invalid"}]
+    return [{"field": "", "type": "invalid"}]
+
+
 def format_exception_message(exc: BaseException) -> str:
     """Format any exception for display in UI, job rows, or chat errors."""
     from fastapi import HTTPException

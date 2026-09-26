@@ -8,6 +8,10 @@ import structlog
 def configure_logging(level: int = logging.INFO) -> None:
     structlog.configure(
         processors=[
+            # FIRST, so what a request or job bound (`request_id`, `user_id` —
+            # services/api/middleware.py; a worker task binding the id it was
+            # enqueued with) lands on every line, and an explicit kwarg on a
+            # log call still wins over the bound value.
             structlog.contextvars.merge_contextvars,
             structlog.processors.add_log_level,
             structlog.processors.TimeStamper(fmt="iso"),

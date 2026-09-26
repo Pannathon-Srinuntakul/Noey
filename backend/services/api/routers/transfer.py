@@ -37,6 +37,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from packages.core.logging import get_logger
+from packages.core.settings import get_settings
 from packages.video.s3 import delete_transfer, pull_transfer_file, push_transfer_file
 from packages.video.storage import data_root
 
@@ -51,9 +52,10 @@ router = APIRouter(prefix="/videos/transfer", tags=["transfer"])
 # before it travels.
 TICKET_TTL_SEC = 30 * 60
 
-# Caps: this is one person moving their own footage, not a file host.
+# Caps: this is one person moving their own footage, not a file host. The
+# per-file cap is the same one every whole-clip upload gets
+# (settings.max_upload_bytes, 4 GB — a long 4K phone clip is real).
 MAX_FILES = 20
-MAX_FILE_BYTES = 4 * 1024 * 1024 * 1024  # a long 4K phone clip is real
 
 # What a phone camera produces. The web client re-probes everything anyway;
 # this only keeps the endpoint from being a generic upload box.
@@ -78,6 +80,12 @@ class TransferStatus(BaseModel):
 
 def _transfer_dir(token: str) -> Path:
     return data_root() / "video_transfer" / token
+
+
+def _log_token(token: str) -> str:
+    """The token is the phone's whole credential, so the log gets a prefix
+    that is enough to correlate lines and not enough to upload with."""
+    return token[:8]
 
 
 def _safe_token(token: str) -> str:
@@ -126,7 +134,7 @@ async def create_ticket(auth: CurrentUser) -> TicketOut:
     # The phone's upload may land on another API host — the ticket has to be
     # readable wherever it lands.
     await push_transfer_file(token, ticket_path)
-    log.info("transfer_ticket_created", user_id=auth.user_id, token=token)
+    log.info("transfer_ticket_created", user_id=auth.user_id, token=_log_token(token))
     return TicketOut(token=token, expires_in_sec=TICKET_TTL_SEC)
 
 
@@ -147,16 +155,12 @@ async def upload_from_phone(token: str, file: UploadFile = File(...)) -> dict:
 
     index = len(manifest)
     dest = _transfer_dir(token) / f"file_{index:03d}{suffix}"
-    size = 0
     # Streamed: whole camera files, hundreds of MB — never buffered in memory.
-    with dest.open("wb") as out:
-        while chunk := await file.read(1024 * 1024):
-            size += len(chunk)
-            if size > MAX_FILE_BYTES:
-                out.close()
-                dest.unlink(missing_ok=True)
-                raise HTTPException(413, "ไฟล์ใหญ่เกินไป (สูงสุด 4GB ต่อไฟล์)")
-            out.write(chunk)
+    # `receive_upload` is the loop this route pioneered, shared now with
+    # every other upload route (and it deletes the partial file on a 413).
+    from services.api.routers.videos import receive_upload
+
+    size = await receive_upload(file, dest, limit=get_settings().max_upload_bytes, label="")
     if size == 0:
         dest.unlink(missing_ok=True)
         raise HTTPException(422, "ไฟล์ว่างเปล่า")
@@ -166,7 +170,7 @@ async def upload_from_phone(token: str, file: UploadFile = File(...)) -> dict:
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
     await push_transfer_file(token, dest)
     await push_transfer_file(token, manifest_path)
-    log.info("transfer_file_received", token=token, name=name, bytes=size, index=index)
+    log.info("transfer_file_received", token=_log_token(token), name=name, bytes=size, index=index)
     return {"ok": True, "index": index, "count": len(manifest)}
 
 
@@ -213,5 +217,5 @@ async def close_ticket(token: str, auth: CurrentUser) -> Response:
     if base.is_dir():
         await asyncio.to_thread(shutil.rmtree, base, True)
     await delete_transfer(token)
-    log.info("transfer_ticket_closed", token=token)
+    log.info("transfer_ticket_closed", token=_log_token(token))
     return Response(status_code=204)

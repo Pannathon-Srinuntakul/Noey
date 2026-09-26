@@ -6,6 +6,12 @@ services:
     restart: unless-stopped
     ports:
       - "6380:6379"   # Use 6380 on host to avoid conflict with other local Redis instances.
+    # The queue lives here: a job enqueued but not yet picked up, the rate-limit
+    # counters and the usage outbox. Without the mount a `docker compose down`
+    # dropped every queued job with the container (the volume was declared but
+    # never attached). The image's default config snapshots to /data.
+    volumes:
+      - noey_redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -64,6 +70,10 @@ services:
     container_name: noey_worker
     restart: unless-stopped
     command: ["python", "-m", "services.worker"]
+    # The image's HEALTHCHECK probes the API's /health; the worker serves no
+    # HTTP, so inherited it would just mark this container unhealthy forever.
+    healthcheck:
+      disable: true
     # BOTH files, same as api. Loading only the root .env left the worker — the
     # process that runs every transcription and render — without
     # ELEVENLABS_API_KEY, so every talking_head and speech mode failed while the
