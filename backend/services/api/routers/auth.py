@@ -1,5 +1,5 @@
-"""Auth endpoints: login, refresh, me (+ profile), register, email verification,
-password change/reset, email change.
+"""Auth endpoints: login, refresh, logout, me (+ profile), register, email
+verification, password change/reset, email change.
 
 Self-service registration is gated by ALLOW_REGISTRATION (default off) and,
 when TURNSTILE_SECRET_KEY is set, by a server-verified Turnstile token. Each
@@ -7,6 +7,37 @@ new account gets its own tenant — see packages/auth/accounts.py. Mail goes out
 through SendGrid (packages/email); links are single-use (packages/auth/
 email_tokens.py). Every token carries `tv`: a password change or reset revokes
 all earlier sessions. Rate limits: services/api/ratelimit.py.
+
+Sessions (2026-09-27). Refresh tokens are single use: every one carries a
+`jti` registered in packages/auth/refresh_store.py (Redis), and
+`POST /auth/refresh` spends it and returns a NEW pair — the presented token
+never works twice. Presenting an already-spent token is treated as theft:
+the user's `token_version` is bumped (every session, stolen and honest, is
+signed out) and the request gets 401. `tv` stays the nuclear path (password
+change / reset); logout below is the gentle one.
+
+    POST /auth/refresh    Authorization: Bearer <refresh_token>
+        200 {access_token, refresh_token, token_type: "bearer"}  (unchanged shape)
+        401 invalid / expired / revoked / already used / store unreachable
+            (a refresh the store cannot verify is refused — never assumed)
+
+    POST /auth/logout     Authorization: Bearer <ACCESS token>
+        body (optional): {"refresh_token": "<the session's refresh token>"}
+        204 always on success:
+            with a refresh token  → that one session's refresh token is dropped
+                                    (an expired or already-dropped one is a no-op)
+            without one           → every refresh token of the user is dropped
+        400 the body's refresh token is not this user's / not a refresh token
+        503 the store is unreachable (nothing was dropped; try again)
+        The access token itself is NOT revoked — it dies on its own `exp`
+        (30 min). Only a `tv` bump kills access tokens early.
+
+Deploy grace: a refresh token issued before rotation shipped has no `jti`.
+It is accepted ONCE (its hash is remembered in the store) and answered with
+a rotated pair, so nobody signed in at the time of the deploy is thrown out.
+Presenting it a second time is a plain 401 — not the theft path, because a
+client that pre-dates rotation may retry honestly. The last such token
+expires 14 days (`jwt_refresh_ttl`) after the deploy.
 """
 
 import asyncio
@@ -22,6 +53,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import set_committed_value
 
+from packages.auth import refresh_store
 from packages.auth.accounts import (
     DISPLAY_NAME_MAX_CHARS,
     create_account,
@@ -39,8 +71,15 @@ from packages.auth.email_tokens import (
     issue_token,
     void_tokens,
 )
-from packages.auth.hashing import hash_password, verify_password
-from packages.auth.tokens import decode, encode_access, encode_refresh, token_version_matches
+from packages.auth.hashing import dummy_hash, hash_password, verify_password
+from packages.auth.refresh_store import Consume, RefreshStoreUnavailable
+from packages.auth.tokens import (
+    decode,
+    encode_access,
+    encode_refresh,
+    new_jti,
+    token_version_matches,
+)
 from packages.auth.turnstile import TOKEN_MAX_CHARS, verify_turnstile
 from packages.billing import free_tier
 from packages.billing.client import billing_enabled, get_stripe_client
@@ -151,6 +190,12 @@ class TokenOut(BaseModel):
     token_type: str = "bearer"
 
 
+class LogoutIn(BaseModel):
+    #: The session's refresh token, to drop just that session. Absent (or
+    #: null): every refresh token of the caller is dropped.
+    refresh_token: str | None = Field(default=None, max_length=4096)
+
+
 class MeOut(BaseModel):
     user_id: int
     email: str
@@ -167,12 +212,38 @@ class MeOut(BaseModel):
 _bearer = HTTPBearer(auto_error=False)
 
 
-async def _tokens_for(user: User, tenant: Tenant) -> TokenOut:
+_STORE_DOWN = "sign-in is temporarily unavailable — please try again in a moment"
+
+
+async def _issue_pair(user: User, tenant: Tenant) -> TokenOut:
+    """A fresh pair; raises RefreshStoreUnavailable when the `jti` could not
+    be recorded. The refresh token's `jti` is registered BEFORE the token is
+    handed out: a token the store does not know is refused at /refresh, so
+    issuing one the store failed to record would only sign the user out 30
+    minutes later, confusingly. Refusing now is the honest answer."""
     version = int(user.token_version or 0)
+    jti = new_jti()
+    await refresh_store.get_store().issue(int(user.id), jti, get_settings().jwt_refresh_ttl)
     return TokenOut(
         access_token=encode_access(int(user.id), int(tenant.id), str(tenant.slug), version),
-        refresh_token=encode_refresh(int(user.id), int(tenant.id), version),
+        refresh_token=encode_refresh(int(user.id), int(tenant.id), version, jti=jti),
     )
+
+
+async def _tokens_for(user: User, tenant: Tenant) -> TokenOut:
+    """`_issue_pair` for the sign-in routes: a store outage is their 503."""
+    try:
+        return await _issue_pair(user, tenant)
+    except RefreshStoreUnavailable:
+        raise HTTPException(status_code=503, detail=_STORE_DOWN) from None
+
+
+def _seconds_left(payload: dict[str, object]) -> int:
+    """How long a decoded token still has (its tombstone need not outlive it)."""
+    exp = payload.get("exp")
+    if isinstance(exp, bool) or not isinstance(exp, int | float):
+        return get_settings().jwt_refresh_ttl
+    return max(1, int(exp - datetime.now(UTC).timestamp()))
 
 
 async def _me_out(auth: CurrentUser, session: AsyncSession) -> MeOut:
@@ -305,11 +376,19 @@ async def login(body: LoginIn, request: Request, session: CoreSession) -> TokenO
     ip = ratelimit.client_ip(request)
     await ratelimit.enforce([
         (ratelimit.LOGIN_EMAIL_IP, f"{normalize_email(body.email)}|{ip}"),
+        (ratelimit.LOGIN_EMAIL, normalize_email(body.email)),
         (ratelimit.LOGIN_IP, ip),
     ])
 
     user = await _active_user_by_email(session, body.email)
-    if user is None or not verify_password(body.password, str(user.password_hash)):
+    # bcrypt runs whether or not the account exists (against a dummy hash
+    # when it does not), so an unknown address takes as long as a wrong
+    # password; and it runs off the event loop — ~100 ms of hashing would
+    # otherwise stall every other request in this worker. `_password_matches`
+    # turns the >72-byte refusal into a mismatch instead of a 500.
+    hashed = str(user.password_hash) if user is not None else dummy_hash()
+    matched = await asyncio.to_thread(_password_matches, body.password, hashed)
+    if user is None or not matched:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid credentials")
 
     mem = (
@@ -359,7 +438,72 @@ async def refresh(
     if not token_version_matches(payload, user.token_version):
         raise HTTPException(status_code=401, detail="token revoked")
 
-    return await _tokens_for(user, tenant)
+    # Spend the presented token before minting the next one (module docstring).
+    # Any store trouble here is a 401, not a 503: a refresh the store could
+    # not verify is refused, and if it was verified but the store then failed
+    # to record the new pair, the old one is already spent — either way the
+    # client's only move is to sign in again, and 401 is what makes it do so.
+    store = refresh_store.get_store()
+    jti = payload.get("jti")
+    try:
+        if jti is None:
+            # Pre-rotation token (deploy grace, module docstring): once only.
+            if not await store.consume_legacy(user_id, creds.credentials, _seconds_left(payload)):
+                raise HTTPException(status_code=401, detail="token already used")
+        elif not isinstance(jti, str) or not jti:
+            raise HTTPException(status_code=401, detail="invalid token")
+        else:
+            outcome = await store.consume(user_id, jti, _seconds_left(payload))
+            if outcome is Consume.REUSED:
+                # Someone holds a token that was already rotated away. We
+                # cannot tell the thief from the owner, so both lose every
+                # session; the owner signs in again, the thief cannot.
+                log.warning("refresh_token_reuse", user_id=user_id)
+                await _revoke_sessions(session, user)
+                await session.commit()
+                raise HTTPException(status_code=401, detail="token already used")
+            if outcome is not Consume.SPENT:
+                raise HTTPException(status_code=401, detail="token revoked")
+        return await _issue_pair(user, tenant)
+    except RefreshStoreUnavailable:
+        raise HTTPException(status_code=401, detail="token could not be verified") from None
+
+
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
+async def logout(auth: CurrentUser, body: LogoutIn | None = None) -> None:
+    """Drop the caller's refresh token(s); contract in the module docstring.
+
+    Takes the ACCESS token as bearer (the refresh token is a credential too,
+    but the access token is what the client holds in memory and what every
+    other route checks) and the refresh token in the body, if the client
+    wants only this session gone. The refresh token is decoded WITHOUT
+    checking `exp`: an expired one can still be the one the client means,
+    and dropping a key that already expired is a harmless no-op.
+    """
+    store = refresh_store.get_store()
+    raw = (body.refresh_token or "").strip() if body is not None else ""
+    try:
+        if not raw:
+            dropped = await store.revoke_all(auth.user_id)
+            log.info("logout_all", user_id=auth.user_id, dropped=dropped)
+            return
+        try:
+            payload = decode(raw, verify_exp=False)
+        except jwt.PyJWTError:
+            raise HTTPException(status_code=400, detail="invalid refresh token") from None
+        if payload.get("type") != "refresh" or str(payload.get("sub")) != str(auth.user_id):
+            raise HTTPException(status_code=400, detail="invalid refresh token")
+        jti = payload.get("jti")
+        if isinstance(jti, str) and jti:
+            await store.revoke(auth.user_id, jti)
+        else:
+            # A pre-rotation token has no id to drop: mark it spent instead,
+            # so its one-time grace at /refresh is used up by this logout.
+            await store.consume_legacy(auth.user_id, raw, _seconds_left(payload))
+        log.info("logout", user_id=auth.user_id)
+        return
+    except RefreshStoreUnavailable:
+        raise HTTPException(status_code=503, detail=_STORE_DOWN) from None
 
 
 @router.get("/me", response_model=MeOut)

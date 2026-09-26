@@ -1,5 +1,6 @@
-"""Rate limits: the Redis store (against a fake Redis), fail-open, 429 shape,
-client-IP resolution behind proxies, and the limits on real endpoints."""
+"""Rate limits: the Redis store (against a fake Redis), fail-closed for auth
+rules / fail-open for UX rules, 429 shape, client-IP resolution behind
+proxies, and the limits on real endpoints."""
 
 import uuid
 from typing import Any, Self
@@ -10,10 +11,17 @@ from fastapi import HTTPException
 from httpx import ASGITransport, AsyncClient
 from starlette.requests import Request
 
+from packages.auth import refresh_store
 from packages.core.settings import get_settings
 from services.api import ratelimit
 from services.api.main import app
 from services.api.ratelimit import Limit, MemoryCounterStore, RateLimiter, RedisCounterStore
+
+
+@pytest.fixture(autouse=True)
+def _memory_refresh_store(monkeypatch):
+    """Login/register register refresh tokens in Redis; not from these tests."""
+    monkeypatch.setattr(refresh_store, "_store", refresh_store.MemoryRefreshStore())
 
 
 class FakePipeline:
@@ -88,18 +96,65 @@ class _RecordingLog:
         pass
 
 
-async def test_redis_down_fails_open_and_backs_off(monkeypatch):
+async def test_redis_down_fails_open_and_backs_off_for_ux_rules(monkeypatch):
     recorded = _RecordingLog()
     monkeypatch.setattr(ratelimit, "log", recorded)
     fake = FakeRedis(down=True)
     limiter = RateLimiter(RedisCounterStore("redis://unused", client=fake))
-    rule = Limit("t", 1, 60)
+    rule = Limit("t", 1, 60, fail_closed=False)
     for _ in range(5):
         await limiter.check([(rule, "someone")])  # never raises
     assert fake.executes == 1  # the breaker skips Redis after the first failure
     assert recorded.warnings == [
         ("rate_limit_store_unavailable", {"error": "ConnectionError", "fail_open": True})
     ]
+
+
+async def test_redis_down_refuses_auth_rules_and_keeps_knocking(monkeypatch):
+    """A fail-closed rule answers 503 (never 429, never allow) while Redis is
+    down, and tries Redis on EVERY request — the breaker is for fail-open
+    rules only — so the door reopens the moment Redis is back."""
+    recorded = _RecordingLog()
+    monkeypatch.setattr(ratelimit, "log", recorded)
+    fake = FakeRedis(down=True)
+    limiter = RateLimiter(RedisCounterStore("redis://unused", client=fake))
+    rule = Limit("t", 1, 60)  # the default is fail-closed
+    for _ in range(3):
+        with pytest.raises(HTTPException) as exc:
+            await limiter.check([(rule, "someone")])
+        assert exc.value.status_code == 503
+        assert (exc.value.headers or {})["Retry-After"] == "30"
+    assert fake.executes == 3
+    assert [w for w, _ in recorded.warnings].count("rate_limit_refused_unverified") == 3
+    fake.down = False
+    await limiter.check([(rule, "someone")])  # back at once: counts, does not refuse
+    with pytest.raises(HTTPException) as over:
+        await limiter.check([(rule, "someone")])
+    assert over.value.status_code == 429
+
+
+async def test_a_fail_open_rule_behind_a_fail_closed_one_still_uses_the_breaker():
+    """Once a fail-closed rule has tripped the breaker, the fail-open rules
+    stop paying the connect timeout — and the fail-closed one keeps trying."""
+    fake = FakeRedis(down=True)
+    limiter = RateLimiter(RedisCounterStore("redis://unused", client=fake))
+    closed, opened = Limit("c", 1, 60), Limit("o", 1, 60, fail_closed=False)
+    with pytest.raises(HTTPException):
+        await limiter.check([(closed, "x")])
+    await limiter.check([(opened, "x")])  # allowed, and Redis was not asked
+    assert fake.executes == 1
+    with pytest.raises(HTTPException):
+        await limiter.check([(closed, "x")])
+    assert fake.executes == 2
+
+
+def test_only_the_ux_rules_fail_open():
+    """Every auth / mail rule refuses when it cannot count; the wizard's
+    estimate throttle is the one that must not take the wizard down."""
+    fail_open = {limit.name for limit in ratelimit.ALL_LIMITS if not limit.fail_closed}
+    assert fail_open == {"usage_estimate:account"}
+    for prefix in ("login:", "register:", "forgot_password:", "admin_"):
+        assert all(limit.fail_closed for limit in ratelimit.ALL_LIMITS if limit.name.startswith(prefix))
 
 
 async def test_429_is_thai_with_retry_after():
@@ -227,13 +282,38 @@ async def test_register_is_limited_per_email(monkeypatch):
                 await conn.execute(text(f'DROP SCHEMA IF EXISTS "tenant_{slug}" CASCADE'))
 
 
-async def test_endpoints_keep_working_when_redis_is_down(monkeypatch):
-    monkeypatch.setattr(
-        ratelimit, "_limiter", RateLimiter(RedisCounterStore("redis://unused", client=FakeRedis(down=True)))
-    )
+async def test_login_is_refused_not_opened_when_redis_is_down(monkeypatch):
+    """The auth rules fail closed: with the limiter unable to count, login
+    answers 503 + Retry-After for everyone — never a free run of guesses,
+    never a 500 — and works again as soon as Redis does."""
+    fake = FakeRedis(down=True)
+    monkeypatch.setattr(ratelimit, "_limiter", RateLimiter(RedisCounterStore("redis://unused", client=fake)))
     async with _client() as c:
-        codes = {
-            (await c.post("/auth/login", json={"email": _nobody(), "password": "x"})).status_code
-            for _ in range(15)
-        }
-    assert codes == {401}  # fail open: never 429, never 500
+        down = [await c.post("/auth/login", json={"email": _nobody(), "password": "x"}) for _ in range(3)]
+        fake.down = False
+        back = await c.post("/auth/login", json={"email": _nobody(), "password": "x"})
+    assert {r.status_code for r in down} == {503}
+    assert all(r.headers.get("retry-after") for r in down)
+    assert back.status_code == 401
+
+
+async def test_usage_estimate_keeps_working_when_redis_is_down(monkeypatch):
+    """The one fail-open rule, on its real endpoint: the wizard's estimate is
+    not refused because the limiter is away (whatever else it answers)."""
+    from tests.admin_helpers import email as an_email
+    from tests.admin_helpers import make_user, purge, user_token
+
+    fake = FakeRedis(down=True)
+    monkeypatch.setattr(ratelimit, "_limiter", RateLimiter(RedisCounterStore("redis://unused", client=fake)))
+    uid = await make_user(an_email("estimate"))
+    try:
+        token = await user_token(uid)
+        async with _client() as c:
+            r = await c.post(
+                "/usage/estimate",
+                json={"mode": "talking_head", "clips": [{"duration_sec": 30}]},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+        assert r.status_code == 200, r.text
+    finally:
+        await purge()

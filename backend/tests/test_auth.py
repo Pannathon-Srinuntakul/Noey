@@ -1,12 +1,22 @@
-"""Auth endpoint tests: login, refresh, me, register-disabled, invalid credentials."""
+"""Auth endpoint tests: login, refresh, me, register-disabled, invalid credentials.
+
+Rotation, logout and the store are covered in tests/test_refresh_rotation.py.
+"""
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from packages.auth import refresh_store
 from services.api.main import app
 
 ADMIN_EMAIL = "admin@noey.local"
 ADMIN_PASSWORD = "ChangeMe123!"
+
+
+@pytest.fixture(autouse=True)
+def _memory_refresh_store(monkeypatch):
+    """Refresh tokens are registered in Redis; these tests never reach it."""
+    monkeypatch.setattr(refresh_store, "_store", refresh_store.MemoryRefreshStore())
 
 
 def _client() -> AsyncClient:
@@ -65,7 +75,24 @@ async def test_refresh_works():
         refresh_token = login.json()["refresh_token"]
         r = await c.post("/auth/refresh", headers={"Authorization": f"Bearer {refresh_token}"})
     assert r.status_code == 200
-    assert "access_token" in r.json()
+    body = r.json()
+    assert set(body) == {"access_token", "refresh_token", "token_type"}  # shape unchanged
+    assert body["refresh_token"] != refresh_token  # rotated
+
+
+@pytest.mark.asyncio
+async def test_access_token_is_not_a_refresh_token():
+    async with _client() as c:
+        login = await c.post("/auth/login", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD})
+        r = await c.post("/auth/refresh", headers={"Authorization": f"Bearer {login.json()['access_token']}"})
+    assert r.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_logout_requires_auth():
+    async with _client() as c:
+        r = await c.post("/auth/logout")
+    assert r.status_code == 401
 
 
 @pytest.mark.asyncio

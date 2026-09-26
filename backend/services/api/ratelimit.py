@@ -7,9 +7,18 @@ EXPIRE in one round trip. Identities are hashed — no address or IP is stored.
 Per-email / per-account rules are listed (and checked) first; per-IP rules
 are secondary and looser, because many honest people can share one IP.
 
-FAIL OPEN: if Redis is unreachable the request is allowed and a warning is
-logged; the store then skips Redis for 30 s so an outage does not add a
-connection timeout to every request. Defaults: docs/email-sendgrid.md.
+When Redis is unreachable each rule decides (`Limit.fail_closed`):
+
+- FAIL CLOSED (the default, every auth rule — login, register, forgot/reset,
+  admin, the mail-sending and password-checking ones): the request is refused
+  with 503 + Retry-After. An outage of the limiter must not be the moment a
+  credential-stuffing run gets unlimited tries. These rules try Redis on
+  every request (short timeouts), so the door reopens the instant Redis does.
+- FAIL OPEN (UX rules only — the wizard's estimate): the request is allowed,
+  a warning is logged, and the store skips Redis for 30 s so an outage does
+  not add a connection timeout to every request.
+
+Defaults: docs/email-sendgrid.md.
 """
 
 import hashlib
@@ -33,12 +42,24 @@ class Limit:
     name: str
     max_hits: int
     window_sec: int
+    #: Refuse (503) rather than allow when the store cannot count. Default on:
+    #: a rule that guards a credential or a mailbox is worth more than the
+    #: request it blocks during an outage. Opt OUT per rule, deliberately.
+    fail_closed: bool = True
 
 
 _15_MIN = 15 * 60
 _HOUR = 60 * 60
 
+#: Fail-closed refusals say "try again shortly": the store is retried on the
+#: very next request, so this is a hint, not a lockout.
+_UNAVAILABLE_RETRY_SEC = 30
+
 LOGIN_EMAIL_IP = Limit("login:email_ip", 10, _15_MIN)
+#: The same address from MANY IPs (a distributed guess at one account): looser
+#: than the per-IP pair so a shared office is not locked out by one typo run,
+#: tight enough that 30 tries in 15 min is not a useful brute force.
+LOGIN_EMAIL = Limit("login:email", 30, _15_MIN)
 LOGIN_IP = Limit("login:ip", 100, _15_MIN)
 REGISTER_EMAIL = Limit("register:email", 5, _HOUR)
 REGISTER_IP = Limit("register:ip", 20, _HOUR)
@@ -57,8 +78,9 @@ CONTACT_IP = Limit("contact:ip", 10, _HOUR)
 #: not be able to guess it without limit.
 CHANGE_PASSWORD_ACCOUNT = Limit("change_password:account", 10, _15_MIN)
 #: The wizard re-asks for an estimate as files / mode / precision change
-#: (debounced client-side); this only stops a runaway loop.
-USAGE_ESTIMATE_ACCOUNT = Limit("usage_estimate:account", 60, 60)
+#: (debounced client-side); this only stops a runaway loop — so a limiter
+#: outage must not take the wizard down with it: fail open.
+USAGE_ESTIMATE_ACCOUNT = Limit("usage_estimate:account", 60, 60, fail_closed=False)
 
 #: Admin dashboard login (services/api/routers/admin.py). Tighter than the
 #: public login: there are a handful of admins, and each step is guarded twice
@@ -73,7 +95,7 @@ ADMIN_RESEND_IP = Limit("admin_resend:ip", 10, _HOUR)
 ADMIN_REFRESH_IP = Limit("admin_refresh:ip", 240, _15_MIN)
 
 ALL_LIMITS: tuple[Limit, ...] = (
-    LOGIN_EMAIL_IP, LOGIN_IP, REGISTER_EMAIL, REGISTER_IP, REGISTER_IP_DAY, FORGOT_EMAIL, FORGOT_IP,
+    LOGIN_EMAIL_IP, LOGIN_EMAIL, LOGIN_IP, REGISTER_EMAIL, REGISTER_IP, REGISTER_IP_DAY, FORGOT_EMAIL, FORGOT_IP,
     RESEND_ACCOUNT, RESEND_IP, CHANGE_EMAIL_ACCOUNT, CHANGE_EMAIL_IP, CONTACT_EMAIL, CONTACT_IP,
     CHANGE_PASSWORD_ACCOUNT, USAGE_ESTIMATE_ACCOUNT, ADMIN_LOGIN_EMAIL, ADMIN_LOGIN_IP, ADMIN_OTP_CHALLENGE, ADMIN_OTP_IP,
     ADMIN_RESEND_CHALLENGE, ADMIN_RESEND_IP, ADMIN_REFRESH_IP,
@@ -81,8 +103,13 @@ ALL_LIMITS: tuple[Limit, ...] = (
 
 
 class CounterStore(Protocol):
-    async def incr(self, key: str, ttl_sec: int) -> int | None:
-        """The key's count after this hit, or None when the store is unavailable."""
+    async def incr(self, key: str, ttl_sec: int, *, must_answer: bool = False) -> int | None:
+        """The key's count after this hit, or None when the store is unavailable.
+
+        `must_answer` (fail-closed rules) asks the store to try even while its
+        breaker is open: the caller will refuse on None, so a stale "down"
+        verdict would refuse for nothing once Redis is back.
+        """
         ...
 
 
@@ -101,14 +128,14 @@ class RedisCounterStore:
             import redis.asyncio as aioredis
 
             # Short timeouts: a limiter that cannot answer fast must not hold
-            # the request hostage — it fails open instead.
+            # the request hostage — it fails open (or refuses) instead.
             self._client = aioredis.from_url(
                 self._url, socket_timeout=0.5, socket_connect_timeout=0.5
             )
         return self._client
 
-    async def incr(self, key: str, ttl_sec: int) -> int | None:
-        if time.monotonic() < self._down_until:
+    async def incr(self, key: str, ttl_sec: int, *, must_answer: bool = False) -> int | None:
+        if not must_answer and time.monotonic() < self._down_until:
             return None
         try:
             async with self._redis().pipeline(transaction=True) as pipe:
@@ -117,8 +144,12 @@ class RedisCounterStore:
                 count, _ = await pipe.execute()
             return int(count)
         except (RedisError, OSError, TimeoutError) as exc:
+            # The breaker only ever gates the fail-open rules; a fail-closed
+            # rule keeps knocking, so it is the first to notice Redis is back.
             self._down_until = time.monotonic() + self._BREAKER_SEC
-            log.warning("rate_limit_store_unavailable", error=type(exc).__name__, fail_open=True)
+            log.warning(
+                "rate_limit_store_unavailable", error=type(exc).__name__, fail_open=not must_answer
+            )
             return None
 
 
@@ -128,7 +159,7 @@ class MemoryCounterStore:
     def __init__(self) -> None:
         self.counts: dict[str, tuple[int, float]] = {}
 
-    async def incr(self, key: str, ttl_sec: int) -> int | None:
+    async def incr(self, key: str, ttl_sec: int, *, must_answer: bool = False) -> int | None:
         now = time.monotonic()
         count, expires = self.counts.get(key, (0, now + ttl_sec))
         if expires <= now:
@@ -142,19 +173,34 @@ def _thai_detail(retry_after: int) -> str:
     return f"ทำรายการถี่เกินไป กรุณาลองใหม่อีกครั้งในอีกประมาณ {minutes} นาที"
 
 
+_UNAVAILABLE_DETAIL = "ระบบไม่พร้อมให้บริการชั่วคราว กรุณาลองใหม่อีกครั้งในอีกสักครู่"
+
+
 class RateLimiter:
     def __init__(self, store: CounterStore) -> None:
         self.store = store
 
     async def check(self, rules: Sequence[tuple[Limit, str | None]]) -> None:
-        """Count one hit on every rule, in order; 429 on the first one over its limit."""
+        """Count one hit on every rule, in order; 429 on the first one over its
+        limit, 503 on the first fail-closed one the store could not count."""
         for limit, identity in rules:
             if not identity:
                 continue
             now = time.time()
             window = int(now // limit.window_sec)
             digest = hashlib.sha256(identity.strip().lower().encode("utf-8")).hexdigest()[:32]
-            count = await self.store.incr(f"noey:rl:{limit.name}:{digest}:{window}", limit.window_sec)
+            count = await self.store.incr(
+                f"noey:rl:{limit.name}:{digest}:{window}",
+                limit.window_sec,
+                must_answer=limit.fail_closed,
+            )
+            if count is None and limit.fail_closed:
+                log.warning("rate_limit_refused_unverified", rule=limit.name)
+                raise HTTPException(
+                    status_code=503,
+                    detail=_UNAVAILABLE_DETAIL,
+                    headers={"Retry-After": str(_UNAVAILABLE_RETRY_SEC)},
+                )
             if count is not None and count > limit.max_hits:
                 retry_after = max(1, int(limit.window_sec - (now % limit.window_sec)))
                 log.info("rate_limited", rule=limit.name, retry_after=retry_after)

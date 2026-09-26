@@ -22,12 +22,29 @@ def _no_redis_no_mail(monkeypatch):
     from services.api import ratelimit
 
     monkeypatch.setattr(ratelimit, "_limiter", ratelimit.RateLimiter(ratelimit.MemoryCounterStore()))
+    # Refresh-token jtis likewise: a suite that logs in would otherwise write
+    # 14-day keys into the developer's Redis on every run.
+    from packages.auth import refresh_store
+
+    monkeypatch.setattr(refresh_store, "_store", refresh_store.MemoryRefreshStore())
     monkeypatch.setenv("SENDGRID_API_KEY", "")
     # A developer's .env may turn the mock top-up on; tests opt in explicitly.
     monkeypatch.setenv("WALLET_MOCK_TOPUP", "false")
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def _fresh_arq_pool():
+    """The API's shared arq pool is module-level and bound to the event loop
+    that opened it; every test runs on its own loop, so a pool left over from
+    the previous test would answer with "Event loop is closed"."""
+    from services.api import arq_pool
+
+    arq_pool._pool = None
+    yield
+    arq_pool._pool = None
 
 
 @pytest.fixture(autouse=True)

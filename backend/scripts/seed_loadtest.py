@@ -165,14 +165,30 @@ async def seed(
                 )
             ).all()
             versions: dict[int, int] = {int(r[0]): int(r[1]) for r in rows}
-        pairs = [
-            {
-                "email": u["email"],
-                "access_token": encode_access(u["user_id"], u["tenant_id"], u["tenant_slug"], versions[u["user_id"]]),
-                "refresh_token": encode_refresh(u["user_id"], u["tenant_id"], versions[u["user_id"]]),
-            }
-            for u in users
-        ]
+        # Refresh tokens rotate (packages/auth/refresh_store.py): a token the
+        # store does not know is honoured once, then refused. Registered here so
+        # k6's first refresh is an ordinary one, not the legacy grace path.
+        from packages.auth import refresh_store
+        from packages.auth.tokens import new_jti
+        from packages.core.settings import get_settings
+
+        store = refresh_store.get_store()
+        ttl = get_settings().jwt_refresh_ttl
+        pairs = []
+        for u in users:
+            jti = new_jti()
+            await store.issue(int(u["user_id"]), jti, ttl)
+            pairs.append(
+                {
+                    "email": u["email"],
+                    "access_token": encode_access(
+                        u["user_id"], u["tenant_id"], u["tenant_slug"], versions[u["user_id"]]
+                    ),
+                    "refresh_token": encode_refresh(
+                        u["user_id"], u["tenant_id"], versions[u["user_id"]], jti=jti
+                    ),
+                }
+            )
         tok_path = out.with_name("tokens.json")
         _write_private(tok_path, pairs)
         _say(f"tokens written to {tok_path} (access tokens expire; k6 refreshes on 401 like the web app)")
