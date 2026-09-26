@@ -17,11 +17,14 @@ describe('writeFileAtomic on the main thread', () => {
     fs.indexOf('export interface StagedWrite')
   )
 
-  it('writes the destination ONCE through its own swap-file writable', () => {
-    // It used to write `.part` and then copy it over the destination: every
-    // file twice, for an atomicity `createWritable()` already provides.
-    expect(body).not.toContain('.part')
-    expect(body).toContain('dest.createWritable()')
+  it('replaces an existing file in place, stages a NEW one under a dot-name', () => {
+    // A replacement rides the writable's swap file (readers see the old
+    // bytes until close). A new file cannot: `getFileHandle(create)` makes
+    // an empty entry at once, and the server sync's PUT of a fresh
+    // project.json died with net::ERR_UPLOAD_FILE_CHANGED when it caught it
+    // (live, 2026-09-27). So a new file is staged and renamed in.
+    expect(body).toContain('exists ? name : `.${name}.part`')
+    expect(body).toContain('if (!exists) await publishStaged(dir, target, name)')
     expect(body.match(/createWritable\(\)/g)?.length).toBe(1)
   })
 

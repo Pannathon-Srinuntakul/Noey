@@ -187,8 +187,22 @@ export async function writeFileAtomic(
   const dir = await dirFor(segments, { create: true })
   if (!dir) throw new Error(`cannot create directory for ${path}`)
 
-  const dest = await dir.getFileHandle(name, { create: true })
-  const writable = await dest.createWritable()
+  // A writable's swap file makes a REPLACEMENT atomic: readers see the old
+  // bytes until close. A NEW file is different — `getFileHandle(create)`
+  // makes an empty entry at once, so for the whole write a reader (the
+  // server sync, the service worker) finds a file that exists and is empty,
+  // then changes under it (measured live: the sync's PUT of a fresh
+  // project.json died with net::ERR_UPLOAD_FILE_CHANGED). A new file is
+  // therefore staged under a dot-name and renamed in.
+  let exists = true
+  try {
+    await dir.getFileHandle(name)
+  } catch {
+    exists = false
+  }
+  const stagedName = exists ? name : `.${name}.part`
+  const target = await dir.getFileHandle(stagedName, { create: true })
+  const writable = await target.createWritable()
   try {
     if (data instanceof ReadableStream) {
       await data.pipeTo(writable, { preventClose: true })
@@ -199,8 +213,10 @@ export async function writeFileAtomic(
     }
   } catch (err) {
     await writable.abort().catch(() => undefined)
+    if (!exists) await dir.removeEntry(stagedName).catch(() => undefined)
     throw err
   }
+  if (!exists) await publishStaged(dir, target, name)
   return path
 }
 
