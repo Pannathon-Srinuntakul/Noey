@@ -5,6 +5,14 @@ import tailwindcss from '@tailwindcss/vite'
 
 /** The API this build talks to. Baked in — users never see or set it. */
 const BACKEND_URL = process.env.VITE_BACKEND_URL ?? 'https://noey-api-production.up.railway.app'
+/**
+ * Where presigned uploads go (lib/directUpload.ts): the bucket's own origin,
+ * `https://<bucket>.<endpoint host>` — `scripts/set_bucket_cors.py` prints it.
+ * Empty means no direct uploads: the CSP names no bucket, the browser's PUT is
+ * blocked, and the client falls back to the API route. Set it on the deploy
+ * that has a bucket; it is a build-time value like the API URL.
+ */
+const UPLOAD_ORIGIN = (process.env.VITE_UPLOAD_ORIGIN ?? '').trim()
 
 /**
  * Put the backend's ORIGIN into the page's CSP.
@@ -20,7 +28,9 @@ function cspBackendOrigin(): Plugin {
   return {
     name: 'noey-csp-backend-origin',
     transformIndexHtml(html) {
-      return html.replaceAll('%BACKEND_ORIGIN%', new URL(BACKEND_URL).origin)
+      return html
+        .replaceAll('%BACKEND_ORIGIN%', new URL(BACKEND_URL).origin)
+        .replaceAll('%UPLOAD_ORIGIN%', UPLOAD_ORIGIN ? new URL(UPLOAD_ORIGIN).origin : '')
     }
   }
 }

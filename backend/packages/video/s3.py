@@ -217,6 +217,104 @@ def _sync_delete_object(key: str) -> bool:
         raise
 
 
+# ── direct (presigned) uploads ──────────────────────────────────────────────
+#
+# The web client used to PUT every project file to the API, which wrote it to
+# its own disk and forwarded it to the bucket — so every byte of every clip
+# crossed the API host's network link twice. Measured 2026-09-23: that link
+# tops out around 110 MB/s, and 80 uploads at once broke it. A presigned PUT
+# lets the browser write the object itself; the API only signs the key and,
+# afterwards, checks what landed.
+
+
+def _output_object_key(project_uid: str, relative_path: str) -> str:
+    rel = relative_path.replace("\\", "/").lstrip("/")
+    return f"videos/{project_uid}/outputs/{rel}"
+
+
+def _sync_presigned_put(key: str, content_type: str, expires: int) -> str:
+    params: dict[str, str] = {"Bucket": _bucket(), "Key": key}
+    if content_type:
+        # Signed in: the browser has to send exactly this header, so a signed
+        # URL cannot be reused to store some other kind of file under the key.
+        params["ContentType"] = content_type
+    return _client().generate_presigned_url("put_object", Params=params, ExpiresIn=expires)
+
+
+async def output_upload_url(
+    project_uid: str, relative_path: str, content_type: str, expires: int = 900
+) -> str | None:
+    """A presigned PUT for one project file, or None when storage is off."""
+    if not _s3_enabled():
+        return None
+    key = _output_object_key(project_uid, relative_path)
+    return await asyncio.to_thread(_sync_presigned_put, key, content_type, expires)
+
+
+def _sync_object_size(key: str) -> int | None:
+    from botocore.exceptions import ClientError
+
+    try:
+        head = _client().head_object(Bucket=_bucket(), Key=key)
+    except ClientError as exc:
+        code = exc.response.get("Error", {}).get("Code", "")
+        if code in ("404", "NoSuchKey", "NotFound"):
+            return None
+        raise
+    return int(head.get("ContentLength") or 0)
+
+
+async def output_object_size(project_uid: str, relative_path: str) -> int | None:
+    """Bytes the bucket holds under a project file's key, or None if absent."""
+    if not _s3_enabled():
+        return None
+    return await asyncio.to_thread(_sync_object_size, _output_object_key(project_uid, relative_path))
+
+
+def upload_origin() -> str | None:
+    """The origin presigned PUTs go to — what the web page's CSP must allow.
+
+    Railway buckets (and R2) are addressed virtual-hosted style, so the host is
+    ``<bucket>.<endpoint host>``; on plain AWS boto3 derives it from the region.
+    """
+    if not _s3_enabled():
+        return None
+    from packages.core.settings import get_settings
+
+    s = get_settings()
+    if s.s3_endpoint_url:
+        from urllib.parse import urlsplit
+
+        parts = urlsplit(s.s3_endpoint_url)
+        return f"{parts.scheme}://{s.s3_bucket}.{parts.netloc}"
+    region = s.s3_region if s.s3_region and s.s3_region != "auto" else "us-east-1"
+    return f"https://{s.s3_bucket}.s3.{region}.amazonaws.com"
+
+
+def _sync_put_bucket_cors(origins: list[str]) -> None:
+    _client().put_bucket_cors(
+        Bucket=_bucket(),
+        CORSConfiguration={
+            "CORSRules": [
+                {
+                    "AllowedHeaders": ["*"],
+                    "AllowedMethods": ["PUT"],
+                    "AllowedOrigins": origins,
+                    "ExposeHeaders": ["ETag"],
+                    "MaxAgeSeconds": 3000,
+                }
+            ]
+        },
+    )
+
+
+async def put_bucket_cors(origins: list[str]) -> None:
+    """Allow the given page origins to PUT presigned uploads (scripts/set_bucket_cors.py)."""
+    if not _s3_enabled():
+        raise RuntimeError("storage is not configured")
+    await asyncio.to_thread(_sync_put_bucket_cors, origins)
+
+
 async def delete_output_file(project_uid: str, relative_path: str) -> None:
     """Delete one file under the project's outputs/ prefix. No-op when S3 off.
 

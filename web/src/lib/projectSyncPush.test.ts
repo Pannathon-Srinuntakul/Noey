@@ -24,6 +24,8 @@ vi.mock('../platform/fs', () => ({
 vi.mock('./authedFetch', () => ({
   authedFetch: async (_s: unknown, url: string, init?: RequestInit) => {
     if (!init) return new Response(JSON.stringify(remote))
+    // This deploy has no bucket: every file goes through the API route.
+    if (url.endsWith('/uploads')) return new Response('{}', { status: 409 })
     if (init.method === 'PUT') puts.push(decodeURIComponent(url.split('/files/')[1]))
     return new Response('{}')
   },

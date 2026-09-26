@@ -55,6 +55,15 @@ Railway Project
 VITE_BACKEND_URL=https://noey-api-production.up.railway.app
 ```
 
+`VITE_UPLOAD_ORIGIN` ก็เป็น build-time เหมือนกัน — origin ของ bucket ที่เบราว์เซอร์
+PUT ไฟล์ตรงเข้าไป (presigned upload, `web/src/lib/directUpload.ts`) ต้องอยู่ใน
+`connect-src` ของ CSP ไม่งั้นเบราว์เซอร์บล็อกเองแล้ว client ถอยไปอัปโหลดผ่าน api
+(ช้ากว่าและกินแบนด์วิดท์ของ api — วัด 2026-09-23 ได้ ~110 MB/s รวมทุกคน)
+
+```
+VITE_UPLOAD_ORIGIN=https://<bucket>.<endpoint host>   # scripts/set_bucket_cors.py พิมพ์ค่านี้ให้
+```
+
 ---
 
 ## ขั้นที่ 2 — Environment Variables
@@ -117,6 +126,16 @@ S3_ENDPOINT_URL=https://<account>.r2.cloudflarestorage.com   # R2 เท่า�
 S3_REGION=auto
 ```
 
+**อัปโหลดตรงเข้า bucket** (แบบ B): bucket ต้องยอมรับ PUT จาก origin ของหน้าเว็บ
+(CORS) — รันครั้งเดียวต่อ bucket ด้วยตัวแปร S3_* ของ production
+
+```
+cd backend && railway run --service "Noey Api" --environment production -- \
+  python scripts/set_bucket_cors.py https://noey-studio-production.up.railway.app
+```
+
+สคริปต์พิมพ์ origin ที่ต้องใส่ใน `VITE_UPLOAD_ORIGIN` ของ web ให้ด้วย
+
 ถ้าไม่ตั้งทั้งสองแบบ: manifest ของโปรเจกต์จะว่างเมื่อเปิดจากเบราว์เซอร์อื่น,
 โควตาที่เก็บอ่านได้ 0 เสมอ, และการแปลงไฟล์ HEVC จะรายงานว่าสำเร็จแต่ดาวน์โหลด 404
 ตลอดไป — ทุกอันดูเหมือนไฟล์หาย ไม่ใช่ config ผิด
@@ -167,6 +186,7 @@ PLAN_FREE_STORAGE_BYTES=10737418240   # 10 GB (default ทุกแพลน)
 - [ ] `ELEVENLABS_API_KEY` ถึง worker
 - [ ] `FRONTEND_URL` = origin ของ web จริง
 - [ ] `VITE_BACKEND_URL` ตอน build web = origin ของ api จริง
+- [ ] `VITE_UPLOAD_ORIGIN` ตอน build web = origin ของ bucket และรัน `set_bucket_cors.py` แล้ว
 - [ ] api pin ไว้ 1 replica (migration รันตอน start)
 - [ ] api และ web เป็น HTTPS ทั้งคู่
 - [ ] `ENCRYPTION_KEY` ตั้ง ถ้าจะเก็บ AI key ใน DB

@@ -16,6 +16,9 @@ WORKDIR /app
 
 ARG VITE_BACKEND_URL=https://noey-api-production.up.railway.app
 ENV VITE_BACKEND_URL=$VITE_BACKEND_URL
+# The bucket presigned uploads go to (see vite.config.ts). Empty = none.
+ARG VITE_UPLOAD_ORIGIN=
+ENV VITE_UPLOAD_ORIGIN=$VITE_UPLOAD_ORIGIN
 
 COPY package.json package-lock.json ./
 RUN npm ci

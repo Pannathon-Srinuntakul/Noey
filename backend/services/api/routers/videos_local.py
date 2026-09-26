@@ -93,7 +93,9 @@ from packages.video.s3 import (
     delete_scratch,
     list_output_files,
     open_output_range,
+    output_object_size,
     output_relpath,
+    output_upload_url,
     pull_scratch_file,
     push_output_file,
     push_scratch_file,
@@ -1500,12 +1502,142 @@ async def put_web_file(
         raise
     tmp.replace(dest)
     _ = plan
+    _note_stored(auth.user_id, size - replacing)
 
     # ONE object, not the whole tree: `push_project_files` re-uploads every
     # output the project has, so calling it per PUT made a sync of N files cost
     # N²/2 object writes.
     await push_output_file(uid, _rel_of(dest, uid), dest)
     log.info("web_file_stored", uid=uid, path=rel, bytes=size)
+    return WebFileEntry(path=rel, bytes=size)
+
+
+# ── direct-to-bucket uploads ──────────────────────────────────────────────────
+#
+# PUT /files/{rel} above streams every byte through this process and its
+# network link. Measured 2026-09-23 (docs/load-test-real-footage-2026-09-23.md):
+# the link tops out near 110 MB/s shared by everyone uploading, and 80 uploads
+# at once returned HTTP 500 on 44% of them. The standard shape is for the API
+# to sign a URL and the browser to write the object itself: `uploads` hands out
+# the signed PUT, `uploads/complete` checks what landed. The old PUT route stays
+# as the fallback for a deploy with no bucket and for a browser whose direct
+# PUT failed (a CORS gap, a corporate proxy).
+
+#: Presigned PUTs stay valid this long — a 2 GB clip over a slow uplink.
+_UPLOAD_URL_TTL_SEC = 60 * 60
+
+
+class UploadUrlIn(BaseModel):
+    path: str
+    bytes: int = Field(ge=0)
+    content_type: str = ""
+
+
+class UploadUrlOut(BaseModel):
+    url: str
+    method: str = "PUT"
+    headers: dict[str, str]
+    expires_in: int
+
+
+class UploadCompleteIn(BaseModel):
+    path: str
+
+
+async def _storage_check(session: AsyncSession, user_id: int, incoming: int, replacing: int) -> None:
+    """507 when ``incoming`` bytes (net of the ``replacing`` bytes it swaps
+    out) would take the account past its plan's storage. Same arithmetic as
+    ``put_web_file``; quota 0 = unlimited and skips the walk."""
+    quota, _plan = await _quota_for(session, user_id)
+    if not quota:
+        return
+    used, _ = await _storage_used(session, user_id)
+    projected = used + max(0, incoming) - replacing
+    if projected > quota:
+        raise HTTPException(
+            507,
+            f"พื้นที่เก็บเต็มแล้ว ({_human_bytes(projected)} จาก "
+            f"{_human_bytes(quota)}) — ลบโปรเจกต์เก่าออกก่อน",
+        )
+
+
+def _note_stored(user_id: int, delta: int) -> None:
+    """Fold bytes just accepted into the cached total, so the next file of the
+    same sync is projected against a count that includes this one. The cache
+    exists to avoid a walk per file; without this it also hid every file
+    accepted in the last 20 s from the quota, and a sync of many files could
+    overshoot the plan by all of them."""
+    cached = _USED_CACHE.get(user_id)
+    if cached:
+        _USED_CACHE[user_id] = (cached[0], max(0, cached[1] + delta), cached[2])
+
+
+async def _stored_size(uid: str, rel: str, local: Path) -> int:
+    """Bytes already stored under this path, on disk or in the bucket."""
+    if local.is_file():
+        return local.stat().st_size
+    return await output_object_size(uid, rel) or 0
+
+
+@router.post("/{uid}/uploads", response_model=UploadUrlOut)
+async def create_direct_upload(
+    uid: str,
+    body: UploadUrlIn,
+    auth: CurrentUser,
+    session: AsyncSession = Depends(db_session),
+) -> UploadUrlOut:
+    """A presigned PUT for one project file.
+
+    409 ``direct_upload_unavailable`` when this deploy has no bucket — the
+    client then falls back to ``PUT /files/{rel}``. The plan's storage is
+    checked against the DECLARED size here so a hopeless upload is refused
+    before it starts; ``uploads/complete`` re-checks the real size.
+    """
+    await _get_local_project(session, uid, auth.user_id)
+    dest = _web_file_path(uid, body.path)
+    rel = _rel_of(dest, uid)
+    replacing = await _stored_size(uid, rel, dest)
+    await _storage_check(session, auth.user_id, body.bytes, replacing)
+    content_type = body.content_type.strip() if body.content_type else ""
+    url = await output_upload_url(uid, rel, content_type, expires=_UPLOAD_URL_TTL_SEC)
+    if url is None:
+        raise HTTPException(
+            409, {"code": "direct_upload_unavailable", "message": "อัปโหลดตรงไม่พร้อมใช้บนเซิร์ฟเวอร์นี้"}
+        )
+    headers = {"Content-Type": content_type} if content_type else {}
+    return UploadUrlOut(url=url, headers=headers, expires_in=_UPLOAD_URL_TTL_SEC)
+
+
+@router.post("/{uid}/uploads/complete", response_model=WebFileEntry)
+async def complete_direct_upload(
+    uid: str,
+    body: UploadCompleteIn,
+    auth: CurrentUser,
+    session: AsyncSession = Depends(db_session),
+) -> WebFileEntry:
+    """Confirm a direct upload: the object must exist, and its REAL size must
+    fit the plan (an object over the line is deleted again — the signed URL
+    let the browser write anything). A stale local copy of the same path is
+    dropped so `get_web_file` serves the new object, not the old disk file."""
+    await _get_local_project(session, uid, auth.user_id)
+    dest = _web_file_path(uid, body.path)
+    rel = _rel_of(dest, uid)
+    size = await output_object_size(uid, rel)
+    if size is None:
+        raise HTTPException(404, "ไม่พบไฟล์ที่อัปโหลด — ลองอัปโหลดใหม่")
+    # The cached total predates this object (the walk ran for `uploads`, before
+    # the browser wrote it), so the new bytes are added and only a stale disk
+    # copy of the same path — which the walk did count — is subtracted.
+    replacing = dest.stat().st_size if dest.is_file() else 0
+    try:
+        await _storage_check(session, auth.user_id, size, replacing)
+    except HTTPException:
+        await delete_output_file(uid, rel)
+        raise
+    _note_stored(auth.user_id, size - replacing)
+    if dest.is_file():
+        dest.unlink()
+    log.info("web_file_stored_direct", uid=uid, path=rel, bytes=size)
     return WebFileEntry(path=rel, bytes=size)
 
 

@@ -29,6 +29,7 @@ import {
 } from '../platform/fs'
 import { ApiError } from './api'
 import { authedFetch, serverMessage } from './authedFetch'
+import { uploadDirect } from './directUpload'
 import type { ApiSession } from './videosLocalApi'
 
 /** Mirrors `_WEB_FILE_ROOTS` / `_WEB_FILE_NAMES` in `videos_local.py`. */
@@ -152,19 +153,25 @@ export async function pushProjectFiles(
     if (signal?.aborted) break
     const file = await readFile(projectFilePath(uid, entry.path))
     if (!file) continue
-    const form = new FormData()
-    form.append('file', file, entry.path.split('/').pop() ?? 'file')
-    const res = await authedFetch(session, `/videos/${remoteUid}/files/${encodePath(entry.path)}`, {
-      method: 'PUT',
-      body: form,
-      signal
-    })
-    if (!res.ok) {
-      // The server's own message, not a status code. 507 is "พื้นที่เก็บเต็ม"
-      // and names the numbers; 413 names the size limit. Both used to be
-      // swallowed into a generic failure the caller then ignored, so a project
-      // stopped halfway through syncing with nothing on screen to say so.
-      throw new ApiError(res.status, await serverMessage(res, `อัปโหลด ${entry.path} ไม่สำเร็จ`))
+    // Straight into the bucket when the server offers it (directUpload.ts);
+    // through the API only on a deploy with no bucket or a browser that
+    // cannot reach it.
+    const how = await uploadDirect(session, remoteUid, entry.path, file, signal)
+    if (how !== 'direct') {
+      const form = new FormData()
+      form.append('file', file, entry.path.split('/').pop() ?? 'file')
+      const res = await authedFetch(session, `/videos/${remoteUid}/files/${encodePath(entry.path)}`, {
+        method: 'PUT',
+        body: form,
+        signal
+      })
+      if (!res.ok) {
+        // The server's own message, not a status code. 507 is "พื้นที่เก็บเต็ม"
+        // and names the numbers; 413 names the size limit. Both used to be
+        // swallowed into a generic failure the caller then ignored, so a project
+        // stopped halfway through syncing with nothing on screen to say so.
+        throw new ApiError(res.status, await serverMessage(res, `อัปโหลด ${entry.path} ไม่สำเร็จ`))
+      }
     }
     uploaded += 1
     bytes += entry.bytes
