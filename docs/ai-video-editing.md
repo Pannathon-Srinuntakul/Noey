@@ -263,6 +263,47 @@ Output Video
 
 ---
 
+## How the model READS the video: static, not agentic (settled 2026-09-27)
+
+Gemini takes a per-part `mediaProcessing` field that chooses between two ways of
+reading a video. **Static** pre-samples frames at a fixed rate — 1/second by
+default, 5 at Precision high — and sends them all. **Agentic** hands over the
+file and lets the model navigate it, seeking and re-checking and raising the
+frame rate where the prompt says it matters; Google advertises up to 88% fewer
+tokens and recommends starting with it.
+
+It was measured on a real review clip and **rejected**. Do not re-open this
+without new numbers.
+
+The test: a 3-minute 1080x1920 product review, its own proxy (270x480, 12 fps),
+engine pro, Precision high, three rounds per mode, the product's own prompt.
+
+| | static | agentic |
+|---|---|---|
+| Input tokens | 65,750, identical every round | 1,011,268 and 1,399,977 |
+| Output | 15–19 cuts, a usable edit each time | nothing — `response_chars=0` |
+| Rounds that produced a video | 3 of 3 | **0 of 3** |
+| Cost | ฿27.51 for all three | ฿130.18 for nothing |
+
+Agentic used **21x more** input, not 88% less. Left to choose for itself on a
+detailed review clip, the model zoomed and re-checked until it filled the 1M
+context, which left no room to write the JSON — every round failed with
+`no JSON object in LLM response` after spending the input.
+
+Why static suits this product, in Google's own words: agentic is for *"long-form
+videos or queries targeting specific moments"*, static for *"frame-level
+precision across the entire clip"*. Our question is the second one — every cut
+boundary across the whole clip, to a tenth of a second. A public benchmark does
+put agentic ahead on edit decisions (F1 0.68 vs 0.55) and behind on broad moment
+retrieval (0.27 vs 0.30), on six synthetic 10-minute videos; its author calls
+the result mixed, and it compares against static at the default 1 fps, which is
+not what we run.
+
+The switch, the LiteLLM patch that carried the field, and the A/B harness were
+all removed once the answer was in. LiteLLM cannot express `mediaProcessing`
+(1.100.1, still true in 1.102.1), so using it means patching library internals —
+not something to carry for a mode we do not want.
+
 ## AI Analysis — ความสามารถที่ต้องการ
 
 ### โหมด 1
