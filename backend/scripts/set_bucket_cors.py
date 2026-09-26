@@ -9,7 +9,7 @@ Run from `backend/` with the bucket's S3_* variables in the environment
 (locally from .env, or `railway run --service "Noey Api" -- python
 scripts/set_bucket_cors.py ...` against production):
 
-    python scripts/set_bucket_cors.py https://noey-studio-production.up.railway.app http://localhost:5174
+    python scripts/set_bucket_cors.py https://noey-frontend-production.up.railway.app http://localhost:5174
 """
 
 from __future__ import annotations

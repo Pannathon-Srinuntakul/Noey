@@ -55,6 +55,10 @@ Railway Project
 VITE_BACKEND_URL=https://noey-api-production.up.railway.app
 ```
 
+หมายเหตุชื่อ service บน Railway สลับกับความหมาย: **"Noey Frontend"** (nginx, port 8080,
+`noey-frontend-production.up.railway.app`) คือตัวแก้ไขวิดีโอ (`web/`) ส่วน **"Noey Studio"**
+(Next, port 3000) คือเว็บไซต์หน้าร้าน (noey-frontend repo) — ตั้ง `VITE_*` ที่ "Noey Frontend"
+
 `VITE_UPLOAD_ORIGIN` ก็เป็น build-time เหมือนกัน — origin ของ bucket ที่เบราว์เซอร์
 PUT ไฟล์ตรงเข้าไป (presigned upload, `web/src/lib/directUpload.ts`) ต้องอยู่ใน
 `connect-src` ของ CSP ไม่งั้นเบราว์เซอร์บล็อกเองแล้ว client ถอยไปอัปโหลดผ่าน api
@@ -131,7 +135,7 @@ S3_REGION=auto
 
 ```
 cd backend && railway run --service "Noey Api" --environment production -- \
-  python scripts/set_bucket_cors.py https://noey-studio-production.up.railway.app
+  python scripts/set_bucket_cors.py https://noey-frontend-production.up.railway.app
 ```
 
 สคริปต์พิมพ์ origin ที่ต้องใส่ใน `VITE_UPLOAD_ORIGIN` ของ web ให้ด้วย
