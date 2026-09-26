@@ -2290,17 +2290,16 @@ export const VideoTimelineEditor = memo(function VideoTimelineEditor({
     hasSelection: !!selectedId,
     onEscape: () => {
       // Esc gives back the smallest thing it can reach: the context menu,
-      // then the selection, then the whole editor. Closing the editor from
-      // the key people press to deselect is a surprise.
+      // then the selection — and then nothing. It used to close the whole
+      // editor as the third step, and the key people press to deselect (or
+      // press twice out of habit, as every other editor lets them) threw
+      // them out to the project page mid-edit (live 2026-09-27). Leaving is
+      // the back button's job; no desktop editor closes on Esc.
       if (contextMenu) {
         setContextMenu(null)
         return
       }
-      if (selection.ids.length > 0 || selectedId) {
-        setSelection(clearSelection())
-        return
-      }
-      void requestClose()
+      if (selection.ids.length > 0 || selectedId) setSelection(clearSelection())
     },
     togglePlay,
     playSelectionOrRange,

@@ -19,7 +19,7 @@ export interface EditorShortcutActions {
   canShotSwap: boolean
   hasSelection: boolean
   /** Esc with nothing typing and no sheet open: close the context menu,
-   * else clear the selection, else close the editor — the editor's order. */
+   * else clear the selection. Never the editor (see TimelineEditor). */
   onEscape: () => void
 
   // ---- playback ----------------------------------------------------------

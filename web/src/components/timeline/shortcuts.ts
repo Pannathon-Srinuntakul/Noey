@@ -336,7 +336,7 @@ export const SHORTCUT_DISPLAY: ShortcutDisplayDef[] = [
   {
     id: 'escape',
     category: 'select',
-    labelTh: 'ยกเลิกการเลือก / ปิดหน้านี้',
+    labelTh: 'ยกเลิกการเลือก / ปิดเมนู',
     parts: [{ type: 'key', code: 'Escape' }]
   },
   // ---- edit --------------------------------------------------------------

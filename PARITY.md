@@ -129,6 +129,9 @@ limit except where marked.
   modifier tracker + the drag binder's per-frame `altKey`); a snap draws a
   guide line with a triangle head; the scrub has a softer 6 px threshold and
   Alt/Shift bypass; every drag result is frame-quantised before snapping.
+- Esc never closes the editor (it used to, as the third step after the
+  context menu and the selection — a habit press threw people out to the
+  project page mid-edit, live 2026-09-27); the back button is the way out.
 - The playhead is a FIXED target: the player no longer reads a skimmed frame
   or a trim's edge preview back as the clock (`skimShowingRef`), and the
   target is frozen at drag start (`dragPlayheadRef`); voiceover/caption edges
