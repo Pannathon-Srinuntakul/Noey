@@ -17,6 +17,10 @@ import DevUiPage from './pages/DevUiPage'
 import LoginPage from './pages/LoginPage'
 
 import { BACKEND_URL } from './lib/backendUrl'
+import { handleGoogleReturn } from './lib/googleReturn'
+import type { Route } from './lib/routes'
+import { BrandMark } from './components/ui/BrandMark'
+import { Button } from './components/ui/Button'
 
 /**
  * The browser's store is per ORIGIN, not per account. Logging out and signing
@@ -70,11 +74,15 @@ const appLog = (scope: string, message: string): void => {
 function Workspace({
   session,
   onSession,
-  onLogout
+  onLogout,
+  onAccountDeleted,
+  initialRoute
 }: {
   session: Session
   onSession: (next: Session) => void
   onLogout: () => void
+  onAccountDeleted: () => void
+  initialRoute?: Route
 }): React.JSX.Element {
   const apiSession = useMemo<ApiSession>(
     () => ({
@@ -126,7 +134,7 @@ function Workspace({
     <PrefsProvider>
       <ToastProvider>
         <ConfirmProvider>
-          <RouterProvider>
+          <RouterProvider initial={initialRoute}>
             <JobsProvider session={apiSession}>
               {/* Editor AI work lives here, not in the editors: leaving the
                   screen must not kill a running job (see lib/fxJobs). */}
@@ -136,7 +144,11 @@ function Workspace({
                     {/* Below the job providers on purpose: a screen that
                         throws must not take a running render with it. */}
                     <ErrorBoundary onError={(m) => appLog('render', `screen crashed: ${m}`)}>
-                      <RouteView session={session} onLogout={onLogout} />
+                      <RouteView
+                        session={session}
+                        onLogout={onLogout}
+                        onAccountDeleted={onAccountDeleted}
+                      />
                     </ErrorBoundary>
                   </AppShell>
                 </UsageProvider>
@@ -152,6 +164,11 @@ function Workspace({
 function App(): React.JSX.Element {
   const [session, setSession] = useState<Session | null>(null)
   const [restoring, setRestoring] = useState(true)
+  // Set by a page load that came back from Google: an error for the login
+  // screen, or the screen the workspace opens on (link / re-auth → settings).
+  const [loginError, setLoginError] = useState<string | null>(null)
+  const [initialRoute, setInitialRoute] = useState<Route | undefined>(undefined)
+  const [goodbye, setGoodbye] = useState(false)
 
   // Tokens refreshed OUTSIDE the shared session object (the settings page's
   // private path, the style library) and refreshes that FAIL both arrive over
@@ -245,6 +262,23 @@ function App(): React.JSX.Element {
 
   useEffect(() => {
     const attempt = async (): Promise<void> => {
+      // Back from Google? Sign-in hands over a fresh pair; link / re-auth
+      // finish against the stored session, which the path below restores.
+      const google = await handleGoogleReturn(BACKEND_URL)
+      if (google?.signedIn) {
+        const { accessToken, refreshToken, profile } = google.signedIn
+        await window.noey.auth.save({
+          baseUrl: BACKEND_URL,
+          email: profile.email,
+          accessToken,
+          refreshToken
+        })
+        await ensureStoreOwner(profile.email)
+        setSession({ baseUrl: BACKEND_URL, accessToken, refreshToken, profile })
+        return
+      }
+      if (google?.loginError) setLoginError(google.loginError)
+      if (google?.route) setInitialRoute(google.route)
       const stored = await window.noey.auth.load()
       if (!stored) return
       // Always use the baked-in backend URL, ignoring any older stored value.
@@ -282,6 +316,31 @@ function App(): React.JSX.Element {
     setSession(null)
   }, [session])
 
+  /**
+   * The server deleted the account (204). Every token is already dead, so
+   * there is nothing to revoke: forget them, drop this browser's copy of the
+   * projects (the server does not touch OPFS), and say goodbye.
+   */
+  const onAccountDeleted = useCallback(() => {
+    void (async () => {
+      await window.noey.auth.clear()
+      forgetWorkerSession()
+      try {
+        await window.noey.storage.clearAll()
+      } catch (err) {
+        appLog('account', `local store not cleared after deletion: ${String(err)}`)
+      }
+      try {
+        localStorage.removeItem(STORE_OWNER_KEY)
+      } catch {
+        // Storage unavailable — nothing to remove.
+      }
+      setInitialRoute(undefined)
+      setGoodbye(true)
+      setSession(null)
+    })()
+  }, [])
+
   const onLogin = useCallback(async (next: Session) => {
     await ensureStoreOwner(next.profile.email)
     setSession(next)
@@ -298,7 +357,16 @@ function App(): React.JSX.Element {
   // Signed in: AppShell owns the title bar (it needs the current route to
   // label it). Signed out / restoring: render a bare one so the window is
   // still draggable and the OS caption buttons sit on a themed strip.
-  if (session) return <Workspace session={session} onSession={setSession} onLogout={logout} />
+  if (session)
+    return (
+      <Workspace
+        session={session}
+        onSession={setSession}
+        onLogout={logout}
+        onAccountDeleted={onAccountDeleted}
+        initialRoute={initialRoute}
+      />
+    )
 
   return (
     <div className="flex h-full flex-col bg-ground">
@@ -311,9 +379,36 @@ function App(): React.JSX.Element {
           <div className="flex flex-1 items-center justify-center bg-ground text-sm text-muted">
             กำลังโหลด…
           </div>
+        ) : goodbye ? (
+          <Goodbye onDone={() => setGoodbye(false)} />
         ) : (
-          <LoginPage backendUrl={BACKEND_URL} onLogin={(next) => void onLogin(next)} />
+          <LoginPage
+            backendUrl={BACKEND_URL}
+            initialError={loginError}
+            onLogin={(next) => void onLogin(next)}
+          />
         )}
+      </div>
+    </div>
+  )
+}
+
+/** After a self-service deletion: the account is gone, say so plainly. */
+function Goodbye({ onDone }: { onDone: () => void }): React.JSX.Element {
+  return (
+    <div className="flex flex-1 items-safe-center justify-center overflow-y-auto px-5 py-8">
+      <div className="w-full max-w-[420px] rounded-md border border-border-faint bg-surface p-8">
+        <BrandMark size={26} className="text-accent" />
+        <h1 className="mt-4 text-2xl font-semibold text-ink">ลบบัญชีเรียบร้อยแล้ว</h1>
+        <p className="mt-2 text-sm leading-[1.6] text-muted">
+          ข้อมูลบัญชีและโปรเจกต์บนเซิร์ฟเวอร์ถูกลบแล้ว และล้างสำเนาในเบราว์เซอร์นี้แล้ว ขอบคุณที่ใช้
+          Noey Studio
+        </p>
+        <div className="mt-6">
+          <Button variant="secondary" onClick={onDone}>
+            กลับไปหน้าเข้าสู่ระบบ
+          </Button>
+        </div>
       </div>
     </div>
   )

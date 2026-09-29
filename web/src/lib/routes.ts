@@ -15,7 +15,9 @@ export type Route =
   | { name: 'effectsClip'; uid: string }
   | { name: 'voiceover'; uid: string }
   | { name: 'library'; category?: 'cutStyles' | 'zoomStyles' }
-  | { name: 'settings' }
+  // `tab` opens a specific tab — the Google link / re-auth return lands on
+  // บัญชี, where the person started it.
+  | { name: 'settings'; tab?: 'account' }
 
 export type RouteName = Route['name']
 

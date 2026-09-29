@@ -13,8 +13,21 @@ interface RouterApi {
 
 const RouterContext = createContext<RouterApi | null>(null)
 
-export function RouterProvider({ children }: { children: React.ReactNode }): React.JSX.Element {
-  const [stack, setStack] = useState<Route[]>([{ name: 'projects' }])
+export function RouterProvider({
+  children,
+  initial
+}: {
+  children: React.ReactNode
+  /** The first screen. The projects list unless a page load came back from
+   * somewhere with a destination (the Google link / re-auth return). The
+   * projects list stays underneath it so `back` has somewhere to go. */
+  initial?: Route
+}): React.JSX.Element {
+  const [stack, setStack] = useState<Route[]>(() =>
+    initial && initial.name !== 'projects'
+      ? [{ name: 'projects' }, initial]
+      : [{ name: 'projects' }]
+  )
 
   const navigate = useCallback((next: Route) => {
     setStack((prev) => {

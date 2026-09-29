@@ -28,6 +28,7 @@ import { useUsageInfo } from '../lib/usageInfo'
 import { planLabel } from '../lib/planLadder'
 import { WalletCard } from '../components/settings/WalletCard'
 import { DiagnosticsTab } from '../components/settings/DiagnosticsTab'
+import { AccountSecurity } from '../components/settings/AccountSecurity'
 import { PageHeader } from '../components/shell/PageHeader'
 import { Button } from '../components/ui/Button'
 import { Chip } from '../components/ui/Chip'
@@ -550,10 +551,12 @@ function DefaultsTab(): React.JSX.Element {
 
 function AccountTab({
   session,
-  onLogout
+  onLogout,
+  onAccountDeleted
 }: {
   session: Session
   onLogout: () => void
+  onAccountDeleted: () => void
 }): React.JSX.Element {
   const { prefs, update } = usePrefs()
   const name = session.profile.email.split('@')[0]
@@ -584,6 +587,8 @@ function AccountTab({
           label={(prefs?.notifications ?? true) ? 'เปิด' : 'ปิด'}
         />
       </Section>
+
+      <AccountSecurity session={session} onAccountDeleted={onAccountDeleted} />
     </div>
   )
 }
@@ -592,12 +597,17 @@ function AccountTab({
 
 export default function SettingsPage({
   session,
-  onLogout
+  onLogout,
+  onAccountDeleted,
+  initialTab
 }: {
   session: Session
   onLogout: () => void
+  onAccountDeleted: () => void
+  /** Opened on a specific tab — a Google link / re-auth return lands on บัญชี. */
+  initialTab?: TabKey
 }): React.JSX.Element {
-  const [tab, setTab] = useState<TabKey>('usage')
+  const [tab, setTab] = useState<TabKey>(initialTab ?? 'usage')
 
   return (
     <>
@@ -611,7 +621,9 @@ export default function SettingsPage({
           {tab === 'storage' ? <StorageTab /> : null}
           {tab === 'defaults' ? <DefaultsTab /> : null}
           {tab === 'diagnostics' ? <DiagnosticsTab /> : null}
-          {tab === 'account' ? <AccountTab session={session} onLogout={onLogout} /> : null}
+          {tab === 'account' ? (
+            <AccountTab session={session} onLogout={onLogout} onAccountDeleted={onAccountDeleted} />
+          ) : null}
         </div>
       </div>
     </>

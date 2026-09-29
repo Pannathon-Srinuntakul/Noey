@@ -13,6 +13,28 @@ const BACKEND_URL = process.env.VITE_BACKEND_URL ?? 'https://noey-api-production
  * that has a bucket; it is a build-time value like the API URL.
  */
 const UPLOAD_ORIGIN = (process.env.VITE_UPLOAD_ORIGIN ?? '').trim()
+/**
+ * Error monitoring (src/lib/monitoring.ts) — optional, build-time. The browser
+ * SDK POSTs events to the host inside the DSN, so connect-src must name that
+ * origin; with no DSN the CSP names nothing and the SDK is never loaded. A
+ * DSN is public by design (it can submit events, never read them).
+ */
+const SENTRY_DSN = (process.env.VITE_SENTRY_DSN ?? '').trim()
+const SENTRY_ENVIRONMENT = (process.env.VITE_SENTRY_ENVIRONMENT ?? '').trim()
+const SENTRY_RELEASE = (process.env.VITE_SENTRY_RELEASE ?? '').trim()
+
+/** The DSN's ingest origin (`https://o<org>.ingest.<region>.sentry.io`), or ''. */
+function sentryIngestOrigin(dsn: string): string {
+  if (!dsn) return ''
+  try {
+    const u = new URL(dsn)
+    if (u.protocol !== 'https:' && u.protocol !== 'http:') return ''
+    return u.origin
+  } catch {
+    // A malformed DSN must not break the build; monitoring.ts refuses it too.
+    return ''
+  }
+}
 
 /**
  * Put the backend's ORIGIN into the page's CSP.
@@ -44,6 +66,7 @@ function cspBackendOrigin(): Plugin {
         .replaceAll('%BACKEND_ORIGIN%', new URL(BACKEND_URL).origin)
         .replaceAll('%UPLOAD_ORIGIN%', UPLOAD_ORIGIN ? new URL(UPLOAD_ORIGIN).origin : '')
         .replaceAll('%DEV_ORIGINS%', serving ? DEV_ORIGINS : '')
+        .replaceAll('%SENTRY_ORIGIN%', sentryIngestOrigin(SENTRY_DSN))
     }
   }
 }
@@ -55,7 +78,12 @@ function cspBackendOrigin(): Plugin {
 export default defineConfig({
   resolve: { alias: { '@renderer': resolve(__dirname, 'src') } },
   plugins: [react(), tailwindcss(), cspBackendOrigin()],
-  define: { 'import.meta.env.VITE_BACKEND_URL': JSON.stringify(BACKEND_URL) },
+  define: {
+    'import.meta.env.VITE_BACKEND_URL': JSON.stringify(BACKEND_URL),
+    'import.meta.env.VITE_SENTRY_DSN': JSON.stringify(SENTRY_DSN),
+    'import.meta.env.VITE_SENTRY_ENVIRONMENT': JSON.stringify(SENTRY_ENVIRONMENT),
+    'import.meta.env.VITE_SENTRY_RELEASE': JSON.stringify(SENTRY_RELEASE)
+  },
   server: { port: 5174 },
   worker: { format: 'es' }
 })

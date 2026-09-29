@@ -21,6 +21,11 @@ interface ImportMetaEnv {
    *  deployment when unset. Override for local dev:
    *  VITE_BACKEND_URL=http://localhost:8000 npm run dev */
   readonly VITE_BACKEND_URL?: string
+  /** Error monitoring (lib/monitoring.ts). Empty = off: the SDK is never
+   *  loaded and the CSP names no ingest host. Build-time, like the API URL. */
+  readonly VITE_SENTRY_DSN?: string
+  readonly VITE_SENTRY_ENVIRONMENT?: string
+  readonly VITE_SENTRY_RELEASE?: string
 }
 
 interface ImportMeta {

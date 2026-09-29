@@ -25,6 +25,11 @@ export interface Me {
   tenant_slug: string
   role: string
   is_admin: boolean
+  /** Additive fields (backend 2026-09-30). Optional: an older server omits
+   * them, and the account screen then offers the password path only. */
+  has_password?: boolean
+  google_linked?: boolean
+  google_email?: string | null
 }
 
 export class ApiError extends Error {
@@ -34,10 +39,23 @@ export class ApiError extends Error {
     /** Set when the server refused to start (or stopped) paid work — a limit,
      * the free tier, a paused service. The UI branches on it (continue with
      * the balance, show the reset time) instead of parsing `detail`. */
-    public refusal: BillingRefusal | null = null
+    public refusal: BillingRefusal | null = null,
+    /** The machine-readable `detail.code` the account and Google routes send
+     * (`{code, message}`). Branch on this, never on the Thai message. */
+    public code: string | null = null,
+    /** The whole `detail` object when it was one — carries extras such as
+     * `balance_satang` on a 409 `wallet_balance`. */
+    public extra: Record<string, unknown> | null = null
   ) {
     super(detail)
   }
+}
+
+/** `detail.code` / the detail object of a `{detail: {code, message, ...}}` body. */
+export function detailObject(body: unknown): Record<string, unknown> | null {
+  const detail = (body as { detail?: unknown } | null)?.detail
+  if (!detail || typeof detail !== 'object' || Array.isArray(detail)) return null
+  return detail as Record<string, unknown>
 }
 
 /**
@@ -60,7 +78,9 @@ export function errorFromResponse(res: { status: number; json: () => unknown }):
   } catch {
     /* non-JSON error body */
   }
-  return new ApiError(res.status, detail)
+  const obj = detailObject(body)
+  const code = typeof obj?.code === 'string' ? obj.code : null
+  return new ApiError(res.status, detail, null, code, obj)
 }
 
 function apiUrl(baseUrl: string, path: string): string {
@@ -297,4 +317,71 @@ export async function restoreSession(
   } catch {
     return null
   }
+}
+
+// ── Google sign-in + account deletion (backend contract 2026-09-30) ─────────
+// docs/google-sign-in.md. Every route answers errors as
+// `detail: {code, message}` — callers branch on `ApiError.code`.
+
+export type GoogleIntent = 'signin' | 'link' | 'reauth'
+
+/** `GET /auth/google/config` — public; `enabled` false until the server has
+ * GOOGLE_CLIENT_ID / _SECRET / _REDIRECT_URIS. Never 503. */
+export function googleConfig(
+  baseUrl: string
+): Promise<{ enabled: boolean; redirect_uris: string[] }> {
+  return request(baseUrl, '/auth/google/config')
+}
+
+/** `POST /auth/google/start` — link/reauth need the caller's access token. */
+export function googleStart(
+  baseUrl: string,
+  body: { redirect_uri: string; intent: GoogleIntent },
+  accessToken?: string
+): Promise<{ authorization_url: string; state: string; expires_in: number }> {
+  return request(baseUrl, '/auth/google/start', {
+    method: 'POST',
+    headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
+    body: JSON.stringify(body)
+  })
+}
+
+export type GoogleCallbackResult =
+  | (TokenPair & { intent: 'signin'; created: boolean; linked: boolean })
+  | { intent: 'link'; google_email: string }
+  | { intent: 'reauth'; reauth_token: string; expires_in: number }
+
+/** `POST /auth/google/callback` — spends the state; link/reauth need the SAME
+ * user's access token as /start. */
+export function googleCallback(
+  baseUrl: string,
+  body: { code: string; state: string; redirect_uri: string },
+  accessToken?: string
+): Promise<GoogleCallbackResult> {
+  return request(baseUrl, '/auth/google/callback', {
+    method: 'POST',
+    headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
+    body: JSON.stringify(body)
+  })
+}
+
+/** `DELETE /auth/google` — 409 `password_required` while there is no password. */
+export function googleUnlink(baseUrl: string, accessToken: string): Promise<void> {
+  return request<void>(baseUrl, '/auth/google', {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${accessToken}` }
+  })
+}
+
+/** `POST /auth/delete-account` — 204 on success; every token is dead after it. */
+export function deleteAccount(
+  baseUrl: string,
+  accessToken: string,
+  body: { password?: string; reauth_token?: string; forfeit_wallet_balance?: boolean }
+): Promise<void> {
+  return request<void>(baseUrl, '/auth/delete-account', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${accessToken}` },
+    body: JSON.stringify(body)
+  })
 }

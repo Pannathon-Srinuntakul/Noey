@@ -30,10 +30,12 @@ function NotBuiltYet({ what }: { what: string }): React.JSX.Element {
 
 export function RouteView({
   session,
-  onLogout
+  onLogout,
+  onAccountDeleted
 }: {
   session: Session
   onLogout: () => void
+  onAccountDeleted: () => void
 }): React.JSX.Element {
   const { route } = useRouter()
 
@@ -48,7 +50,14 @@ export function RouteView({
       if (!canUseStyles) return <ProjectsPage />
       return <EffectsStudioPage session={session} initialCategory={route.category} />
     case 'settings':
-      return <SettingsPage session={session} onLogout={onLogout} />
+      return (
+        <SettingsPage
+          session={session}
+          onLogout={onLogout}
+          onAccountDeleted={onAccountDeleted}
+          initialTab={route.tab}
+        />
+      )
     case 'wizard':
       return <WizardPage initialFiles={route.initialFiles} />
     case 'detail':

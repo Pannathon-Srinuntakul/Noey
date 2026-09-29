@@ -19,6 +19,14 @@ ENV VITE_BACKEND_URL=$VITE_BACKEND_URL
 # The bucket presigned uploads go to (see vite.config.ts). Empty = none.
 ARG VITE_UPLOAD_ORIGIN=
 ENV VITE_UPLOAD_ORIGIN=$VITE_UPLOAD_ORIGIN
+# Error monitoring (src/lib/monitoring.ts). Empty = off. Its ingest origin is
+# added to the CSP only when set (vite.config.ts).
+ARG VITE_SENTRY_DSN=
+ENV VITE_SENTRY_DSN=$VITE_SENTRY_DSN
+ARG VITE_SENTRY_ENVIRONMENT=
+ENV VITE_SENTRY_ENVIRONMENT=$VITE_SENTRY_ENVIRONMENT
+ARG VITE_SENTRY_RELEASE=
+ENV VITE_SENTRY_RELEASE=$VITE_SENTRY_RELEASE
 
 COPY package.json package-lock.json ./
 RUN npm ci

@@ -23,6 +23,7 @@
     "@fontsource/prompt": "^5.2.8",
     "@fontsource/sarabun": "^5.2.8",
     "@mediabunny/aac-encoder": "^1.55.7",
+    "@sentry/react": "^11.1.0",
     "fflate": "^0.8.2",
     "lucide-react": "^1.23.0",
     "mediabunny": "^1.50.8",

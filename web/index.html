@@ -24,10 +24,15 @@
       own, so this used to be a hard-coded origin — which silently blocked
       every request on any other deployment, before it left the page, with the
       UI reporting only "เชื่อมต่อ server ไม่ได้".
+
+      `%SENTRY_ORIGIN%` is the error-monitoring ingest host taken from
+      VITE_SENTRY_DSN, and empty when that is unset (monitoring off).
+      Google sign-in adds nothing here: accounts.google.com is a top-level
+      navigation, not a fetch, script or frame.
     -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; worker-src 'self' blob:; connect-src 'self' blob: %BACKEND_ORIGIN% %UPLOAD_ORIGIN% %DEV_ORIGINS%"
+      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; worker-src 'self' blob:; connect-src 'self' blob: %BACKEND_ORIGIN% %UPLOAD_ORIGIN% %SENTRY_ORIGIN% %DEV_ORIGINS%"
     />
   </head>
 

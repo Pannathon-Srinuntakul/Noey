@@ -10,6 +10,7 @@ import { createRoot } from 'react-dom/client'
 import App from './App'
 import { WebGate } from './platform/WebGate'
 import { installLifecycleTrace } from './lib/lifecycleTrace'
+import { initMonitoring } from './lib/monitoring'
 
 /**
  * Register the media service worker before rendering.
@@ -23,7 +24,9 @@ async function boot(): Promise<void> {
   // Before the first render: a boot line appearing in the middle of a render is
   // how we learn iOS threw the page away rather than the job failing.
   installLifecycleTrace()
-  const root = createRoot(document.getElementById('root')!)
+  // Error monitoring: a no-op returning {} unless VITE_SENTRY_DSN was baked in.
+  const rootOptions = await initMonitoring()
+  const root = createRoot(document.getElementById('root')!, rootOptions)
 
   // `/transfer/<token>` — the page a PHONE lands on after scanning the
   // รับจากมือถือ QR. It renders before (and without) everything else on
