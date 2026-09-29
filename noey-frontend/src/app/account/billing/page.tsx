@@ -3,7 +3,8 @@ import { BillingPanel, type UpgradeOption } from "@/components/account/BillingPa
 import { formatCard, hasLiveSubscription, needsPaymentAttention, subscriptionLapsed, subscriptionStatusLabel } from "@/lib/billing";
 import { formatThaiDate } from "@/lib/format";
 import { MSG } from "@/lib/messages";
-import { PAID_TIERS, PLAN_COPY, displayPrice, isPaidTier, isTier, planDisplayName, tierFromLookupKey, type PaidTier } from "@/lib/plans";
+import { BETA_PRICE_NOTE_SHORT } from "@/lib/beta";
+import { PAID_TIERS, PLAN_COPY, displayPrice, isBetaPriced, isPaidTier, isTier, planDisplayName, strikePrice, tierFromLookupKey, type PaidTier } from "@/lib/plans";
 import { privatePageMetadata } from "@/lib/seo";
 import { loadAccountData } from "@/lib/server/account-data";
 import { getPriceTable } from "@/lib/server/prices";
@@ -34,6 +35,7 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
     tier,
     name: PLAN_COPY[tier].name,
     price: displayPrice(table, tier),
+    fullPrice: strikePrice(table, tier),
     summary: PLAN_COPY[tier].dialogSummary,
     recommended: !!PLAN_COPY[tier].recommended,
     current: tier === currentTier && !cancelScheduled,
@@ -97,6 +99,7 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
         billingEnabled={billingEnabled}
         periodEndLabel={live ? periodEndLabel : null}
         cardLabel={formatCard(billing?.payment_method)}
+        betaNote={isBetaPriced(table) ? BETA_PRICE_NOTE_SHORT : null}
       />
     </>
   );

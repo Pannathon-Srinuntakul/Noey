@@ -4,20 +4,26 @@
  * the HTML pages render, so an agent never reads a price the page does not
  * show. No AI vendor is named anywhere in this output (unit-tested).
  */
-import { PRICING_FAQ } from "./faq";
+import { BETA_END_DATE_ISO, BETA_PRICE_AFTER_SHORT, BETA_PRICE_LINE } from "./beta";
+import { pricingFaq } from "./faq";
 import { ANSWERED_QUESTIONS, GUIDE_DOCS, GUIDE_ORDER, type GuideDoc } from "./guide";
 import { SOFTWARE_DESCRIPTION } from "./jsonld";
 import { SCOPE_FITS, SCOPE_MISFITS, SCOPE_STEPS, SCOPE_SUMMARY, SCOPE_YOUR_WORK } from "./scope";
 import {
   COMPARISON_ROWS,
+  FULL_PRICES_THB,
   PAID_TIERS,
   PLAN_COPY,
-  SCENE_FOOTAGE_HIGH,
-  SCENE_FOOTAGE_STANDARD,
   TIERS,
   displayPrice,
-  multiplierCaption,
-  multiplierLabel,
+  CLIPS_FOOTNOTE,
+  clipsHeadline,
+  clipsLadderSentence,
+  footageLadderSentence,
+  formatBaht,
+  isBetaPriced,
+  precisionLabel,
+  strikePrice,
   type PriceTable,
 } from "./plans";
 import { PAGES, SITE_NAME, absoluteUrl, publishedDate, type PageKey } from "./site";
@@ -36,8 +42,10 @@ function markdownHeader(key: PageKey, title: string): string[] {
 
 function priceLine(table: PriceTable, tier: (typeof TIERS)[number]): string {
   const price = displayPrice(table, tier);
-  if (tier === "free") return "0 บาท";
-  return price ? `${price} บาท/เดือน` : "ยังไม่เปิดขาย";
+  if (tier === "free") return "0 บาท (เครดิตทดลองก้อนเดียว ไม่รีเซ็ตรายเดือน)";
+  if (!price) return "ยังไม่เปิดขาย";
+  const full = strikePrice(table, tier);
+  return full ? `${price} บาท/เดือน (ราคาเบต้า ราคาปกติ ${full} บาท ถึง ${BETA_END_DATE_ISO})` : `${price} บาท/เดือน`;
 }
 
 export function buildPricingMarkdown(table: PriceTable, updatedIso: string): string {
@@ -45,14 +53,22 @@ export function buildPricingMarkdown(table: PriceTable, updatedIso: string): str
   lines.push(`# ราคา ${SITE_NAME}`);
   lines.push("");
   lines.push(
-    `> ${SITE_NAME} มีแพลนฟรี 0 บาท ใช้ได้ต่อเนื่องไม่ต้องผูกบัตร และแพลนรายเดือน ${PAID_TIERS.map(
+    `> ${SITE_NAME} ให้เครดิตทดลองฟรีก้อนเดียวเมื่อสมัคร ไม่ต้องผูกบัตร และมีแพลนรายเดือน ${PAID_TIERS.map(
       (tier) => `${PLAN_COPY[tier].name} ${priceLine(table, tier)}`,
-    ).join(" · ")} ทุกแพลนได้ไทม์ไลน์ ซับไทย และการเรนเดอร์แบบไม่จำกัดครั้ง ที่ต่างกันคือปริมาณการใช้งาน AI (บอกเป็นจำนวนเท่าของแพลน Lite ตั้งแต่ 1x ถึง 35x) ความยาวคลิปต่อโปรเจกต์ จำนวนงานที่ทำพร้อมกันได้ และพื้นที่เก็บงาน`,
+    ).join(" · ")} ทุกแพลนได้ไทม์ไลน์ ซับไทย และการเรนเดอร์แบบไม่จำกัดครั้ง ที่ต่างกันคือจำนวนคลิปที่ AI ตัดให้ต่อเดือน ความยาวฟุตเทจต่อโปรเจกต์ ความละเอียดการวิเคราะห์ จำนวนงานที่ทำพร้อมกันได้ และพื้นที่เก็บงาน`,
   );
   lines.push("");
+  if (isBetaPriced(table)) {
+    lines.push(`- ${BETA_PRICE_LINE} ${BETA_PRICE_AFTER_SHORT}`);
+    lines.push(
+      `- ราคาปกติต่อเดือน: ${PAID_TIERS.map((tier) => `${PLAN_COPY[tier].name} ${formatBaht(FULL_PRICES_THB[tier] * 100)} บาท`).join(" · ")}`,
+    );
+  }
   lines.push(`- หน้าเว็บ: ${absoluteUrl(PAGES.pricing.path)}`);
   lines.push(`- อัปเดตล่าสุด: ${updatedIso}`);
   lines.push("- สกุลเงิน: บาท (THB) ราคาต่อเดือน ชำระด้วยบัตรเครดิตหรือเดบิต ตัดอัตโนมัติทุกเดือน");
+  lines.push(`- จำนวนคลิปต่อเดือนของแต่ละแพลน: ${clipsLadderSentence()}`);
+  lines.push(`- วิธีนับ: ${CLIPS_FOOTNOTE}`);
   lines.push(`- สมัครใช้งาน: ${absoluteUrl(PAGES.signup.path)}`);
   lines.push("");
 
@@ -62,8 +78,9 @@ export function buildPricingMarkdown(table: PriceTable, updatedIso: string): str
     lines.push("");
     lines.push(`- ราคา: ${priceLine(table, tier)}`);
     lines.push(`- สรุป: ${copy.pricingBlurb}`);
-    lines.push(`- ปริมาณการใช้งาน: ${multiplierLabel(tier) ?? "ทดลองใช้"} (${multiplierCaption(tier)})`);
+    lines.push(`- จำนวนคลิป: ${clipsHeadline(tier)} (${CLIPS_FOOTNOTE})`);
     lines.push(`- ขีดจำกัดการใช้งาน: ${copy.limits.join(" + ")} · ทำงาน AI พร้อมกันได้ ${copy.concurrentJobs} งาน`);
+    lines.push(`- ความละเอียดการวิเคราะห์: ${precisionLabel(tier)}`);
     for (const feature of copy.features) lines.push(`- ${feature}`);
     if (copy.recommended) lines.push("- แพลนที่แนะนำ");
     lines.push("");
@@ -81,7 +98,7 @@ export function buildPricingMarkdown(table: PriceTable, updatedIso: string): str
 
   lines.push("## คำถามเรื่องราคา");
   lines.push("");
-  for (const item of PRICING_FAQ) {
+  for (const item of pricingFaq(isBetaPriced(table))) {
     lines.push(`### ${item.question}`);
     lines.push("");
     lines.push(item.answer);
@@ -176,6 +193,7 @@ export function buildLlmsTxt(table: PriceTable): string {
     "- ไฟล์ที่รับ: MP4 และ MOV จากมือถือและกล้องทั่วไป",
     "- ผลลัพธ์: วิดีโอแนวตั้ง 1080×1920 พร้อมลง TikTok, Reels หรือ Shorts",
     `- ราคา: ${prices}`,
+    ...(isBetaPriced(table) ? [`- ${BETA_PRICE_LINE} ${BETA_PRICE_AFTER_SHORT}`] : []),
     "",
     "## ความสามารถหลัก",
     "",
@@ -207,11 +225,15 @@ export function buildLlmsTxt(table: PriceTable): string {
     "- ไม่มีชั้นกราฟิก สติกเกอร์ ข้อความเคลื่อนไหว หรือเอฟเฟกต์ภาพ",
     "- ไม่แทรกภาพประกอบตามบท ไม่ตัดซ้อนหลายชั้น และไม่คุมจังหวะระดับเฟรมแทนผู้ใช้",
     "- ใช้บนคอมพิวเตอร์ผ่าน Chrome หรือ Edge เวอร์ชันใหม่ ยังไม่แนะนำให้ใช้บนมือถือ",
-    "- ความยาวฟุตเทจรวมต่อโปรเจกต์: ฟรี 5 นาที · Lite 10 นาที · Starter 20 นาที · Pro ขึ้นไปสูงสุด 2 ชั่วโมง",
-    `- โหมดตัดฉากเด่นมีเพดานแยก เพราะ AI ดูฟุตเทจทั้งกองในรอบเดียว: ${SCENE_FOOTAGE_STANDARD}ต่อโปรเจกต์ ที่ความละเอียด Standard และ ${SCENE_FOOTAGE_HIGH} ที่ความละเอียด High เท่ากันทุกแพลน ระบบใช้ค่าที่น้อยกว่าระหว่างเพดานนี้กับเพดานของแพลน`,
+    `- จำนวนคลิปที่ AI ตัดให้ต่อเดือน: ${clipsLadderSentence()}`,
+    `- วิธีนับจำนวนคลิป: ${CLIPS_FOOTNOTE}`,
+    `- ความยาวฟุตเทจรวมต่อโปรเจกต์: ${footageLadderSentence()} เพดานเดียวใช้กับทุกโหมด`,
+    "- ความละเอียดการวิเคราะห์: แพลนฟรี Lite และ Starter วิเคราะห์ที่ระดับปกติ ส่วน Pro ขึ้นไปเลือกระดับละเอียดได้ ซึ่งตัดถี่ขึ้นและจุดตัดแม่นขึ้น แต่ใช้โควตามากกว่า",
+    "- แพลนฟรีคือเครดิตทดลองก้อนเดียวเมื่อสมัคร ไม่รีเซ็ตรายเดือน ใช้หมดแล้วต้องอัปเกรด",
     "- การแปลงไฟล์อัตโนมัติเมื่อเบราว์เซอร์เปิดไฟล์ไม่ได้ มีตั้งแต่แพลน Starter ขึ้นไป เพลงประกอบมีตั้งแต่แพลน Lite ขึ้นไป",
     "- งาน AI ที่ทำพร้อมกันได้: ฟรีถึง Starter 1 งาน · Pro 2 · Studio 3 · Agency 4 · Max 5",
     "- โควตาแสดงเป็นเปอร์เซ็นต์ของรอบ ไม่ใช่ตัวเลขหน่วยภายใน การแก้ไทม์ไลน์และการเรนเดอร์ซ้ำไม่กินโควตา",
+    "- ระบบบอกก่อนเริ่มทุกครั้งว่างานนั้นใช้โควตาเท่าไหร่ จึงไม่มีการหักเกินโดยไม่รู้ตัว",
     "- ไม่มีตัวเลขความเร็วหรือความแม่นที่วัดแล้วประกาศไว้ ณ ตอนนี้ หน้าเว็บจึงไม่อ้างตัวเลขเหล่านั้น",
     "",
     "## หน้าหลัก",
@@ -219,7 +241,7 @@ export function buildLlmsTxt(table: PriceTable): string {
     `- [หน้าแรก](${absoluteUrl(PAGES.home.path)}): ภาพรวมเครื่องมือ วิธีใช้งาน และคำถามที่พบบ่อย`,
     `- [ทำอะไรได้บ้าง](${absoluteUrl(PAGES.scope.path)}): ขอบเขตของระบบ — ถอดเสียง คัดช็อต เรียงลำดับ ใส่ซับไทยเป็นร่างแรก แล้วคุณเกลาต่อ งานแบบไหนเหมาะและไม่เหมาะ · Markdown: ${absoluteUrl("/scope.md")}`,
     `- [เกี่ยวกับเรา](${absoluteUrl(PAGES.about.path)}): ที่มาของเครื่องมือ และช่องทางติดต่อทีมงาน`,
-    `- [สมัครใช้งานฟรี](${absoluteUrl(PAGES.signup.path)}): สมัครแล้วเริ่มที่แพลนฟรีได้ทันที ไม่ต้องผูกบัตร`,
+    `- [สมัครใช้งานฟรี](${absoluteUrl(PAGES.signup.path)}): สมัครแล้วได้เครดิตทดลองฟรีทันที ไม่ต้องผูกบัตร`,
     "",
     "## ติดตามการอัปเดต",
     "",

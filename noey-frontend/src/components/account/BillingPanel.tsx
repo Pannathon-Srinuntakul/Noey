@@ -17,6 +17,8 @@ export interface UpgradeOption {
   name: string;
   /** Formatted price, or null when the backend does not list this tier. */
   price: string | null;
+  /** Full price to strike through beside it during the beta; null otherwise. */
+  fullPrice: string | null;
   summary: string;
   current: boolean;
   /** Shows the "แนะนำ" tag (Pro). */
@@ -36,6 +38,8 @@ export interface BillingPanelProps {
   billingEnabled: boolean;
   periodEndLabel: string | null;
   cardLabel: string | null;
+  /** One line about the beta price and what follows it; null once the beta ends. */
+  betaNote: string | null;
 }
 
 function Message({ state }: { state: ActionState | undefined }) {
@@ -76,6 +80,7 @@ export function BillingPanel(props: BillingPanelProps) {
     billingEnabled,
     periodEndLabel,
     cardLabel,
+    betaNote,
   } = props;
 
   // Arriving from a plan button (/account/billing?plan=pro) opens the dialog with that plan picked.
@@ -213,7 +218,15 @@ export function BillingPanel(props: BillingPanelProps) {
                 <span className="dot" />
                 <span className="plan-option__text">
                   <span className="plan-option__name">
-                    {option.name} · {option.price === null ? "ยังไม่เปิดขาย" : `${option.price} บาท/เดือน`}
+                    {option.name} ·{" "}
+                    {option.price === null ? (
+                      "ยังไม่เปิดขาย"
+                    ) : (
+                      <>
+                        {option.fullPrice ? <s className="price-strike">{option.fullPrice}</s> : null}
+                        {`${option.price} บาท/เดือน`}
+                      </>
+                    )}
                     {option.current ? " · แพลนปัจจุบัน" : ""}
                     {option.recommended ? <span className="tag tag-outline plan-option__tag">แนะนำ</span> : null}
                   </span>
@@ -236,6 +249,7 @@ export function BillingPanel(props: BillingPanelProps) {
               เรื่องค่าบริการและการคืนเงิน
             </span>
           </label>
+          {betaNote ? <p className="beta-note beta-note--compact">{betaNote}</p> : null}
           <Message state={planState} />
           <div className="dialog-actions">
             <button type="button" className="btn btn-secondary" onClick={() => setUpgradeOpen(false)}>

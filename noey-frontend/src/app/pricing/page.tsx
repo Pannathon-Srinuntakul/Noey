@@ -1,11 +1,12 @@
 import type { Metadata } from "next";
+import { BetaPriceNote } from "@/components/BetaPriceNote";
 import { Breadcrumb } from "@/components/Breadcrumb";
 import { CheckoutCanceledNotice } from "@/components/CheckoutCanceledNotice";
 import { FaqList } from "@/components/FaqList";
 import { JsonLd } from "@/components/JsonLd";
 import { PlanComparisonTable } from "@/components/PlanComparisonTable";
 import { PriceCards } from "@/components/PriceCards";
-import { PRICING_FAQ } from "@/lib/faq";
+import { pricingFaq } from "@/lib/faq";
 import { formatThaiDate } from "@/lib/format";
 import {
   SOFTWARE_ID,
@@ -15,13 +16,17 @@ import {
   softwareApplicationNode,
   webPageNode,
 } from "@/lib/jsonld";
+import { BETA_PRICE_AFTER, BETA_PRICE_LINE } from "@/lib/beta";
 import {
+  CLIPS_FOOTNOTE,
   PAID_TIERS,
   PLAN_COPY,
-  SCENE_FOOTAGE_HIGH,
-  SCENE_FOOTAGE_STANDARD,
+  clipsHeadline,
+  clipsLadderSentence,
   displayPrice,
+  footageLadderSentence,
   formatBaht,
+  isBetaPriced,
   lowestPaidPrice,
   type PriceTable,
 } from "@/lib/plans";
@@ -40,7 +45,8 @@ const TRAIL = [
 function describe(table: PriceTable): string {
   const lowest = lowestPaidPrice(table);
   if (!lowest) return PAGES.pricing.description;
-  return `เทียบราคาทุกแพลนของ Noey Studio แพลนฟรี 0 บาท ไม่ต้องผูกบัตร และแพลนรายเดือนเริ่ม ${formatBaht(lowest.amountSatang)} บาท ดูโควตางาน AI ความยาวฟุตเทจ และพื้นที่เก็บงาน`;
+  const beta = isBetaPriced(table) ? ` ${BETA_PRICE_LINE}` : "";
+  return `เทียบราคาทุกแพลนของ Noey Studio แพลนรายเดือนเริ่ม ${formatBaht(lowest.amountSatang)} บาท และมีเครดิตทดลองฟรี ดูจำนวนคลิปต่อเดือน ความยาวฟุตเทจ และพื้นที่เก็บงาน${beta}`;
 }
 
 export async function generateMetadata(): Promise<Metadata> {
@@ -58,7 +64,9 @@ function answer(table: PriceTable): string {
     return price ? [`${PLAN_COPY[tier].name} ${price} บาท`] : [];
   });
   const list = paid.length > 1 ? `${paid.slice(0, -1).join(", ")} และ ${paid[paid.length - 1]}` : paid.join("");
-  return `Noey Studio มีแพลนฟรี 0 บาทที่ใช้ได้ต่อเนื่องโดยไม่ต้องผูกบัตร และแพลนรายเดือน ${paid.length} ระดับ ได้แก่ ${list} ต่อเดือน ชำระด้วยบัตรเครดิตหรือเดบิต เปลี่ยนหรือยกเลิกแพลนได้เองจากหน้าบัญชี`;
+  const beta = isBetaPriced(table) ? ` ราคาที่แสดงคือราคาเบต้า ลด 50% ${BETA_PRICE_AFTER}` : "";
+  const clips = clipsLadderSentence(PAID_TIERS);
+  return `Noey Studio ให้เครดิตทดลองฟรีก้อนเดียวเมื่อสมัคร ตัดได้ ${clipsHeadline("free")} ไม่ต้องผูกบัตร ใช้หมดแล้วเลือกแพลนรายเดือนได้ ${paid.length} ระดับ ได้แก่ ${list} ต่อเดือน โดยได้จำนวนคลิปต่อเดือน ${clips} (${CLIPS_FOOTNOTE}) ชำระด้วยบัตรเครดิตหรือเดบิต เปลี่ยนหรือยกเลิกแพลนได้เองจากหน้าบัญชี${beta}`;
 }
 
 export default async function PricingPage() {
@@ -69,7 +77,7 @@ export default async function PricingPage() {
     webPageNode({ path: page.path, name: page.title, description, dateModified: page.updated, about: SOFTWARE_ID }),
     breadcrumbNode(TRAIL),
     softwareApplicationNode(table),
-    faqPageNode(PRICING_FAQ, page.path),
+    faqPageNode(pricingFaq(isBetaPriced(table)), page.path),
   );
 
   return (
@@ -81,7 +89,7 @@ export default async function PricingPage() {
           {answer(table)}
         </p>
         <p className="pricing-lead" style={{ marginBottom: 12 }}>
-          เครื่องมือเหมือนกันทุกแพลน สิ่งที่ต่างคือปริมาณงาน AI ต่อรอบ ความยาวฟุตเทจที่รับต่อโปรเจกต์ และพื้นที่เก็บโปรเจกต์บนบัญชี
+          เครื่องมือเหมือนกันทุกแพลน สิ่งที่ต่างคือจำนวนคลิปที่ AI ตัดให้ต่อเดือน ความยาวฟุตเทจที่รับต่อโปรเจกต์ ความละเอียดการวิเคราะห์ และพื้นที่เก็บโปรเจกต์บนบัญชี
           งานที่กินกำลังมากที่สุดคือการถอดเสียงกับการวางแผนตัด จึงเป็นตัวกำหนดราคา ส่วนการแก้ในไทม์ไลน์และการเรนเดอร์ซ้ำ ไม่จำกัดทุกแพลน
         </p>
         <p className="pricing-lead pricing-lead--muted">
@@ -94,6 +102,7 @@ export default async function PricingPage() {
       </div>
 
       <CheckoutCanceledNotice />
+      <BetaPriceNote table={table} />
       <PriceCards table={table} variant="full" />
 
       <section className="quota-explain" aria-labelledby="quota-title">
@@ -102,8 +111,8 @@ export default async function PricingPage() {
             โควตาคิดยังไง
           </h2>
           <p>
-            เราไม่นับเป็นจำนวนคลิป เพราะคลิป 15 วินาทีกับคลิป 3 นาทีใช้กำลังไม่เท่ากัน สิ่งที่นับคือปริมาณงานที่ AI ทำให้
-            ทั้งการถอดเสียงและการวางแผนตัด แสดงเป็นเปอร์เซ็นต์ของขีดจำกัดในหน้าตั้งค่า แพลนที่สูงขึ้นได้ปริมาณมากขึ้นตามจำนวนเท่าที่บอกไว้
+            เรานับเป็นจำนวนคลิปที่ AI ตัดให้ต่อเดือน เพราะงานหนักของแต่ละคลิปคือการถอดเสียงและการวางแผนตัด ซึ่งใช้กำลังใกล้เคียงกันไม่ว่าฟุตเทจจะยาวแค่ไหน
+            ตัวเลขบนการ์ดคิดจากคลิปดิบ 5 นาที คลิปที่ยาวกว่าหรือระดับละเอียดใช้โควตามากกว่า และ หน้าตั้งค่าแสดงเป็นเปอร์เซ็นต์ของรอบที่เหลือ
           </p>
         </div>
         <div className="card" style={{ padding: 28 }}>
@@ -133,8 +142,12 @@ export default async function PricingPage() {
               <span>Pro ขึ้นไป อีกชั้นหนึ่งกันการใช้งานหนักต่อเนื่อง รีเซ็ต 5 ชั่วโมงหลังงานแรกของรอบ</span>
             </li>
             <li>
-              <span className="num">Monthly limit</span>
-              <span>แพลนฟรี ได้โควตาก้อนเดียวต่อเดือน</span>
+              <span className="num">Trial credit</span>
+              <span>แพลนฟรี ได้เครดิตทดลองก้อนเดียวตอนสมัคร ตัดได้ {clipsHeadline("free")} ไม่รีเซ็ตรายเดือน</span>
+            </li>
+            <li>
+              <span className="num">บอกก่อนเริ่ม</span>
+              <span>ระบบบอกก่อนเริ่มทุกครั้งว่างานนี้ใช้โควตาเท่าไหร่ จึงไม่มีการหักเกินโดยไม่รู้ตัว</span>
             </li>
             <li>
               <span className="num">ไม่กินโควตา</span>
@@ -145,10 +158,13 @@ export default async function PricingPage() {
               <span>ฟุตเทจยาวและโหมดพากย์ใหม่ใช้ปริมาณมากกว่างานปกติ เพราะต้องถอดเสียงและวางแผนมากขึ้น</span>
             </li>
             <li>
-              <span className="num">ตัดฉากเด่น</span>
+              <span className="num">ฟุตเทจต่อโปรเจกต์</span>
+              <span>เพดานเดียวต่อแพลน ใช้กับทุกโหมดเท่ากัน — {footageLadderSentence()}</span>
+            </li>
+            <li>
+              <span className="num">ความละเอียด</span>
               <span>
-                โหมดนี้ให้ AI ดูฟุตเทจทั้งกองในรอบเดียว จึงรับได้ {SCENE_FOOTAGE_STANDARD}ต่อโปรเจกต์ ที่ความละเอียด Standard และ{" "}
-                {SCENE_FOOTAGE_HIGH} ที่ความละเอียด High แม้แพลนจะให้ฟุตเทจถึง 2 ชั่วโมง เพดานนี้เท่ากันทุกแพลน อัปเกรดแล้วไม่ขยาย
+                แพลนฟรี Lite และ Starter วิเคราะห์ที่ระดับปกติ ซึ่งให้ผลดีอยู่แล้ว ตั้งแต่ Pro ขึ้นไปเลือกระดับละเอียดได้ ซึ่งตัดถี่ขึ้นและจุดตัดแม่นขึ้น แลกกับการใช้โควตามากกว่า
               </span>
             </li>
           </ul>
@@ -166,7 +182,7 @@ export default async function PricingPage() {
         <h2 id="pricing-faq-title" className="subsection-title" style={{ marginBottom: 18 }}>
           คำถามเรื่องราคา (FAQ)
         </h2>
-        <FaqList items={PRICING_FAQ} compact />
+        <FaqList items={pricingFaq(isBetaPriced(table))} compact />
       </section>
 
       <JsonLd data={jsonLd} />

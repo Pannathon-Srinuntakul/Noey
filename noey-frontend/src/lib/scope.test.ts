@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { HOME_FAQ } from "./faq";
 import { PRIVACY, TERMS } from "./legal";
-import { COMPARISON_ROWS, PLAN_COPY, TIERS, limitsShort } from "./plans";
+import { COMPARISON_ROWS, PLAN_COPY, TIERS, clipsHeadline, limitsShort } from "./plans";
 import { HOME_FITS, HOME_MISFITS, SCOPE_FITS, SCOPE_MISFITS, SCOPE_STEPS, SCOPE_SUMMARY } from "./scope";
 import { PAGES } from "./site";
 
@@ -61,17 +61,24 @@ describe("legal documents", () => {
 });
 
 describe("plan wording (Website v2)", () => {
-  it("counts jobs from 5 minutes of raw footage, not clips", () => {
+  it("leads every plan with its clip count, the unit the product is sold in", () => {
+    // Owner, 2026-09-29: clips per month replaced minutes of footage as the
+    // headline. The basis of the estimate lives in CLIPS_FOOTNOTE, printed
+    // under every count, so the bullet itself carries only the number.
+    // The card's headline carries the count, so the bullets must not repeat
+    // it; the account card, which has no headline, states it first.
     for (const tier of TIERS) {
-      for (const feature of PLAN_COPY[tier].features) expect(feature).not.toMatch(/คลิป 5 นาที|คลิปต่อรอบ/);
+      expect(PLAN_COPY[tier].accountFeatures[0]).toContain(clipsHeadline(tier));
+      expect(PLAN_COPY[tier].features.join("\n"), `${tier} repeats its count`).not.toContain(clipsHeadline(tier));
     }
-    expect(PLAN_COPY.pro.features[0]).toBe("Weekly limit · ประมาณ 15 งานต่อสัปดาห์ จากฟุตเทจดิบ 5 นาที");
+    // Free carries its own caption: the credit never comes back.
+    expect(PLAN_COPY.free.accountFeatures[0]).toContain("ทดลองใช้ครั้งเดียว");
   });
 
   it("shortens limit windows for the table", () => {
     expect(limitsShort(["Monthly limit"])).toBe("Monthly limit");
     expect(limitsShort(["Weekly limit", "5-hour limit"])).toBe("Weekly + 5-hour");
     const row = COMPARISON_ROWS.find((r) => r.label === "ขีดจำกัดการใช้งาน");
-    expect(row?.values).toEqual(["Monthly limit", "Weekly limit", "Weekly limit", "Weekly + 5-hour", "Weekly + 5-hour", "Weekly + 5-hour", "Weekly + 5-hour"]);
+    expect(row?.values).toEqual(["Trial credit", "Weekly limit", "Weekly limit", "Weekly + 5-hour", "Weekly + 5-hour", "Weekly + 5-hour", "Weekly + 5-hour"]);
   });
 });

@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { ResetClock } from "@/components/account/ResetClock";
 import { formatBytes } from "@/lib/format";
 import { isTier, PLAN_COPY } from "@/lib/plans";
 import { privatePageMetadata } from "@/lib/seo";
 import { loadAccountData } from "@/lib/server/account-data";
-import { clampPct, limitLabel, limitTone, planLimitNote, resetInText, sortLimits } from "@/lib/usage-limits";
+import { clampPct, limitLabel, limitTone, neverResets, planLimitNote, resetInText, sortLimits, spentCreditText } from "@/lib/usage-limits";
 
 export const metadata: Metadata = privatePageMetadata("โควตาและลิมิต");
 
@@ -21,9 +22,12 @@ const TONE_COLOR = { full: "var(--color-danger, #a33a34)", near: "var(--color-ac
 /*
  * Only real numbers from GET /usage/me (and /videos/storage) are rendered, and
  * never a token count — one percentage per window the plan actually enforces
- * (Free: Monthly; Lite/Starter: Weekly; Pro+: Weekly + 5-hour), with when it
- * starts over. The design's per-type counts ("6 โปรเจกต์") are not something
- * the backend records, so the task table shows shares only.
+ * (Free: Trial credit, a one-off `lifetime` window; Lite/Starter: Weekly; Pro+:
+ * Weekly + 5-hour), with when it starts over. A window that carries
+ * `resets: false` never starts over, so it gets the spent-credit line and an
+ * upgrade link instead of a countdown. The design's per-type counts
+ * ("6 โปรเจกต์") are not something the backend records, so the task table shows
+ * shares only.
  */
 export default async function QuotaPage() {
   const { usage, storage } = await loadAccountData("/account/quota", { usage: true, storage: true });
@@ -74,10 +78,16 @@ export default async function QuotaPage() {
                 >
                   <div className="meter__fill" style={{ width: `${pct}%`, ...(color ? { background: color } : {}) }} />
                 </div>
-                <p className="meter-note">
-                  {resetInText(limit.active ? limit.resets_at : null)}
-                  {limit.active ? <ResetClock at={limit.resets_at} /> : null}
-                </p>
+                {neverResets(limit) ? (
+                  <p className="meter-note">
+                    {spentCreditText(pct)} <Link href="/pricing">ดูแพลนทั้งหมด</Link>
+                  </p>
+                ) : (
+                  <p className="meter-note">
+                    {resetInText(limit.active ? limit.resets_at : null)}
+                    {limit.active ? <ResetClock at={limit.resets_at} /> : null}
+                  </p>
+                )}
               </div>
             );
           })

@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { clampPct, limitLabel, limitTone, planLimitNote, resetInText, sortLimits } from "./usage-limits";
+import {
+  clampPct,
+  limitLabel,
+  limitTone,
+  neverResets,
+  planLimitNote,
+  resetInText,
+  sortLimits,
+  spentCreditText,
+} from "./usage-limits";
 
 const NOW = Date.parse("2026-09-22T10:00:00Z");
 
@@ -8,11 +17,32 @@ describe("usage limits", () => {
     expect(limitLabel({ key: "five_hour" })).toBe("5-hour limit");
     expect(limitLabel({ key: "weekly" })).toBe("Weekly limit");
     expect(limitLabel({ key: "monthly" })).toBe("Monthly limit");
+    // The backend's window for the free plan's one-off credit (limits.py).
+    expect(limitLabel({ key: "lifetime" })).toBe("Trial credit");
     expect(limitLabel({ key: "odd", label: "Odd" })).toBe("Odd");
   });
 
-  it("lists the longest window first", () => {
+  it("lists the longest window first, the one-off credit above them all", () => {
     expect(sortLimits([{ key: "five_hour" }, { key: "weekly" }]).map((l) => l.key)).toEqual(["weekly", "five_hour"]);
+    expect(sortLimits([{ key: "five_hour" }, { key: "lifetime" }, { key: "weekly" }]).map((l) => l.key)).toEqual([
+      "lifetime",
+      "weekly",
+      "five_hour",
+    ]);
+  });
+
+  it("treats a window as resetting unless the backend says otherwise", () => {
+    expect(neverResets({ resets: false })).toBe(true);
+    expect(neverResets({ resets: true })).toBe(false);
+    // An older backend sends no flag at all; that must not read as "never".
+    expect(neverResets({})).toBe(false);
+  });
+
+  it("offers an upgrade instead of a countdown once a one-off credit is spent", () => {
+    expect(spentCreditText(100)).toContain("ใช้เครดิตทดลองหมดแล้ว");
+    expect(spentCreditText(100)).toContain("เลือกแพลนรายเดือน");
+    expect(spentCreditText(40)).toContain("ไม่รีเซ็ต");
+    for (const pct of [0, 40, 100, 137]) expect(spentCreditText(pct)).not.toMatch(/รีเซ็ตอีกครั้งใน|รอบใหม่/);
   });
 
   it("clamps percentages that include reservations past 100", () => {

@@ -1,4 +1,5 @@
-import { COMPARISON_ROWS, PLAN_COPY, TIERS, displayPrice, type PriceTable } from "@/lib/plans";
+import { BETA_PRICE_NOTE, BETA_STRIKE_LABEL } from "@/lib/beta";
+import { CLIPS_FOOTNOTE, COMPARISON_ROWS, PLAN_COPY, TIERS, displayPrice, isBetaPriced, strikePrice, type PriceTable } from "@/lib/plans";
 
 /**
  * The seven-plan comparison table. Rendered on /pricing and again on the help
@@ -23,11 +24,20 @@ export function PlanComparisonTable({ table, labelledBy }: { table: PriceTable; 
         <tbody>
           <tr>
             <th scope="row">ราคา (บาท / เดือน)</th>
-            {TIERS.map((tier) => (
-              <td key={tier} className="c num">
-                {displayPrice(table, tier) ?? "—"}
-              </td>
-            ))}
+            {TIERS.map((tier) => {
+              const full = strikePrice(table, tier);
+              return (
+                <td key={tier} className="c num">
+                  {full ? (
+                    <s className="price-strike">
+                      <span className="sr-only">{BETA_STRIKE_LABEL} </span>
+                      {full}
+                    </s>
+                  ) : null}
+                  {displayPrice(table, tier) ?? "—"}
+                </td>
+              );
+            })}
           </tr>
           {COMPARISON_ROWS.map((row) => (
             <tr key={row.label}>
@@ -41,6 +51,9 @@ export function PlanComparisonTable({ table, labelledBy }: { table: PriceTable; 
           ))}
         </tbody>
       </table>
+      {/* The clip counts in the table are estimates; say on what. */}
+      <p className="table-note">{CLIPS_FOOTNOTE}</p>
+      {isBetaPriced(table) ? <p className="table-note">{BETA_PRICE_NOTE}</p> : null}
     </div>
   );
 }

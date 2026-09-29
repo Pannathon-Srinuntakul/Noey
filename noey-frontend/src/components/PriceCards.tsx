@@ -1,16 +1,39 @@
 import Link from "next/link";
+import { BETA_BADGE, BETA_STRIKE_LABEL, isBetaActive } from "@/lib/beta";
 import {
+  APPROX_CUTS_PER_MONTH,
+  CLIPS_BASIS_SHORT,
+  CLIPS_FOOTNOTE,
+  CUTS_APPROX_PREFIX,
+  CUTS_APPROX_SHORT,
   EXTRA_TIERS,
+  FREE_CLIPS_CAPTION,
   MAIN_TIERS,
   PAID_TIERS,
   PLAN_COPY,
+  clipsHeadline,
   displayPrice,
-  multiplierCaption,
-  multiplierLabel,
+  strikePrice,
   type PriceTable,
   type Tier,
 } from "@/lib/plans";
 import { PlanButton } from "./PlanButton";
+
+/**
+ * The full price, struck through, immediately before the beta price and on the
+ * SAME line so the row does not grow taller. `strikePrice` returns null once
+ * the beta ends, which is what makes the cards revert on their own.
+ */
+function StrikeThrough({ table, tier }: { table: PriceTable; tier: Tier }) {
+  const full = strikePrice(table, tier);
+  if (!full) return null;
+  return (
+    <s className="num price-strike">
+      <span className="sr-only">{BETA_STRIKE_LABEL} </span>
+      {full}
+    </s>
+  );
+}
 
 type CardSize = "home" | "full" | "extra";
 
@@ -31,6 +54,8 @@ export function PriceCards({ table, variant }: { table: PriceTable; variant: "ho
           <PriceCard key={tier} tier={tier} table={table} size={full ? "full" : "home"} />
         ))}
       </div>
+      {/* Said once for the page; each card carries only the short basis. */}
+      <p className="clip-note clip-note--grid">{CLIPS_FOOTNOTE}</p>
       {full ? (
         <section className="price-extra" aria-labelledby="price-extra-title">
           <div className="price-extra__head">
@@ -58,14 +83,24 @@ export function PriceCards({ table, variant }: { table: PriceTable; variant: "ho
                 <div key={tier} className="price-more__item">
                   <div className="price-more__name">
                     <span>{PLAN_COPY[tier].name}</span>
-                    <span className="num price-more__mult">{multiplierLabel(tier)}</span>
+                    <span className="num price-more__mult">{clipsHeadline(tier)}</span>
                   </div>
-                  <div className="num price-more__price">{price ? `${price} บาท / เดือน` : "—"}</div>
+                  <div className="num price-more__price">
+                    {price ? (
+                      <>
+                        <StrikeThrough table={table} tier={tier} />
+                        {`${price} บาท / เดือน`}
+                      </>
+                    ) : (
+                      "—"
+                    )}
+                  </div>
                   <p className="price-more__blurb">{PLAN_COPY[tier].homeBlurb}</p>
                 </div>
               );
             })}
           </div>
+          <p className="clip-note clip-note--group">{CLIPS_FOOTNOTE}</p>
         </div>
       )}
     </>
@@ -75,16 +110,20 @@ export function PriceCards({ table, variant }: { table: PriceTable; variant: "ho
 function PriceCard({ tier, table, size }: { tier: Tier; table: PriceTable; size: CardSize }) {
   const copy = PLAN_COPY[tier];
   const price = displayPrice(table, tier);
-  const multiplier = multiplierLabel(tier);
   const detailed = size !== "home";
   const classes = ["card", "price-card", `price-card--${size}`];
   if (copy.recommended) classes.push("price-card--recommended", "elev-sm");
   const paid = (PAID_TIERS as readonly string[]).includes(tier);
+  // Only a plan whose price is actually discounted carries the badge.
+  const beta = isBetaActive() && strikePrice(table, tier) !== null;
 
-  // Usage is sold as a multiple of Lite — never as a token count. The free plan
-  // has no multiple: it is the trial, and it does not expire.
-  const usageValue = multiplier ?? "ทดลองใช้";
-  const usageCaption = multiplier === null ? "ไม่หมดอายุ" : size === "home" ? "ของ Lite" : multiplierCaption(tier);
+  // The headline: an APPROXIMATE cut count, never a token count and never
+  // minutes of footage. The "ราว" is part of the claim, not decoration — a
+  // heavy user gets fewer — so it sits with the number, not in a footnote.
+  // Free is one trial credit, so it carries its own caption instead of /เดือน.
+  const cuts = APPROX_CUTS_PER_MONTH[tier];
+  const cutsPrefix = tier === "free" ? CUTS_APPROX_SHORT : CUTS_APPROX_PREFIX;
+  const cutsUnit = tier === "free" ? "คลิป" : "คลิป / เดือน";
 
   return (
     <div className={classes.join(" ")}>
@@ -97,13 +136,17 @@ function PriceCard({ tier, table, size }: { tier: Tier; table: PriceTable; size:
         <div className="card-kicker">{copy.name}</div>
       )}
       <div className="price-card__amount">
+        <StrikeThrough table={table} tier={tier} />
         <span className="num price-card__value">{price ?? "—"}</span>
         <span className="price-card__unit">{tier === "free" ? "บาท" : "บาท / เดือน"}</span>
       </div>
+      {beta ? <p className="price-card__beta">{BETA_BADGE} · ลด 50% ถึง 31 ธ.ค. 2026 จากนั้นคิดราคาปกติ</p> : null}
       <div className="price-card__usage">
-        <span className="num usage-mult">{usageValue}</span>
-        <span className="usage-caption">{usageCaption}</span>
+        <span className="usage-approx">{cutsPrefix}</span>
+        <span className="num usage-mult">{cuts}</span>
+        <span className="usage-caption">{tier === "free" ? `${cutsUnit} · ${FREE_CLIPS_CAPTION}` : cutsUnit}</span>
       </div>
+      <p className="clip-note">{CLIPS_BASIS_SHORT}</p>
       <p className="card-body">{detailed ? copy.pricingBlurb : copy.homeBlurb}</p>
       {detailed ? (
         <ul className="price-card__features">

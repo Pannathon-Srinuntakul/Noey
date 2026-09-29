@@ -119,7 +119,7 @@ export const PAGES: Record<PageKey, PageEntry> = {
     description:
       "Noey Studio ตัดคลิปสั้นด้วย AI ในเบราว์เซอร์ ถอดเสียงไทย เลือกช่วงไฮไลต์ เขียนสคริปต์พากย์ ใส่ซับไทยอัตโนมัติ แก้ต่อได้ทุกช็อต เริ่มใช้ฟรี",
     label: "หน้าแรก",
-    updated: "2026-09-26", published: "2026-09-21",
+    updated: "2026-09-29", published: "2026-09-21",
     indexable: true,
   },
   scope: {
@@ -137,9 +137,9 @@ export const PAGES: Record<PageKey, PageEntry> = {
     // The pricing page builds its description from live prices; this is the
     // price-free fallback used when prices are unknown.
     description:
-      "เทียบราคาทุกแพลนของ Noey Studio แพลนฟรี 0 บาท และแพลนรายเดือน Lite ถึง Max ดูปริมาณการใช้งาน ความยาวฟุตเทจ และพื้นที่เก็บงาน",
+      "เทียบราคาทุกแพลนของ Noey Studio เครดิตทดลองฟรีเมื่อสมัคร และแพลนรายเดือน Lite ถึง Max ดูปริมาณการใช้งาน ความยาวฟุตเทจ และพื้นที่เก็บงาน",
     label: "ราคา",
-    updated: "2026-09-26", published: "2026-09-21",
+    updated: "2026-09-29", published: "2026-09-21",
     indexable: true,
   },
   about: {

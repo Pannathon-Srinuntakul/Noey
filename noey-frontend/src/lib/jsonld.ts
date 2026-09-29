@@ -6,7 +6,8 @@
  */
 import type { FaqItem } from "./faq";
 import { appIconPath } from "./icons";
-import { PAID_TIERS, PLAN_COPY, schemaPrice, type PriceTable } from "./plans";
+import { BETA_END_DATE_ISO } from "./beta";
+import { PAID_TIERS, PLAN_COPY, schemaPrice, strikePrice, type PriceTable } from "./plans";
 import { LANG, SITE_NAME, SITE_URL, absoluteUrl } from "./site";
 
 export type JsonLdNode = Record<string, unknown>;
@@ -75,18 +76,24 @@ export function softwareApplicationNode(table: PriceTable): JsonLdNode {
     const price = table.prices[tier];
     if (!price) continue;
     const amount = schemaPrice(price.amountSatang);
+    // Dated only while this tier is genuinely on the beta price.
+    const dated = strikePrice(table, tier) !== null;
     offers.push({
       "@type": "Offer",
       name: PLAN_COPY[tier].name,
       price: amount,
       priceCurrency: "THB",
       url: pricingUrl,
+      // The beta price is a dated offer, not an open-ended one: say when it
+      // stops being valid so a crawler does not keep quoting it afterwards.
+      ...(dated ? { priceValidUntil: BETA_END_DATE_ISO } : {}),
       priceSpecification: {
         "@type": "UnitPriceSpecification",
         price: amount,
         priceCurrency: "THB",
         unitText: "เดือน",
         referenceQuantity: { "@type": "QuantitativeValue", value: 1, unitCode: "MON" },
+        ...(dated ? { validThrough: BETA_END_DATE_ISO } : {}),
       },
     });
   }

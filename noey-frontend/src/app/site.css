@@ -1850,3 +1850,229 @@ html[data-auth="in"] .auth-out {
     margin-left: 0;
   }
 }
+
+/* ── Beta (see lib/beta.ts) ───────────────────────────────────────────────────
+ *
+ * Everything here is temporary by construction: the components that use these
+ * classes stop rendering after the beta end date, so the rules go unused
+ * rather than needing a deploy to remove.
+ */
+
+:root {
+  --beta-banner-h: 38px;
+}
+
+/* The slim strip that stays after the modal is dismissed. It sticks above the
+   sticky header, which is offset by the same height while it is present. */
+.beta-banner {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  min-height: var(--beta-banner-h);
+  background: var(--color-accent-100);
+  color: var(--color-accent-900);
+  border-bottom: 1px solid var(--color-divider);
+}
+
+html[data-beta-banner] .site-header {
+  top: var(--beta-banner-h);
+}
+
+.beta-banner__inner {
+  max-width: var(--page-max);
+  margin: 0 auto;
+  padding: 8px var(--gutter);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+
+.beta-banner__badge {
+  flex-shrink: 0;
+}
+
+.beta-banner__text {
+  color: inherit;
+}
+
+.beta-banner__more {
+  color: inherit;
+  white-space: nowrap;
+}
+
+/* Phones: the header is not sticky there, so neither is this. */
+@media (max-width: 899px) {
+  .beta-banner {
+    position: static;
+  }
+
+  html[data-beta-banner] .site-header {
+    top: 0;
+  }
+}
+
+/* The three points inside the modal. */
+.beta-points {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: beta-point;
+  display: grid;
+  gap: 16px;
+}
+
+.beta-points li {
+  counter-increment: beta-point;
+  display: grid;
+  gap: 3px;
+  padding-left: 30px;
+  position: relative;
+  font-size: 14.5px;
+  line-height: 1.65;
+  color: var(--color-neutral-800);
+}
+
+.beta-points li::before {
+  content: counter(beta-point);
+  position: absolute;
+  left: 0;
+  top: 1px;
+  width: 21px;
+  height: 21px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--color-accent-200);
+  color: var(--color-accent-900);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.beta-points strong {
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+.beta-fineprint {
+  margin: 20px 0 0;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--color-neutral-600);
+}
+
+.beta-dialog__badge {
+  margin-left: 10px;
+  vertical-align: middle;
+}
+
+/* Phone width: the dialog becomes a bottom sheet. This works only because
+   Dialog publishes its width cap as --dialog-max-width instead of an inline
+   max-width, which would win over this rule. */
+@media (max-width: 599px) {
+  dialog.dialog.beta-sheet {
+    width: 100%;
+    max-width: none;
+    max-height: 88dvh;
+    margin: auto auto 0;
+    border-bottom: 0;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  }
+
+  .beta-sheet .dialog-inner {
+    padding: 24px 20px calc(20px + env(safe-area-inset-bottom));
+  }
+}
+
+/* The full price, struck through, immediately before the price that is
+   charged — same line, so the row does not grow taller. */
+.price-strike {
+  margin-right: 8px;
+  color: var(--color-neutral-600);
+  text-decoration-thickness: 1px;
+  font-size: 0.62em;
+  font-weight: 400;
+  vertical-align: middle;
+}
+
+.price-more__price .price-strike,
+.table .price-strike {
+  font-size: 0.85em;
+  margin-right: 6px;
+}
+
+/* The line under a price card: what the discount is and when it ends. */
+.price-card__beta {
+  margin: -4px 0 14px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--color-accent-700);
+}
+
+/* The strip above a price grid, and its one-line form. */
+.beta-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0 0 22px;
+  padding: 12px 16px;
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius-md);
+  background: var(--color-accent-100);
+  color: var(--color-accent-900);
+  font-size: 13.5px;
+  line-height: 1.65;
+}
+
+.beta-note__badge {
+  flex-shrink: 0;
+}
+
+.beta-note__lead {
+  font-weight: 600;
+}
+
+.beta-note--compact {
+  margin: 16px 0 0;
+  padding: 10px 12px;
+  font-size: 12.5px;
+}
+
+/* Caption under the comparison table. */
+.table-note {
+  margin: 12px 0 0;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--color-neutral-700);
+}
+
+/* The basis of every clip count. Required under the number, never optional:
+   a count with no basis is a promise the product breaks. */
+.clip-note {
+  margin: -10px 0 16px;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--color-neutral-600);
+}
+
+.clip-note--group {
+  margin: 14px 0 0;
+}
+
+/* The full sentence, said once for the page directly under the grid. */
+.clip-note--grid {
+  margin: 18px 0 0;
+  font-size: 12.5px;
+}
+
+/* "ตัดได้ราว" in front of the cut count. Small, but it must read as part of
+   the number, not as a caption under it: the count is an approximation. */
+.usage-approx {
+  align-self: center;
+  margin-right: 6px;
+  font-size: 12.5px;
+  color: var(--color-neutral-700);
+}

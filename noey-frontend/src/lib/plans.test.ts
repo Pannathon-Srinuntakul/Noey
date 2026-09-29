@@ -1,26 +1,41 @@
 import { describe, expect, it } from "vitest";
+import { BETA_END_INSTANT_MS } from "./beta";
 import {
+  BETA_PRICES_THB,
+  APPROX_CUTS_PER_MONTH,
+  CLIPS_FOOTNOTE,
   COMPARISON_ROWS,
   EXTRA_TIERS,
-  FALLBACK_PRICES_THB,
+  FOOTAGE_PER_PROJECT,
+  FULL_PRICES_THB,
   MAIN_TIERS,
   PAID_TIERS,
   PLAN_COPY,
-  SCENE_FOOTAGE_HIGH,
-  SCENE_FOOTAGE_STANDARD,
   TIERS,
-  multiplierCaption,
-  multiplierLabel,
+  clipsHeadline,
+  clipsLadderSentence,
+  clipsListItem,
   displayPrice,
   fallbackPriceTable,
+  footageLadderSentence,
   formatBaht,
+  hasHighPrecision,
+  isBetaPriced,
   lookupKeyFor,
   lowestPaidPrice,
   normalizePlansResponse,
   planDisplayName,
+  PRECISION_NAMES,
+  precisionFeature,
+  precisionLabel,
   schemaPrice,
+  strikePrice,
   tierFromLookupKey,
 } from "./plans";
+
+/** A moment inside the beta, and the first moment after it. */
+const DURING_BETA = BETA_END_INSTANT_MS - 1;
+const AFTER_BETA = BETA_END_INSTANT_MS;
 
 describe("formatBaht", () => {
   it("formats whole baht with en-US grouping like the design", () => {
@@ -90,19 +105,85 @@ describe("normalizePlansResponse", () => {
 });
 
 describe("fallback prices", () => {
-  it("are the owner's ladder, in satang, for every paid tier", () => {
-    const table = fallbackPriceTable();
+  it("are the beta ladder while the beta runs", () => {
+    const table = fallbackPriceTable(DURING_BETA);
     expect(table.source).toBe("fallback");
     for (const tier of PAID_TIERS) {
-      expect(table.prices[tier]?.amountSatang).toBe(FALLBACK_PRICES_THB[tier] * 100);
+      expect(table.prices[tier]?.amountSatang).toBe(BETA_PRICES_THB[tier] * 100);
     }
-    expect(displayPrice(table, "studio")).toBe("1,990");
-    expect(displayPrice(table, "max")).toBe("6,990");
+    expect(displayPrice(table, "studio")).toBe("999");
+    expect(displayPrice(table, "max")).toBe("3,499");
     expect(displayPrice(table, "free")).toBe("0");
   });
 
+  it("revert to the full ladder the moment the beta ends, with no code change", () => {
+    const table = fallbackPriceTable(AFTER_BETA);
+    for (const tier of PAID_TIERS) {
+      expect(table.prices[tier]?.amountSatang).toBe(FULL_PRICES_THB[tier] * 100);
+    }
+    expect(displayPrice(table, "studio")).toBe("1,990");
+    expect(displayPrice(table, "max")).toBe("6,990");
+  });
+
   it("finds the lowest paid price for 'from X baht' copy", () => {
-    expect(lowestPaidPrice(fallbackPriceTable())?.amountSatang).toBe(19900);
+    expect(lowestPaidPrice(fallbackPriceTable(DURING_BETA))?.amountSatang).toBe(9900);
+    expect(lowestPaidPrice(fallbackPriceTable(AFTER_BETA))?.amountSatang).toBe(19900);
+  });
+});
+
+describe("beta pricing", () => {
+  it("is half the full price, rounded to a 9, on every paid plan", () => {
+    for (const tier of PAID_TIERS) {
+      const full = FULL_PRICES_THB[tier];
+      const beta = BETA_PRICES_THB[tier];
+      expect(beta % 10, `${tier} ends in 9`).toBe(9);
+      expect(Math.abs(beta - full / 2), `${tier} is about half of ${full}`).toBeLessThanOrEqual(5);
+    }
+  });
+
+  it("strikes the full price through beside the beta price", () => {
+    const table = fallbackPriceTable(DURING_BETA);
+    expect(strikePrice(table, "pro", DURING_BETA)).toBe("990");
+    expect(strikePrice(table, "max", DURING_BETA)).toBe("6,990");
+    // Nothing to strike on the free plan.
+    expect(strikePrice(table, "free", DURING_BETA)).toBeNull();
+  });
+
+  it("strikes nothing once the beta is over — the site reverts by itself", () => {
+    expect(strikePrice(fallbackPriceTable(AFTER_BETA), "pro", AFTER_BETA)).toBeNull();
+    for (const tier of TIERS) {
+      expect(strikePrice(fallbackPriceTable(AFTER_BETA), tier, AFTER_BETA)).toBeNull();
+    }
+  });
+
+  it("claims a discount only when the backend is actually charging one", () => {
+    expect(isBetaPriced(fallbackPriceTable(DURING_BETA), DURING_BETA)).toBe(true);
+    expect(isBetaPriced(fallbackPriceTable(AFTER_BETA), AFTER_BETA)).toBe(false);
+    // The catalog is the backend's: until it switches over, the date alone
+    // must not put "ลด 50%" next to an undiscounted number.
+    const notYet = normalizePlansResponse({
+      source: "stripe",
+      currency: "thb",
+      plans: PAID_TIERS.map((tier) => ({ tier, interval: "month", unit_amount: FULL_PRICES_THB[tier] * 100 })),
+    })!;
+    expect(isBetaPriced(notYet, DURING_BETA)).toBe(false);
+  });
+
+  it("strikes nothing when the backend is already charging the full price", () => {
+    const table = normalizePlansResponse({
+      source: "stripe",
+      currency: "thb",
+      plans: [{ tier: "pro", interval: "month", unit_amount: FULL_PRICES_THB.pro * 100 }],
+    });
+    expect(table && strikePrice(table, "pro", DURING_BETA)).toBeNull();
+  });
+
+  it("never puts Starter's beta price next to Lite's full price in one grid", () => {
+    // Both read "199"; they may not sit side by side. Lite lives in the second
+    // row, so the main grid never shows the two together.
+    expect(BETA_PRICES_THB.starter).toBe(FULL_PRICES_THB.lite);
+    expect(MAIN_TIERS).not.toContain("lite");
+    expect(EXTRA_TIERS).toContain("lite");
   });
 });
 
@@ -130,15 +211,49 @@ describe("planDisplayName", () => {
   });
 });
 
-describe("usage multipliers", () => {
-  it("climb the ladder from Lite (1x) to Max (35x), free has none", () => {
-    expect(TIERS.map((tier) => multiplierLabel(tier))).toEqual([null, "1x", "2x", "5x", "10x", "20x", "35x"]);
-    expect(multiplierCaption("pro")).toBe("ปริมาณการใช้งาน 5 เท่าของ Lite");
-    expect(multiplierCaption("lite")).toBe("ปริมาณการใช้งานพื้นฐาน");
+describe("what a plan sells", () => {
+  it("is an APPROXIMATE cut count per month, one map behind every surface", () => {
+    // Owner, 2026-09-29: the cost of a cut is dominated by a fixed per-run
+    // cost, not by the footage, so minutes were the wrong unit to sell.
+    expect(TIERS.map((tier) => APPROX_CUTS_PER_MONTH[tier])).toEqual([2, 4, 9, 22, 45, 90, 160]);
+    expect(clipsHeadline("free")).toBe("ราว 2 คลิป");
+    expect(clipsHeadline("pro")).toBe("ตัดได้ราว 22 คลิป/เดือน");
+    const row = COMPARISON_ROWS.find((r) => r.label === "จำนวนคลิปต่อเดือน (โดยประมาณ)");
+    expect(row?.values).toEqual(["ราว 2 คลิป ครั้งเดียว", ...TIERS.slice(1).map((tier) => clipsListItem(tier))]);
+    for (const tier of TIERS) {
+      expect(PLAN_COPY[tier].accountFeatures[0], `${tier} leads with its clip count`).toContain(clipsHeadline(tier));
+    }
+  });
+
+  it("never states a bare count — a long high-precision cut costs about four times an ordinary one", () => {
+    // Without "ราว" the card promises a quota the product cannot hold for a
+    // heavy user, and someone would eventually wire the number to a counter.
+    for (const tier of TIERS) expect(clipsHeadline(tier), tier).toMatch(/ราว/);
+    // The compact list form keeps the hedge too: an agent may quote one item.
+    for (const tier of TIERS) expect(clipsListItem(tier), tier).toMatch(/^ราว \d+ คลิป$/);
+    expect(clipsLadderSentence(["lite", "pro"])).toBe("Lite ราว 4 คลิป · Pro ราว 22 คลิป");
+    for (const tier of TIERS) {
+      const text = [...PLAN_COPY[tier].accountFeatures, PLAN_COPY[tier].dialogSummary].join("\n");
+      const bare = new RegExp(`(?<!ราว )${APPROX_CUTS_PER_MONTH[tier]} คลิป`);
+      expect(text, `${tier} states a bare count`).not.toMatch(bare);
+    }
+  });
+
+  it("states what the count is estimated on, including that a run is priced before it starts", () => {
+    expect(CLIPS_FOOTNOTE).toContain("คลิปดิบ 5 นาที");
+    expect(CLIPS_FOOTNOTE).toContain("ระดับละเอียดใช้โควตามากกว่า");
+    expect(CLIPS_FOOTNOTE).toContain("ระบบบอกก่อนเริ่มทุกครั้ง");
+  });
+
+  it("no longer sells a multiple of Lite — that ladder contradicts the clip counts", () => {
+    for (const tier of TIERS) {
+      const text = JSON.stringify(PLAN_COPY[tier]);
+      expect(text, `${tier} still quotes a multiplier`).not.toMatch(/\dx/);
+    }
   });
 
   it("show limits by their English names, 5-hour only from Pro up", () => {
-    expect(PLAN_COPY.free.limits).toEqual(["Monthly limit"]);
+    expect(PLAN_COPY.free.limits).toEqual(["Trial credit"]);
     expect(PLAN_COPY.starter.limits).toEqual(["Weekly limit"]);
     expect(PLAN_COPY.pro.limits).toEqual(["Weekly limit", "5-hour limit"]);
     expect(TIERS.map((tier) => PLAN_COPY[tier].concurrentJobs)).toEqual([1, 1, 1, 2, 3, 4, 5]);
@@ -151,31 +266,78 @@ describe("usage multipliers", () => {
     }
   });
 
-  it("states the ตัดฉากเด่น footage cap wherever it undercuts the plan's", () => {
-    // The backend refuses over this (limits.video_call_footage_sec, 2026-09-26).
-    // A plan card that still promised a flat 2 hours would be a promise the
-    // product breaks, so every surface naming 2 hours must name this too.
-    expect(SCENE_FOOTAGE_STANDARD).toBe("1 ชั่วโมง");
-    expect(SCENE_FOOTAGE_HIGH).toBe("44 นาที");
-    for (const tier of ["pro", "studio", "agency", "max"] as const) {
-      const text = [...PLAN_COPY[tier].features, ...PLAN_COPY[tier].accountFeatures].join("\n");
-      expect(text, `${tier} promises 2 hours`).toContain("2 ชั่วโมง");
-      expect(text, `${tier} qualifies it`).toContain(SCENE_FOOTAGE_STANDARD);
-      expect(text, `${tier} names the High figure`).toContain(SCENE_FOOTAGE_HIGH);
-    }
-    const row = COMPARISON_ROWS.find((r) => r.label === "ฟุตเทจรวมต่อโปรเจกต์ · โหมดตัดฉากเด่น");
-    // Below Pro the plan's own cap is shorter, so it is what the cell shows.
-    expect(row?.values).toEqual([
-      "5 นาที",
+  it("state ONE footage cap per plan, the same one the cards and the table show", () => {
+    // Owner, 2026-09-29. Every mode reads the same ceiling now, so no surface
+    // may promise a second, longer number.
+    expect(TIERS.map((tier) => FOOTAGE_PER_PROJECT[tier])).toEqual([
+      "10 นาที",
       "10 นาที",
       "20 นาที",
-      ...Array(4).fill(`${SCENE_FOOTAGE_STANDARD} · High ${SCENE_FOOTAGE_HIGH}`),
+      "30 นาที",
+      "30 นาที",
+      "30 นาที",
+      "30 นาที",
     ]);
+    for (const tier of TIERS) {
+      const text = [...PLAN_COPY[tier].features, ...PLAN_COPY[tier].accountFeatures].join("\n");
+      expect(text, `${tier} names its footage cap`).toContain(FOOTAGE_PER_PROJECT[tier]);
+      expect(text, `${tier} still promises 2 hours`).not.toContain("2 ชั่วโมง");
+    }
+    const row = COMPARISON_ROWS.find((r) => r.label === "ฟุตเทจรวมต่อโปรเจกต์");
+    expect(row?.values).toEqual(TIERS.map((tier) => FOOTAGE_PER_PROJECT[tier]));
+    expect(footageLadderSentence()).toContain("ฟรี 10 นาที");
+    expect(footageLadderSentence()).toContain("Max 30 นาที");
   });
 
-  it("every comparison row has one value per plan, multiplier row first", () => {
+  it("never advertise the finer precision setting below Pro", () => {
+    for (const tier of ["free", "lite", "starter"] as const) {
+      expect(hasHighPrecision(tier), tier).toBe(false);
+      const text = [...PLAN_COPY[tier].features, ...PLAN_COPY[tier].accountFeatures, PLAN_COPY[tier].dialogSummary].join("\n");
+      expect(text, `${tier} must not offer the finer setting`).not.toContain(PRECISION_NAMES.high);
+      expect(text, `${tier} says ${PRECISION_NAMES.standard}`).toContain(PRECISION_NAMES.standard);
+    }
+    for (const tier of ["pro", "studio", "agency", "max"] as const) {
+      expect(hasHighPrecision(tier), tier).toBe(true);
+    }
+    const row = COMPARISON_ROWS.find((r) => r.label === "ความละเอียดการวิเคราะห์");
+    expect(row?.values).toEqual(TIERS.map((tier) => precisionLabel(tier)));
+  });
+
+  it("names the two precision settings the way the editor's dial does", () => {
+    // 2026-09-30 the editor renamed its dials; the site says ปกติ / ละเอียด
+    // because that is the word the customer clicks. English "Standard"/"High"
+    // named a control that no longer exists, so no surface may print it.
+    expect(PRECISION_NAMES).toEqual({ standard: "ปกติ", high: "ละเอียด" });
+    expect(precisionLabel("starter")).toBe("ปกติ");
+    expect(precisionLabel("pro")).toBe("ปกติ และ ละเอียด");
+    expect(precisionFeature("starter")).toBe("วิเคราะห์ระดับปกติ");
+    expect(precisionFeature("pro")).toContain("วิเคราะห์ระดับละเอียด");
+    const copy = [
+      JSON.stringify(PLAN_COPY),
+      JSON.stringify(COMPARISON_ROWS),
+      TIERS.map((tier) => `${precisionLabel(tier)} ${precisionFeature(tier)}`).join("\n"),
+    ].join("\n");
+    for (const dead of ["Standard", "High"]) {
+      expect(copy, `copy still prints "${dead}"`).not.toContain(dead);
+    }
+  });
+
+  it("sells the free plan as a one-time credit, never as a recurring monthly plan", () => {
+    const text = [
+      PLAN_COPY.free.pricingBlurb,
+      PLAN_COPY.free.homeBlurb,
+      ...PLAN_COPY.free.features,
+      ...PLAN_COPY.free.accountFeatures,
+    ].join("\n");
+    expect(text).toContain("ครั้งเดียว");
+    expect(text).toContain("ไม่รีเซ็ต");
+    expect(text).not.toContain("คลิป/เดือน");
+    expect(text).not.toContain("ไม่หมดอายุ");
+  });
+
+  it("every comparison row has one value per plan, the clip count first", () => {
     for (const row of COMPARISON_ROWS) expect(row.values).toHaveLength(TIERS.length);
-    expect(COMPARISON_ROWS[0].values).toEqual(["ทดลองใช้", "1x", "2x", "5x", "10x", "20x", "35x"]);
+    expect(COMPARISON_ROWS[0].label).toContain("จำนวนคลิปต่อเดือน");
   });
 
   it("split into four main cards and three extra ones, covering every plan once", () => {

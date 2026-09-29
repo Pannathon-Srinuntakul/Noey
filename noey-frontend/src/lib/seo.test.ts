@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { HOME_FAQ, PRICING_FAQ } from "./faq";
+import { HOME_FAQ, pricingFaq } from "./faq";
 import { APP_ICONS } from "./icons";
 import {
   breadcrumbNode,
@@ -100,10 +100,10 @@ describe("JSON-LD builders", () => {
   });
 
   it("uses the visible FAQ text verbatim", () => {
-    const node = faqPageNode(PRICING_FAQ, "/pricing");
+    const node = faqPageNode(pricingFaq(), "/pricing");
     const entities = node.mainEntity as Array<{ name: string; acceptedAnswer: { text: string } }>;
-    expect(entities.map((e) => e.name)).toEqual(PRICING_FAQ.map((f) => f.question));
-    expect(entities.map((e) => e.acceptedAnswer.text)).toEqual(PRICING_FAQ.map((f) => f.answer));
+    expect(entities.map((e) => e.name)).toEqual(pricingFaq().map((f) => f.question));
+    expect(entities.map((e) => e.acceptedAnswer.text)).toEqual(pricingFaq().map((f) => f.answer));
   });
 
   it("numbers breadcrumbs from 1 with absolute URLs", () => {
@@ -125,6 +125,7 @@ describe("JSON-LD builders", () => {
 });
 
 describe("machine-readable files", () => {
+  // Priced during the beta, like the live site is today.
   const table = fallbackPriceTable();
 
   it("llms.txt has a heading, a summary, links and the pricing link", () => {
@@ -139,10 +140,11 @@ describe("machine-readable files", () => {
   it("pricing.md lists every plan with the table's prices and the update date", () => {
     const md = buildPricingMarkdown(table, "2026-09-21");
     for (const name of ["ฟรี", "Lite", "Starter", "Pro", "Studio", "Agency", "Max"]) expect(md).toContain(`## ${name}`);
-    expect(md).toContain("6,990 บาท/เดือน");
-    expect(md).toContain("- ปริมาณการใช้งาน: 5x (ปริมาณการใช้งาน 5 เท่าของ Lite)");
+    // The beta price is the one charged; the full price follows it in brackets.
+    expect(md).toContain("3,499 บาท/เดือน (ราคาเบต้า ราคาปกติ 6,990 บาท ถึง 2026-12-31)");
+    expect(md).toContain("- จำนวนคลิป: ตัดได้ราว 22 คลิป/เดือน (คิดจากคลิปดิบ 5 นาที");
     expect(md).toContain("อัปเดตล่าสุด: 2026-09-21");
-    expect(md).toContain("| ราคา (บาท/เดือน) | 0 | 199 | 399 | 990 | 1,990 | 3,990 | 6,990 |");
+    expect(md).toContain("| ราคา (บาท/เดือน) | 0 | 99 | 199 | 499 | 999 | 1,999 | 3,499 |");
   });
 
   it("pricing.md follows a changed backend price", () => {

@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Noto_Sans_Thai } from "next/font/google";
+import { BetaNotice } from "@/components/beta/BetaNotice";
 import { SiteFooter } from "@/components/SiteFooter";
 import { SiteHeader } from "@/components/header/SiteHeader";
 import { PREPAINT_SCRIPT } from "@/lib/prepaint";
@@ -57,6 +58,9 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         <a className="skip-link" href="#main">
           ข้ามไปที่เนื้อหา
         </a>
+        {/* The beta disclosure: the modal on a first visit, then the pinned
+            strip. Both stop rendering by themselves once the beta ends. */}
+        <BetaNotice />
         <SiteHeader />
         {children}
         <SiteFooter />

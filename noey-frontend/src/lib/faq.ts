@@ -7,6 +7,9 @@
  * that did not match the visible ones; that drift is gone by construction.
  */
 
+import { BETA_END_LABEL, BETA_PRICE_AFTER } from "./beta";
+import { CLIPS_FOOTNOTE, FOOTAGE_PER_PROJECT, PAID_TIERS, clipsHeadline, clipsLadderSentence, footageLadderSentence } from "./plans";
+
 export interface FaqItem {
   question: string;
   answer: string;
@@ -40,8 +43,7 @@ export const HOME_FAQ: readonly FaqItem[] = [
   },
   {
     question: "คลิปยาวแค่ไหนถึงจะใช้ได้",
-    answer:
-      "ขึ้นกับแพลนและโหมดที่ใช้ แพลนฟรีรับฟุตเทจรวม 5 นาทีต่อโปรเจกต์ Lite 10 นาที Starter 20 นาที ส่วน Pro ขึ้นไปสูงสุด 2 ชั่วโมงต่อโปรเจกต์ เฉพาะโหมดตัดฉากเด่นรับได้ 1 ชั่วโมงต่อโปรเจกต์ ที่ความละเอียด Standard และ 44 นาที ที่ความละเอียด High เพราะโหมดนี้ให้ AI ดูฟุตเทจทั้งกองในรอบเดียว ดูรายละเอียดได้ในหน้าราคา",
+    answer: `ขึ้นกับแพลน ความยาวฟุตเทจรวมต่อโปรเจกต์คือ ${footageLadderSentence()} เพดานนี้ใช้กับทุกโหมดเท่ากัน ถ้าฟุตเทจยาวกว่านั้นให้ตัดให้สั้นลงก่อนหรือแยกเป็นสองโปรเจกต์ ส่วนโควตานับเป็นจำนวนคลิปต่อเดือน ไม่ได้นับเป็นนาที ดูรายละเอียดได้ในหน้าราคา`,
   },
   {
     question: "ต้องใช้คอมแรงแค่ไหน",
@@ -98,9 +100,8 @@ export const ABOUT_FAQ: readonly FaqItem[] = [
       "ทุกหน้าที่เผยแพร่มีวันที่อัปเดตล่าสุดกำกับไว้ และเว็บมีฟีด Atom ที่เรียงตามวันที่แก้ไขล่าสุด สำหรับคนหรือระบบที่อยากติดตามว่าอะไรเปลี่ยนไปบ้าง",
   },
   {
-    question: "มีแพลนฟรีจริงไหม ต้องผูกบัตรก่อนไหม",
-    answer:
-      "มีจริงและไม่ต้องผูกบัตร แพลนฟรีใช้ได้ครบทุกโหมดภายในโควตารายเดือนหนึ่งก้อน ฟุตเทจรวม 5 นาทีต่อโปรเจกต์ และเก็บได้ 3 โปรเจกต์ภายใน 1 GB",
+    question: "มีให้ลองใช้ฟรีไหม ต้องผูกบัตรก่อนไหม",
+    answer: `มีและไม่ต้องผูกบัตร สมัครแล้วได้เครดิตทดลองก้อนเดียว ตัดได้ ${clipsHeadline("free")} ใช้ได้ครบทุกโหมด ฟุตเทจรวม ${FOOTAGE_PER_PROJECT.free}ต่อโปรเจกต์ วิเคราะห์ระดับปกติ และเก็บได้ 3 โปรเจกต์ภายใน 1 GB เครดิตนี้ไม่รีเซ็ตรายเดือน ใช้หมดแล้วเลือกแพลนรายเดือนต่อได้`,
   },
 ];
 
@@ -138,20 +139,23 @@ export const SCOPE_FAQ: readonly FaqItem[] = [
   },
 ];
 
-export const PRICING_FAQ: readonly FaqItem[] = [
+const PRICING_FAQ_BASE: readonly FaqItem[] = [
   {
-    question: "ใช้แพลนฟรีได้นานแค่ไหน",
-    answer: "ไม่มีกำหนด แพลนฟรีได้โควตาก้อนเดียวต่อเดือน ถ้าเริ่มไม่พอค่อยขยับขึ้น Lite หรือ Starter",
+    question: "แพลนฟรีใช้ได้นานแค่ไหน",
+    answer: `แพลนฟรีคือเครดิตทดลองก้อนเดียวที่ได้ตอนสมัคร ตัดได้ ${clipsHeadline("free")} และไม่รีเซ็ตรายเดือน ใช้หมดแล้วเลือกแพลนรายเดือนที่พอดีกับปริมาณงานได้ เริ่มที่ Lite หรือ Starter`,
   },
   {
-    question: "5x หรือ 10x หมายถึงอะไร",
-    answer:
-      "คือปริมาณการใช้งาน AI เทียบกับแพลน Lite เช่น Pro (5x) ใช้งานได้ 5 เท่าของ Lite และ Max (35x) ได้ 35 เท่า ระบบไม่แสดงเป็นตัวเลขโทเค็น แต่แสดงเป็นเปอร์เซ็นต์ของ Weekly limit และ 5-hour limit ในหน้าตั้งค่า",
+    question: "จำนวนคลิปต่อเดือนนับยังไง",
+    answer: `${CLIPS_FOOTNOTE} แต่ละแพลนได้ต่อเดือน ${clipsLadderSentence(PAID_TIERS)} ส่วนการแก้ไทม์ไลน์ การสลับช็อต และการเรนเดอร์ซ้ำ ไม่นับเป็นคลิปใหม่และไม่กินโควตา`,
   },
   {
-    question: "อัปเกรดแล้วโหมดตัดฉากเด่นรับฟุตเทจยาวขึ้นไหม",
+    question: "อัปเกรดแล้วรับฟุตเทจยาวขึ้นไหม",
+    answer: `ขึ้นถึงจุดหนึ่ง ความยาวฟุตเทจรวมต่อโปรเจกต์คือ ${footageLadderSentence()} ตั้งแต่ Pro ขึ้นไปเพดานเท่ากันที่ ${FOOTAGE_PER_PROJECT.pro} แพลนที่สูงกว่าให้จำนวนคลิปต่อเดือนมากขึ้น จำนวนงานที่ทำพร้อมกันได้มากขึ้น และพื้นที่เก็บงานมากขึ้น ไม่ได้ขยายเพดานต่อโปรเจกต์ ถ้าฟุตเทจยาวกว่านั้นให้ทิ้งเทกที่ไม่ใช้ก่อนอัปโหลด หรือแยกเป็นสองโปรเจกต์`,
+  },
+  {
+    question: "ความละเอียดการวิเคราะห์ระดับปกติกับระดับละเอียดต่างกันยังไง",
     answer:
-      "ขึ้นถึงจุดหนึ่ง โหมดตัดฉากเด่นให้ AI ดูฟุตเทจทั้งกองในรอบเดียว รอบหนึ่งรับได้ 1 ชั่วโมงต่อโปรเจกต์ ที่ความละเอียด Standard และ 44 นาที ที่ความละเอียด High ซึ่งเท่ากันทุกแพลนตั้งแต่ Pro ขึ้นไป แพลนที่สูงกว่าให้โควตาการใช้งานมากขึ้น ไม่ได้ขยายเพดานนี้ ถ้าฟุตเทจยาวกว่านั้นให้ลดความละเอียดเป็น Standard หรือแยกเป็นสองโปรเจกต์ ส่วนโหมดอื่นรับได้ตามเพดานของแพลนถึง 2 ชั่วโมง",
+      "ระดับละเอียดให้ AI อ่านฟุตเทจถี่ขึ้นเวลาเลือกช็อต คัตจึงลงตรงจังหวะแม่นกว่าและเปลี่ยนช็อตได้ถี่กว่า แลกกับการใช้โควตามากกว่างานเดียวกันที่ระดับปกติ ซึ่งก็ให้ผลดีอยู่แล้ว เลือกระดับละเอียดได้ตั้งแต่แพลน Pro ขึ้นไป ส่วนแพลนฟรี Lite และ Starter วิเคราะห์ที่ระดับปกติ",
   },
   {
     question: "เปลี่ยนแพลนกลางเดือนได้ไหม",
@@ -167,3 +171,20 @@ export const PRICING_FAQ: readonly FaqItem[] = [
     answer: "บัตรเครดิตหรือเดบิต ตัดอัตโนมัติทุกเดือน ออกใบเสร็จให้ทางอีเมล",
   },
 ];
+
+/** Only while the beta price is live; it drops out of the page and the JSON-LD after that. */
+const BETA_PRICE_FAQ: FaqItem = {
+  question: "ราคาเบต้าคืออะไร หมดแล้วจ่ายเท่าไหร่",
+  answer: `ช่วงเบต้าทุกแพลนลด 50% จากราคาปกติ และเป็นราคาที่ตัดบัตรจริง ไม่ต้องใส่โค้ดส่วนลด ราคานี้ใช้ถึง ${BETA_END_LABEL} ${BETA_PRICE_AFTER} ตัวเลขที่ขีดฆ่าบนการ์ดแต่ละแพลนคือราคาปกติที่จะกลับมาใช้`,
+};
+
+/**
+ * The pricing FAQ. A function, not a constant, because the beta question is
+ * only worth asking while the beta price is actually being charged — the
+ * caller passes `plans.isBetaPriced(table)`. After `BETA_END_DATE_ISO` that is
+ * false everywhere, so the question leaves both the visible list and the
+ * FAQPage JSON-LD on its own.
+ */
+export function pricingFaq(betaPriced = false): readonly FaqItem[] {
+  return betaPriced ? [BETA_PRICE_FAQ, ...PRICING_FAQ_BASE] : PRICING_FAQ_BASE;
+}

@@ -6,9 +6,26 @@
  * design's mock prices as the build-time fallback only. Both the visible page
  * and every machine-readable surface (JSON-LD offers, /pricing.md, /llms.txt)
  * render prices from the same `PriceTable`, so they cannot disagree.
+ *
+ * During the beta (see `beta.ts`) the backend/Stripe price IS the discounted
+ * one — there is no coupon. The full price is the static ladder below and is
+ * only ever drawn struck through; after `BETA_END_DATE_ISO` nothing is struck
+ * and the full ladder is what the backend charges.
  */
+import { isBetaActive } from "./beta";
 
-/** Every plan, cheapest first — the order of the comparison table. */
+/**
+ * Every plan, cheapest first — the order of the comparison table.
+ *
+ * These seven words are RESERVED for plans and may never also name an AI
+ * model. Until 2026-09-30 the editor's model dial offered "Lite" and "Pro",
+ * so on one screen "Pro" meant both a plan and a model and a Lite-plan
+ * customer could pick the "Pro" model — a contradiction that would have
+ * arrived as a support ticket. The dial was renamed to a ladder of its own,
+ * Scout → Director, with Auteur reserved for a rung above and Cutter for one
+ * between. If a model ever needs a name here, take it from that ladder; never
+ * from this list.
+ */
 export const TIERS = ["free", "lite", "starter", "pro", "studio", "agency", "max"] as const;
 export type Tier = (typeof TIERS)[number];
 
@@ -37,10 +54,11 @@ export function defaultLookupKey(tier: PaidTier): string {
 }
 
 /**
- * Owner-approved ladder (THB / month, 2026-09-22) — used ONLY when the backend
- * is unreachable at build time. The backend catalog is the source of truth.
+ * Owner-approved full ladder (THB / month, 2026-09-22). From 1 Jan 2027 this
+ * is what every account is billed; until then it is the struck-through number
+ * beside the beta price.
  */
-export const FALLBACK_PRICES_THB: Record<PaidTier, number> = {
+export const FULL_PRICES_THB: Record<PaidTier, number> = {
   lite: 199,
   starter: 399,
   pro: 990,
@@ -48,6 +66,29 @@ export const FALLBACK_PRICES_THB: Record<PaidTier, number> = {
   agency: 3990,
   max: 6990,
 };
+
+/**
+ * The beta ladder (owner, 2026-09-29): half of the full price, rounded to a
+ * number ending in 9. This is the amount actually charged while the beta runs
+ * — it is the Stripe price, not a discount applied on top of one.
+ *
+ * Starter's 199 equals Lite's full 199 on purpose. The two never sit side by
+ * side because Lite lives in the "แพลนเพิ่มเติม" row (`EXTRA_TIERS`), and the
+ * colliding number is a struck-through one that nobody pays.
+ */
+export const BETA_PRICES_THB: Record<PaidTier, number> = {
+  lite: 99,
+  starter: 199,
+  pro: 499,
+  studio: 999,
+  agency: 1999,
+  max: 3499,
+};
+
+/** What the backend is expected to charge at `now` — beta ladder, then full. */
+export function chargedPricesThb(now: Date | number = Date.now()): Record<PaidTier, number> {
+  return isBetaActive(now) ? BETA_PRICES_THB : FULL_PRICES_THB;
+}
 
 export interface PaidPrice {
   /** Smallest currency unit (satang), exactly as Stripe/the backend report it. */
@@ -64,10 +105,11 @@ export interface PriceTable {
   prices: Partial<Record<PaidTier, PaidPrice>>;
 }
 
-export function fallbackPriceTable(): PriceTable {
+export function fallbackPriceTable(now: Date | number = Date.now()): PriceTable {
+  const ladder = chargedPricesThb(now);
   const prices: Partial<Record<PaidTier, PaidPrice>> = {};
   for (const tier of PAID_TIERS) {
-    prices[tier] = { amountSatang: FALLBACK_PRICES_THB[tier] * 100, lookupKey: defaultLookupKey(tier) };
+    prices[tier] = { amountSatang: ladder[tier] * 100, lookupKey: defaultLookupKey(tier) };
   }
   return { source: "fallback", currency: "thb", prices };
 }
@@ -152,7 +194,10 @@ export interface PlanCopy {
   homeBlurb: string;
   /** Card sentence on /pricing. */
   pricingBlurb: string;
-  /** Bullet list on /pricing. */
+  /**
+   * Bullet list on /pricing. It never repeats the clip count — the card's
+   * headline states that, with `CLIPS_FOOTNOTE` under it.
+   */
   features: readonly string[];
   /** Bullets on the account billing card (design shows the free-plan version). */
   accountFeatures: readonly string[];
@@ -161,80 +206,175 @@ export interface PlanCopy {
   /** Button label on /pricing. */
   pricingCta: string;
   recommended?: boolean;
-  /**
-   * Usage relative to Lite (1x). Sold as a multiplier, never as a token
-   * count — the user only ever sees percentages of their limits. null = free.
-   */
-  usageMultiplier: number | null;
   /** Which limit windows apply, by their English UI names. */
   limits: readonly UsageLimit[];
   /** AI jobs that may run at the same time; more queue. */
   concurrentJobs: number;
-  /** Rough 5-minute-clip guide, always shown as approximate. */
-  clipsApprox: string;
 }
 
-export type UsageLimit = "Monthly limit" | "Weekly limit" | "5-hour limit";
+export type UsageLimit = "Trial credit" | "Monthly limit" | "Weekly limit" | "5-hour limit";
 
-/** Shown next to every clip estimate: the guide depends on footage and mode. */
-export const APPROX_NOTE = "โดยประมาณ ขึ้นกับความยาวและโหมด";
-
-// ─── The ตัดฉากเด่น footage ceiling ──────────────────────────────────────────
+// ─── Approximate cuts per month — the headline on every card ─────────────────
 //
-// Every other mode reads the footage piece by piece, so the plan's
-// "ฟุตเทจรวมต่อโปรเจกต์" is the only cap. ตัดฉากเด่น hands the WHOLE project to
-// the AI in one pass, and how much one pass can read is fixed — a bigger plan
-// does not move it. The higher ความละเอียด reads the same footage more densely,
-// so it fills that pass sooner. Mirrors the backend's
-// `packages/billing/limits.py:video_call_footage_sec` (owner, 2026-09-26);
-// change both together or the site promises what the product refuses.
+// Owner, 2026-09-29. The product is sold in CLIPS, not in minutes: what a cut
+// costs is dominated by a fixed per-run cost rather than by the footage, so a
+// long source is barely dearer than a short one. Minutes described something
+// the user does not care about. Every surface derives its count from this one
+// map — cards, comparison table, FAQ, guides, /pricing.md, /llms.txt.
+//
+// APPROX, and the name says so on purpose: an ordinary cut and a long
+// high-precision one differ by about four times, so this number is a guide,
+// never a balance. NOTHING may subtract from it, and no meter may count down
+// in cuts — a single heavy upload would drop it by four. Quota is shown as a
+// percentage, everywhere, always (owner's standing decision).
+//
+// Free is NOT a monthly allowance: it is one trial credit, spent once.
+export const APPROX_CUTS_PER_MONTH: Record<Tier, number> = {
+  free: 2,
+  lite: 4,
+  starter: 9,
+  pro: 22,
+  studio: 45,
+  agency: 90,
+  max: 160,
+};
 
-/** ตัดฉากเด่น at ความละเอียด Standard. */
-export const SCENE_FOOTAGE_STANDARD = "1 ชั่วโมง";
-/** ตัดฉากเด่น at ความละเอียด High — the same pass, read five times as densely. */
-export const SCENE_FOOTAGE_HIGH = "44 นาที";
+/**
+ * The word that makes the number honest. Load-bearing: without it the card
+ * states a quota the product cannot guarantee for a heavy user.
+ */
+export const CUTS_APPROX_PREFIX = "ตัดได้ราว";
+/** The bare hedge, for the free plan's one-off credit and for enumerations. */
+export const CUTS_APPROX_SHORT = "ราว";
 
-/** Comparison-table cell for the plans where the mode cap, not the plan, binds. */
-const SCENE_ROW_PRO = `${SCENE_FOOTAGE_STANDARD} · High ${SCENE_FOOTAGE_HIGH}`;
-
-/** Feature bullet for every plan whose 2-hour cap the ตัดฉากเด่น mode undercuts. */
-const FOOTAGE_2H_FEATURE =
-  `ฟุตเทจรวมสูงสุด 2 ชั่วโมงต่อโปรเจกต์ · โหมดตัดฉากเด่น ${SCENE_FOOTAGE_STANDARD} ` +
-  `(ความละเอียด High ${SCENE_FOOTAGE_HIGH})`;
-
-/** "5x" badge text, or null for the free plan. */
-export function multiplierLabel(tier: Tier): string | null {
-  const m = PLAN_COPY[tier].usageMultiplier;
-  return m === null ? null : `${m}x`;
+/** The headline itself: "ตัดได้ราว 22 คลิป/เดือน", or the free plan's one-off credit. */
+export function clipsHeadline(tier: Tier): string {
+  const cuts = APPROX_CUTS_PER_MONTH[tier];
+  return tier === "free" ? `${CUTS_APPROX_SHORT} ${cuts} คลิป` : `${CUTS_APPROX_PREFIX} ${cuts} คลิป/เดือน`;
 }
 
-/** The sentence under the badge. */
-export function multiplierCaption(tier: Tier): string {
-  const m = PLAN_COPY[tier].usageMultiplier;
-  if (m === null) return "สำหรับทดลองใช้";
-  if (m === 1) return "ปริมาณการใช้งานพื้นฐาน";
-  return `ปริมาณการใช้งาน ${m} เท่าของ Lite`;
+/**
+ * Compact form for a list whose lead already said "ต่อเดือน". It keeps "ราว"
+ * per item on purpose: an agent may quote one item out of the list, and a bare
+ * number there would be a promise.
+ */
+export function clipsListItem(tier: Tier): string {
+  return `${CUTS_APPROX_SHORT} ${APPROX_CUTS_PER_MONTH[tier]} คลิป`;
+}
+
+/** "Lite ราว 4 คลิป · Starter ราว 9 คลิป · …" — the ladder, written once. */
+export function clipsLadderSentence(tiers: readonly Tier[] = TIERS): string {
+  return tiers.map((tier) => `${PLAN_COPY[tier].name} ${clipsListItem(tier)}`).join(" · ");
+}
+
+/**
+ * The basis of every clip count. A count with no basis is a promise the product
+ * breaks; the third clause is the one that keeps it honest — the app prices a
+ * run before it starts, so nobody is surprised afterwards.
+ *
+ * Printed ONCE per page, under the grid (owner, 2026-09-29: seven copies on
+ * /pricing was noise). Individual cards carry `CLIPS_BASIS_SHORT` instead. The
+ * machine-readable surfaces repeat the full sentence per plan on purpose —
+ * repetition is free there, and an agent may read one plan in isolation.
+ */
+export const CLIPS_FOOTNOTE =
+  "คิดจากคลิปดิบ 5 นาที · คลิปที่ยาวกว่าหรือระดับละเอียดใช้โควตามากกว่า · ระบบบอกก่อนเริ่มทุกครั้งว่างานนี้ใช้เท่าไหร่";
+
+/** What a card puts under its own count; the page states the rest once. */
+export const CLIPS_BASIS_SHORT = "~คลิปดิบ 5 นาที";
+
+/** The free plan's headline needs its own caption: it never comes back. */
+export const FREE_CLIPS_CAPTION = "ทดลองใช้ครั้งเดียว ไม่รีเซ็ต";
+
+// ─── Footage per project ─────────────────────────────────────────────────────
+//
+// Owner, 2026-09-29. ONE number per plan, and it is the only footage ceiling
+// the site states. The earlier copy promised Pro and up "2 ชั่วโมง" and then
+// had to qualify it with the ตัดฉากเด่น mode's own ceiling (1 hour at the
+// ordinary setting / 44 minutes at the finer one, which that mode hits
+// because it hands the whole project to
+// the AI in one pass). With every plan now at 30 minutes or less, the plan's
+// number is always the smaller of the two, so the mode ceiling can never bind
+// and stating it would only be noise. If a plan ever exceeds 44 minutes again,
+// bring the second number back. Mirrors the backend's
+// `packages/billing/limits.py`; change both together or the site promises what
+// the product refuses.
+export const FOOTAGE_PER_PROJECT: Record<Tier, string> = {
+  free: "10 นาที",
+  lite: "10 นาที",
+  starter: "20 นาที",
+  pro: "30 นาที",
+  studio: "30 นาที",
+  agency: "30 นาที",
+  max: "30 นาที",
+};
+
+/** Feature/FAQ sentence listing the whole ladder, so no page writes its own. */
+export function footageLadderSentence(): string {
+  return TIERS.map((tier) => `${PLAN_COPY[tier].name} ${FOOTAGE_PER_PROJECT[tier]}`).join(" · ");
+}
+
+// ─── ความละเอียด (analysis precision) ────────────────────────────────────────
+//
+// Owner, 2026-09-29: Free, Lite and Starter get the ordinary setting only; the
+// finer one is a Pro-and-up feature. It costs several times the per-second
+// rate, which on the cheap plans would silently halve the clip count, so it is
+// sold as a visible tier feature instead of a hidden tax. Describe it as
+// denser, sharper cuts — never by naming a model or a frame rate. The site must
+// not advertise the finer setting to a plan that cannot select it.
+//
+// The two settings are named in Thai, 2026-09-30, because the editor's dial now
+// reads ปกติ / ละเอียด. The earlier English "Standard / High" was chosen when
+// the dial itself said Standard and High; it does not any more, and a customer
+// must not have to translate the price page into the product. The English
+// spelling survives only in `HIGH_PRECISION_TIERS` and the code around it,
+// where it is an identifier, not copy. Prose says ระดับปกติ / ระดับละเอียด;
+// the comparison-table cell says the bare word the dial shows.
+export const HIGH_PRECISION_TIERS: readonly Tier[] = ["pro", "studio", "agency", "max"];
+
+/** The two settings exactly as the editor's dial spells them. */
+export const PRECISION_NAMES = { standard: "ปกติ", high: "ละเอียด" } as const;
+
+export function hasHighPrecision(tier: Tier): boolean {
+  return HIGH_PRECISION_TIERS.includes(tier);
+}
+
+/** Comparison-table cell and feature bullet for the precision tiers a plan gets. */
+export function precisionLabel(tier: Tier): string {
+  return hasHighPrecision(tier)
+    ? `${PRECISION_NAMES.standard} และ ${PRECISION_NAMES.high}`
+    : PRECISION_NAMES.standard;
+}
+
+/** Feature bullet describing what a plan's precision buys. */
+export function precisionFeature(tier: Tier): string {
+  return hasHighPrecision(tier)
+    ? `วิเคราะห์ระดับ${PRECISION_NAMES.high} ตัดถี่ขึ้น จุดตัดแม่นขึ้น`
+    : `วิเคราะห์ระดับ${PRECISION_NAMES.standard}`;
 }
 
 export const PLAN_COPY: Record<Tier, PlanCopy> = {
   free: {
     tier: "free",
     name: "ฟรี",
-    homeBlurb: "ลองระบบและตัดคลิปสั้นเป็นครั้งคราว",
-    pricingBlurb: "ใช้ได้ต่อเนื่อง ไม่หมดอายุ",
+    homeBlurb: "เครดิตทดลองก้อนเดียว ไว้ลองตัดคลิปแรก",
+    // Not a recurring 0-baht plan: one credit, spent once, then you upgrade.
+    pricingBlurb: "ทดลองใช้ครั้งเดียว ใช้หมดแล้วเลือกแพลนต่อ",
     features: [
-      "Monthly limit · ประมาณ 1–2 งานต่อเดือน จากฟุตเทจดิบ 5 นาที",
-      "ฟุตเทจรวม 5 นาทีต่อโปรเจกต์",
+      `ฟุตเทจรวม ${FOOTAGE_PER_PROJECT.free}ต่อโปรเจกต์`,
+      precisionFeature("free"),
       "ครบทุกโหมด รวมโหมดพากย์ใหม่",
       "เก็บได้ 3 โปรเจกต์ · 1 GB",
     ],
-    accountFeatures: ["ฟุตเทจรวม 5 นาทีต่อโปรเจกต์", "เก็บได้ 3 โปรเจกต์ · 1 GB", "ครบทุกโหมด รวมโหมดพากย์ใหม่"],
+    accountFeatures: [
+      `${clipsHeadline("free")} · ${FREE_CLIPS_CAPTION}`,
+      `ฟุตเทจรวม ${FOOTAGE_PER_PROJECT.free}ต่อโปรเจกต์ · ${precisionFeature("free")}`,
+      "เก็บได้ 3 โปรเจกต์ · 1 GB",
+    ],
     dialogSummary: "",
     pricingCta: "เริ่มใช้ฟรี",
-    usageMultiplier: null,
-    limits: ["Monthly limit"],
+    limits: ["Trial credit"],
     concurrentJobs: 1,
-    clipsApprox: "1–2 งาน/เดือน",
   },
   lite: {
     tier: "lite",
@@ -242,18 +382,20 @@ export const PLAN_COPY: Record<Tier, PlanCopy> = {
     homeBlurb: "เริ่มแบบประหยัด ลงคลิปสัปดาห์ละไม่กี่ตัว",
     pricingBlurb: "เริ่มแบบประหยัด ลงคลิปสัปดาห์ละไม่กี่ตัว",
     features: [
-      "Weekly limit · ประมาณ 3 งานต่อสัปดาห์ จากฟุตเทจดิบ 5 นาที",
-      "ฟุตเทจรวม 10 นาทีต่อโปรเจกต์",
+      `ฟุตเทจรวม ${FOOTAGE_PER_PROJECT.lite}ต่อโปรเจกต์`,
+      precisionFeature("lite"),
       "เพิ่มเพลงประกอบได้",
       "เก็บได้ 10 โปรเจกต์ · 3 GB",
     ],
-    accountFeatures: ["ฟุตเทจรวม 10 นาทีต่อโปรเจกต์", "เพิ่มเพลงประกอบได้", "เก็บได้ 10 โปรเจกต์ · 3 GB"],
-    dialogSummary: "ใช้งาน 1x · ฟุตเทจ 10 นาทีต่อโปรเจกต์ · 3 GB",
+    accountFeatures: [
+      clipsHeadline("lite"),
+      `ฟุตเทจรวม ${FOOTAGE_PER_PROJECT.lite}ต่อโปรเจกต์ · ${precisionFeature("lite")}`,
+      "เก็บได้ 10 โปรเจกต์ · 3 GB",
+    ],
+    dialogSummary: `${clipsHeadline("lite")} · ฟุตเทจ ${FOOTAGE_PER_PROJECT.lite}ต่อโปรเจกต์ · 3 GB`,
     pricingCta: "เลือกแพลนนี้",
-    usageMultiplier: 1,
     limits: ["Weekly limit"],
     concurrentJobs: 1,
-    clipsApprox: "~3 งาน/สัปดาห์",
   },
   starter: {
     tier: "starter",
@@ -261,18 +403,20 @@ export const PLAN_COPY: Record<Tier, PlanCopy> = {
     homeBlurb: "สำหรับคนที่ลงคลิปหลายตัวต่อสัปดาห์",
     pricingBlurb: "สำหรับคนที่ลงคลิปหลายตัวต่อสัปดาห์",
     features: [
-      "Weekly limit · ประมาณ 6 งานต่อสัปดาห์ จากฟุตเทจดิบ 5 นาที",
-      "ฟุตเทจรวม 20 นาทีต่อโปรเจกต์",
+      `ฟุตเทจรวม ${FOOTAGE_PER_PROJECT.starter}ต่อโปรเจกต์`,
+      precisionFeature("starter"),
       "ฟุตเทจยาวขึ้น พร้อมเพลงประกอบ",
       "เก็บได้ 20 โปรเจกต์ · 5 GB",
     ],
-    accountFeatures: ["ฟุตเทจรวม 20 นาทีต่อโปรเจกต์", "ฟุตเทจยาวขึ้น พร้อมเพลงประกอบ", "เก็บได้ 20 โปรเจกต์ · 5 GB"],
-    dialogSummary: "ใช้งาน 2x · ฟุตเทจ 20 นาทีต่อโปรเจกต์ · 5 GB",
+    accountFeatures: [
+      clipsHeadline("starter"),
+      `ฟุตเทจรวม ${FOOTAGE_PER_PROJECT.starter}ต่อโปรเจกต์ · ${precisionFeature("starter")}`,
+      "เก็บได้ 20 โปรเจกต์ · 5 GB",
+    ],
+    dialogSummary: `${clipsHeadline("starter")} · ฟุตเทจ ${FOOTAGE_PER_PROJECT.starter}ต่อโปรเจกต์ · 5 GB`,
     pricingCta: "เลือกแพลนนี้",
-    usageMultiplier: 2,
     limits: ["Weekly limit"],
     concurrentJobs: 1,
-    clipsApprox: "~6 งาน/สัปดาห์",
   },
   pro: {
     tier: "pro",
@@ -280,24 +424,21 @@ export const PLAN_COPY: Record<Tier, PlanCopy> = {
     homeBlurb: "ทำคลิปทุกวัน หรือรับงานให้ลูกค้าหลายเจ้า",
     pricingBlurb: "ทำคลิปทุกวัน หรือรับงานให้ลูกค้าหลายเจ้า",
     features: [
-      "Weekly limit · ประมาณ 15 งานต่อสัปดาห์ จากฟุตเทจดิบ 5 นาที",
-      "5-hour limit · ประมาณ 6 งานต่อรอบ 5 ชั่วโมง",
+      `ฟุตเทจรวม ${FOOTAGE_PER_PROJECT.pro}ต่อโปรเจกต์`,
+      precisionFeature("pro"),
       "ทำงาน AI พร้อมกันได้ 2 งาน",
-      FOOTAGE_2H_FEATURE,
       "คิวประมวลผลก่อนแพลนอื่น · จำนวนโปรเจกต์ไม่จำกัด ภายใน 10 GB",
     ],
     accountFeatures: [
-      FOOTAGE_2H_FEATURE,
-      "คิวประมวลผลก่อนแพลนอื่น",
-      "เก็บโปรเจกต์ไม่จำกัดจำนวน · 10 GB",
+      clipsHeadline("pro"),
+      `ฟุตเทจรวม ${FOOTAGE_PER_PROJECT.pro}ต่อโปรเจกต์ · ${precisionFeature("pro")}`,
+      "คิวประมวลผลก่อนแพลนอื่น · เก็บโปรเจกต์ไม่จำกัดจำนวน · 10 GB",
     ],
-    dialogSummary: `ใช้งาน 5x · ฟุตเทจสูงสุด 2 ชั่วโมง (ตัดฉากเด่น ${SCENE_FOOTAGE_STANDARD}) · 10 GB`,
+    dialogSummary: `${clipsHeadline("pro")} · วิเคราะห์ระดับ${PRECISION_NAMES.high} · 10 GB`,
     pricingCta: "เลือกแพลนนี้",
     recommended: true,
-    usageMultiplier: 5,
     limits: ["Weekly limit", "5-hour limit"],
     concurrentJobs: 2,
-    clipsApprox: "~15 งาน/สัปดาห์",
   },
   studio: {
     tier: "studio",
@@ -305,19 +446,20 @@ export const PLAN_COPY: Record<Tier, PlanCopy> = {
     homeBlurb: "ผลิตคลิปวันละหลายตัว หรือรับงานเป็นทีม",
     pricingBlurb: "ผลิตคลิปวันละหลายตัว หรือรับงานเป็นทีม",
     features: [
-      "Weekly limit · ประมาณ 30 งานต่อสัปดาห์ จากฟุตเทจดิบ 5 นาที",
-      "5-hour limit · ประมาณ 12 งานต่อรอบ 5 ชั่วโมง",
+      `ฟุตเทจรวม ${FOOTAGE_PER_PROJECT.studio}ต่อโปรเจกต์`,
+      precisionFeature("studio"),
       "ทำงาน AI พร้อมกันได้ 3 งาน",
-      FOOTAGE_2H_FEATURE,
       "คิวประมวลผลลำดับแรก · จำนวนโปรเจกต์ไม่จำกัด ภายใน 30 GB",
     ],
-    accountFeatures: [FOOTAGE_2H_FEATURE, "คิวประมวลผลลำดับแรก", "เก็บโปรเจกต์ไม่จำกัด · 30 GB"],
-    dialogSummary: "ใช้งาน 10x · ทำงานพร้อมกัน 3 งาน · 30 GB",
+    accountFeatures: [
+      clipsHeadline("studio"),
+      `ฟุตเทจรวม ${FOOTAGE_PER_PROJECT.studio}ต่อโปรเจกต์ · ${precisionFeature("studio")}`,
+      "คิวประมวลผลลำดับแรก · เก็บโปรเจกต์ไม่จำกัด · 30 GB",
+    ],
+    dialogSummary: `${clipsHeadline("studio")} · ทำงานพร้อมกัน 3 งาน · 30 GB`,
     pricingCta: "เลือกแพลนนี้",
-    usageMultiplier: 10,
     limits: ["Weekly limit", "5-hour limit"],
     concurrentJobs: 3,
-    clipsApprox: "~30 งาน/สัปดาห์",
   },
   agency: {
     tier: "agency",
@@ -325,19 +467,20 @@ export const PLAN_COPY: Record<Tier, PlanCopy> = {
     homeBlurb: "ดูแลหลายแบรนด์พร้อมกัน",
     pricingBlurb: "สำหรับเอเจนซีที่ดูแลคอนเทนต์หลายแบรนด์",
     features: [
-      "Weekly limit · ประมาณ 60 งานต่อสัปดาห์ จากฟุตเทจดิบ 5 นาที",
-      "5-hour limit · ประมาณ 24 งานต่อรอบ 5 ชั่วโมง",
+      `ฟุตเทจรวม ${FOOTAGE_PER_PROJECT.agency}ต่อโปรเจกต์`,
+      precisionFeature("agency"),
       "ทำงาน AI พร้อมกันได้ 4 งาน",
-      FOOTAGE_2H_FEATURE,
       "คิวประมวลผลลำดับแรก · จำนวนโปรเจกต์ไม่จำกัด ภายใน 60 GB",
     ],
-    accountFeatures: ["ทำงาน AI พร้อมกันได้ 4 งาน", "คิวประมวลผลลำดับแรก", "เก็บโปรเจกต์ไม่จำกัด · 60 GB"],
-    dialogSummary: "ใช้งาน 20x · ทำงานพร้อมกัน 4 งาน · 60 GB",
+    accountFeatures: [
+      clipsHeadline("agency"),
+      "ทำงาน AI พร้อมกันได้ 4 งาน",
+      "คิวประมวลผลลำดับแรก · เก็บโปรเจกต์ไม่จำกัด · 60 GB",
+    ],
+    dialogSummary: `${clipsHeadline("agency")} · ทำงานพร้อมกัน 4 งาน · 60 GB`,
     pricingCta: "เลือกแพลนนี้",
-    usageMultiplier: 20,
     limits: ["Weekly limit", "5-hour limit"],
     concurrentJobs: 4,
-    clipsApprox: "~60 งาน/สัปดาห์",
   },
   max: {
     tier: "max",
@@ -345,19 +488,20 @@ export const PLAN_COPY: Record<Tier, PlanCopy> = {
     homeBlurb: "ทีมผลิตคอนเทนต์เต็มเวลา ใช้งานต่อเนื่องได้ทั้งวัน",
     pricingBlurb: "สำหรับทีมผลิตคอนเทนต์เต็มเวลา ใช้งานต่อเนื่องได้ทั้งวัน",
     features: [
-      "Weekly limit · ประมาณ 100 งานขึ้นไปต่อสัปดาห์ จากฟุตเทจดิบ 5 นาที",
-      "5-hour limit · ประมาณ 40 งานต่อรอบ 5 ชั่วโมง",
+      `ฟุตเทจรวม ${FOOTAGE_PER_PROJECT.max}ต่อโปรเจกต์`,
+      precisionFeature("max"),
       "ทำงาน AI พร้อมกันได้ 5 งาน",
-      FOOTAGE_2H_FEATURE,
       "คิวประมวลผลลำดับแรก · จำนวนโปรเจกต์ไม่จำกัด ภายใน 100 GB",
     ],
-    accountFeatures: ["ทำงาน AI พร้อมกันได้ 5 งาน", "คิวประมวลผลลำดับแรก", "เก็บโปรเจกต์ไม่จำกัด · 100 GB"],
-    dialogSummary: "ใช้งาน 35x · ทำงานพร้อมกัน 5 งาน · 100 GB",
+    accountFeatures: [
+      clipsHeadline("max"),
+      "ทำงาน AI พร้อมกันได้ 5 งาน",
+      "คิวประมวลผลลำดับแรก · เก็บโปรเจกต์ไม่จำกัด · 100 GB",
+    ],
+    dialogSummary: `${clipsHeadline("max")} · ทำงานพร้อมกัน 5 งาน · 100 GB`,
     pricingCta: "เลือกแพลนนี้",
-    usageMultiplier: 35,
     limits: ["Weekly limit", "5-hour limit"],
     concurrentJobs: 5,
-    clipsApprox: "100+ งาน/สัปดาห์",
   },
 };
 
@@ -383,8 +527,13 @@ type Row7 = readonly [string, string, string, string, string, string, string];
 
 export const COMPARISON_ROWS: ReadonlyArray<{ label: string; values: Row7; numeric?: boolean }> = [
   {
-    label: "ปริมาณการใช้งาน (เทียบกับ Lite)",
-    values: TIERS.map((tier) => multiplierLabel(tier) ?? "ทดลองใช้") as unknown as Row7,
+    // The headline the whole product is sold on. The row label carries the
+    // "ต่อเดือน (โดยประมาณ)", so each cell uses the compact form — but every
+    // cell still says "ราว", because a cell read alone must not promise.
+    label: "จำนวนคลิปต่อเดือน (โดยประมาณ)",
+    values: TIERS.map((tier) =>
+      tier === "free" ? `${clipsListItem(tier)} ครั้งเดียว` : clipsListItem(tier),
+    ) as unknown as Row7,
     numeric: true,
   },
   {
@@ -392,31 +541,20 @@ export const COMPARISON_ROWS: ReadonlyArray<{ label: string; values: Row7; numer
     values: TIERS.map((tier) => limitsShort(PLAN_COPY[tier].limits)) as unknown as Row7,
   },
   {
-    label: `จำนวนงาน เมื่อฟุตเทจดิบยาว 5 นาที (${APPROX_NOTE})`,
-    values: TIERS.map((tier) => PLAN_COPY[tier].clipsApprox) as unknown as Row7,
-    numeric: true,
-  },
-  {
     label: "งาน AI ที่ทำพร้อมกันได้",
     values: TIERS.map((tier) => `${PLAN_COPY[tier].concurrentJobs} งาน`) as unknown as Row7,
     numeric: true,
   },
-  { label: "ฟุตเทจรวมต่อโปรเจกต์", values: ["5 นาที", "10 นาที", "20 นาที", "2 ชั่วโมง", "2 ชั่วโมง", "2 ชั่วโมง", "2 ชั่วโมง"], numeric: true },
   {
-    // A row of its own, not a footnote on the one above: from Pro up the two
-    // numbers differ, and someone comparing plans has to see that this one
-    // stops climbing. Below Pro the plan's cap is the shorter of the two, so
-    // the cell repeats it and ความละเอียด changes nothing.
-    label: "ฟุตเทจรวมต่อโปรเจกต์ · โหมดตัดฉากเด่น",
-    values: [
-      "5 นาที",
-      "10 นาที",
-      "20 นาที",
-      SCENE_ROW_PRO,
-      SCENE_ROW_PRO,
-      SCENE_ROW_PRO,
-      SCENE_ROW_PRO,
-    ],
+    label: "ฟุตเทจรวมต่อโปรเจกต์",
+    values: TIERS.map((tier) => FOOTAGE_PER_PROJECT[tier]) as unknown as Row7,
+    numeric: true,
+  },
+  {
+    // Free, Lite and Starter get the ordinary setting only (owner,
+    // 2026-09-29), so the site must not advertise the finer one to them.
+    label: "ความละเอียดการวิเคราะห์",
+    values: TIERS.map((tier) => precisionLabel(tier)) as unknown as Row7,
   },
   { label: "โหมดเก็บทุกฉาก และโหมดไฮไลต์", values: ["มี", "มี", "มี", "มี", "มี", "มี", "มี"] },
   { label: "โหมดพากย์ใหม่ พร้อมสคริปต์ AI", values: ["มี", "มี", "มี", "มี", "มี", "มี", "มี"] },
@@ -434,4 +572,35 @@ export function displayPrice(table: PriceTable, tier: Tier): string | null {
   if (tier === "free") return "0";
   const price = priceFor(table, tier);
   return price ? formatBaht(price.amountSatang) : null;
+}
+
+/**
+ * Is the backend actually charging the beta ladder? The date alone is not
+ * enough: the prices come from `GET /billing/plans`, so until that catalog is
+ * switched over, claiming a discount beside an undiscounted number would be a
+ * lie. Every beta PRICE claim asks this; the beta programme's own banner and
+ * modal ask only the date.
+ */
+/**
+ * The full price to draw struck through immediately before the beta price, or
+ * null when there is nothing to strike — the beta is over, the plan is free or
+ * unlisted, or the backend is already charging the full amount (in which case
+ * "1,990 1,990" would be nonsense).
+ *
+ * This is the whole reversion mechanism on the price itself: once
+ * `BETA_END_DATE_ISO` passes, every card stops striking anything on the next
+ * revalidation, with no deploy.
+ */
+export function isBetaPriced(table: PriceTable, now: Date | number = Date.now()): boolean {
+  return PAID_TIERS.some((tier) => strikePrice(table, tier, now) !== null);
+}
+
+export function strikePrice(table: PriceTable, tier: Tier, now: Date | number = Date.now()): string | null {
+  if (!isBetaActive(now)) return null;
+  if (!isPaidTier(tier)) return null;
+  const charged = priceFor(table, tier);
+  if (!charged) return null;
+  const fullSatang = FULL_PRICES_THB[tier] * 100;
+  if (charged.amountSatang >= fullSatang) return null;
+  return formatBaht(fullSatang);
 }

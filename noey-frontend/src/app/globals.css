@@ -692,7 +692,7 @@ html[data-theme="dark"] .card {
 
 dialog.dialog {
   width: calc(100% - 48px);
-  max-width: 520px;
+  max-width: var(--dialog-max-width, 520px);
   max-height: calc(100dvh - 48px);
   padding: 0;
   margin: auto;

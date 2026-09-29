@@ -3,10 +3,10 @@
  *
  * The site never shows token counts — only a percentage per enforced window and
  * when that window starts over. Labels stay in English to match the pricing
- * page ("5-hour limit", "Weekly limit", "Monthly limit").
+ * page ("5-hour limit", "Weekly limit", "Trial credit").
  */
 
-export type LimitKey = "five_hour" | "weekly" | "monthly";
+export type LimitKey = "five_hour" | "weekly" | "monthly" | "lifetime";
 
 export interface UsageLimit {
   key: LimitKey | string;
@@ -15,16 +15,24 @@ export interface UsageLimit {
   /** UTC ISO; null = the window has not started (it starts at the next job). */
   resets_at: string | null;
   active: boolean;
+  /**
+   * False = the allowance never comes back (the free plan's one-off trial
+   * credit). Absent means it does reset, so an older backend keeps working.
+   */
+  resets?: boolean;
 }
 
 export const LIMIT_LABELS: Record<LimitKey, string> = {
   five_hour: "5-hour limit",
   weekly: "Weekly limit",
   monthly: "Monthly limit",
+  // The free plan's one-off credit. Mirrors the backend's
+  // `packages/billing/limits.py:WINDOW_LABELS["lifetime"]`.
+  lifetime: "Trial credit",
 };
 
 /** Display order: the longest window first, the way the pricing page lists them. */
-const ORDER: Record<string, number> = { monthly: 0, weekly: 1, five_hour: 2 };
+const ORDER: Record<string, number> = { lifetime: 0, monthly: 1, weekly: 2, five_hour: 3 };
 
 export function limitLabel(limit: Pick<UsageLimit, "key" | "label">): string {
   return LIMIT_LABELS[limit.key as LimitKey] ?? limit.label ?? limit.key;
@@ -48,6 +56,26 @@ export function limitTone(pct: number): "full" | "near" | "ok" {
 }
 
 /**
+ * A window whose allowance never comes back. The backend says so with
+ * `resets: false` (the free plan's trial credit); it may still send a
+ * `resets_at`, which must NOT be shown as a countdown — there is nothing to
+ * count down to.
+ */
+export function neverResets(limit: Pick<UsageLimit, "resets">): boolean {
+  return limit.resets === false;
+}
+
+/**
+ * What goes under a one-off credit's meter instead of a countdown: that it is
+ * spent (or being spent), that it does not come back, and what to do next.
+ */
+export function spentCreditText(usedPct: number): string {
+  return clampPct(usedPct) >= 100
+    ? "ใช้เครดิตทดลองหมดแล้ว เครดิตนี้ไม่รีเซ็ต เลือกแพลนรายเดือนเพื่อใช้งานต่อ"
+    : "เครดิตทดลองก้อนเดียว ใช้หมดแล้วจะไม่รีเซ็ต เลือกแพลนรายเดือนได้เมื่อต้องการใช้ต่อ";
+}
+
+/**
  * "รีเซ็ตอีกครั้งใน 12 วัน" / "… ใน 3 ชม. 20 นาที" / "… ใน 45 นาที".
  * Relative text is timezone-free, so it is safe to render on the server; the
  * absolute clock time is added in the viewer's timezone by the client.
@@ -68,7 +96,7 @@ export function resetInText(resetsAt: string | null, now: number = Date.now()): 
 
 /** The one-line explainer under the meters, per plan (design copy for Free). */
 export function planLimitNote(plan: string): string | null {
-  if (plan === "free") return "อัปเกรดแล้วเปลี่ยนเป็น Weekly limit ส่วน Pro ขึ้นไปมี 5-hour limit เพิ่มอีกชั้น";
+  if (plan === "free") return "แพลนรายเดือนได้โควตาใหม่ทุกรอบเป็น Weekly limit ส่วน Pro ขึ้นไปมี 5-hour limit เพิ่มอีกชั้น";
   if (plan === "lite" || plan === "starter") return "Pro ขึ้นไปมี 5-hour limit เพิ่มอีกชั้น และทำงานพร้อมกันได้หลายงาน";
   return null;
 }

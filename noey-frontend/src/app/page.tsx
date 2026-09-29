@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { BetaPriceNote } from "@/components/BetaPriceNote";
 import { FaqList } from "@/components/FaqList";
 import { JsonLd } from "@/components/JsonLd";
 import { FitLists } from "@/components/FitLists";
@@ -115,7 +116,7 @@ export default async function HomePage() {
             เริ่มใช้ฟรี
           </Link>
         </div>
-        <p className="fine">มีแพลนฟรีให้ใช้ต่อเนื่อง · ไม่ต้องผูกบัตร · ใช้บนคอมผ่าน Chrome หรือ Edge</p>
+        <p className="fine">สมัครแล้วได้เครดิตทดลองฟรี · ไม่ต้องผูกบัตร · ใช้บนคอมผ่าน Chrome หรือ Edge</p>
         <p className="fine hero__honest">ระบบทำร่างแรกให้ ไม่ได้ตัดจบแทนคุณ งานที่เหลือยังแก้เองในไทม์ไลน์</p>
         <p className="updated">
           อัปเดตล่าสุด <time dateTime={home.updated}>{formatThaiDate(home.updated)}</time>
@@ -248,8 +249,9 @@ export default async function HomePage() {
             เริ่มฟรี แล้วค่อยขยับตามปริมาณงาน
           </h2>
           <p className="pricing-intro" style={{ marginBottom: 40 }}>
-            ทุกแพลนได้ไทม์ไลน์ ซับไทย และการเรนเดอร์แบบไม่จำกัดครั้ง ที่ต่างกันคือปริมาณงาน AI ต่อรอบ ความยาวคลิปต่อโปรเจกต์ และพื้นที่เก็บงาน
+            ทุกแพลนได้ไทม์ไลน์ ซับไทย และการเรนเดอร์แบบไม่จำกัดครั้ง ที่ต่างกันคือจำนวนคลิปที่ AI ตัดให้ต่อเดือน ความยาวฟุตเทจต่อโปรเจกต์ และพื้นที่เก็บงาน
           </p>
+          <BetaPriceNote table={table} />
           <PriceCards table={table} variant="home" />
           <p style={{ margin: "26px 0 0" }}>
             <Link href="/pricing" style={{ fontSize: 15 }}>
@@ -274,7 +276,7 @@ export default async function HomePage() {
       <section className="section" aria-labelledby="cta-title">
         <div className="container-narrow final-cta">
           <h2 id="cta-title">ลองตัดคลิปแรกวันนี้</h2>
-          <p>สมัครแล้วเริ่มที่แพลนฟรีได้ทันที ไม่ต้องผูกบัตร อยากได้โควตามากขึ้นค่อยอัปเกรดทีหลัง</p>
+          <p>สมัครแล้วได้เครดิตทดลองฟรีทันที ไม่ต้องผูกบัตร ใช้หมดแล้วค่อยเลือกแพลนรายเดือน</p>
           <Link href="/signup" className="btn btn-primary" style={{ fontSize: 15, padding: "12px 26px" }}>
             สมัครใช้งาน
           </Link>
