@@ -96,7 +96,12 @@ async def test_logout_requires_auth():
 
 
 @pytest.mark.asyncio
-async def test_register_disabled():
+async def test_register_disabled(monkeypatch):
+    # Explicit: a developer's backend/.env may turn registration on.
+    from packages.core.settings import get_settings
+
+    monkeypatch.setenv("ALLOW_REGISTRATION", "false")
+    get_settings.cache_clear()
     async with _client() as c:
         r = await c.post("/auth/register", json={"email": "new@noey.local", "password": "abc"})
     assert r.status_code == 403

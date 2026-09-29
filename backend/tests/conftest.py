@@ -22,12 +22,40 @@ def _no_redis_no_mail(monkeypatch):
     from services.api import ratelimit
 
     monkeypatch.setattr(ratelimit, "_limiter", ratelimit.RateLimiter(ratelimit.MemoryCounterStore()))
+    # Windows are fixed wall-clock buckets (key = now // window). A test that
+    # counts N hits and expects the N+1th to be refused fails whenever a
+    # window boundary (e.g. :00/:15/:30/:45 for a 15-min rule) falls between
+    # two of its requests — seen once as a flaky login-limit test. Pin the
+    # limiter's wall clock to one instant so a test sees one
+    # window; only `ratelimit`'s own `time` is replaced, and monotonic time
+    # (the memory store's TTL) stays real.
+    import types
+
+    _frozen_wall = 1_700_000_000.0 + 1_800.0  # any fixed instant: a test sees one window
+    monkeypatch.setattr(
+        ratelimit,
+        "time",
+        types.SimpleNamespace(time=lambda: _frozen_wall, monotonic=ratelimit.time.monotonic),
+    )
     # Refresh-token jtis likewise: a suite that logs in would otherwise write
     # 14-day keys into the developer's Redis on every run.
     from packages.auth import refresh_store
 
     monkeypatch.setattr(refresh_store, "_store", refresh_store.MemoryRefreshStore())
+    # Sign in with Google: flow records in memory, and OFF unless a test
+    # installs the fake (tests/google_fake.py) — a developer's .env may hold
+    # real client credentials.
+    from packages.auth import google_oauth
+
+    monkeypatch.setattr(google_oauth, "_store", google_oauth.MemoryFlowStore())
+    for var in ("GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REDIRECT_URIS"):
+        monkeypatch.setenv(var, "")
     monkeypatch.setenv("SENDGRID_API_KEY", "")
+    # A developer's .env may pick the SMTP transport or hold a Sentry DSN: no
+    # test sends mail through it or reports an error anywhere.
+    monkeypatch.setenv("EMAIL_TRANSPORT", "sendgrid")
+    monkeypatch.setenv("SMTP_HOST", "")
+    monkeypatch.setenv("SENTRY_DSN", "")
     # A developer's .env may turn the mock top-up on; tests opt in explicitly.
     monkeypatch.setenv("WALLET_MOCK_TOPUP", "false")
     get_settings.cache_clear()
@@ -59,7 +87,7 @@ def _billing_stores_in_memory(monkeypatch):
 
     monkeypatch.setattr(free_tier, "_store", free_tier.MemoryFreeTierStore())
 
-    async def no_redis():  # noqa: ANN202
+    async def no_redis():
         raise ConnectionError("tests do not reach Redis")
 
     monkeypatch.setattr(vendor_limits, "_client", no_redis)
@@ -71,7 +99,7 @@ def _billing_stores_in_memory(monkeypatch):
     # poll. Fail it instantly instead; a test that wants the cache patches this.
     from packages.db import job_cache
 
-    def no_job_redis():  # noqa: ANN202
+    def no_job_redis():
         raise ConnectionError("tests do not reach Redis")
 
     monkeypatch.setattr(job_cache, "_redis", no_job_redis)
@@ -100,12 +128,12 @@ def _usage_outbox_in_memory(monkeypatch):
     where the worker's drain cron would keep failing on it. Tests that care
     read ``metering.TEST_OUTBOX``.
     """
-    from packages.billing import metering, vendor_cost
     from packages.billing import fx as fx_mod
+    from packages.billing import metering, vendor_cost
 
     outbox: list[str] = []
 
-    async def push(table, row):  # noqa: ANN001
+    async def push(table, row):
         outbox.append(metering._to_json(table, row))
         return True
 

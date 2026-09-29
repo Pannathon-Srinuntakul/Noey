@@ -58,6 +58,7 @@ from packages.auth.accounts import (
     DISPLAY_NAME_MAX_CHARS,
     create_account,
     email_taken,
+    has_usable_password,
     normalize_display_name,
     normalize_email,
     password_problem,
@@ -87,6 +88,7 @@ from packages.billing.service import sync_customer_email
 from packages.core.logging import get_logger
 from packages.core.settings import get_settings
 from packages.db.models.core_auth import Membership, Tenant, User
+from packages.db.models.oauth_identity import PROVIDER_GOOGLE, OAuthIdentity
 from packages.email import templates
 from packages.email.message import (
     Address,
@@ -205,6 +207,13 @@ class MeOut(BaseModel):
     is_admin: bool
     display_name: str | None
     email_verified: bool
+    #: False for an account created through Google that never set a password
+    #: (it can set one with forgot-password). Clients hide "change password"
+    #: and ask for a Google re-auth instead of a password where it is False.
+    has_password: bool = True
+    #: Whether a Google identity is linked, and its email (informational).
+    google_linked: bool = False
+    google_email: str | None = None
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -255,6 +264,13 @@ async def _me_out(auth: CurrentUser, session: AsyncSession) -> MeOut:
             )
         )
     ).scalar_one_or_none()
+    google = (
+        await session.execute(
+            select(OAuthIdentity).where(
+                OAuthIdentity.user_id == auth.user_id, OAuthIdentity.provider == PROVIDER_GOOGLE
+            )
+        )
+    ).scalar_one_or_none()
     return MeOut(
         user_id=auth.user_id,
         email=str(auth.user.email),
@@ -264,11 +280,25 @@ async def _me_out(auth: CurrentUser, session: AsyncSession) -> MeOut:
         is_admin=bool(auth.user.is_admin),
         display_name=auth.user.display_name,
         email_verified=auth.user.email_verified_at is not None,
+        has_password=has_usable_password(auth.user.password_hash),
+        google_linked=google is not None,
+        google_email=google.email if google is not None else None,
     )
 
 
 def _password_matches(plain: str, hashed: str) -> bool:
-    """`verify_password`, except a password bcrypt refuses (>72 bytes) is a mismatch."""
+    """`verify_password`, except a password bcrypt refuses (>72 bytes) is a mismatch.
+
+    An account with no password (Google-only) still pays one bcrypt check
+    against the dummy hash, so a Google-only address answers exactly as slowly
+    as a wrong password — no timing tell of how the account signs in.
+    """
+    if not has_usable_password(hashed):
+        try:
+            verify_password(plain, dummy_hash())
+        except ValueError:
+            pass
+        return False
     try:
         return verify_password(plain, hashed)
     except ValueError:

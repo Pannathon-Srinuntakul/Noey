@@ -40,10 +40,9 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import set_committed_value
 
-from packages.admin import accuracy
+from packages.admin import accuracy, metrics
 from packages.admin import auth as admin_auth
 from packages.admin import billing_config as billing_cfg
-from packages.admin import metrics
 from packages.admin import reconciliation as recon
 from packages.admin.cost_config import (
     CostConfig,
@@ -63,6 +62,7 @@ from packages.core.settings import get_settings, is_local_deployment
 from packages.db.models.admin import AdminAuditEvent, AdminLoginChallenge, AdminSession
 from packages.db.models.core_auth import PLAN_VALUES, User
 from packages.email import templates
+from packages.email.client import email_config_problem
 from packages.email.message import Address, EmailSendError, Mailer, OutgoingEmail, mask_email
 from services.api import ratelimit
 from services.api.admin_deps import CurrentAdmin, admin_ip_allowed
@@ -221,7 +221,7 @@ async def _deliver_code(mailer: Mailer | None, user: User, code: str, ip: str) -
     login cannot proceed."""
     if mailer is None:
         s = get_settings()
-        if is_local_deployment(s.postgres_host) and not (s.sendgrid_api_key or "").strip():
+        if is_local_deployment(s.postgres_host) and email_config_problem(s) is not None:
             print(f"[DEV ONLY] admin login code for {mask_email(str(user.email))}: {code}", file=sys.stderr, flush=True)
             return
         raise HTTPException(status_code=503, detail="ส่งอีเมลรหัสยืนยันไม่ได้ในตอนนี้ — ระบบอีเมลยังไม่ได้ตั้งค่า")
@@ -601,6 +601,11 @@ async def set_active(user_id: int, body: ActiveIn, admin: CurrentAdmin, db: Core
     if user_id == admin.user_id and not body.active:
         raise HTTPException(status_code=409, detail="ปิดการใช้งานบัญชีของตัวเองไม่ได้")
     user = await _target(db, user_id)
+    if user.deleted_at is not None and body.active:
+        # Anonymised by self-service deletion (packages/auth/account_deletion.py):
+        # there is no person behind it any more, and reactivating would resurrect
+        # a tombstone.
+        raise HTTPException(status_code=409, detail="บัญชีนี้ถูกลบโดยเจ้าของแล้ว เปิดใช้งานอีกไม่ได้")
     before = bool(user.is_active)
     if before and not body.active and user.is_admin:
         others = (

@@ -121,3 +121,46 @@ def token_version_matches(payload: dict[str, Any], current: int | None) -> bool:
     if isinstance(raw, bool) or not isinstance(raw, int):
         return False
     return raw == int(current or 0)
+
+
+# ── re-authentication proof (account deletion for Google-only accounts) ─────
+
+#: A short-lived proof that the person just passed a fresh Google sign-in for
+#: THIS account (POST /auth/google/callback with intent "reauth"). It is not a
+#: session token — its own audience means no route that takes an access token
+#: accepts it, and `decode` above refuses it.
+REAUTH_AUDIENCE = "noey-reauth"
+REAUTH_TTL_SEC = 5 * 60
+
+
+def encode_reauth(user_id: int, token_version: int, *, purpose: str = "delete_account") -> str:
+    s = _settings()
+    payload: dict[str, Any] = {
+        "sub": str(user_id),
+        "tv": int(token_version),
+        "purpose": purpose,
+        "aud": REAUTH_AUDIENCE,
+        "exp": _now() + timedelta(seconds=REAUTH_TTL_SEC),
+        "iat": _now(),
+    }
+    return jwt.encode(payload, s.jwt_secret, algorithm=s.jwt_algorithm)
+
+
+def reauth_matches(token: str, *, user_id: int, token_version: int, purpose: str = "delete_account") -> bool:
+    """Whether ``token`` is a live re-auth proof for this user, version and purpose."""
+    s = _settings()
+    try:
+        payload = jwt.decode(
+            token,
+            s.jwt_secret,
+            algorithms=[s.jwt_algorithm],
+            audience=REAUTH_AUDIENCE,
+            options={"require": ["sub", "tv", "purpose", "aud", "exp", "iat"]},
+        )
+    except jwt.PyJWTError:
+        return False
+    return (
+        str(payload.get("sub")) == str(user_id)
+        and payload.get("purpose") == purpose
+        and token_version_matches(payload, token_version)
+    )

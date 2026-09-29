@@ -78,6 +78,12 @@ class User(Base):
     # the sign-up IP and the client's device id — never the raw values.
     signup_ip_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     signup_device_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Self-service account deletion (packages/auth/account_deletion.py). The
+    # row itself is KEPT, anonymised — usage, run and wallet rows are
+    # accounting records keyed on this id — so "deleted" is this timestamp,
+    # plus is_active false, plus an email that can never be signed in with.
+    # NULL = a live account. A deleted account is never reactivated.
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

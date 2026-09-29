@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from packages.core.logging import configure_logging, get_logger
+from packages.core.monitoring import init_monitoring
 from packages.core.settings import (
     _ENV_FILES,
     announce_fake_ai,
@@ -20,8 +21,10 @@ from packages.core.settings import (
 from services.api.arq_pool import close_arq_pool, warm_arq_pool
 from services.api.middleware import BodySizeLimitMiddleware, RequestContextMiddleware
 from services.api.routers import (
+    account,
     admin,
     auth,
+    auth_google,
     billing,
     contact,
     effect_styles,
@@ -170,6 +173,9 @@ def create_app() -> FastAPI:
     assert_production_secrets()
     # Load-test fake AI: refuses to boot in production, warns loudly otherwise.
     announce_fake_ai()
+    # Error monitoring: a no-op unless SENTRY_DSN is set (never under pytest or
+    # fake AI). Before the app object exists so the ASGI integration wraps it.
+    init_monitoring("api")
 
     cfg = get_settings()
     # Which .env files were actually read — both the repo root and backend/ are
@@ -252,6 +258,8 @@ def create_app() -> FastAPI:
     for r in (
         admin,
         auth,
+        auth_google,
+        account,
         billing,
         contact,
         effect_styles,

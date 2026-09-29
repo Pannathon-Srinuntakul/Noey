@@ -628,6 +628,72 @@ async def cancel_subscription(
     log.info("billing_cancel_scheduled", user_id=user.id)
 
 
+#: Subscription statuses Stripe will never bill again. Everything else —
+#: active, trialing, past_due, unpaid, incomplete, paused — can still take
+#: money or retry a charge, so account deletion cancels it.
+_ENDED_STATUSES = ("canceled", "incomplete_expired")
+
+
+async def cancel_subscriptions_now(
+    session: AsyncSession, client: stripe.StripeClient, user: User
+) -> int:
+    """Cancel EVERY not-yet-ended subscription of the user immediately
+    (account deletion — not the user-facing "cancel at period end" above).
+
+    Stripe's DELETE /v1/subscriptions/{id} — https://docs.stripe.com/api/subscriptions/cancel
+    (fetched 2026-09-30): "Cancels a customer's subscription immediately. The
+    customer won't be charged again". `invoice_now` and `prorate` are left at
+    their false defaults: no final invoice, no automatic credit for the unused
+    part of the period (a refund, if the owner grants one, is a manual Stripe
+    action). Idempotent: an already-cancelled subscription is skipped, and a
+    cancel that races another one is re-read and accepted once it shows
+    `canceled`. The mirror (`users.plan`, the account row) follows through the
+    `customer.subscription.deleted` webhook as usual. Returns how many
+    subscriptions this call cancelled. Raises BillingError on a Stripe failure.
+    """
+    account = await get_account(session, int(user.id))
+    if account is None:
+        return 0
+    cancelled = 0
+    async with _stripe_errors("cancel_now"):
+        for sub in await fetch_subscriptions(client, account.stripe_customer_id):
+            if field(sub, "status") in _ENDED_STATUSES:
+                continue
+            sub_id = str(field(sub, "id"))
+            try:
+                await client.v1.subscriptions.cancel_async(sub_id)
+            except stripe.InvalidRequestError:
+                again = await client.v1.subscriptions.retrieve_async(sub_id)
+                if field(again, "status") not in _ENDED_STATUSES:
+                    raise
+                continue
+            cancelled += 1
+            log.info("billing_subscription_cancelled_now", user_id=user.id, subscription=sub_id)
+    return cancelled
+
+
+async def redact_customer(session: AsyncSession, client: stripe.StripeClient, user: User) -> None:
+    """Best effort, after account deletion: drop the name and email from the
+    Stripe customer (invoices already issued keep their own copy — those are
+    the accounting record). The customer object itself stays, so a later
+    refund or dispute still resolves to the anonymised account.
+
+    https://docs.stripe.com/api/customers/update (fetched 2026-09-30) documents
+    empty values as the way to unset metadata keys; it does not spell that out
+    for `email`/`name`, so this is best effort and a refusal is only logged
+    (the owner can redact by hand in the dashboard — the log names the user)."""
+    account = await get_account(session, int(user.id))
+    if account is None:
+        return
+    try:
+        await client.v1.customers.update_async(
+            account.stripe_customer_id,
+            {"email": "", "name": "", "metadata": {"noey_account_deleted": "true"}},
+        )
+    except stripe.StripeError as exc:
+        log.warning("billing_customer_redact_failed", user_id=user.id, error_type=type(exc).__name__)
+
+
 async def resume_subscription(
     session: AsyncSession, client: stripe.StripeClient, user: User
 ) -> None:

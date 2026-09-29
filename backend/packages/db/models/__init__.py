@@ -24,6 +24,7 @@ from packages.db.models.core_auth import Job, Membership, Tenant, User
 from packages.db.models.effect_style import EffectStyle
 from packages.db.models.fx import FxRate, VendorInvoice
 from packages.db.models.llm_usage import LlmUsageLog
+from packages.db.models.oauth_identity import OAuthIdentity
 from packages.db.models.stt_usage import SttUsageLog
 from packages.db.models.usage_account import UsageAccount
 from packages.db.models.video_project import VideoProject
@@ -43,6 +44,7 @@ __all__ = [
     "Job",
     "LlmUsageLog",
     "Membership",
+    "OAuthIdentity",
     "PlanPriceOverride",
     "StripeEvent",
     "SttUsageLog",

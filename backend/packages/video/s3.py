@@ -588,6 +588,14 @@ async def delete_scratch(user_id: int, token: str) -> None:
     await asyncio.to_thread(_sync_delete_prefix, f"scratch/transcode/{user_id}/{token}/")
 
 
+async def delete_user_scratch(user_id: int) -> None:
+    """Remove every conversion the user still has in scratch (account deletion)."""
+    if not _s3_enabled():
+        return
+    await asyncio.to_thread(_sync_delete_prefix, f"scratch/transcode/{int(user_id)}/")
+    log.info("s3_delete_user_scratch", user_id=user_id)
+
+
 # ── scratch (phone→web transfer: keyed by TOKEN alone) ─────────────────────
 #
 # The phone-side uploader is unauthenticated — the single-use token IS its

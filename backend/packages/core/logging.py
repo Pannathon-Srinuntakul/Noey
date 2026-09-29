@@ -6,6 +6,9 @@ import structlog
 
 
 def configure_logging(level: int = logging.INFO) -> None:
+    # Lazy: monitoring imports this module. A no-op until Sentry is initialised.
+    from packages.core.monitoring import forward_errors_to_sentry
+
     structlog.configure(
         processors=[
             # FIRST, so what a request or job bound (`request_id`, `user_id` —
@@ -14,6 +17,8 @@ def configure_logging(level: int = logging.INFO) -> None:
             # log call still wins over the bound value.
             structlog.contextvars.merge_contextvars,
             structlog.processors.add_log_level,
+            # Before format_exc_info turns the exception into a string.
+            forward_errors_to_sentry,
             structlog.processors.TimeStamper(fmt="iso"),
             structlog.processors.StackInfoRenderer(),
             structlog.processors.format_exc_info,

@@ -479,6 +479,28 @@ class Settings(BaseSettings):
     #: require a `turnstile_token` and verify it server-side. Unset → no check.
     turnstile_secret_key: str | None = None
 
+    # --- Sign in with Google (packages/auth/google_oauth.py) ---
+    # All three unset → every /auth/google/* route answers 503 naming the
+    # missing variable, and nothing else changes. Create a "Web application"
+    # OAuth client in Google Cloud Console → APIs & Services → Credentials.
+    #: The OAuth client id (`….apps.googleusercontent.com`). Also the `aud`
+    #: every ID token must carry.
+    google_client_id: str | None = None
+    #: The OAuth client secret — server-side only, never shipped to a client.
+    google_client_secret: str | None = None
+    #: Comma-separated allow-list of callback URLs, each registered VERBATIM
+    #: in the Cloud Console (Google compares scheme, host, path, case and the
+    #: trailing slash exactly). A client names one of these per sign-in; a
+    #: redirect_uri not in this list is refused — it is never taken from the
+    #: request unchecked. E.g. the marketing site's
+    #: `https://noey.example/auth/google/callback` and the editor's
+    #: `https://app.noey.example/auth/google/callback`.
+    google_redirect_uris: str = ""
+
+    @property
+    def google_redirect_uri_set(self) -> tuple[str, ...]:
+        return tuple(u.strip() for u in self.google_redirect_uris.split(",") if u.strip())
+
     # --- Transactional email (SendGrid) — see docs/email-sendgrid.md ---
     # Unset key or sender → every endpoint whose job is to send mail answers
     # 503; registration still succeeds and logs that the mail was skipped.
@@ -493,6 +515,34 @@ class Settings(BaseSettings):
     #: Unverified, non-admin accounts cannot START paid AI work (403) — see
     #: services/api/ai_gate.py for the endpoints it covers.
     require_verified_email_for_ai: bool = True
+    #: Which transport delivers mail: ``sendgrid`` (HTTP API, SENDGRID_API_KEY)
+    #: or ``smtp`` (any provider's SMTP relay, the SMTP_* settings below).
+    #: Everything else — templates, the 503 when unconfigured — is shared.
+    email_transport: str = "sendgrid"
+
+    # --- SMTP transport (EMAIL_TRANSPORT=smtp) — docs/email-sendgrid.md §SMTP ---
+    smtp_host: str | None = None
+    #: Unset → 587 for starttls, 465 for ssl, 25 for none.
+    smtp_port: int | None = None
+    #: ``starttls`` (upgrade a plain connection, usually port 587), ``ssl``
+    #: (implicit TLS from the first byte, usually 465) or ``none`` (plain —
+    #: only accepted against a loopback relay, see packages/email/client.py).
+    smtp_security: str = "starttls"
+    #: Both or neither. Unset → no AUTH (an IP-allow-listed relay).
+    smtp_username: str | None = None
+    smtp_password: str | None = None
+    smtp_timeout_sec: float = 15.0
+
+    # --- Error monitoring (Sentry) — packages/core/monitoring.py ---
+    #: Unset → the SDK is never initialised and nothing leaves the process.
+    sentry_dsn: str | None = None
+    #: Unset → RAILWAY_ENVIRONMENT_NAME, else "development".
+    sentry_environment: str | None = None
+    #: Unset → RAILWAY_GIT_COMMIT_SHA (Railway sets it on GitHub deploys).
+    sentry_release: str | None = None
+    #: Performance tracing share, 0..1. 0 = errors only (the default: a
+    #: transaction per request/job is quota the owner has not asked to pay for).
+    sentry_traces_sample_rate: float = 0.0
 
     # --- Client IP behind proxies (rate limits) ---
     #: How many trusted reverse proxies append to X-Forwarded-For in front of

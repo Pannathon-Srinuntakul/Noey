@@ -19,6 +19,11 @@ from services.worker.tasks import WorkerSettings
 def main() -> None:
     configure_logging()
     settings = reload_settings()
+    # Error monitoring (no-op without SENTRY_DSN; the arq integration then
+    # reports every job that raises). Before run_worker builds the Worker.
+    from packages.core.monitoring import init_monitoring
+
+    init_monitoring("worker", settings)
     from packages.core.logging import get_logger
     log = get_logger(__name__)
     log.info(

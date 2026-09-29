@@ -93,12 +93,21 @@ ADMIN_OTP_IP = Limit("admin_otp:ip", 30, _15_MIN)
 ADMIN_RESEND_CHALLENGE = Limit("admin_resend:challenge", 3, _HOUR)
 ADMIN_RESEND_IP = Limit("admin_resend:ip", 10, _HOUR)
 ADMIN_REFRESH_IP = Limit("admin_refresh:ip", 240, _15_MIN)
+#: Sign in with Google (services/api/routers/auth_google.py). /start mints a
+#: flow record in Redis per call; /callback spends one and calls Google — both
+#: bounded per IP. Creating an account through Google ALSO counts against the
+#: REGISTER_* limits, exactly like POST /auth/register.
+GOOGLE_START_IP = Limit("google_start:ip", 60, _15_MIN)
+GOOGLE_CALLBACK_IP = Limit("google_callback:ip", 60, _15_MIN)
+#: Account deletion re-checks the password: bounded like change-password.
+DELETE_ACCOUNT_ACCOUNT = Limit("delete_account:account", 10, _15_MIN)
 
 ALL_LIMITS: tuple[Limit, ...] = (
     LOGIN_EMAIL_IP, LOGIN_EMAIL, LOGIN_IP, REGISTER_EMAIL, REGISTER_IP, REGISTER_IP_DAY, FORGOT_EMAIL, FORGOT_IP,
     RESEND_ACCOUNT, RESEND_IP, CHANGE_EMAIL_ACCOUNT, CHANGE_EMAIL_IP, CONTACT_EMAIL, CONTACT_IP,
     CHANGE_PASSWORD_ACCOUNT, USAGE_ESTIMATE_ACCOUNT, ADMIN_LOGIN_EMAIL, ADMIN_LOGIN_IP, ADMIN_OTP_CHALLENGE, ADMIN_OTP_IP,
-    ADMIN_RESEND_CHALLENGE, ADMIN_RESEND_IP, ADMIN_REFRESH_IP,
+    ADMIN_RESEND_CHALLENGE, ADMIN_RESEND_IP, ADMIN_REFRESH_IP, GOOGLE_START_IP, GOOGLE_CALLBACK_IP,
+    DELETE_ACCOUNT_ACCOUNT,
 )
 
 

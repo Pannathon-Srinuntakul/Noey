@@ -181,6 +181,26 @@ def change_email_notice(*, brand: str, new_email: str) -> RenderedEmail:
     ))
 
 
+def account_deleted(*, brand: str) -> RenderedEmail:
+    """Sent to the address the account HAD, after it was deleted."""
+    return _render(brand, f"บัญชีของคุณถูกลบแล้ว — {brand}", _Body(
+        heading="ลบบัญชีเรียบร้อยแล้ว",
+        paragraphs=(
+            f"บัญชี {brand} ที่ใช้อีเมลนี้ถูกลบตามคำขอของคุณแล้ว",
+            (
+                "โปรเจกต์ ไฟล์วิดีโอบนเซิร์ฟเวอร์ และข้อมูลส่วนตัวของบัญชีถูกลบทั้งหมด "
+                "และการสมัครสมาชิกแบบรายเดือน (ถ้ามี) ถูกยกเลิกทันที"
+            ),
+            (
+                "เราเก็บเฉพาะบันทึกทางบัญชี (ประวัติการชำระเงินและการใช้งาน) "
+                "ในรูปแบบที่ไม่ระบุตัวตน ตามที่กฎหมายกำหนด"
+            ),
+        ),
+        note="ถ้าคุณไม่ได้เป็นคนลบบัญชีนี้ กรุณาติดต่อเราทันทีโดยตอบกลับอีเมลนี้",
+        footer=f"อีเมลนี้เป็นอีเมลสุดท้ายที่ {brand} จะส่งถึงบัญชีนี้",
+    ))
+
+
 def contact_message(*, brand: str, name: str, email: str, message: str) -> RenderedEmail:
     body_html = escape(message).replace("\r\n", "\n").replace("\n", "<br>")
     return _render(brand, f"[{brand}] ข้อความจากฟอร์มติดต่อ — {_one_line(name)}", _Body(
@@ -222,10 +242,14 @@ def circuit_breaker_tripped(*, brand: str, day: str, spend_thb: float, cap_thb: 
     return _render(brand, f"งาน AI ถูกหยุดชั่วคราว: ถึงเพดานค่าใช้จ่ายรายวัน — {brand}", _Body(
         heading="ถึงเพดานค่าใช้จ่าย AI รายวันแล้ว",
         paragraphs=(
-            f"ค่าใช้จ่าย AI วันที่ {escape(day)} (UTC) ถึง ฿{spend_thb:,.2f} "
-            f"จากเพดาน ฿{cap_thb:,.2f} ระบบหยุดรับงาน AI ใหม่ของลูกค้าแล้ว",
-            "งานที่เริ่มไปแล้วยังทำต่อได้จนกว่าจะเกินเพดานมากกว่าที่ตั้งไว้ "
-            "ปรับเพดานหรือปิดการหยุดอัตโนมัติได้ที่แผงผู้ดูแลระบบ",
+            (
+                f"ค่าใช้จ่าย AI วันที่ {escape(day)} (UTC) ถึง ฿{spend_thb:,.2f} "
+                f"จากเพดาน ฿{cap_thb:,.2f} ระบบหยุดรับงาน AI ใหม่ของลูกค้าแล้ว"
+            ),
+            (
+                "งานที่เริ่มไปแล้วยังทำต่อได้จนกว่าจะเกินเพดานมากกว่าที่ตั้งไว้ "
+                "ปรับเพดานหรือปิดการหยุดอัตโนมัติได้ที่แผงผู้ดูแลระบบ"
+            ),
         ),
         note="แจ้งเตือนนี้ส่งครั้งเดียวต่อวัน",
     ))

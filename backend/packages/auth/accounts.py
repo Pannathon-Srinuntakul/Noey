@@ -28,6 +28,18 @@ DISPLAY_NAME_MAX_CHARS = 80
 _SLUG_MAX = 63 - len("tenant_")
 
 
+#: Stored as `password_hash` for an account that has no password (created
+#: through Sign in with Google, or anonymised by account deletion). It is not
+#: a bcrypt hash — `$2…` is — so no password can ever match it. The column
+#: stays NOT NULL; `has_usable_password` is how code asks.
+UNUSABLE_PASSWORD_HASH = "!no-password"
+
+
+def has_usable_password(password_hash: str | None) -> bool:
+    """Whether a password sign-in can ever succeed against this stored hash."""
+    return bool(password_hash) and str(password_hash).startswith("$2")
+
+
 def normalize_email(raw: str) -> str:
     """The one spelling an address is stored and compared under."""
     return raw.strip().lower()

@@ -190,6 +190,16 @@ async def test_quota_reset_moves_the_web_apps_quota_window(mail):
     assert audit[0][0]["windows"]["monthly"]["used"] == 4300
 
 
+async def test_a_self_deleted_account_cannot_be_reactivated(mail):
+    async with client() as c:
+        _, _, s = await new_admin(c, mail)
+        target = await make_user(email("gone"), active=False)
+        await db("UPDATE core.users SET deleted_at = now() WHERE id = :t", t=target)
+        on = await c.patch(f"/admin/users/{target}/active", json={"active": True}, headers=bearer(s["access_token"]))
+    assert on.status_code == 409
+    assert (await db("SELECT is_active FROM core.users WHERE id = :t", t=target))[0][0] is False
+
+
 async def test_deactivation_signs_the_user_out_of_the_web_app_and_back(mail):
     async with client() as c:
         _, _, s = await new_admin(c, mail)
