@@ -82,7 +82,8 @@ Every API request sets `SET search_path TO "tenant_<slug>", core` via `deps.py` 
 ## Code Map (current state)
 
 - **`backend/packages/`** — shared libs:
-  - `core/` — `settings.py` (Pydantic settings from `.env`), `logging.py` (structured JSON), `errors.py` (structured error helpers).
+  - `core/` — `settings.py` (Pydantic settings from `.env`), `logging.py` (structured JSON), `errors.py` (structured error helpers), `monitoring.py` (Sentry for API + worker — off without `SENTRY_DSN`, never under pytest or `LOADTEST_FAKE_AI`; privacy scrubbing in `scrub_event`; error-level structlog lines are forwarded).
+  - `email/` — one `Mailer` interface, two transports picked by `EMAIL_TRANSPORT`: `sendgrid.py` (HTTP API) and `smtp.py` (any SMTP relay); `client.py:get_mailer` is the only way mail is sent (docs/email-sendgrid.md).
   - `auth/` — JWT access + refresh tokens (`tokens.py`), bcrypt hashing (`hashing.py`), Fernet encryption (`crypto.py`).
   - `db/` — `base.py`, `session.py` (engine + explicitly sized pool; plus a `NullPool` LIFELINE engine for status writes that must not queue behind it), `config.py`, `tenancy.py` (schema management), `job_cache.py` (Redis mirror of `core.jobs` — `GET /jobs/{id}` reads it first; see "Capacity" below).
     - `models/core_auth.py` — Tenant, User, Membership, Job (core schema).

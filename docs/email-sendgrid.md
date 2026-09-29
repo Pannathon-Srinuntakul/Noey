@@ -150,6 +150,37 @@ Registration and forgot-password send after the response (a failure is only
 logged): registration never waits on the provider, and forgot-password's
 response time does not reveal whether the account exists.
 
+### SMTP instead of SendGrid (`EMAIL_TRANSPORT=smtp`)
+
+Added 2026-09-30 so the owner can use any provider (Google Workspace relay,
+Amazon SES SMTP, Mailgun, Postmark, Zoho, Brevo, a self-hosted MTA …):
+`packages/email/smtp.py:SmtpMailer`, chosen in `packages/email/client.py:get_mailer`.
+Same `Mailer` interface, same templates, same 503 naming the missing variable,
+same log rules (masked recipient, no password, no body).
+
+- **`SMTP_SECURITY=starttls`** (default, port 587): plain connect → STARTTLS
+  with a certificate- and hostname-verifying context → AUTH. A server that
+  does not offer STARTTLS is a hard failure — it never continues in clear.
+- **`ssl`** (port 465): implicit TLS from the first byte.
+- **`none`** (port 25): only accepted when `SMTP_HOST` is loopback (a local
+  relay); anywhere else email stays off with a "misconfigured" 503.
+- `SMTP_USERNAME` + `SMTP_PASSWORD`: both or neither (neither = no AUTH, for an
+  IP-allow-listed relay). `SMTP_TIMEOUT_SEC` (default 15) bounds each socket op.
+- Retries: connection errors and 4xx replies (up to 3 attempts, backoff);
+  5xx, auth failure and an unverifiable certificate are final.
+- Each message: `multipart/alternative` (text/plain, then HTML), UTF-8 Thai
+  subject/names, `Message-ID` on the From domain, `Auto-Submitted:
+  auto-generated`. Header injection is impossible (the stdlib refuses CR/LF in
+  header values; display names are cleaned).
+- SMTP has no per-message "tracking off" switch: turn click/open tracking off
+  in the provider's dashboard, or reset links get rewritten.
+- The From domain still needs SPF + DKIM for that provider (their docs).
+
+Every mail the product sends goes through `get_mailer()`: verification,
+resend, forgot/reset, change-email (both mails), contact, admin login code,
+account-deletion confirmation, the AI-spend circuit-breaker alert. Payment
+failures send nothing from here — Stripe's own customer emails cover them.
+
 ---
 
 ## 3. Templates (`packages/email/templates.py`)
@@ -176,6 +207,12 @@ under each button. No AI vendor is named anywhere.
 | `SENDGRID_API_KEY` | unset | Mail Send-only restricted key. Unset → mail endpoints 503. |
 | `EMAIL_FROM_ADDRESS` | unset | From address on the authenticated domain. Unset → 503. |
 | `EMAIL_FROM_NAME` | `Noey Studio` | From name and template brand. |
+| `EMAIL_TRANSPORT` | `sendgrid` | `sendgrid` or `smtp` (§2 SMTP). |
+| `SMTP_HOST` | unset | SMTP relay host. Unset (with `smtp`) → mail endpoints 503. |
+| `SMTP_PORT` | by mode | 587 starttls / 465 ssl / 25 none. |
+| `SMTP_SECURITY` | `starttls` | `starttls`, `ssl`, or `none` (loopback only). |
+| `SMTP_USERNAME` / `SMTP_PASSWORD` | unset | Both or neither. |
+| `SMTP_TIMEOUT_SEC` | `15` | Per socket operation. |
 | `CONTACT_TO_EMAIL` | unset | Contact-form inbox. Unset → `/contact` 503. |
 | `REQUIRE_VERIFIED_EMAIL_FOR_AI` | `true` | The AI gate (§1). |
 | `TRUSTED_PROXY_HOPS` | `0` | Proxies in front of the API for client-IP resolution (§5). |
