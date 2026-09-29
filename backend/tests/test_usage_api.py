@@ -4,9 +4,11 @@ Percentages, reset times (UTC ISO) and baht — never a token count anywhere
 in the body (docs/token-billing-plan.md §1).
 """
 
+from datetime import UTC, datetime
+
 from sqlalchemy import text
 
-from packages.billing import limits, wallet
+from packages.billing import limits, runs, wallet
 from packages.db.session import get_sessionmaker
 from tests.admin_helpers import (  # noqa: F401
     _admin_env,
@@ -34,17 +36,19 @@ async def _me(uid: int) -> dict:
     return r.json()
 
 
-async def test_a_fresh_pro_account_sees_two_empty_windows():
-    uid = await make_user(email("usage"), plan="pro")
+async def test_a_fresh_paid_account_sees_one_empty_window():
+    """One window rule per account (limits.py rule 1): a paid plan shows its
+    month and nothing else — no 5-hour or weekly sub-window to explain."""
+    uid = await make_user(email("usage"), plan="studio")
     me = await _me(uid)
-    assert me["plan"] == "pro" and me["unlimited"] is False
-    assert [(w["key"], w["label"], w["used_pct"], w["active"], w["resets_at"]) for w in me["limits"]] == [
-        ("weekly", "Weekly limit", 0.0, False, None),
-        ("five_hour", "5-hour limit", 0.0, False, None),
+    assert me["plan"] == "studio" and me["unlimited"] is False
+    assert [(w["key"], w["label"], w["used_pct"], w["active"], w["resets_at"], w["resets"])
+            for w in me["limits"]] == [
+        ("monthly", "Monthly limit", 0.0, False, None, True),
     ]
     assert me["blocked"] is None and me["wallet"] is None and me["pending_plan"] is None
-    assert me["concurrency"] == {"max": 2, "running": 0, "queued": 0}
-    assert me["storage"]["quota_bytes"] == 10 * 1024**3
+    assert me["concurrency"] == {"max": limits.plan_limits("studio").concurrency, "running": 0, "queued": 0}
+    assert me["storage"]["quota_bytes"] == limits.plan_limits("studio").storage_gb * 1024**3
     assert [t["task"] for t in me["by_task"]] == ["cut", "effects", "style", "other"]
     # Compat fields the marketing site's account pages read.
     assert me["usage_pct"] == 0.0 and me["period_start"].endswith("Z") and me["reset_at"] is None
@@ -52,22 +56,51 @@ async def test_a_fresh_pro_account_sees_two_empty_windows():
 
 
 async def test_used_windows_show_percent_reset_time_and_block_when_full():
+    """Lite enforces its monthly budget only (limits.py says why), and the
+    month is the SUBSCRIPTION's: a customer billed on the 15th counts down to
+    the 15th, whenever in the cycle they happened to start cutting."""
     uid = await make_user(email("usage"), plan="lite")
-    weekly = limits.window_limit("lite", "weekly")
+    [key] = limits.plan_limits("lite").windows
+    assert key == "monthly"
+    monthly = limits.window_limit("lite", key)
+    now = datetime.now(UTC)
+    period_start = runs.period_start(now, 15)
+    start, refills = runs.iso(period_start), runs.iso(runs.period_end(now, 15))
     await db(
-        "INSERT INTO core.usage_accounts (user_id, weekly_started_at, weekly_used, reserved_tokens) "
-        "VALUES (:u, '2099-01-01T00:00:00Z', :w, 0)",
-        u=uid, w=weekly // 2,
+        "INSERT INTO core.usage_accounts "
+        "(user_id, monthly_anchor_day, monthly_started_at, monthly_used, reserved_tokens) "
+        "VALUES (:u, 15, :s, :m, 0)",
+        u=uid, s=period_start, m=monthly // 2,
     )
     me = await _me(uid)
     [w] = me["limits"]
-    assert w["used_pct"] == round((weekly // 2) / weekly * 100, 1) and w["resets_at"] == "2099-01-08T00:00:00Z"
+    assert w["used_pct"] == round((monthly // 2) / monthly * 100, 1) and w["resets_at"] == refills
+    assert w["resets"] is True and refills.endswith("-15T00:00:00Z")
     assert me["blocked"] is None and me["usage_pct"] == w["used_pct"]
-    assert me["period_start"] == "2099-01-01T00:00:00Z" and me["reset_at"] == "2099-01-08T00:00:00Z"
+    assert me["period_start"] == start and me["reset_at"] == refills
 
-    await db("UPDATE core.usage_accounts SET weekly_used = :w WHERE user_id = :u", u=uid, w=weekly)
+    await db("UPDATE core.usage_accounts SET monthly_used = :m WHERE user_id = :u", u=uid, m=monthly)
     me = await _me(uid)
-    assert me["blocked"] == {"key": "weekly", "resets_at": "2099-01-08T00:00:00Z"}
+    assert me["blocked"] == {"key": "monthly", "resets_at": refills, "resets": True}
+
+
+async def test_a_spent_free_credit_shows_no_reset_at_all():
+    """The Free trial credit is the one window with nothing to count down to:
+    ``resets`` is False and ``resets_at`` stays null even once it is full, so
+    the client says "spent, upgrade" instead of "resets in 0s"."""
+    uid = await make_user(email("usage"), plan="free")
+    credit = limits.window_limit("free", "lifetime")
+    await db(
+        "INSERT INTO core.usage_accounts (user_id, lifetime_started_at, lifetime_used, reserved_tokens) "
+        "VALUES (:u, '2099-01-01T00:00:00Z', :c, 0)",
+        u=uid, c=credit,
+    )
+    me = await _me(uid)
+    [w] = me["limits"]
+    assert (w["key"], w["label"], w["used_pct"], w["active"]) == ("lifetime", "Trial credit", 100.0, True)
+    assert w["resets"] is False and w["resets_at"] is None
+    assert me["blocked"] == {"key": "lifetime", "resets_at": None, "resets": False}
+    assert me["resets"] is False and me["reset_at"] is None
 
 
 async def test_the_wallet_shows_baht_once_bought():
@@ -100,8 +133,8 @@ async def test_the_estimate_counts_what_is_already_used_and_the_wallet():
         h = bearer(await user_token(uid))
         empty = (await c.post("/usage/estimate", json=body, headers=h)).json()
         await db(
-            "INSERT INTO core.usage_accounts (user_id, monthly_started_at, monthly_used) "
-            "VALUES (:u, now(), :m)", u=uid, m=limits.window_limit("free", "monthly") - 1_000,
+            "INSERT INTO core.usage_accounts (user_id, lifetime_started_at, lifetime_used) "
+            "VALUES (:u, now(), :m)", u=uid, m=limits.window_limit("free", "lifetime") - 1_000,
         )
         full = (await c.post("/usage/estimate", json=body, headers=h)).json()
         async with get_sessionmaker()() as s:
@@ -110,7 +143,9 @@ async def test_the_estimate_counts_what_is_already_used_and_the_wallet():
             await s.commit()
         paid = (await c.post("/usage/estimate", json=body, headers=h)).json()
     assert empty["fits"] == "plan" and empty["resets_at"] is None
-    assert full["fits"] == "none" and full["binding"] == "monthly" and full["resets_at"].endswith("Z")
+    # A spent trial credit has no reset time to offer — only "upgrade".
+    assert full["fits"] == "none" and full["binding"] == "lifetime"
+    assert full["resets_at"] is None and full["resets"] is False
     assert full["pct"] == empty["pct"] and full["wallet_satang"] > 0
     assert paid["fits"] == "wallet" and paid["wallet_satang"] == full["wallet_satang"]
     assert not any("token" in k for k in _keys(paid))

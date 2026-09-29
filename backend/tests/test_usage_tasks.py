@@ -22,12 +22,14 @@ def test_unknown_and_missing_features_fall_back_to_other() -> None:
     assert task_for_feature("") == "other"
 
 
-def test_free_plan_has_a_monthly_limit_so_a_percentage_exists() -> None:
-    # A share of "unlimited" is not a number — the settings screen needs a limit.
+def test_free_plan_has_a_limit_so_a_percentage_exists() -> None:
+    # A share of "unlimited" is not a number — the settings screen needs a
+    # limit. Free's is its one-time trial credit, not a monthly allowance.
     from packages.billing import limits
 
-    assert limits.window_limit("free", "monthly") == 100_000
-    assert limits.plan_limits("free").windows == ("monthly",)
+    assert limits.plan_limits("free").windows == ("lifetime",)
+    assert limits.window_limit("free", "lifetime") > 0
+    assert limits.window_resets("lifetime") is False
 
 
 def test_build_usage_tasks_always_lists_all_four() -> None:

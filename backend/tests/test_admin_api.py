@@ -60,11 +60,13 @@ async def _seed_usage(user_id: int) -> str:
         "(:b, :u, :s, 'talking_head', 'error', 'lite', 'standard', NULL, NULL)",
         a=uid, b=str(uuid.uuid4()), u=user_id, s=slug,
     )
-    # The plan's rolling windows (packages/billing/runs.py): 4,300 tokens
-    # charged in a Weekly window that started just now.
+    # The plan's windows (packages/billing/runs.py): 4,300 tokens charged in
+    # every one of them, including ``lifetime`` — the window a Free account is
+    # actually held to, and the only one that never rolls.
     await db(
         "INSERT INTO core.usage_accounts (user_id, weekly_started_at, weekly_used, monthly_started_at, "
-        "monthly_used, five_hour_started_at, five_hour_used) VALUES (:u, now(), 4300, now(), 4300, now(), 4300)",
+        "monthly_used, five_hour_started_at, five_hour_used, lifetime_started_at, lifetime_used) "
+        "VALUES (:u, now(), 4300, now(), 4300, now(), 4300, now(), 4300)",
         u=user_id,
     )
     return uid
@@ -105,9 +107,11 @@ async def test_dashboard_reports_real_usage_facts(mail):
     assert me["engine_pro_pct"] == 50.0 and me["precision_high_pct"] == 50.0
     assert me["last_active_days"] == 0
     # The admin sees real tokens per window; the percentage is what the user sees.
-    assert me["quota_window"] == "weekly" and me["quota_used_tokens"] == 4300
-    assert me["quota_used_pct"] == round(4300 / limits.window_limit("starter", "weekly") * 100, 1)
-    assert [w["key"] for w in me["windows"]] == ["weekly"] and me["windows"][0]["resets_at"].endswith("Z")
+    [enforced] = limits.plan_limits("starter").windows  # Starter: monthly only
+    assert me["quota_window"] == enforced and me["quota_used_tokens"] == 4300
+    assert me["quota_used_pct"] == round(4300 / limits.window_limit("starter", enforced) * 100, 1)
+    assert [w["key"] for w in me["windows"]] == [enforced]
+    assert me["windows"][0]["resets_at"].endswith("Z")
     assert data["circuit_breaker"]["enabled"] in (True, False) and "estimate_accuracy" in data
     assert data["billing_config"]["sell_thb_per_1m"] == 250
     assert data["period"]["days"] == 30
@@ -164,11 +168,22 @@ async def test_quota_reset_moves_the_web_apps_quota_window(mail):
             before = (await c.get("/usage/me", headers=bearer(token))).json()
             r = await c.post(f"/admin/users/{target}/quota-reset", headers=bearer(s["access_token"]))
             after = (await c.get("/usage/me", headers=bearer(token))).json()
+            refilled = await c.post(
+                f"/admin/users/{target}/window-reset",
+                json={"window": "lifetime"},
+                headers=bearer(s["access_token"]),
+            )
+            after_refill = (await c.get("/usage/me", headers=bearer(token))).json()
         finally:
             await _cleanup_projects(target)
-    assert before["usage_pct"] == round(4300 / limits.window_limit("free", "monthly") * 100, 1)
-    assert r.status_code == 200 and after["usage_pct"] == 0.0
-    assert after["limits"][0]["active"] is False and after["limits"][0]["resets_at"] is None
+    # Free is held to its lifetime trial credit, so that is the binding window.
+    assert before["usage_pct"] == round(4300 / limits.window_limit("free", "lifetime") * 100, 1)
+    # The bulk reset clears the rolling windows only. Free's binding window is
+    # its lifetime trial credit, which a routine reset must NOT hand back.
+    assert r.status_code == 200 and after["usage_pct"] == before["usage_pct"]
+    assert after["limits"][0]["key"] == "lifetime"
+    assert after["limits"][0]["resets_at"] is None and after["limits"][0]["resets"] is False
+    assert refilled.status_code == 200 and after_refill["usage_pct"] == 0.0
     audit = await db(
         "SELECT detail FROM core.admin_audit_events WHERE action = 'quota_reset' AND target_user_id = :t", t=target
     )

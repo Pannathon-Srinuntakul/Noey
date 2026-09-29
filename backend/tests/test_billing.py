@@ -13,6 +13,7 @@ import hmac
 import json
 import time
 import uuid
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 
@@ -74,6 +75,7 @@ def _sub(
     schedule: str | None = None,
     created: int = 1_700_000_000,
     period_end: int = 1_790_000_000,
+    billing_cycle_anchor: int | None = None,
     card: tuple[str, str] | None = ("visa", "4242"),
     price: dict | None = None,
 ) -> dict:
@@ -88,6 +90,7 @@ def _sub(
         "customer": customer,
         "status": status,
         "created": created,
+        "billing_cycle_anchor": billing_cycle_anchor,
         "cancel_at": cancel_at,
         "cancel_at_period_end": cancel_at_period_end,
         "billing_mode": {"type": billing_mode},
@@ -312,7 +315,17 @@ async def _row(user_id: int) -> dict[str, Any]:
                 text("SELECT * FROM core.billing_accounts WHERE user_id = :u"), {"u": user_id}
             )
         ).mappings().one_or_none()
-    return {"plan": plan, "account": dict(account) if account else None}
+        anchor_day = (
+            await conn.execute(
+                text("SELECT monthly_anchor_day FROM core.usage_accounts WHERE user_id = :u"),
+                {"u": user_id},
+            )
+        ).scalar_one_or_none()
+    return {
+        "plan": plan,
+        "account": dict(account) if account else None,
+        "anchor_day": anchor_day,
+    }
 
 
 def _customer() -> str:
@@ -772,6 +785,42 @@ async def test_webhook_syncs_the_plan_from_stripe(fake):
     assert account["price_lookup_key"] == "noey_pro_monthly"
     assert int(account["current_period_end"].timestamp()) == 1_790_000_000
     assert (account["pm_brand"], account["pm_last4"]) == ("visa", "4242")
+
+
+async def test_the_sync_stores_the_day_the_quota_month_refills_on(fake):
+    """The monthly allowance resets on the billing anniversary
+    (packages/billing/runs.py), and the charging path may not call Stripe to
+    find it — so every sync writes the day down.
+
+    ``billing_cycle_anchor`` wins over the period end on purpose: a 31st
+    subscription read in February has a period end on the 28th, and taking the
+    day from THAT would move the customer's reset to the 28th for good.
+    """
+    customer = _customer()
+    user_id, _ = await _user(customer=customer)
+    feb = int(datetime(2027, 2, 28, 9, 0, tzinfo=UTC).timestamp())
+    jan = int(datetime(2027, 1, 31, 9, 0, tzinfo=UTC).timestamp())
+    fake.subscriptions = [_sub(customer, "pro", period_end=feb, billing_cycle_anchor=jan)]
+    async with _client() as c:
+        r = await _deliver(c, _event("customer.subscription.updated", fake.subscriptions[0]))
+    assert r.status_code == 200
+    assert (await _row(user_id))["anchor_day"] == 31
+
+    # A subscription that ends hands over no date, and the day is never taken
+    # away: lapsing one must not buy a second reset.
+    fake.subscriptions = []
+    async with _client() as c:
+        r = await _deliver(
+            c,
+            _event(
+                "customer.subscription.deleted",
+                _sub(customer, "pro", status="canceled"),
+                event_id=f"evt_{uuid.uuid4().hex[:10]}",
+            ),
+        )
+    assert r.status_code == 200
+    row = await _row(user_id)
+    assert row["plan"] == "free" and row["anchor_day"] == 31
 
 
 async def test_webhook_is_idempotent_per_event_id(fake):

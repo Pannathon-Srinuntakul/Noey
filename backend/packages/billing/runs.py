@@ -3,12 +3,34 @@
 Guard layer 1 of docs/token-billing-plan.md §4, and the state behind
 ``GET /usage/me`` (docs/token-billing-design.md §4, §6.1, §10).
 
-Windows (``core.usage_accounts``). A window is ACTIVE while
-``now < started_at + length`` (5 h / 7 d / 30 d); an inactive window reads as
-unused and restarts — ``started_at = now`` — at the next charge, so a window
-starts at first use (rolling), never on a calendar boundary. A plan ENFORCES
-some windows (limits.PLAN_LIMITS) but all three are TRACKED: every charge
-adds to all of them.
+Windows (``core.usage_accounts``). A plan ENFORCES some windows
+(limits.PLAN_LIMITS) but all four are TRACKED: every charge adds to all of
+them. There are two kinds:
+
+**``monthly`` — the calendar window every paid plan enforces.** It runs from
+one billing anniversary to the next: 00:00 UTC on ``monthly_anchor_day`` of
+each month, the day the subscription actually renews. It used to be a rolling
+30 days from first use, which drifted away from the invoice — a customer
+billed on the 15th whose first cut landed on the 12th got a fresh allowance on
+the 12th, three days before paying for it, and further adrift every month.
+Now the answer to "when does my quota come back?" is a date the customer
+already knows. ``monthly_started_at`` holds the START of the current period
+(the last anniversary), so the window is active while that start is still the
+current period's; the length of a month is never assumed — a 31st anchor lands
+on the 28th/29th/30th in a month too short for it and returns to the 31st in
+the next long one, which is Stripe's own rule, not an invention.
+
+**The rolling sub-windows** (``five_hour``, ``weekly``) keep the old rule —
+active while ``now < started_at + length``, restarting at the next charge — and
+``lifetime`` never runs out at all. No plan enforces the first two today; they
+are recorded so switching one back on needs no new code.
+
+The anchor (``usage_accounts.monthly_anchor_day``) is stored, never fetched:
+``window_used`` / ``window_resets_at`` run on every ``GET /usage/me`` and
+inside the account lock, and neither may call Stripe. The Stripe sync keeps it
+fresh (packages/billing/service.py); an account with no subscription at all —
+admin-granted, enterprise, a plan set by hand — pins it once to the day of its
+first charge, so it too resets on a fixed calendar date.
 
 **No reservation (owner, 2026-09-26).** A start used to hold the whole
 server-side estimate up front, which refused work that would have fitted: the
@@ -62,6 +84,7 @@ lapses after ``LEASE`` if the worker dies; ``sweep_orphans`` settles those.
 
 from __future__ import annotations
 
+import calendar
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -124,6 +147,10 @@ def iso(value: datetime | None) -> str | None:
 
 # ── window math ──────────────────────────────────────────────────────────────
 
+#: The one window that follows the subscription's calendar instead of a length.
+ANNIVERSARY_WINDOW = "monthly"
+
+
 def _started(account: UsageAccount | None, key: str) -> datetime | None:
     return getattr(account, f"{key}_started_at", None) if account is not None else None
 
@@ -132,38 +159,127 @@ def _used_raw(account: UsageAccount | None, key: str) -> int:
     return int(getattr(account, f"{key}_used", 0) or 0) if account is not None else 0
 
 
-def window_active(started_at: datetime | None, key: str, now: datetime) -> bool:
-    return started_at is not None and now < started_at + timedelta(seconds=limits_mod.WINDOW_SECONDS[key])
+# ── the billing anniversary ──────────────────────────────────────────────────
+
+def _anniversary(year: int, month: int, day: int) -> datetime:
+    """00:00 UTC on ``day`` of ``month``, clamped to the month's last day.
+
+    ``month`` may be 0 or 13: it rolls into the neighbouring year. Clamping is
+    Stripe's rule for a subscription anchored past the end of a short month —
+    the 31st invoices on the 28th in February and goes back to the 31st in
+    March, because the ANCHOR is kept, not the date it landed on.
+    """
+    year, month = year + (month - 1) // 12, (month - 1) % 12 + 1
+    last = calendar.monthrange(year, month)[1]
+    return datetime(year, month, min(max(day, 1), last), tzinfo=UTC)
+
+
+def period_start(now: datetime, anchor_day: int) -> datetime:
+    """The most recent billing anniversary at or before ``now``."""
+    at = now.astimezone(UTC)
+    this = _anniversary(at.year, at.month, anchor_day)
+    return this if this <= at else _anniversary(at.year, at.month - 1, anchor_day)
+
+
+def period_end(now: datetime, anchor_day: int) -> datetime:
+    """The next billing anniversary strictly after ``now`` — the moment the
+    allowance refills, and what the editor counts down to."""
+    at = now.astimezone(UTC)
+    this = _anniversary(at.year, at.month, anchor_day)
+    return this if this > at else _anniversary(at.year, at.month + 1, anchor_day)
+
+
+def anchor_day(account: UsageAccount | None) -> int | None:
+    """The day of the month this account's allowance refills on.
+
+    The stored anchor (the subscription's, or the day of the account's first
+    charge) first; failing that, the day the current period was stamped on,
+    which is the same number for every row written since. None only for an
+    account that has never been charged and never had a subscription — there
+    is nothing to count down to yet, and the window reads as unused anyway.
+    """
+    if account is None:
+        return None
+    stored = getattr(account, "monthly_anchor_day", None)
+    if stored:
+        return min(max(int(stored), 1), 31)
+    started = _started(account, ANNIVERSARY_WINDOW)
+    return started.astimezone(UTC).day if started is not None else None
+
+
+def window_active(
+    started_at: datetime | None, key: str, now: datetime, anchor: int | None = None
+) -> bool:
+    if started_at is None:
+        return False
+    if key == ANNIVERSARY_WINDOW and anchor:
+        # Still inside the period it was stamped for. ``>=`` rather than ``==``
+        # on purpose: a start somewhere INSIDE the current period (a row the
+        # backfill re-anchored, an anchor the subscription moved a few days
+        # later in the same month) keeps counting rather than handing out a
+        # second allowance.
+        return started_at.astimezone(UTC) >= period_start(now, anchor)
+    length = limits_mod.WINDOW_SECONDS[key]
+    if length is None:
+        return True  # ``lifetime``: started once, never runs out
+    return now < started_at + timedelta(seconds=length)
 
 
 def window_used(account: UsageAccount | None, key: str, now: datetime) -> int:
     """Charged tokens in the window — 0 once it has run out."""
-    return _used_raw(account, key) if window_active(_started(account, key), key, now) else 0
+    active = window_active(_started(account, key), key, now, anchor_day(account))
+    return _used_raw(account, key) if active else 0
 
 
 def window_resets_at(account: UsageAccount | None, key: str, now: datetime) -> datetime | None:
-    """When an active window runs out; None for an inactive one ("5 h after next use")."""
+    """When the window refills. None for ``lifetime``, which never comes back.
+
+    ``monthly`` answers with the real next anniversary whether or not anything
+    has been charged yet — the date is the subscription's, not the usage's, and
+    the editor renders a countdown from it. A rolling sub-window still answers
+    None while it is inactive ("5 h after next use").
+    """
     started = _started(account, key)
+    length = limits_mod.WINDOW_SECONDS[key]
+    if length is None:
+        return None
+    if key == ANNIVERSARY_WINDOW:
+        day = anchor_day(account)
+        return period_end(now, day) if day else None
     if not window_active(started, key, now):
         return None
     assert started is not None
-    return started + timedelta(seconds=limits_mod.WINDOW_SECONDS[key])
+    return started + timedelta(seconds=length)
 
 
 def roll_windows(account: UsageAccount, now: datetime) -> None:
     """Clear every window that has run out (it restarts at the next use)."""
+    day = anchor_day(account)
     for key in limits_mod.TRACKED_WINDOWS:
-        if _started(account, key) is not None and not window_active(_started(account, key), key, now):
+        started = _started(account, key)
+        if started is not None and not window_active(started, key, now, day):
             setattr(account, f"{key}_started_at", None)
             setattr(account, f"{key}_used", 0)
 
 
 def start_windows(account: UsageAccount, now: datetime) -> None:
-    """Start every inactive window now — the "first use" of a rolling window."""
+    """Start every inactive window — "first use" for the rolling ones, the
+    current billing period for ``monthly``.
+
+    ``monthly`` is stamped with the period's START, not with ``now``, so a
+    first cut on the 20th of a cycle anchored to the 15th still runs out on the
+    15th. An account with no anchor yet (no subscription: admin-granted,
+    enterprise, a plan set by hand) pins today's day-of-month as its anchor
+    here — once, and never again, so it too has a fixed calendar date.
+    """
     roll_windows(account, now)
+    day = anchor_day(account) or now.astimezone(UTC).day
+    if not getattr(account, "monthly_anchor_day", None):
+        account.monthly_anchor_day = day
     for key in limits_mod.TRACKED_WINDOWS:
         if _started(account, key) is None:
-            setattr(account, f"{key}_started_at", now)
+            at = period_start(now, day) if key == ANNIVERSARY_WINDOW else now
+            setattr(account, f"{key}_started_at", at)
             setattr(account, f"{key}_used", 0)
 
 
@@ -207,6 +323,7 @@ class WindowView:
 
 def enforced_windows(plan: str, account: UsageAccount | None, now: datetime) -> list[WindowView]:
     reserved = int(account.reserved_tokens or 0) if account is not None else 0
+    day = anchor_day(account)
     out = []
     for key in limits_mod.plan_limits(plan).windows:
         started = _started(account, key)
@@ -217,7 +334,7 @@ def enforced_windows(plan: str, account: UsageAccount | None, now: datetime) -> 
                 used=window_used(account, key, now),
                 reserved=reserved,
                 resets_at=window_resets_at(account, key, now),
-                active=window_active(started, key, now),
+                active=window_active(started, key, now, day),
             )
         )
     return out
@@ -711,7 +828,13 @@ async def usage_state(session: AsyncSession, user: User, now: datetime | None = 
     tightest = binding_window(views)
     blocked = None
     if tightest is not None and tightest.headroom <= 0:
-        blocked = {"key": tightest.key, "resets_at": iso(tightest.resets_at)}
+        blocked = {
+            "key": tightest.key,
+            "resets_at": iso(tightest.resets_at),
+            # A spent trial credit never comes back, so the client must offer
+            # an upgrade instead of counting down to a reset that never runs.
+            "resets": limits_mod.window_resets(tightest.key),
+        }
     return {
         "plan": plan,
         "unlimited": unlimited,

@@ -140,6 +140,10 @@ class Settings(BaseSettings):
     # Note `llm_vision_effort` does NOT reach these: that one belongs to
     # `vision_call_kwargs()`, i.e. the Anthropic vision path. Override via
     # DUB_VISION_EFFORT.
+    # Since the Engine tier now carries thinking depth (see dub_effort_lite /
+    # dub_effort_pro below), this is the FALLBACK — what the call sites with no
+    # tier use (speech selection), and what a blanked per-tier setting drops
+    # back to.
     dub_vision_effort: str = "medium"
     # Cut-style distillation (packages/video/cut_style.py): >0 attaches
     # video_metadata {"fps": N} to the reference upload for denser sampling.
@@ -156,11 +160,20 @@ class Settings(BaseSettings):
     # (PROHIBITED_CONTENT, not adjustable). See packages/llm/files.py.
     # Practical ceiling ~40 min of footage at 5 fps before the 1M context fills.
     dub_vision_fps: int = 0
-    # User-facing quality tiers (packages/video/quality.py). The desktop shows
-    # them as Engine lite|pro and Precision standard|high; only these two lines
-    # know which provider model / frame rate that means.
+    # User-facing quality tiers (packages/video/quality.py). The clients show
+    # them under their own names; the stored values stay lite|pro and
+    # standard|high, and only the lines below know which provider model /
+    # thinking depth / frame rate that means.
     dub_engine_lite: str = "gemini-3.7-flash"
     dub_engine_pro: str = "gemini-3.8-flash"
+    # Thinking depth per Engine tier. Measured 2026-09-29 (scripts/effort_ab.py,
+    # two clips, eight runs): "high" spends 22,892 thinking tokens and 114s per
+    # cut against 12,428 and 87s at "medium", and thinking is ~94% of a cut's
+    # fixed cost. Binding it to the tier is what lets someone on the cheap
+    # engine actually buy a cheaper cut. Blank → dub_vision_effort.
+    # Override via DUB_EFFORT_LITE / DUB_EFFORT_PRO.
+    dub_effort_lite: str = "medium"
+    dub_effort_pro: str = "high"
     dub_precision_high_fps: int = 5
     # Which ตัดฉากเด่น edit-prompt generation the native-video call uses.
     # "v2" (2026-08-15): spans bounded by complete action arcs, spans/moments

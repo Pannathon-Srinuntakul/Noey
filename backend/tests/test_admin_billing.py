@@ -110,26 +110,33 @@ async def test_a_normal_user_token_cannot_reach_admin_billing(mail):
 
 
 async def test_window_reset_is_per_window_and_audited(mail):
-    target = await make_user(email("win"), plan="pro")
+    """One window is cleared and the others are left alone. A Free account
+    shows it best: every window is tracked, only ``lifetime`` is enforced, and
+    clearing ``monthly`` must not hand the trial credit back."""
+    target = await make_user(email("win"), plan="free")
     await db(
-        "INSERT INTO core.usage_accounts (user_id, five_hour_started_at, five_hour_used, weekly_started_at, "
-        "weekly_used) VALUES (:u, now(), 5000, now(), 9000)",
+        "INSERT INTO core.usage_accounts (user_id, monthly_started_at, monthly_used, "
+        "lifetime_started_at, lifetime_used) VALUES (:u, now(), 5000, now(), 9000)",
         u=target,
     )
     async with client() as c:
         admin_id, _, s = await new_admin(c, mail)
         h = bearer(s["access_token"])
-        r = await c.post(f"/admin/users/{target}/window-reset", json={"window": "five_hour"}, headers=h)
+        r = await c.post(f"/admin/users/{target}/window-reset", json={"window": "monthly"}, headers=h)
         bad = await c.post(f"/admin/users/{target}/window-reset", json={"window": "daily"}, headers=h)
         missing = await c.post("/admin/users/999999999/window-reset", json={"window": "weekly"}, headers=h)
     assert r.status_code == 200 and bad.status_code == 422 and missing.status_code == 404
     windows = {w["key"]: w for w in r.json()["windows"]}
-    assert windows["five_hour"]["used_tokens"] == 0 and windows["weekly"]["used_tokens"] == 9000
+    assert windows["lifetime"]["used_tokens"] == 9000  # the trial credit is untouched
+    used = await db(
+        "SELECT monthly_used, lifetime_used FROM core.usage_accounts WHERE user_id = :u", u=target
+    )
+    assert tuple(used[0]) == (0, 9000)
     audit = await db(
         "SELECT actor_user_id, detail FROM core.admin_audit_events WHERE action = 'window_reset' AND target_user_id = :t",
         t=target,
     )
-    assert audit[0][0] == admin_id and audit[0][1]["window"] == "five_hour" and audit[0][1]["before"]["used"] == 5000
+    assert audit[0][0] == admin_id and audit[0][1]["window"] == "monthly" and audit[0][1]["before"]["used"] == 5000
 
 
 async def test_wallet_adjustments_credit_and_debit_with_an_audit_trail(mail):

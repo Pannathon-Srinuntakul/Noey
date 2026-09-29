@@ -192,12 +192,16 @@ async def _pause(uid: str, job_id: str, run_id: str | None = None) -> None:
 
 
 async def _fill_the_window(user_id: int, plan: str) -> None:
-    await db(
-        "INSERT INTO core.usage_accounts (user_id, monthly_started_at, monthly_used, reserved_tokens) "
-        "VALUES (:u, now(), :m, 0) ON CONFLICT (user_id) DO UPDATE SET monthly_used = :m, "
-        "monthly_started_at = now()",
-        u=user_id, m=limits.window_limit(plan, "monthly"),
-    )
+    """Spend every window the plan enforces — whichever they are (Free's
+    lifetime credit, Lite's month, Pro's week…): the column names follow
+    limits.PLAN_LIMITS rather than being typed in here."""
+    for key in limits.plan_limits(plan).windows:
+        await db(
+            f"INSERT INTO core.usage_accounts (user_id, {key}_started_at, {key}_used, reserved_tokens) "
+            f"VALUES (:u, now(), :m, 0) ON CONFLICT (user_id) DO UPDATE SET {key}_used = :m, "
+            f"{key}_started_at = now()",
+            u=user_id, m=limits.window_limit(plan, key),
+        )
 
 
 async def _runs(user_id: int) -> list[tuple]:

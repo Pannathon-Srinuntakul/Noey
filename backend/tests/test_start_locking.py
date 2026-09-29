@@ -144,7 +144,7 @@ async def test_two_simultaneous_speech_starts_open_one_run(captured):
             _cleanup(uid)
     assert sorted((a.status_code, b.status_code)) == [202, 400], (a.text, b.text)
     assert len(captured) == 1
-    assert [k for k, _s in await _runs(user)] == ["transcribe_audio"]
+    assert [k for k, _s in await _runs(user)] == ["transcribe_only"]
 
 
 # ── the idempotency key ──────────────────────────────────────────────────────

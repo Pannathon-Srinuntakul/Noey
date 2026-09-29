@@ -570,7 +570,13 @@ async def enforce_new_project(
     existing projects are never touched — and 422 ``footage_over_limit`` when
     the footage the client declares is over the per-project cap. The declared
     length is only an early refusal; every start route re-checks the footage
-    it measures itself (services/api/billing_start.py)."""
+    it measures itself (services/api/billing_start.py).
+
+    ``precision`` is also a plan feature: refuse High here rather than let the
+    project be created with a tier its plan can never pay to run."""
+    refusal = plan_features.check_precision(user, precision)
+    if refusal is not None:
+        raise HTTPException(403, refusal)
     if declared_sec is not None:
         # mode + precision decide the cap for the modes that send the whole
         # project to the model in one request — refuse here, before the upload,
@@ -658,14 +664,21 @@ async def _pause_project(
 #: The estimate kind each paid boundary is priced at, for a project whose
 #: ticket is missing (paused by a build from before tickets existed). Only a
 #: display figure — an actual resume always reprices from the ticket.
+#: ``transcribe``/``select`` are the speech modes' boundaries, and those three
+#: modes cost wildly different amounts behind the same route, so the MODE
+#: answers for them instead (``estimate.KIND_FOR_MODE``).
 _STAGE_KIND = {
     "analyze": "analyze_video",
-    "transcribe": "transcribe_audio",
-    "select": "transcribe_audio",
     "plan": "plan_dub",
     "reedit": "reedit",
     "effects": "plan_effects",
 }
+
+
+def _stage_kind(stage: str | None, mode: str | None) -> str | None:
+    if stage in ("transcribe", "select"):
+        return estimator.KIND_FOR_MODE.get(mode or "")
+    return _STAGE_KIND.get(stage or "")
 
 
 def _reached_stage(proj: VideoProject) -> str | None:
@@ -909,6 +922,17 @@ async def analyze_video(
         return replay
     music_window = _music_window_kwargs(music_offset_sec, music_trim_in_sec, music_trim_out_sec)
     _refuse_running(proj)
+
+    # ความละเอียด is a plan feature, and this is the route that spends it (the
+    # whole project travels as one video part, priced per second at the tier).
+    # Check the EFFECTIVE tier — what this run would really use — before
+    # anything is written, so a plan downgrade cannot leave a stored "high"
+    # running unchecked and a refused request leaves the row untouched.
+    precision_refusal = plan_features.check_precision(
+        auth.user, normalize_precision(precision) if precision.strip() else proj.precision
+    )
+    if precision_refusal is not None:
+        raise HTTPException(403, precision_refusal)
 
     new_brief = brief.strip()
     if new_brief and new_brief != (proj.brief or ""):
@@ -1916,8 +1940,12 @@ async def transcribe_audio(
             dest = staging / str(f.filename)
             await receive_upload(f, dest, limit=cap, label="เสียง")
             audio_secs.append(await _measure_upload(dest, label="เสียง"))
+        # One route, three modes, three different amounts of work behind it:
+        # talking_head never calls a model at all, speech_scenes calls one and
+        # speech_highlights fans out per highlight. The kind comes from the
+        # MODE, not from the route (packages/billing/estimate.py KIND_FOR_MODE).
         est = estimator.estimate_run(
-            kind="transcribe_audio", engine=proj.engine, precision=proj.precision,
+            mode=proj.mode, engine=proj.engine, precision=proj.precision,
             clip_secs=audio_secs,
         )
         run_id = await start_paid_run(
@@ -2090,12 +2118,12 @@ async def _resume_quota(
     est = resume_mod.estimate_for(state, engine=proj.engine, precision=proj.precision)
     source = "ticket"
     if est is None:
-        kind = _STAGE_KIND.get(next_st or "")
+        kind = _stage_kind(next_st, proj.mode)
         if kind is None:
             return (
                 {
                     "fits": "plan", "pct": {}, "wallet_satang": 0, "balance_satang": 0,
-                    "binding": None, "resets_at": None, "unlimited": False,
+                    "binding": None, "resets_at": None, "resets": True, "unlimited": False,
                 },
                 None,
                 "free",
@@ -2130,6 +2158,9 @@ def _resume_view(proj: VideoProject, state: dict | None, reached: str | None, ne
         "paused_at": (state or {}).get("paused_at"),
         "window": (state or {}).get("window"),
         "window_resets_at": (state or {}).get("resets_at"),
+        # False = a spent one-time credit; the client offers an upgrade, not a
+        # countdown. Older tickets predate the flag, so absent means "resets".
+        "window_resets": bool((state or {}).get("resets", True)),
         "message": proj.error_msg if proj.status == "paused_quota" else None,
     }
 

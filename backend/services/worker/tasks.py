@@ -2047,7 +2047,7 @@ async def analyze_dub_video_local(
         # here depends on the enqueue kwargs surviving a requeue.
         from packages.video.quality import resolve as resolve_quality
 
-        tier_model, tier_fps = resolve_quality(proj.engine, proj.precision)
+        tier_model, tier_fps, tier_effort = resolve_quality(proj.engine, proj.precision)
         log.info(
             "analyze_dub_video_tiers",
             project_uid=project_uid,
@@ -2055,6 +2055,7 @@ async def analyze_dub_video_local(
             precision=proj.precision or "(default)",
             model=tier_model,
             fps=tier_fps,
+            effort=tier_effort,
         )
         await _video_progress(job_id, 74, "analyze", "กำลัง match script กับซีนวิดีโอ…")
 
@@ -2087,6 +2088,7 @@ async def analyze_dub_video_local(
             default_cut_style_prose=edit_default_prose,
             model=tier_model,
             fps=tier_fps,
+            effort=tier_effort,
             on_thinking=_push_thinking,
         )
 
@@ -2507,6 +2509,12 @@ async def reedit_dub_scenes_local(
                 result={"step": "analyze", "message": "กำลังแก้ไขตามคำสั่ง…", "thinking": excerpt},
             )
 
+        # The re-edit runs on whatever model reedit_model() names, but it thinks
+        # as hard as the project's Engine tier says — same dial, same cut.
+        from packages.video.quality import engine_effort
+
+        tier_effort = engine_effort(proj.engine)
+
         await _release_connection(session)
         new_segments = await generate_dub_reedit_script_video(
             clip_videos,
@@ -2523,6 +2531,7 @@ async def reedit_dub_scenes_local(
             ),
             target_duration_sec=getattr(proj, "target_duration_sec", None),
             style_prompt=style_prompt,
+            effort=tier_effort,
             on_thinking=_push_thinking,
         )
 

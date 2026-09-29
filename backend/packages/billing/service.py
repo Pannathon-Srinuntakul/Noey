@@ -28,7 +28,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from packages.billing import catalog, plan_change
+from packages.billing import accounts, catalog, plan_change
 from packages.billing.catalog import PaidPlan
 from packages.billing.objects import field, id_of, items_of, metadata_value
 from packages.core.logging import get_logger
@@ -129,6 +129,21 @@ def _period_end(sub: Any) -> datetime | None:
     # Since API 2025-03-31.basil the period lives on each item, not the subscription.
     ends = [e for e in (field(i, "current_period_end") for i in items_of(sub)) if isinstance(e, int)]
     return datetime.fromtimestamp(max(ends), tz=UTC) if ends else None
+
+
+def _billing_anchor(sub: Any) -> datetime | None:
+    """The date the customer is invoiced on — what the monthly quota window
+    resets on (packages/billing/runs.py).
+
+    ``billing_cycle_anchor`` first, because it is the ORIGINAL day and keeps a
+    31st a 31st: a period end read in February would say 28 and freeze the
+    anchor there for good. It falls back to the period end for a subscription
+    shape that carries no anchor.
+    """
+    ts = field(sub, "billing_cycle_anchor")
+    if isinstance(ts, int):
+        return datetime.fromtimestamp(ts, tz=UTC)
+    return _period_end(sub)
 
 
 def _card_of(payment_method: Any) -> tuple[str | None, str | None]:
@@ -277,6 +292,11 @@ async def _apply(
         account.cancel_at_period_end = live and _scheduled_to_end(sub)
         pm = await _payment_method_for(client, sub, account.stripe_customer_id) if live else None
         account.pm_brand, account.pm_last4 = _card_of(pm)
+        # The quota month follows the invoice, so the billing day has to be
+        # stored where the charging path can read it without a Stripe call.
+        # Set from any subscription, live or not: a past_due customer inside
+        # their grace keeps the date they have always reset on.
+        await accounts.set_billing_anchor(session, int(user.id), _billing_anchor(sub))
 
     new_plan = plan_for_subscription(sub)
     if new_plan is None:

@@ -6,15 +6,17 @@ and are purged afterwards.
 """
 
 import asyncio
+import dataclasses
 import math
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import text
 
-from packages.billing import limits, runs, wallet
-from packages.billing.accounts import get_account, lock_account
+from packages.billing import limits, plan_change, runs, wallet
+from packages.billing.accounts import get_account, lock_account, set_billing_anchor
 from packages.billing.estimate import Estimate
 from packages.db.models.ai_run import AiRun
 from packages.db.models.core_auth import User
@@ -90,15 +92,60 @@ async def _account(user_id: int) -> UsageAccount:
         await s.close()
 
 
+@contextmanager
+def _enforcing(plan: str, windows: tuple[str, ...]):
+    """Give ``plan`` those enforced windows for the duration of a test.
+
+    No plan enforces more than one window today (limits.py rule 1), but the
+    machinery still has to handle several — the sub-windows are all still
+    tracked, and switching one back on must not need new code. These tests
+    exercise that path; nothing in the shipped table reaches it.
+    """
+    old = limits.PLAN_LIMITS[plan]
+    limits.PLAN_LIMITS[plan] = dataclasses.replace(old, windows=windows)
+    try:
+        yield
+    finally:
+        limits.PLAN_LIMITS[plan] = old
+
+
 # ── window math (pure) ───────────────────────────────────────────────────────
 
 def test_limits_follow_the_owner_table():
-    assert limits.window_limit("lite", "weekly") == math.floor(800_000 / 4.33)
-    assert limits.window_limit("pro", "five_hour") == math.floor(math.floor(4_000_000 / 4.33) * 0.4)
-    assert limits.window_limit("free", "monthly") == 100_000
+    lite_weekly = math.floor(limits.PLAN_LIMITS["lite"].monthly / limits.WEEKS_PER_MONTH)
+    assert limits.window_limit("lite", "weekly") == lite_weekly
+    assert limits.window_limit("lite", "five_hour") == math.floor(
+        lite_weekly * limits.FIVE_HOUR_SHARE
+    )
+    # Free's credit is a lifetime one — the same number under either name.
+    assert limits.window_limit("free", "lifetime") == limits.PLAN_LIMITS["free"].monthly
+    assert limits.plan_limits("free").windows == ("lifetime",)
     assert [limits.plan_limits(p).concurrency for p in ("free", "lite", "starter", "pro", "studio", "agency", "max")] == [
         1, 1, 1, 2, 3, 4, 5,
     ]
+
+
+def test_only_the_lifetime_window_never_comes_back():
+    assert limits.window_resets("lifetime") is False
+    assert [w for w in limits.TRACKED_WINDOWS if not limits.window_resets(w)] == ["lifetime"]
+    assert all(limits.window_resets(w) for w in ("five_hour", "weekly", "monthly"))
+
+
+def test_a_lifetime_window_never_rolls_over_however_long_it_waits():
+    """Free's credit is spent once. A rolling window would hand it back; this
+    one must still read as used a decade later."""
+    acct = UsageAccount(user_id=1, reserved_tokens=0)
+    runs.start_windows(acct, NOW)
+    acct.lifetime_used = 40_000
+    much_later = NOW + timedelta(days=365 * 10)
+    assert runs.window_active(acct.lifetime_started_at, "lifetime", much_later) is True
+    assert runs.window_used(acct, "lifetime", much_later) == 40_000
+    # Nothing to count down to, and rolling the windows leaves it alone.
+    assert runs.window_resets_at(acct, "lifetime", much_later) is None
+    runs.roll_windows(acct, much_later)
+    assert acct.lifetime_started_at == NOW and acct.lifetime_used == 40_000
+    # The weekly window beside it did roll.
+    assert acct.weekly_started_at is None and acct.weekly_used == 0
 
 
 def test_a_window_is_rolling_and_starts_at_first_use():
@@ -119,28 +166,31 @@ def test_a_window_is_rolling_and_starts_at_first_use():
 def test_reservations_count_against_every_enforced_window():
     acct = UsageAccount(user_id=1, weekly_started_at=NOW, weekly_used=1000, five_hour_started_at=NOW,
                         five_hour_used=1000, monthly_started_at=NOW, monthly_used=1000, reserved_tokens=500)
-    views = runs.enforced_windows("pro", acct, NOW)
-    assert [v.key for v in views] == ["weekly", "five_hour"]
-    five = next(v for v in views if v.key == "five_hour")
-    assert five.headroom == limits.window_limit("pro", "five_hour") - 1500
-    assert five.used_pct == round(1500 / five.limit * 100, 1)
-    assert runs.binding_window(views).key == "five_hour"
+    with _enforcing("studio", ("weekly", "five_hour")):
+        views = runs.enforced_windows("studio", acct, NOW)
+        five = next(v for v in views if v.key == "five_hour")
+        assert [v.key for v in views] == ["weekly", "five_hour"]
+        assert five.headroom == limits.window_limit("studio", "five_hour") - 1500
+        assert five.used_pct == round(1500 / five.limit * 100, 1)
+        assert runs.binding_window(views).key == "five_hour"
 
 
 def test_a_window_too_small_for_the_run_does_not_govern_it():
-    """Pro's 5-hour window is 40 % of its weekly one, so an hour of footage
-    costs more than it holds however empty it is. Stopping the run there would
-    make it unstartable forever — the weekly window governs instead."""
+    """A 5-hour window is 40 % of the weekly one, so footage can cost more
+    than it holds however empty it is. Stopping the run there would make it
+    unstartable forever — the weekly window governs instead."""
     acct = UsageAccount(user_id=1, weekly_started_at=NOW, weekly_used=0, five_hour_started_at=NOW,
                         five_hour_used=0, monthly_started_at=NOW, monthly_used=0, reserved_tokens=0)
-    views = runs.enforced_windows("pro", acct, NOW)
-    five, week = limits.window_limit("pro", "five_hour"), limits.window_limit("pro", "weekly")
-    small = runs.binding_window(runs.windows_for_run(views, five // 2))
-    big = runs.binding_window(runs.windows_for_run(views, five + 1))
-    assert small.key == "five_hour" and big.key == "weekly"
-    # Past every window, the biggest one still answers (the start refused it).
-    assert runs.binding_window(runs.windows_for_run(views, week * 10)).key == "weekly"
-    assert runs.windows_for_run(views, 0) == views
+    with _enforcing("studio", ("weekly", "five_hour")):
+        views = runs.enforced_windows("studio", acct, NOW)
+        five = limits.window_limit("studio", "five_hour")
+        week = limits.window_limit("studio", "weekly")
+        small = runs.binding_window(runs.windows_for_run(views, five // 2))
+        big = runs.binding_window(runs.windows_for_run(views, five + 1))
+        assert small.key == "five_hour" and big.key == "weekly"
+        # Past every window, the biggest one still answers (the start refused it).
+        assert runs.binding_window(runs.windows_for_run(views, week * 10)).key == "weekly"
+        assert runs.windows_for_run(views, 0) == views
 
 
 def test_effective_plan_reads_due_changes_and_lapsed_grace():
@@ -151,6 +201,138 @@ def test_effective_plan_reads_due_changes_and_lapsed_grace():
     acct.grace_until = NOW - timedelta(seconds=1)
     assert runs.effective_plan(user, acct, NOW) == "free"
     assert runs.effective_plan(SimpleNamespace(plan="enterprise"), acct, NOW) == "enterprise"
+
+
+# ── the monthly window follows the subscription's anniversary ────────────────
+
+def _month(day: int | None = None, started: datetime | None = None, used: int = 0) -> UsageAccount:
+    return UsageAccount(
+        user_id=1, monthly_anchor_day=day, monthly_started_at=started,
+        monthly_used=used, reserved_tokens=0,
+    )
+
+
+def test_the_month_refills_on_the_billing_day_not_30_days_after_first_use():
+    """Billed on the 15th, first cut of the cycle on the 20th: the allowance
+    still belongs to the 15th's period and comes back on the 15th. Under the
+    old rolling rule it came back on the 20th, and a month later on the 25th."""
+    acct = _month(day=15)
+    first_use = datetime(2026, 3, 20, 9, 0, tzinfo=UTC)
+    runs.start_windows(acct, first_use)
+    assert acct.monthly_started_at == datetime(2026, 3, 15, tzinfo=UTC)
+    acct.monthly_used = 500_000
+    assert runs.window_resets_at(acct, "monthly", first_use) == datetime(2026, 4, 15, tzinfo=UTC)
+
+    # A minute before the anniversary the month is still spent …
+    assert runs.window_used(acct, "monthly", datetime(2026, 4, 14, 23, 59, tzinfo=UTC)) == 500_000
+    # … and at 00:00 on the 15th it is empty again.
+    reset = datetime(2026, 4, 15, tzinfo=UTC)
+    assert runs.window_used(acct, "monthly", reset) == 0
+    runs.roll_windows(acct, reset)
+    assert acct.monthly_started_at is None and acct.monthly_used == 0
+
+    # Second cycle, and it does not drift: coming back on the 28th still puts
+    # the period start on the 15th and the next refill on the 15th.
+    later = datetime(2026, 4, 28, tzinfo=UTC)
+    runs.start_windows(acct, later)
+    assert acct.monthly_started_at == datetime(2026, 4, 15, tzinfo=UTC)
+    assert runs.window_resets_at(acct, "monthly", later) == datetime(2026, 5, 15, tzinfo=UTC)
+
+
+def test_a_31st_anchor_keeps_the_31st_through_short_months():
+    """Stripe's own rule, not an invention: a subscription anchored on the
+    31st invoices on the last day of a month too short for it and goes back to
+    the 31st in the next long one — the ANCHOR is kept, not where it landed."""
+    at = datetime(2026, 1, 31, tzinfo=UTC)
+    walk = []
+    for _ in range(13):
+        at = runs.period_end(at, 31)
+        walk.append(at.date().isoformat())
+    assert walk == [
+        "2026-02-28", "2026-03-31", "2026-04-30", "2026-05-31", "2026-06-30", "2026-07-31",
+        "2026-08-31", "2026-09-30", "2026-10-31", "2026-11-30", "2026-12-31",
+        "2027-01-31", "2027-02-28",
+    ]
+    # A 30-day month: mid-April the period is the one that opened on 31 March.
+    mid_april = datetime(2026, 4, 12, tzinfo=UTC)
+    assert runs.period_start(mid_april, 31) == datetime(2026, 3, 31, tzinfo=UTC)
+    assert runs.period_end(mid_april, 31) == datetime(2026, 4, 30, tzinfo=UTC)
+    # A 28-day February, and the leap one beside it.
+    assert runs.period_end(datetime(2026, 2, 5, tzinfo=UTC), 31) == datetime(2026, 2, 28, tzinfo=UTC)
+    assert runs.period_end(datetime(2028, 2, 5, tzinfo=UTC), 31) == datetime(2028, 2, 29, tzinfo=UTC)
+    # A month the clamp shortened is a whole period all the same.
+    feb = _month(day=31, started=datetime(2026, 2, 28, tzinfo=UTC), used=700_000)
+    assert runs.window_used(feb, "monthly", datetime(2026, 3, 30, tzinfo=UTC)) == 700_000
+    assert runs.window_used(feb, "monthly", datetime(2026, 3, 31, tzinfo=UTC)) == 0
+
+
+def test_an_account_with_no_subscription_pins_its_own_calendar_day():
+    """Admin-granted, enterprise, a plan set by hand, a lapsed subscription:
+    no billing date exists, so the day of the first charge becomes the
+    anniversary — once. It is still a fixed date on a calendar, which is the
+    whole point; it simply is not Stripe's."""
+    acct = _month()
+    assert runs.window_resets_at(acct, "monthly", NOW) is None  # nothing to count to yet
+    runs.start_windows(acct, datetime(2026, 3, 7, 18, 30, tzinfo=UTC))
+    assert acct.monthly_anchor_day == 7
+    assert acct.monthly_started_at == datetime(2026, 3, 7, tzinfo=UTC)
+
+    for opened in (datetime(2026, 4, 7, tzinfo=UTC), datetime(2026, 5, 7, tzinfo=UTC)):
+        acct.monthly_used = 1_000
+        runs.start_windows(acct, opened + timedelta(days=11))
+        assert acct.monthly_started_at == opened and acct.monthly_anchor_day == 7
+        assert acct.monthly_used == 0
+
+
+def test_the_countdown_is_there_before_anything_has_been_charged():
+    """The editor renders a countdown from ``resets_at``. A paid account that
+    has not run anything this month still has a real date to show — the window
+    belongs to the subscription, not to the usage."""
+    acct = _month(day=15)
+    at = datetime(2026, 3, 20, tzinfo=UTC)
+    [view] = runs.enforced_windows("pro", acct, at)
+    assert view.used == 0 and view.active is False
+    assert view.resets_at == datetime(2026, 4, 15, tzinfo=UTC)
+    assert limits.window_resets("monthly") is True
+
+
+def test_a_start_left_inside_the_period_keeps_what_it_has_used():
+    """What the backfill leaves behind, and what a moved anchor produces: a
+    start somewhere INSIDE the current period, not exactly on it. It must read
+    as the same month, never as a fresh one."""
+    acct = _month(day=15, started=datetime(2026, 3, 20, tzinfo=UTC), used=123_456)
+    at = datetime(2026, 4, 2, tzinfo=UTC)
+    assert runs.window_used(acct, "monthly", at) == 123_456
+    assert runs.window_resets_at(acct, "monthly", at) == datetime(2026, 4, 15, tzinfo=UTC)
+
+
+def test_a_window_untouched_for_months_refills_once_and_starts_from_this_period():
+    """Nothing runs a cron over idle accounts, so months of silence have to
+    read right the first time somebody asks."""
+    acct = _month(day=15, started=datetime(2026, 1, 15, tzinfo=UTC), used=700_000)
+    at = datetime(2026, 6, 20, tzinfo=UTC)
+    assert runs.window_used(acct, "monthly", at) == 0
+    assert runs.window_resets_at(acct, "monthly", at) == datetime(2026, 7, 15, tzinfo=UTC)
+    runs.start_windows(acct, at)
+    # One period's worth of allowance, not five months' — and it starts at the
+    # anniversary it is in, not at the day they came back.
+    assert acct.monthly_started_at == datetime(2026, 6, 15, tzinfo=UTC) and acct.monthly_used == 0
+
+
+def test_the_lifetime_credit_ignores_the_billing_anniversary_entirely():
+    """Free's credit is spent once. Anniversaries pass it by — ``resets`` stays
+    False and nothing ever hands it back."""
+    acct = _month(day=15)
+    runs.start_windows(acct, datetime(2026, 3, 20, tzinfo=UTC))
+    acct.lifetime_used = acct.monthly_used = 40_000
+    far = datetime(2027, 8, 1, tzinfo=UTC)
+    assert runs.window_used(acct, "lifetime", far) == 40_000
+    assert runs.window_resets_at(acct, "lifetime", far) is None
+    assert limits.window_resets("lifetime") is False
+    assert runs.window_used(acct, "monthly", far) == 0
+    runs.roll_windows(acct, far)
+    assert acct.lifetime_started_at == datetime(2026, 3, 20, tzinfo=UTC)
+    assert acct.lifetime_used == 40_000 and acct.monthly_started_at is None
 
 
 def test_charge_table():
@@ -192,6 +374,22 @@ async def test_each_recorded_request_charges_itself_as_the_run_goes():
     assert acct.weekly_used == 20_000
     row = await db("SELECT actual_tokens, charged_tokens FROM core.ai_runs WHERE id = :r", r=run_id)
     assert tuple(row[0]) == (20_000, 20_000)
+
+
+async def test_a_paid_plan_still_spends_its_lifetime_credit():
+    """``lifetime`` is charged for every plan, not only Free. Otherwise the
+    trial credit would be refilled by upgrading and coming back: subscribe for
+    a month, cut on Pro's quota, cancel — and Free's untouched credit is there
+    again, every month, forever."""
+    user, tid = await _user("pro")
+    assert "lifetime" not in limits.plan_limits("pro").windows  # not ENFORCED on Pro
+    run_id = await _open(user, tid, 50_000)
+    await _spend(run_id, 12_000)
+    acct = await _account(user.id)
+    assert acct.lifetime_used == 12_000 and acct.lifetime_started_at is not None
+    # Back on Free the same credit is what the enforced window reads.
+    views = runs.enforced_windows("free", acct, NOW)
+    assert [v.key for v in views] == ["lifetime"] and views[0].used == 12_000
 
 
 async def test_settle_trues_up_what_the_run_already_paid():
@@ -254,9 +452,12 @@ async def test_limit_stop_charges_at_most_the_estimate_and_refunds_the_rest():
 async def test_a_full_window_no_longer_refuses_the_start():
     """The reservation is gone: a start the estimate would have refused now
     goes ahead, and the quota snapshot is what stops it mid-run."""
-    user, tid = await _user("pro")
-    five = limits.window_limit("pro", "five_hour")
-    await _settle(await _open(user, tid, five - 1_000), "ok", actual=five - 1_000)
+    user, tid = await _user("lite")
+    [key] = limits.plan_limits("lite").windows
+    budget = limits.window_limit("lite", key)
+    # No subscription, so the first charge pins NOW's day as the billing day.
+    refills = runs.period_end(NOW, NOW.day)
+    await _settle(await _open(user, tid, budget - 1_000), "ok", actual=budget - 1_000)
     later = NOW + timedelta(minutes=1)
     run_id = await _open(user, tid, 5_000, now=later)
     s = await _session()
@@ -264,21 +465,116 @@ async def test_a_full_window_no_longer_refuses_the_start():
         snap = await runs.quota_snapshot(s, run_id, now=later)
     finally:
         await s.close()
-    assert snap.window == "five_hour" and snap.headroom == 1_000
-    assert snap.resets_at == NOW + timedelta(hours=5)
+    assert snap.window == key and snap.headroom == 1_000
+    assert snap.resets_at == refills
     assert snap.budget == 1_000  # no balance, no consent
-    # Five hours later the window has rolled and the whole run fits again.
+    # Once the month has turned over the whole run fits again.
     s = await _session()
     try:
-        rolled = await runs.quota_snapshot(s, run_id, now=NOW + timedelta(hours=5, seconds=1))
+        rolled = await runs.quota_snapshot(s, run_id, now=refills + timedelta(seconds=1))
     finally:
         await s.close()
-    assert rolled.headroom == five
+    assert rolled.headroom == budget
+
+
+async def test_the_billing_day_is_stored_once_and_drives_the_charging_path():
+    """``window_used`` runs inside the account lock and on every
+    ``GET /usage/me``; neither may ask Stripe when the month started. The sync
+    writes the day down, and everything else reads the row."""
+    user, _ = await _user("pro")
+    s = await _session()
+    try:
+        assert await set_billing_anchor(s, int(user.id), datetime(2026, 5, 15, 14, 32, tzinfo=UTC)) == 15
+        await s.commit()
+    finally:
+        await s.close()
+    assert (await _account(int(user.id))).monthly_anchor_day == 15
+
+    # No date to take one from (no subscription, or one that ended) leaves the
+    # stored day alone — lapsing a subscription cannot buy an extra reset.
+    s = await _session()
+    try:
+        assert await set_billing_anchor(s, int(user.id), None) is None
+        await s.commit()
+    finally:
+        await s.close()
+    assert (await _account(int(user.id))).monthly_anchor_day == 15
+
+    # The first charge then opens the period that CONTAINS it, not one that
+    # starts at the moment of the charge.
+    s = await _session()
+    try:
+        runs.start_windows(await lock_account(s, int(user.id)), NOW)
+        await s.commit()
+    finally:
+        await s.close()
+    acct = await _account(int(user.id))
+    assert acct.monthly_started_at == runs.period_start(NOW, 15) == datetime(2026, 9, 15, tzinfo=UTC)
+    assert runs.window_resets_at(acct, "monthly", NOW) == datetime(2026, 10, 15, tzinfo=UTC)
+
+
+async def test_an_upgrade_mid_cycle_widens_the_month_without_restarting_it():
+    """Proration buys the bigger plan for the REST of the period, not a second
+    period. So what is used stays used and the reset day does not move — the
+    allowance still grows, because the limit did. Emptying the window here
+    would sell a whole month for a few days' proration, over and over."""
+    user, tid = await _user("lite")
+    spent = 400_000
+    await _settle(await _open(user, tid, spent), "ok", actual=spent)
+    acct = await _account(int(user.id))
+    [before] = runs.enforced_windows("lite", acct, NOW)
+
+    s = await _session()
+    try:
+        await plan_change.upgrade(s, await s.get(User, int(user.id)), "pro")
+        await s.commit()
+    finally:
+        await s.close()
+
+    acct = await _account(int(user.id))
+    [after] = runs.enforced_windows("pro", acct, NOW)
+    assert before.used == after.used == spent  # nothing handed back
+    assert after.resets_at == before.resets_at  # the billing day did not move
+    assert after.limit > before.limit and after.headroom > before.headroom
+    # Every tracked window carried the charge, whatever the plan enforces.
+    assert acct.weekly_used == acct.lifetime_used == spent
+
+
+async def test_a_downgrade_lands_on_the_same_day_the_month_refills():
+    """A downgrade applies at the end of the paid period — which is now the
+    same instant the allowance comes back. Until then the paid-for tier and
+    the month it paid for both stand; after it, the smaller plan starts on an
+    empty month rather than inheriting a full one it cannot hold."""
+    user, tid = await _user("pro")
+    spent = 3_000_000
+    await _settle(await _open(user, tid, spent), "ok", actual=spent)
+    acct = await _account(int(user.id))
+    refills = runs.window_resets_at(acct, "monthly", NOW)
+
+    s = await _session()
+    try:
+        await plan_change.schedule_downgrade(s, await s.get(User, int(user.id)), "lite", refills)
+        await s.commit()
+    finally:
+        await s.close()
+
+    acct = await _account(int(user.id))
+    eve = refills - timedelta(seconds=1)
+    assert runs.effective_plan(user, acct, eve) == "pro"
+    [still_pro] = runs.enforced_windows("pro", acct, eve)
+    assert still_pro.used == spent and still_pro.resets_at == refills
+
+    assert runs.effective_plan(user, acct, refills) == "lite"
+    [now_lite] = runs.enforced_windows("lite", acct, refills)
+    assert now_lite.limit == limits.window_limit("lite", "monthly")
+    assert now_lite.used == 0 and now_lite.headroom == now_lite.limit
+    # Free's trial credit is the one window a cycle never gives back.
+    assert acct.lifetime_used == spent
 
 
 async def test_the_quota_snapshot_adds_the_balance_only_with_consent():
     user, tid = await _user("free")
-    monthly = limits.window_limit("free", "monthly")
+    monthly = limits.window_limit("free", "lifetime")
     s = await _session()
     await wallet.credit(s, user.id, 10_000, source="mock", now=NOW)
     await s.commit()
@@ -298,12 +594,13 @@ async def test_the_quota_snapshot_adds_the_balance_only_with_consent():
 
 async def test_overshoot_goes_past_100_percent():
     user, tid = await _user("lite")
-    weekly = limits.window_limit("lite", "weekly")
-    run_id = await _open(user, tid, weekly - 10)
-    await _settle(run_id, "ok", actual=weekly + 5_000)  # within the ceiling (1.2 × estimate)
+    [key] = limits.plan_limits("lite").windows
+    budget = limits.window_limit("lite", key)
+    run_id = await _open(user, tid, budget - 10)
+    await _settle(run_id, "ok", actual=budget + 5_000)  # within the ceiling (1.2 × estimate)
     acct = await _account(user.id)
     views = runs.enforced_windows("lite", acct, NOW)
-    assert views[0].used == weekly + 5_000 and views[0].used_pct > 100
+    assert views[0].used == budget + 5_000 and views[0].used_pct > 100
 
 
 async def test_parallel_charges_never_spend_the_same_headroom_twice():
@@ -320,7 +617,7 @@ async def test_parallel_charges_never_spend_the_same_headroom_twice():
 
 async def test_the_wallet_carries_the_overflow_only_when_allowed():
     user, tid = await _user("free")
-    monthly = limits.window_limit("free", "monthly")
+    monthly = limits.window_limit("free", "lifetime")
     s = await _session()
     await wallet.credit(s, user.id, 10_000, source="mock", now=NOW)
     await s.commit()
@@ -353,7 +650,7 @@ async def test_a_failed_wallet_run_gives_the_baht_back():
     await wallet.credit(s, user.id, 5_000, source="mock", now=NOW)
     await s.commit()
     await s.close()
-    run_id = await _open(user, tid, limits.window_limit("free", "monthly") + 10_000, allow_wallet=True)
+    run_id = await _open(user, tid, limits.window_limit("free", "lifetime") + 10_000, allow_wallet=True)
     await _settle(run_id, "our_failure", actual=90_000)
     acct = await _account(user.id)
     assert acct.wallet_balance_satang == 5_000 and acct.monthly_used == 0

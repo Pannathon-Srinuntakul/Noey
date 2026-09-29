@@ -10,7 +10,7 @@ POST /admin/auth/refresh   a new access token while the session is alive
 Behind ``current_admin`` (services/api/admin_deps.py):
 GET  /admin/auth/me                 POST /admin/auth/logout
 GET  /admin/dashboard               GET  /admin/users/{id}
-PATCH /admin/users/{id}/plan        POST /admin/users/{id}/quota-reset (all windows)
+PATCH /admin/users/{id}/plan        POST /admin/users/{id}/quota-reset (rolling windows)
 PATCH /admin/users/{id}/active      POST /admin/users/{id}/window-reset
 POST /admin/users/{id}/wallet-adjust
 GET/PUT /admin/cost-config          GET/PUT /admin/plan-prices
@@ -150,7 +150,7 @@ class FxIn(BaseModel):
 
 
 class WindowResetIn(BaseModel):
-    window: Literal["five_hour", "weekly", "monthly"]
+    window: Literal["five_hour", "weekly", "monthly", "lifetime"]
 
 
 class WalletAdjustIn(BaseModel):
@@ -541,8 +541,13 @@ async def set_plan(user_id: int, body: PlanIn, admin: CurrentAdmin, db: CoreSess
 
 @router.post("/users/{user_id}/quota-reset", response_model=UserActionOut)
 async def reset_quota(user_id: int, admin: CurrentAdmin, db: CoreSession) -> UserActionOut:
-    """Every window (5-hour, weekly, monthly) starts over at the user's next
-    use. Kept as the "reset all" alias of ``window-reset``."""
+    """Every ROLLING window (5-hour, weekly, monthly) starts over at the
+    user's next use. Kept as the "reset all" alias of ``window-reset``.
+
+    ``lifetime`` is deliberately excluded: it is the Free trial credit, and a
+    routine quota reset must not hand a free account a second one. Refilling
+    it is possible, through ``window-reset`` naming that window — one call,
+    one audit row, on purpose."""
     user = await _target(db, user_id)
     before = await runs.reset_windows(db, user_id, ("five_hour", "weekly", "monthly"))
     user.usage_reset_at = datetime.now(UTC)
@@ -556,8 +561,9 @@ async def reset_quota(user_id: int, admin: CurrentAdmin, db: CoreSession) -> Use
 
 @router.post("/users/{user_id}/window-reset")
 async def reset_window(user_id: int, body: WindowResetIn, admin: CurrentAdmin, db: CoreSession) -> dict[str, Any]:
-    """One window (5-hour / weekly / monthly) starts over at the user's next
-    use. Open reservations stay held. Audited with the tokens it cleared."""
+    """One window (5-hour / weekly / monthly / lifetime) starts over at the
+    user's next use. Open reservations stay held. Audited with the tokens it
+    cleared. Naming ``lifetime`` refills a Free account's trial credit."""
     user = await _target(db, user_id)
     before = await runs.reset_windows(db, user_id, (body.window,))
     user.usage_reset_at = datetime.now(UTC)

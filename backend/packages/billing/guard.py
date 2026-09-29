@@ -83,6 +83,9 @@ SERVICE_PAUSED_MESSAGE = "ระบบหยุดรับงาน AI ชั�
 #: A run paused because the plan's window ran out — not an error. The client
 #: adds the reset time in the viewer's own timezone.
 QUOTA_PAUSED_MESSAGE = "พักงานไว้ก่อน: โควตาหมดระหว่างทำงาน — งานที่ทำไปแล้วยังอยู่ ทำต่อได้เมื่อโควตากลับมา"
+#: The same pause on a window that never resets (the Free trial credit): the
+#: work is still kept, but waiting will not bring the quota back.
+QUOTA_SPENT_MESSAGE = "พักงานไว้ก่อน: เครดิตทดลองใช้หมดแล้ว — งานที่ทำไปแล้วยังอยู่ อัปเกรดแพลนเพื่อทำต่อ"
 WALLET_HINT = " — ใช้ยอดเงินคงเหลือทำงานนี้ต่อได้"
 
 
@@ -136,17 +139,23 @@ class QuotaExhausted(RunBudgetExceeded):
     def payload(self) -> dict[str, Any]:
         """The one body for this stop, wherever it is reported from — the 402
         of a synchronous route or the paused job row of a worker task."""
-        from packages.billing.limits import WINDOW_LABELS
+        from packages.billing.limits import WINDOW_LABELS, window_resets
         from packages.billing.runs import iso
 
         message = str(self)
         if self.wallet_can_cover:
             message += WALLET_HINT
+        resets = window_resets(self.window or "")
+        if not resets:
+            message = QUOTA_SPENT_MESSAGE + (WALLET_HINT if self.wallet_can_cover else "")
         return {
             "code": self.code,
             "window": self.window,
             "label": WINDOW_LABELS.get(self.window or "", "limit"),
             "resets_at": iso(self.resets_at),
+            # False = this allowance never comes back (the Free trial credit):
+            # the client must offer an upgrade, not a countdown.
+            "resets": resets,
             "wallet_can_cover": self.wallet_can_cover,
             "wallet_satang": self.wallet_satang,
             "message": message,

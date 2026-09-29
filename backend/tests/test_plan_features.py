@@ -28,22 +28,27 @@ def _user(plan: str = "free", admin: bool = False) -> SimpleNamespace:
 
 def test_the_table_is_what_the_pricing_page_promises():
     rows = {k: limits.PLAN_LIMITS[k] for k in ("free", "lite", "starter", "pro", "studio", "agency", "max")}
-    assert [r.footage_sec for r in rows.values()] == [300, 600, 1200, 7200, 7200, 7200, 7200]
+    assert [r.footage_sec for r in rows.values()] == [600, 600, 1200, 1800, 1800, 1800, 1800]
     assert [r.max_projects for r in rows.values()] == [3, 10, 20, None, None, None, None]
     assert [r.storage_gb for r in rows.values()] == [1, 3, 5, 10, 30, 60, 100]
     assert [r.music for r in rows.values()] == [False, True, True, True, True, True, True]
     assert [r.transcode for r in rows.values()] == [False, False, True, True, True, True, True]
+    # High ความละเอียด: Pro and up — it is 5.2x Standard per second of footage.
+    assert [r.high_precision for r in rows.values()] == [False, False, False, True, True, True, True]
+    # What the pricing page prints: whole clips, rounded down.
+    assert [limits.plan_cuts(k) for k in rows] == [2, 4, 8, 20, 40, 80, 140]
     leads = [r.queue_lead_sec for r in rows.values()]
     assert leads[:3] == [0, 0, 0] and 0 < leads[3] < leads[4] == leads[5] == leads[6]
 
 
 def test_footage_cap_with_a_small_tolerance():
-    assert plan_features.check_footage(_user("free"), 300) is None
-    assert plan_features.check_footage(_user("free"), 304) is None
+    free_cap = limits.plan_limits("free").footage_sec
+    assert plan_features.check_footage(_user("free"), free_cap) is None
+    assert plan_features.check_footage(_user("free"), free_cap + 4) is None
     refusal = plan_features.check_footage(_user("starter"), 24 * 60)
     assert refusal["code"] == "footage_over_limit" and refusal["limit_sec"] == 1200
     assert "24 นาที" in refusal["message"] and "20 นาที" in refusal["message"]
-    assert plan_features.check_footage(_user("pro"), 2 * 3600) is None
+    assert plan_features.check_footage(_user("pro"), limits.plan_limits("pro").footage_sec) is None
     assert plan_features.check_footage(_user("free", admin=True), 10 * 3600) is None
     assert plan_features.check_footage(_user("enterprise"), 10 * 3600) is None
 
@@ -64,56 +69,129 @@ def test_the_video_call_cap_is_derived_from_the_two_real_constants():
 
 def test_the_video_call_cap_applies_to_the_video_modes_only():
     pro = _user("pro")
-    assert plan_features.check_footage(pro, 3_000, mode="dub_first", precision="standard") is None
-    tight = plan_features.check_footage(pro, 3_000, mode="dub_first", precision="high")
+    cap = limits.plan_limits("pro").footage_sec
+    assert plan_features.check_footage(pro, cap, mode="dub_first", precision="high") is None
+    # Speech modes send audio per clip: only the plan's own cap applies.
+    assert plan_features.check_footage(pro, cap, mode="talking_head", precision="high") is None
+    # The plan cap wins when it is the tighter of the two, and its message
+    # points at the plan rather than at ความละเอียด.
+    over = plan_features.check_footage(pro, cap + 600, mode="dub_first", precision="standard")
+    assert over["code"] == "footage_over_limit" and over["limit_sec"] == cap
+    assert over["by_precision"] is False and "แผนนี้" in over["message"]
+    lite = plan_features.check_footage(_user("lite"), 1_200, mode="dub_first", precision="standard")
+    assert lite["limit_sec"] == limits.plan_limits("lite").footage_sec and lite["by_precision"] is False
+    # Now that every plan caps footage at 30 minutes or less, the CONTEXT
+    # ceiling is only reachable by an account with no plan cap at all — and it
+    # binds there, because no plan can make a request fit a context it does
+    # not fit. That branch is what tells the user to drop ความละเอียด.
+    admin = _user("free", admin=True)
+    tight = plan_features.check_footage(admin, 3_000, mode="dub_first", precision="high")
     assert tight["code"] == "footage_over_limit" and tight["by_precision"] is True
     assert "Standard" in tight["message"] and "1 ชั่วโมง" in tight["message"]
-    # Speech modes send audio per clip: only the plan's own cap applies.
-    assert plan_features.check_footage(pro, 3_000, mode="talking_head", precision="high") is None
-    # The plan cap still wins when it is the tighter of the two, and its
-    # message points at the plan rather than at ความละเอียด.
-    lite = plan_features.check_footage(_user("lite"), 1_200, mode="dub_first", precision="standard")
-    assert lite["limit_sec"] == 600 and lite["by_precision"] is False and "แผนนี้" in lite["message"]
-    # No plan can make a request fit a context it does not fit.
-    assert plan_features.check_footage(_user("free", admin=True), 3_000, mode="dub_first",
-                                       precision="high")["by_precision"] is True
+    assert plan_features.check_footage(admin, 3_000, mode="dub_first", precision="standard") is None
 
 
 def test_a_run_too_big_for_every_window_is_refused_whatever_is_left():
-    assert plan_features.check_run_size(_user("free"), 99_000) is None
-    too_big = plan_features.check_run_size(_user("free"), 120_000)
-    assert too_big["code"] == "run_too_large" and too_big["window"] == "monthly"
-    assert "โควตารายเดือน" in too_big["message"]
-    # Pro enforces weekly AND a 5-hour window at 40 % of it. An hour of
-    # footage costs more than the 5-hour window holds — refusing on THAT would
-    # make it unstartable forever, so only the biggest window decides.
-    five, week = limits.window_limit("pro", "five_hour"), limits.window_limit("pro", "weekly")
-    assert five < week
-    assert plan_features.check_run_size(_user("pro"), five + 1) is None
-    refused = plan_features.check_run_size(_user("pro"), week + 1)
-    assert refused["code"] == "run_too_large" and refused["window"] == "weekly"
+    credit = limits.window_limit("free", "lifetime")
+    assert plan_features.check_run_size(_user("free"), credit - 1) is None
+    too_big = plan_features.check_run_size(_user("free"), credit + 1)
+    assert too_big["code"] == "run_too_large" and too_big["window"] == "lifetime"
+    # A one-time credit has no "รอบ" to be too big for — it is simply all of it.
+    assert "เครดิตทดลองใช้ทั้งหมด" in too_big["message"]
+    month = limits.window_limit("studio", "monthly")
+    assert plan_features.check_run_size(_user("studio"), month) is None
+    refused = plan_features.check_run_size(_user("studio"), month + 1)
+    assert refused["code"] == "run_too_large" and refused["window"] == "monthly"
+    assert "โควตารายเดือนทั้งรอบ" in refused["message"]
+    # Only the BIGGEST window decides, so a plan that ever enforced two again
+    # could still start a run one of them cannot hold.
+    two = SimpleNamespace(id=1, plan="studio", is_admin=False)
+    from dataclasses import replace as _replace
+    old = limits.PLAN_LIMITS["studio"]
+    limits.PLAN_LIMITS["studio"] = _replace(old, windows=("monthly", "weekly"))
+    try:
+        assert plan_features.check_run_size(two, limits.window_limit("studio", "weekly") + 1) is None
+        assert plan_features.check_run_size(two, month + 1)["window"] == "monthly"
+    finally:
+        limits.PLAN_LIMITS["studio"] = old
     assert plan_features.check_run_size(_user("free", admin=True), 10**9) is None
     assert plan_features.check_run_size(_user("enterprise"), 10**9) is None
 
 
-def test_an_hour_of_footage_still_starts_on_pro():
-    """The owner's cap is 1 hour of dub_first (2026-09-26); it must actually
-    be startable on the plan it is meant for, at both precisions."""
+def test_the_page_quotes_two_counts_and_the_longer_one_is_smaller():
+    """A plan that says "30 นาที" and "20 คลิป" invites the wrong sum: 20 cuts
+    is what five-minute sources buy, and thirty-minute ones buy 14. Both
+    numbers are quoted, and the cap one must always be the smaller — if it
+    ever is not, the cap stopped costing anything and the claim is noise."""
+    for plan in ("free", "lite", "starter", "pro", "studio", "agency", "max"):
+        typical = limits.plan_cuts(plan)
+        at_cap = limits.plan_cuts_at_cap(plan)
+        assert at_cap >= 1, plan
+        assert at_cap <= typical, plan
+    # Free's cap IS about five minutes' worth of budget, so the two agree;
+    # everywhere else the cap costs real cuts.
+    assert limits.plan_cuts_at_cap("free") == limits.plan_cuts("free")
+    assert limits.plan_cuts_at_cap("pro") < limits.plan_cuts("pro")
+
+
+def test_every_advertised_cap_is_actually_runnable():
+    """The bug this table was rewritten to fix: a plan that says 30 minutes
+    while a 20-minute clip is refused.
+
+    For every plan, the pre-flight estimate at that plan's own ``footage_sec``
+    — at the best precision the plan may pick — must be strictly smaller than
+    EVERY window the plan enforces. Then nothing a plan advertises can reach
+    ``check_run_size`` at all.
+    """
     from packages.billing import estimate
 
-    for precision in ("standard", "high"):
-        seconds = limits.video_call_footage_sec(precision)
-        est = estimate.estimate_run(
-            kind="analyze_video", engine="pro", precision=precision, clip_secs=[float(seconds)]
-        )
-        assert plan_features.check_run_size(_user("pro"), est.tokens) is None, (precision, est.tokens)
-        assert plan_features.check_footage(_user("pro"), seconds, mode="dub_first",
-                                           precision=precision) is None
+    priced = {}
+    for plan in ("free", "lite", "starter", "pro", "studio", "agency", "max"):
+        limit = limits.plan_limits(plan)
+        precisions = ("standard", "high") if limit.high_precision else ("standard",)
+        for precision in precisions:
+            est = estimate.estimate_run(
+                kind="analyze_video", engine="pro", precision=precision,
+                clip_secs=[float(limit.footage_sec)],
+            )
+            for window in limit.windows:
+                assert est.tokens < limits.window_limit(plan, window), (plan, precision, window)
+            assert plan_features.check_run_size(_user(plan), est.tokens) is None, (plan, precision)
+            assert plan_features.check_footage(
+                _user(plan), limit.footage_sec, mode="dub_first", precision=precision
+            ) is None, (plan, precision)
+        priced[plan] = est.tokens  # the dearest precision the plan may pick
+    # Pinned so a change to the estimator shows up here, not on a user's run.
+    assert priced == {
+        "free": 192_510, "lite": 192_510, "starter": 254_610,
+        "pro": 689_310, "studio": 689_310, "agency": 689_310, "max": 689_310,
+    }
+
+
+def test_high_precision_is_refused_below_pro():
+    """Free, Lite and Starter cannot pay for High — 5.2x Standard per second
+    of footage (limits.py rule 2). Refused, never silently downgraded, like
+    every other plan feature here."""
+    for plan in ("free", "lite", "starter"):
+        assert plan_features.check_precision(_user(plan), "standard") is None
+        assert plan_features.check_precision(_user(plan), None) is None  # unset = Standard
+        refusal = plan_features.check_precision(_user(plan), "high")
+        assert refusal["code"] == "plan_feature" and refusal["feature"] == "high_precision"
+        assert refusal["required_plan"] == "pro"
+        assert "Pro" in refusal["message"] and "Standard" in refusal["message"]
+        # No vendor is ever named to a user.
+        assert not any(v in refusal["message"].lower() for v in ("gemini", "claude", "elevenlabs"))
+    for plan in ("pro", "studio", "agency", "max"):
+        assert plan_features.check_precision(_user(plan), "high") is None
+    assert plan_features.check_precision(_user("free", admin=True), "high") is None
+    assert plan_features.check_precision(_user("enterprise"), "high") is None
+    # A junk value normalises to Standard exactly as the call site does.
+    assert plan_features.check_precision(_user("free"), "HIGHER") is None
 
 
 def test_the_features_payload_tells_a_client_both_caps():
     payload = plan_features.features_payload(_user("pro"))
-    assert payload["footage_sec"] == 7_200
+    assert payload["footage_sec"] == limits.plan_limits("pro").footage_sec
     assert payload["video_call_footage_sec"] == {
         "standard": limits.video_call_footage_sec("standard"),
         "high": limits.video_call_footage_sec("high"),
@@ -133,6 +211,13 @@ def test_project_cap_counts_what_would_be_added():
 
 
 def test_music_and_conversion_name_the_cheapest_plan_that_has_them():
+    assert plan_features.minimum_plan("high_precision") == "pro"
+    assert plan_features.features_payload(_user("starter"))["high_precision"] is False
+    assert plan_features.features_payload(_user("pro"))["high_precision"] is True
+    assert plan_features.features_payload(_user("enterprise"))["high_precision"] is True
+    # The plan's advertised clip count travels with the features, in clips.
+    assert plan_features.features_payload(_user("pro"))["approx_cuts"] == limits.plan_cuts("pro")
+    assert plan_features.features_payload(_user("enterprise"))["approx_cuts"] is None
     assert plan_features.check_feature(_user("free"), "music")["required_plan"] == "lite"
     assert plan_features.check_feature(_user("lite"), "music") is None
     assert plan_features.check_feature(_user("lite"), "transcode")["required_plan"] == "starter"
@@ -168,10 +253,11 @@ async def _new_project(c, token: str, seconds: float = 60):
     )
 
 
-async def test_free_footage_over_five_minutes_is_refused_before_upload():
+async def test_free_footage_over_the_plan_cap_is_refused_before_upload():
     token = await user_token(await make_user(email("feat")))
+    over = limits.plan_limits("free").footage_sec + 60
     async with client() as c:
-        r = await _new_project(c, token, seconds=400)
+        r = await _new_project(c, token, seconds=over)
     assert r.status_code == 422 and r.json()["detail"]["code"] == "footage_over_limit"
 
 
@@ -193,7 +279,9 @@ async def test_free_keeps_three_projects_and_the_old_ones_stay_open():
         me = (await c.get("/usage/me", headers=bearer(token))).json()
     assert me["projects"] == {"count": 3, "max": 3}
     assert me["features"]["music"] is False and me["features"]["transcode"] is False
-    assert me["features"]["footage_sec"] == 300 and me["features"]["queue"] == "normal"
+    assert me["features"]["footage_sec"] == limits.plan_limits("free").footage_sec
+    assert me["features"]["queue"] == "normal"
+    assert me["features"]["high_precision"] is False
 
 
 async def test_admin_accounts_have_no_plan_caps():
@@ -302,6 +390,7 @@ async def test_measured_footage_is_checked_again_at_start(monkeypatch):
 
     monkeypatch.setenv("REQUIRE_VERIFIED_EMAIL_FOR_AI", "false")
     token = await user_token(await make_user(email("feat")))
+    over_cap = limits.plan_limits("free").footage_sec + 60
     async with client() as c:
         r = await c.post(
             "/videos/local",
@@ -312,7 +401,7 @@ async def test_measured_footage_is_checked_again_at_start(monkeypatch):
         try:
             r = await c.post(
                 f"/videos/{uid}/transcribe-audio",
-                files=[("files", ("audio_000.wav", wav_bytes(330), "audio/wav"))],
+                files=[("files", ("audio_000.wav", wav_bytes(over_cap), "audio/wav"))],
                 headers=bearer(token),
             )
         finally:

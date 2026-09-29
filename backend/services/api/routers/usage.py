@@ -123,6 +123,9 @@ async def get_my_usage(
                 "label": plan_limits_mod.WINDOW_LABELS[v.key],
                 "used_pct": v.used_pct,
                 "resets_at": runs.iso(v.resets_at),
+                # False = a one-time allowance (the Free trial credit): the
+                # client shows "spent, upgrade", never a reset countdown.
+                "resets": plan_limits_mod.window_resets(v.key),
                 "active": v.active,
             }
             for v in views
@@ -147,6 +150,7 @@ async def get_my_usage(
         "usage_pct": binding.used_pct if binding else None,
         "period_start": runs.iso(since),
         "reset_at": runs.iso(binding.resets_at) if binding else None,
+        "resets": plan_limits_mod.window_resets(binding.key) if binding else True,
         # Always empty: the web/desktop settings screens still iterate it until
         # they move to ``limits`` (their token-count breakdown is gone).
         "by_feature": [],
@@ -211,7 +215,7 @@ async def estimate_usage(
     if plan_limits_mod.is_unlimited(user):
         return {
             "fits": "plan", "pct": {}, "wallet_satang": 0, "binding": None,
-            "resets_at": None, "unlimited": True,
+            "resets_at": None, "resets": True, "unlimited": True,
         }
 
     now = datetime.now(UTC)
@@ -238,6 +242,7 @@ async def estimate_usage(
         "wallet_satang": wallet_satang,
         "binding": tightest.key if tightest else None,
         "resets_at": runs.iso(tightest.resets_at) if tightest else None,
+        "resets": plan_limits_mod.window_resets(tightest.key) if tightest else True,
         "unlimited": False,
     }
 

@@ -1009,6 +1009,7 @@ async def generate_dub_edit_script_video(
     default_cut_style_prose: str | None = None,
     model: str | None = None,
     fps: int | None = None,
+    effort: str | None = None,
     on_thinking: Callable[[str], Awaitable[None]] | None = None,
 ) -> dict[str, Any]:
     """Run the Gemini native-video edit-script call: proxy clips → normalized Edit Script dict.
@@ -1078,7 +1079,13 @@ async def generate_dub_edit_script_video(
         # 0/None = Gemini's default ~1 fps (today's behavior).
         sample_fps = fps if fps is not None else settings.dub_vision_fps
         messages = [{"role": "user", "content": _build_content(sample_fps)}]
-        extra = call_kwargs(model=resolved_model, effort=settings.dub_vision_effort)
+        # Thinking depth, like the model and the frame rate, comes from the
+        # project's Engine tier (packages/video/quality.py:engine_effort).
+        # None = no tier in hand → DUB_VISION_EFFORT, the pre-tier behaviour.
+        extra = call_kwargs(
+            model=resolved_model,
+            effort=effort if effort is not None else settings.dub_vision_effort,
+        )
         extra["timeout"] = settings.dub_vision_timeout_sec
         # The per-call billing guard prices the footage this request really
         # attaches: each file as measured here, never the length a client
@@ -1100,6 +1107,7 @@ async def generate_dub_edit_script_video(
             project_uid=project_uid,
             model=resolved_model,
             fps=sample_fps,
+            effort=extra.get("reasoning_effort"),
             clip_count=len(clip_videos),
             upload_ms=upload_ms,
             # The length inputs, so "why did it come back at Ns" is answerable
@@ -1353,6 +1361,7 @@ async def generate_dub_reedit_script_video(
     music_beats: dict[str, Any] | None = None,
     target_duration_sec: int | None = None,
     style_prompt: str = "",
+    effort: str | None = None,
     on_thinking: Callable[[str], Awaitable[None]] | None = None,
 ) -> list[dict[str, Any]]:
     """Run the Gemini native-video AI re-edit call: current script + edited preview +
@@ -1406,7 +1415,15 @@ async def generate_dub_reedit_script_video(
         user_msg_content.append({"type": "text", "text": DUB_EDIT_REMINDER})
 
         messages = [{"role": "user", "content": user_msg_content}]
-        extra = call_kwargs(model=model, effort=settings.dub_vision_effort)
+        # The MODEL here is deliberately untiered (reedit_model, pinned by the
+        # billing estimator), but the thinking depth is the same user decision
+        # as on the first cut — this is the same request, re-planning the same
+        # footage (packages/billing/estimate.py:CUT_PLAN_OUTPUT_TOKENS says so
+        # explicitly). None = caller has no tier → DUB_VISION_EFFORT.
+        extra = call_kwargs(
+            model=model,
+            effort=effort if effort is not None else settings.dub_vision_effort,
+        )
         extra["timeout"] = settings.dub_vision_timeout_sec
         # Every video this request attaches — the live preview AND each source
         # proxy — at the provider's default sampling (no fps is set here).

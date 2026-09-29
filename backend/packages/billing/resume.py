@@ -115,6 +115,9 @@ def mark_paused(
     out["paused_at"] = runs.iso(at or datetime.now(UTC))
     out["window"] = window
     out["resets_at"] = runs.iso(resets_at)
+    # False when the window never comes back (the Free trial credit) — the
+    # client then offers an upgrade instead of a countdown.
+    out["resets"] = limits_mod.window_resets(window or "")
     out["wallet_can_cover"] = bool(wallet_can_cover)
     out["wallet_satang"] = int(wallet_satang or 0)
     if run_id:
@@ -175,7 +178,7 @@ async def quota_view(
     if limits_mod.is_unlimited(user):
         return {
             "fits": "plan", "pct": {}, "wallet_satang": 0, "balance_satang": 0,
-            "binding": None, "resets_at": None, "unlimited": True,
+            "binding": None, "resets_at": None, "resets": True, "unlimited": True,
         }
     account = await get_account(session, int(user.id))
     plan = runs.effective_plan(user, account, at)
@@ -203,5 +206,6 @@ async def quota_view(
         "balance_satang": max(0, spare),
         "binding": tightest.key if tightest is not None else None,
         "resets_at": runs.iso(tightest.resets_at) if tightest is not None else None,
+        "resets": limits_mod.window_resets(tightest.key) if tightest is not None else True,
         "unlimited": False,
     }

@@ -135,10 +135,11 @@ async def test_a_used_up_window_no_longer_refuses_the_start(captured):
     pauses mid-way if the quota really does run out."""
     uid_user = await make_user(email("start"), plan="free")
     token = await user_token(uid_user)
+    # Free's enforced window is its one-time lifetime credit, fully spent.
     await db(
-        "INSERT INTO core.usage_accounts (user_id, monthly_started_at, monthly_used, reserved_tokens) "
+        "INSERT INTO core.usage_accounts (user_id, lifetime_started_at, lifetime_used, reserved_tokens) "
         "VALUES (:u, now(), :m, 0)",
-        u=uid_user, m=limits.window_limit("free", "monthly"),
+        u=uid_user, m=limits.window_limit("free", "lifetime"),
     )
     async with client() as c:
         project = await _project(c, token, 10)
@@ -150,40 +151,90 @@ async def test_a_used_up_window_no_longer_refuses_the_start(captured):
     assert [(k, s) for k, s, *_ in await _open_runs(uid_user)] == [("analyze_video", "queued")]
 
 
-async def test_a_run_too_big_for_the_whole_window_is_refused_up_front(captured):
-    """The one pre-flight check left: not "is there enough left" but "could
-    this ever fit". 5 minutes of footage at Precision high prices well past
-    Free's whole monthly limit, so nothing would make it work."""
+async def test_a_run_too_big_for_the_whole_window_is_refused_up_front(captured, monkeypatch):
+    """The one pre-flight quota check left: not "is there enough left" but
+    "could this ever fit".
+
+    No production plan can reach it any more — every plan's footage cap now
+    prices below its own largest window (tests/test_plan_features.py
+    ``test_the_longest_footage_each_plan_allows_can_actually_be_started``),
+    which is the point of the table. So the budget is shrunk here rather than
+    the footage stretched: this test is about the guard, not about the table.
+    """
+    from dataclasses import replace
+
+    monkeypatch.setitem(
+        limits.PLAN_LIMITS, "free", replace(limits.PLAN_LIMITS["free"], monthly=1_000)
+    )
     uid_user = await make_user(email("start"), plan="free")
     token = await user_token(uid_user)
     async with client() as c:
-        r = await c.post(
-            "/videos/local",
-            json={"mode": "dub_first", "clips": [{"id": "c1", "durationSec": 290}],
-                  "engine": "pro", "precision": "high"},
-            headers=bearer(token),
-        )
-        project = r.json()["uid"]
+        project = await _project(c, token, 30)
         try:
-            refused = await _analyze(c, token, project, seconds=290)
+            refused = await _analyze(c, token, project, seconds=30)
             stored = (data_root() / "video_outputs" / project / "proxy").exists()
             status = (await c.get(f"/videos/{project}", headers=bearer(token))).json()["status"]
         finally:
             _cleanup(project)
     assert refused.status_code == 422, refused.text
     detail = refused.json()["detail"]
-    assert detail["code"] == "run_too_large" and detail["window"] == "monthly"
+    assert detail["code"] == "run_too_large" and detail["window"] == "lifetime"
     assert not any("token" in k for k in detail)
     assert not stored and status == "pending" and captured == []
     assert await _open_runs(uid_user) == []
 
 
+async def test_high_precision_is_refused_before_a_free_project_exists(captured):
+    """Free and Lite are Standard only (packages/billing/limits.py): the tier
+    is refused where it is chosen, so no project is created carrying a tier it
+    could never afford to run, and no vendor is named in the message."""
+    uid_user = await make_user(email("start"), plan="free")
+    token = await user_token(uid_user)
+    async with client() as c:
+        r = await c.post(
+            "/videos/local",
+            json={"mode": "dub_first", "clips": [{"id": "c1", "durationSec": 30}],
+                  "engine": "pro", "precision": "high"},
+            headers=bearer(token),
+        )
+    assert r.status_code == 403, r.text
+    detail = r.json()["detail"]
+    assert detail["code"] == "plan_feature" and detail["feature"] == "high_precision"
+    assert "Pro" in detail["message"] and "uid" not in r.json()
+    assert not any(v in detail["message"].lower() for v in ("gemini", "claude", "elevenlabs"))
+    assert await db("SELECT count(*) FROM core.ai_runs WHERE user_id = :u", u=uid_user) == [(0,)]
+
+
+async def test_a_started_project_cannot_be_switched_to_a_tier_the_plan_lacks(captured):
+    """The tier can also arrive on the start route (a re-analyze sends it), and
+    a plan downgrade can leave "high" sitting in the row — so the EFFECTIVE
+    tier is checked there too, before anything is written."""
+    uid_user = await make_user(email("start"), plan="free")
+    token = await user_token(uid_user)
+    async with client() as c:
+        project = await _project(c, token, 30)
+        try:
+            refused = await _analyze(c, token, project, seconds=30, precision="high")
+            # Refused before the row was touched: Standard still starts.
+            ok = await _analyze(c, token, project, seconds=30)
+        finally:
+            _cleanup(project)
+    assert refused.status_code == 403 and refused.json()["detail"]["code"] == "plan_feature"
+    assert ok.status_code == 202, ok.text
+
+
 async def test_footage_longer_than_one_request_is_refused_by_precision(captured):
     """1 hour fits a Standard request but not a High one (1.08 M tokens past
-    a 1 M context) — the cap follows ความละเอียด, and the message says so."""
+    a 1 M context) — the cap follows ความละเอียด, and the message says so.
+
+    Every plan now caps footage at 30 minutes or less, so the plan's own cap
+    is always the tighter of the two and this branch is only reachable by an
+    account with no plan cap at all. It still has to work there: a context
+    ceiling is physics, not a plan rule (limits.video_call_footage_sec).
+    """
     from packages.billing import plan_features
 
-    user = SimpleNamespace(plan="max", is_admin=False)
+    user = SimpleNamespace(plan="max", is_admin=True)
     assert plan_features.check_footage(user, 3_000, mode="dub_first", precision="standard") is None
     refusal = plan_features.check_footage(user, 3_000, mode="dub_first", precision="high")
     assert refusal is not None and refusal["by_precision"] is True
@@ -191,8 +242,13 @@ async def test_footage_longer_than_one_request_is_refused_by_precision(captured)
     assert "Standard" in refusal["message"]
     # An hour is the owner's cap at Standard; the context ceiling is higher.
     assert limits.video_call_footage_sec("standard") == 3_600
-    # A speech mode sends audio per clip, not one video request: plan cap only.
+    # A speech mode sends audio per clip, not one video request: no such cap.
     assert plan_features.check_footage(user, 3_000, mode="talking_head", precision="high") is None
+    # And on a real plan the 30-minute cap is what binds first.
+    on_plan = SimpleNamespace(plan="max", is_admin=False)
+    plan_cap = plan_features.check_footage(on_plan, 3_000, mode="dub_first", precision="high")
+    assert plan_cap["limit_sec"] == limits.plan_limits("max").footage_sec
+    assert plan_cap["by_precision"] is False
 
 
 async def test_a_failed_enqueue_closes_the_run_row(monkeypatch, captured):
@@ -464,7 +520,9 @@ async def test_transcribe_audio_prices_the_measured_wavs(captured):
     assert r.status_code == 202, r.text
     assert audio == ["audio_000.wav"]
     [(kind, media_sec, _)] = await _run_rows(uid_user)
-    assert kind == "transcribe_audio" and abs(media_sec - 45) < 0.5
+    # The MODE decides the kind on this route: talking_head is speech-to-text
+    # with no model call behind it (estimate.py KIND_FOR_MODE).
+    assert kind == "transcribe_only" and abs(media_sec - 45) < 0.5
 
 
 async def test_a_refused_free_start_does_not_spend_the_networks_daily_runs(captured, monkeypatch):
@@ -475,18 +533,16 @@ async def test_a_refused_free_start_does_not_spend_the_networks_daily_runs(captu
     blocked = await make_user(email("start"), plan="free")
     other = await make_user(email("start"), plan="free")
     t_blocked, t_other = await user_token(blocked), await user_token(other)
+    over_cap = limits.plan_limits("free").footage_sec + 30
     async with client() as c:
-        # Too big for Free's whole month however empty it is → 422, every time.
-        r = await c.post(
-            "/videos/local",
-            json={"mode": "dub_first", "clips": [{"id": "c1", "durationSec": 290}],
-                  "engine": "pro", "precision": "high"},
-            headers=bearer(t_blocked),
-        )
-        p1 = r.json()["uid"]
+        # Declares a legal length, then uploads more footage than the plan's
+        # cap: the start measures the file and refuses → 422, every time.
+        p1 = await _project(c, t_blocked, 30)
         mine = [await _project(c, t_other, 10) for _ in range(3)]  # one start each
         try:
-            refused = [(await _analyze(c, t_blocked, p1, seconds=290)).status_code for _ in range(3)]
+            refused = [
+                (await _analyze(c, t_blocked, p1, seconds=over_cap)).status_code for _ in range(3)
+            ]
             fine = [(await _analyze(c, t_other, p)).status_code for p in mine[:2]]
             third = await _analyze(c, t_other, mine[2])
         finally:

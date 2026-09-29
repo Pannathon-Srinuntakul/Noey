@@ -6,14 +6,18 @@ an admin window reset and a plan change all take ``SELECT … FOR UPDATE`` on
 it first, so parallel jobs of one user can never both spend the same
 headroom (docs/token-billing-design.md §6.1).
 
-Windows are ROLLING and start at first use: a window is active while
-``now < <window>_started_at + length``; an inactive window reads as unused
-and restarts at the next reservation (packages/billing/runs.py).
+The ``monthly`` window — the one every paid plan enforces — is a CALENDAR
+window: it runs from one billing anniversary to the next
+(``monthly_anchor_day``), so the allowance refills on the day the
+subscription renews rather than 30 days after the user's first cut. The
+sub-windows nobody enforces (``five_hour``, ``weekly``) are still rolling:
+active while ``now < <window>_started_at + length``. ``lifetime`` never runs
+out. See packages/billing/runs.py for the arithmetic.
 """
 
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, String, func
+from sqlalchemy import BigInteger, DateTime, ForeignKey, SmallInteger, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from packages.db.base import Base
@@ -34,8 +38,26 @@ class UsageAccount(Base):
     five_hour_used: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
     weekly_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     weekly_used: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
+    # ``monthly`` is the calendar window: ``monthly_started_at`` is the START
+    # of the current billing period (00:00 UTC on the anniversary), not the
+    # moment of first use, and it lasts until the next anniversary.
     monthly_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     monthly_used: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
+    #: Day of month (1–31) the monthly allowance refills on, at 00:00 UTC.
+    #: Written by the Stripe sync from the subscription's billing-cycle anchor
+    #: (packages/billing/service.py) and, for an account that has no
+    #: subscription at all — admin-granted, enterprise, a plan set by hand —
+    #: pinned once to the day of its first charge. A month too short for the
+    #: day falls back to its last day, the way Stripe does (31 → 28/29/30).
+    #: Never cleared: a lapsed subscription keeps the day it used to renew on,
+    #: so ending one cannot hand out an extra reset.
+    monthly_anchor_day: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    # The one window that never rolls: it starts at the account's first charge
+    # and accumulates for as long as the account exists. Free spends its trial
+    # credit against it (packages/billing/limits.py), and paid plans keep
+    # charging it so a later downgrade to Free does not refill the credit.
+    lifetime_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    lifetime_used: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
 
     #: Σ open reservations held against the plan windows.
     reserved_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
