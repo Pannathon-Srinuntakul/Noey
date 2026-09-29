@@ -81,10 +81,48 @@ export const BETA_NOTICE_POINTS: ReadonlyArray<{ title: string; body: string }> 
   },
 ];
 
-export const BETA_NOTICE_DISCLAIMER =
+/** The part of the disclaimer that is true whatever the catalog charges. */
+const BETA_NOTICE_DISCLAIMER_BASE =
   "ช่วงเบต้า ฟีเจอร์ โควตา และราคาอาจเปลี่ยนแปลงได้ และอาจหยุดให้บริการชั่วคราวเพื่อปรับปรุง · " +
-  "เนื้อหาที่ AI สร้างขึ้น ผู้ใช้เป็นผู้ตรวจและรับผิดชอบก่อนนำไปเผยแพร่ · " +
+  "เนื้อหาที่ AI สร้างขึ้น ผู้ใช้เป็นผู้ตรวจและรับผิดชอบก่อนนำไปเผยแพร่";
+
+export const BETA_NOTICE_DISCLAIMER =
+  `${BETA_NOTICE_DISCLAIMER_BASE} · ` +
   `ราคาเบต้าสิ้นสุด ${BETA_END_LABEL} รอบบิลถัดจากนั้นคิดราคาปกติทุกบัญชี`;
+
+/**
+ * What the notice may say, given what the catalog really charges.
+ *
+ * The date alone is not enough. Until the backend serves the beta ladder —
+ * which needs Stripe configured and the discounted prices on the catalog
+ * lookup keys — the site shows the full prices, and a notice promising "ลด 50%"
+ * next to them advertises a price nobody can buy. So the discount point, the
+ * banner's price line and the disclaimer's price clause appear only when
+ * `betaPriced` is true (lib/server/prices.ts:catalogIsBetaPriced). The other
+ * two points — check every clip, keep the originals — are true of the beta
+ * either way and always show.
+ */
+export function betaNoticeCopy(betaPriced: boolean): {
+  title: string;
+  points: ReadonlyArray<{ title: string; body: string }>;
+  banner: string;
+  disclaimer: string;
+} {
+  if (betaPriced) {
+    return {
+      title: BETA_NOTICE_TITLE,
+      points: BETA_NOTICE_POINTS,
+      banner: BETA_BANNER_TEXT,
+      disclaimer: BETA_NOTICE_DISCLAIMER,
+    };
+  }
+  return {
+    title: "ช่วงเบต้า มีสองเรื่องที่อยากให้รู้",
+    points: [BETA_NOTICE_POINTS[0], BETA_NOTICE_POINTS[2]],
+    banner: "ช่วงเบต้า · ตรวจคลิปก่อนลงทุกครั้ง",
+    disclaimer: BETA_NOTICE_DISCLAIMER_BASE,
+  };
+}
 
 export const BETA_NOTICE_DISMISS = "รับทราบ";
 export const BETA_NOTICE_NEVER = "ไม่ต้องแสดงอีก";

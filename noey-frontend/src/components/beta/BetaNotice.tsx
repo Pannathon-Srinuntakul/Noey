@@ -6,13 +6,10 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type Mo
 import {
   BETA_BADGE,
   BETA_BANNER_LINK,
-  BETA_BANNER_TEXT,
-  BETA_NOTICE_DISCLAIMER,
   BETA_NOTICE_DISMISS,
   BETA_NOTICE_NEVER,
-  BETA_NOTICE_POINTS,
   BETA_NOTICE_STORAGE_KEY,
-  BETA_NOTICE_TITLE,
+  betaNoticeCopy,
   isBetaActive,
   parseBetaNoticeState,
   shouldShowBetaBanner,
@@ -56,7 +53,8 @@ function remember(forever: boolean): void {
  * banner stop rendering on their own — the banner disappears together with the
  * beta price, with no deploy.
  */
-export function BetaNotice() {
+export function BetaNotice({ betaPriced }: { betaPriced: boolean }) {
+  const copy = betaNoticeCopy(betaPriced);
   // Nothing renders until mount: the decision reads localStorage, which the
   // server cannot see, and a banner in the server HTML would flash for a
   // visitor who dismissed it.
@@ -128,7 +126,7 @@ export function BetaNotice() {
         <div className="beta-banner">
           <div className="beta-banner__inner">
             <span className="tag tag-accent beta-banner__badge">{BETA_BADGE}</span>
-            <span className="beta-banner__text">{BETA_BANNER_TEXT}</span>
+            <span className="beta-banner__text">{copy.banner}</span>
             <button type="button" className="link-button beta-banner__more" onClick={reopen}>
               {BETA_BANNER_LINK}
             </button>
@@ -143,11 +141,11 @@ export function BetaNotice() {
         onClose={close}
         className="beta-sheet"
         maxWidth={560}
-        title={BETA_NOTICE_TITLE}
+        title={copy.title}
         titleExtra={<span className="tag tag-accent beta-dialog__badge">{BETA_BADGE}</span>}
       >
         <ol className="beta-points">
-          {BETA_NOTICE_POINTS.map((point) => (
+          {copy.points.map((point) => (
             <li key={point.title}>
               <strong>{point.title}</strong>
               <span>{point.body}</span>
@@ -155,7 +153,7 @@ export function BetaNotice() {
           ))}
         </ol>
         <p className="beta-fineprint">
-          {BETA_NOTICE_DISCLAIMER} · <Link href="/terms">เงื่อนไขการใช้งาน</Link>
+          {copy.disclaimer} · <Link href="/terms">เงื่อนไขการใช้งาน</Link>
         </p>
         <label className="agree agree--flush">
           <input

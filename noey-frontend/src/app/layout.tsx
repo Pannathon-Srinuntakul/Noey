@@ -4,6 +4,7 @@ import { BetaNotice } from "@/components/beta/BetaNotice";
 import { SiteFooter } from "@/components/SiteFooter";
 import { SiteHeader } from "@/components/header/SiteHeader";
 import { PREPAINT_SCRIPT } from "@/lib/prepaint";
+import { catalogIsBetaPriced } from "@/lib/server/prices";
 import { SITE_VERIFICATION } from "@/lib/server/config";
 import { LOCALE, PAGES, SITE_NAME, SITE_URL } from "@/lib/site";
 import "./globals.css";
@@ -41,7 +42,8 @@ export const viewport: Viewport = {
   colorScheme: "light dark",
 };
 
-export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+export default async function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+  const betaPriced = await catalogIsBetaPriced();
   return (
     // data-theme / data-auth are written by the pre-paint script before React
     // hydrates, hence suppressHydrationWarning on <html> only.
@@ -59,8 +61,9 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
           ข้ามไปที่เนื้อหา
         </a>
         {/* The beta disclosure: the modal on a first visit, then the pinned
-            strip. Both stop rendering by themselves once the beta ends. */}
-        <BetaNotice />
+            strip. Both stop rendering by themselves once the beta ends, and
+            neither mentions a discount the live catalog is not charging. */}
+        <BetaNotice betaPriced={betaPriced} />
         <SiteHeader />
         {children}
         <SiteFooter />

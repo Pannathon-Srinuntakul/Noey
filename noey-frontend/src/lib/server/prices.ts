@@ -1,6 +1,6 @@
 import "server-only";
 import { PHASE_PRODUCTION_BUILD } from "next/constants";
-import { fallbackPriceTable, normalizePlansResponse, type PriceTable } from "../plans";
+import { fallbackPriceTable, isBetaPriced, normalizePlansResponse, type PriceTable } from "../plans";
 import { API_URL } from "./config";
 
 /** Seconds between price refreshes; matches `revalidate` on the pages that show prices. */
@@ -35,5 +35,21 @@ export async function getPriceTable(options: { fallbackOnError?: boolean } = {})
       return fallbackPriceTable();
     }
     throw error;
+  }
+}
+
+/**
+ * Is the beta discount real right now? Only an answer from the backend counts:
+ * the design fallback carries the beta ladder by construction (it is what the
+ * build uses when the API is unreachable), so treating it as evidence would
+ * bake a discount claim into static pages that the live catalog does not make.
+ * Any failure reads as "no" — a missing claim is harmless, a false one is not.
+ */
+export async function catalogIsBetaPriced(): Promise<boolean> {
+  try {
+    const table = await getPriceTable();
+    return table.source !== "fallback" && isBetaPriced(table);
+  } catch {
+    return false;
   }
 }

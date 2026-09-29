@@ -3,8 +3,11 @@ import {
   BETA_END_DATE_ISO,
   BETA_END_INSTANT_MS,
   BETA_END_LABEL,
+  BETA_BANNER_TEXT,
   BETA_NOTICE_DISCLAIMER,
   BETA_NOTICE_POINTS,
+  BETA_NOTICE_TITLE,
+  betaNoticeCopy,
   BETA_NOTICE_SNOOZE_MS,
   isBetaActive,
   isPaymentPath,
@@ -98,5 +101,24 @@ describe("parseBetaNoticeState", () => {
     expect(parseBetaNoticeState("not json")).toBeNull();
     expect(parseBetaNoticeState(JSON.stringify({ forever: true }))).toBeNull();
     expect(parseBetaNoticeState(JSON.stringify("yes"))).toBeNull();
+  });
+});
+
+describe("the beta notice never promises a discount the catalog is not charging", () => {
+  it("drops the price point, banner line and disclaimer clause when not beta-priced", () => {
+    const copy = betaNoticeCopy(false);
+    const all = [copy.title, copy.banner, copy.disclaimer, ...copy.points.flatMap((p) => [p.title, p.body])].join(" ");
+    expect(all).not.toMatch(/ลด\s*\d+%/);
+    expect(all).not.toContain("ราคาเบต้า");
+    expect(copy.points).toHaveLength(2);
+    expect(copy.title).toContain("สอง");
+  });
+
+  it("keeps the approved three-point copy when the discount is real", () => {
+    const copy = betaNoticeCopy(true);
+    expect(copy.points).toBe(BETA_NOTICE_POINTS);
+    expect(copy.banner).toBe(BETA_BANNER_TEXT);
+    expect(copy.disclaimer).toBe(BETA_NOTICE_DISCLAIMER);
+    expect(copy.title).toBe(BETA_NOTICE_TITLE);
   });
 });
