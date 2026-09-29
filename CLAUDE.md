@@ -302,6 +302,10 @@ docker compose up -d            # start all containers
 ## Docs
 
 - `docs/ai-video-editing.md` — the video pipeline end to end.
+- `docs/unit-economics.md` — what a plan earns vs what it costs: the ฿50/1M peg
+  verified per resource, the Gemini dated price schedule, the measured cost from
+  real usage rows, per-plan margin, payment fees and the VAT threshold (neither
+  is in the cost model), breakeven.
 - `docs/railway-deploy.md` — deploy notes (API + worker on separate hosts → this is why `s3.py` exists).
 - `AGENTS.md` — a Codex-facing mirror of this file. Update both together, or say which one is authoritative.
 - Historical only (describe removed systems): `REMOTION_EFFECTS_REQUIREMENTS.md`, `EFFECTS_USER_GUIDE.md`.

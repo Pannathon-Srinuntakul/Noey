@@ -13,7 +13,9 @@ vendor-side spend caps).
   (never token counts), Claude-style, with Thai labels per docs/design/editor-limits.md (the website pricing copy keeps its
   English `5-hour limit` / `Weekly limit` / `Monthly limit` wording).
 - Cost peg: **1M tokens = ฿50 vendor cost** at 2027 reference prices and ฿34.5/USD.
-  Real cost today ≈ ฿33/1M (Gemini Flash is half price until 2026-12-31).
+  Measured in production 2026-09-29: **฿24.13/1M** (all Flash, half price until
+  2026-12-31). Full margin arithmetic, payment fees and breakeven:
+  `docs/unit-economics.md`.
 - **Sell price: ฿250 per 1M tokens, same for every plan.**
 
 ### Rate card v1 (fixed; changes only as a new version, forward-only)
