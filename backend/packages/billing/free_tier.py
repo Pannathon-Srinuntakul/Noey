@@ -34,6 +34,9 @@ from packages.core.logging import get_logger
 log = get_logger(__name__)
 
 ACCOUNTS_TTL_SEC = 30 * 86_400
+#: One free account per MAILBOX (canonical email), remembered for a year —
+#: longer than any account lives just to be deleted and re-registered.
+MAILBOX_TTL_SEC = 365 * 86_400
 RUNS_TTL_SEC = 2 * 86_400
 DEVICE_HEADER = "x-noey-device"
 FREE_TIER_MESSAGE = (
@@ -68,6 +71,8 @@ class FreeTierStore(Protocol):
     async def incr(self, key: str, ttl_sec: int) -> int | None: ...
 
     async def get_count(self, key: str) -> int | None: ...
+
+    async def decr(self, key: str) -> None: ...
 
 
 _ADMIT_LUA = """
@@ -130,6 +135,12 @@ class RedisFreeTierStore:
             self._down(exc)
             return None
 
+    async def decr(self, key: str) -> None:
+        try:
+            await self._redis().decr(key)
+        except Exception as exc:  # noqa: BLE001
+            self._down(exc)
+
 
 class MemoryFreeTierStore:
     """In-process store — tests only."""
@@ -153,6 +164,9 @@ class MemoryFreeTierStore:
 
     async def get_count(self, key: str) -> int | None:
         return self.counts.get(key, 0)
+
+    async def decr(self, key: str) -> None:
+        self.counts[key] = self.counts.get(key, 0) - 1
 
 
 _store: FreeTierStore | None = None
@@ -180,14 +194,31 @@ def _runs_key(kind: str, digest: str) -> str:
     return f"noey:free:{kind}:{digest}:runs:{datetime.now(UTC).strftime('%Y%m%d')}"
 
 
-async def check_start(*, user_id: int, ip: str | None, device: str | None) -> None:
+async def check_start(
+    *, user_id: int, ip: str | None, device: str | None, email: str | None = None
+) -> None:
     """Raise ``FreeTierLimited`` when this free account may not start AI work
-    from this IP / device. Does NOT count the run — ``count_run`` does, once
-    the reservation has succeeded."""
+    from this IP / device / mailbox. Does NOT count the run — ``claim_run``
+    does.
+
+    ``email``: the free lifetime credit is one per MAILBOX. ``+tag`` / dotted
+    Gmail aliases, and delete-then-re-register (deletion tombstones the row and
+    frees the address), each used to mint a fresh credit. The canonical
+    mailbox is remembered here (hashed, a year) with the first account that
+    used it; any other account on the same mailbox is refused. Kept in this
+    store, not on the user row, so account deletion does not erase it.
+    """
+    from packages.auth.accounts import canonical_email
     from packages.core.settings import get_settings
 
     s = get_settings()
     store = get_store()
+    mailbox = identity_hash(canonical_email(email)) if email else None
+    if mailbox is not None:
+        admitted = await store.admit_member(f"noey:free:mailbox:{mailbox}:accounts", str(user_id), 1, MAILBOX_TTL_SEC)
+        if admitted is False:
+            log.info("free_tier_limited", reason="mailbox_accounts", user_id=user_id)
+            raise FreeTierLimited("mailbox_accounts")
     for kind, digest in _identities(ip, device):
         admitted = await store.admit_member(
             f"noey:free:{kind}:{digest}:accounts", str(user_id), int(s.free_accounts_per_ip), ACCOUNTS_TTL_SEC
@@ -199,6 +230,45 @@ async def check_start(*, user_id: int, ip: str | None, device: str | None) -> No
         if runs is not None and runs >= int(s.free_runs_per_ip_day):
             log.info("free_tier_limited", reason=f"{kind}_runs", user_id=user_id)
             raise FreeTierLimited(f"{kind}_runs")
+
+
+async def claim_run(*, user_id: int, ip: str | None, device: str | None) -> None:
+    """Count one free run against the IP / device for today, ATOMICALLY with
+    the cap: increment first, compare, and give the hit back when over.
+
+    ``check_start`` reads the count and ``count_run`` increments it later, so a
+    burst of parallel starts all read the same count and all got through.
+    Here each start owns the number its own INCR returned. The caller gives the
+    claim back with ``unclaim_run`` when the run then fails to open, so a start
+    refused for another reason still does not use up the shared allowance.
+    Fail open like the rest of this module (a store that cannot count admits).
+    """
+    from packages.core.settings import get_settings
+
+    cap = int(get_settings().free_runs_per_ip_day)
+    store = get_store()
+    claimed: list[str] = []
+    for kind, digest in _identities(ip, device):
+        key = _runs_key(kind, digest)
+        count = await store.incr(key, RUNS_TTL_SEC)
+        if count is None:
+            continue
+        claimed.append(key)
+        if count > cap:
+            for k in claimed:
+                await store.decr(k)
+            log.info("free_tier_limited", reason=f"{kind}_runs", user_id=user_id)
+            raise FreeTierLimited(f"{kind}_runs")
+
+
+async def unclaim_run(*, ip: str | None, device: str | None) -> None:
+    """Give back a ``claim_run`` whose run never opened. Never raises."""
+    store = get_store()
+    for kind, digest in _identities(ip, device):
+        try:
+            await store.decr(_runs_key(kind, digest))
+        except Exception as exc:  # noqa: BLE001
+            log.warning("free_tier_unclaim_failed", error=str(exc)[:200])
 
 
 async def count_run(*, ip: str | None, device: str | None) -> None:

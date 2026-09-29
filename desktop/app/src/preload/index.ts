@@ -1,5 +1,4 @@
-import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
-import { electronAPI } from '@electron-toolkit/preload'
+import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron'
 
 export interface SidecarEvent {
   event: string
@@ -508,16 +507,30 @@ const noey = {
 
 export type NoeyApi = typeof noey
 
-if (process.contextIsolated) {
-  try {
-    contextBridge.exposeInMainWorld('electron', electronAPI)
-    contextBridge.exposeInMainWorld('noey', noey)
-  } catch (error) {
-    console.error(error)
+/**
+ * `window.electron` is only what the renderer actually uses of it: the OS path
+ * of a File the user picked or dropped. It used to be @electron-toolkit's
+ * whole `electronAPI` — raw ipcRenderer.send/sendSync/invoke on ANY channel and
+ * a copy of process.env — which let any script in the page skip every narrow
+ * wrapper in `noey`.
+ *
+ * Resolving the path also records it as a user grant in main (the only way a
+ * file outside the project library may be uploaded or imported). A File made
+ * by script has no path, so nothing is granted for it.
+ */
+const electronBridge = {
+  webUtils: {
+    getPathForFile: (file: File): string => {
+      const path = webUtils.getPathForFile(file)
+      if (path) ipcRenderer.sendSync('files:grant', path)
+      return path
+    }
   }
-} else {
-  // @ts-ignore (define in dts)
-  window.electron = electronAPI
-  // @ts-ignore (define in dts)
-  window.noey = noey
 }
+
+export type ElectronBridge = typeof electronBridge
+
+// contextIsolation is always on (main/index.ts) — there is no fallback that
+// writes the bridge straight onto window.
+contextBridge.exposeInMainWorld('electron', electronBridge)
+contextBridge.exposeInMainWorld('noey', noey)

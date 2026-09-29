@@ -1,5 +1,6 @@
 import type { NextConfig } from "next";
 import { PHASE_PRODUCTION_BUILD } from "next/constants";
+import { STATIC_CSP_SOURCE, staticContentSecurityPolicy } from "./src/lib/csp";
 import { sentryDsn, sentryIngestOrigin } from "./src/lib/sentry-config";
 
 const isProduction = process.env.NODE_ENV === "production";
@@ -17,37 +18,10 @@ function warnAboutBuildTimeEnv(): void {
   }
 }
 
-/**
- * Content-Security-Policy. `'unsafe-inline'` scripts are required because the
- * marketing pages are static (no per-request nonce) and carry the theme
- * pre-paint script and JSON-LD; every script ORIGIN is still pinned.
- * Turnstile is the only third-party script. `form-action` lists Stripe's
- * hosted pages because a no-JavaScript plan-button submit is answered with a
- * 303 redirect to Checkout / the Customer Portal — if the backend ever uses a
- * Stripe custom domain, add it here.
- *
- * `connect-src` gains exactly one origin — the Sentry ingest host inside
- * NEXT_PUBLIC_SENTRY_DSN — and only when that DSN is set (it is inlined at
- * build time, as are these headers). No DSN, no change. The Google sign-in
- * flow needs nothing here: accounts.google.com is a top-level navigation (a
- * 303 from our own server), not a fetch, frame or script.
- */
+// The CSP itself lives in src/lib/csp.ts (static policy here, nonce policy
+// in src/proxy.ts for /account and /checkout).
 const sentryOrigin = sentryIngestOrigin(sentryDsn());
-
-const contentSecurityPolicy = [
-  "default-src 'self'",
-  "script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com",
-  "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: blob: https:",
-  "media-src 'self' blob: https:",
-  "font-src 'self' data:",
-  sentryOrigin ? `connect-src 'self' ${sentryOrigin}` : "connect-src 'self'",
-  "frame-src https://challenges.cloudflare.com",
-  "form-action 'self' https://checkout.stripe.com https://billing.stripe.com",
-  "frame-ancestors 'none'",
-  "base-uri 'self'",
-  "object-src 'none'",
-].join("; ");
+const contentSecurityPolicy = staticContentSecurityPolicy(sentryOrigin);
 
 const securityHeaders = [
   { key: "X-Content-Type-Options", value: "nosniff" },
@@ -56,7 +30,6 @@ const securityHeaders = [
   { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=(), payment=()" },
   ...(isProduction
     ? [
-        { key: "Content-Security-Policy", value: contentSecurityPolicy },
         // Ignored by browsers over plain HTTP; takes effect once served over HTTPS.
         { key: "Strict-Transport-Security", value: "max-age=63072000" },
       ]
@@ -78,6 +51,11 @@ const nextConfig: NextConfig = {
   async headers() {
     return [
       { source: "/:path*", headers: securityHeaders },
+      // Static pages only: /account/* and /checkout/* get a per-request nonce
+      // policy from src/proxy.ts instead (both headers would both be enforced).
+      ...(isProduction
+        ? [{ source: STATIC_CSP_SOURCE, headers: [{ key: "Content-Security-Policy", value: contentSecurityPolicy }] }]
+        : []),
       // Point agents from each HTML page to its Markdown twin. Keep in step
       // with the `.md` route folders and `withMarkdownTwin` in lib/seo.ts.
       ...["/pricing", "/scope", "/guide/ai-cut-tiktok", "/guide/thai-subtitles", "/guide/product-review", "/guide/long-to-shorts", "/guide/choose-ai-editor", "/guide/help"].map(

@@ -12,8 +12,12 @@ import packages.db.models  # noqa: F401  (registers all models on Base.metadata)
 
 config = context.config
 
-if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+# The CLI (`alembic upgrade head`) configures logging from alembic.ini. Run
+# in-process (services/api/main.py sets configure_logger=False) it must not:
+# fileConfig would replace the host's handlers and, by default, DISABLE every
+# logger that already exists — uvicorn's error and access loggers included.
+if config.config_file_name is not None and config.attributes.get("configure_logger", True):
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 # Use our sync URL (Alembic runs synchronously).
 config.set_main_option("sqlalchemy.url", get_settings().sync_database_url)

@@ -108,6 +108,15 @@ describe("sanitizeNextPath (open-redirect guard)", () => {
     expect(sanitizeNextPath("/api/auth/refresh")).toBe("/account");
   });
 
+  it("rejects dot-segment paths that normalise to a protocol-relative URL", () => {
+    for (const bad of ["/.//evil.com", "/..//evil.com/x", "/%2e//evil.com", "/%2E%2E//evil.com", "/a/..//evil.com"]) {
+      const out = sanitizeNextPath(bad);
+      expect(out).toBe("/account");
+      expect(new URL(out, "https://noeystudio.com/login").origin).toBe("https://noeystudio.com");
+    }
+    expect(loginPathFor("/.//evil.com")).toBe(`/login?next=${encodeURIComponent("/account")}`);
+  });
+
   it("builds the login redirect used by Proxy", () => {
     expect(loginPathFor("/account/billing?plan=pro")).toBe("/login?next=%2Faccount%2Fbilling%3Fplan%3Dpro");
     expect(loginPathFor("//evil.example")).toBe("/login?next=%2Faccount");

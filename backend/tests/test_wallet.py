@@ -338,3 +338,105 @@ async def test_a_refund_of_something_that_is_not_a_top_up_changes_nothing():
     failed = SimpleNamespace(id=f"cs_f_{uid}", object="checkout.session", mode="payment", payment_status="unpaid")
     assert await _deliver(f"evt_f_{uid}", "checkout.session.async_payment_failed", failed) == "payment_failed"
     await db("DELETE FROM core.stripe_events WHERE id LIKE :p", p=f"evt_%_{uid}")
+
+
+# ── security review 2026-09-30 ───────────────────────────────────────────────
+
+async def test_a_dispute_after_a_partial_refund_reverses_the_whole_disputed_amount():
+    """฿1,000 lot, ฿400 refunded, the other ฿600 disputed: ฿1,000 left Stripe,
+    so ฿1,000 must be reversed. Comparing the dispute's own amount with ALL
+    earlier reversals reversed only ฿200 and left ฿400 spendable."""
+    uid = await make_user(email("wallet"))
+    pi = f"pi_rd_{uid}"
+    await _stripe_lot(uid, pi, 100_000)
+    await _deliver(f"evt_rd1_{uid}", "charge.refunded",
+                   SimpleNamespace(object="charge", payment_intent=pi, amount_refunded=40_000))
+    await _deliver(f"evt_rd2_{uid}", "charge.dispute.created",
+                   SimpleNamespace(object="dispute", payment_intent=pi, amount=60_000, charge="ch_rd"))
+    assert await _balance(uid) == 0
+    # And a redelivered/cumulative refund after that takes nothing more.
+    await _deliver(f"evt_rd3_{uid}", "charge.refunded",
+                   SimpleNamespace(object="charge", payment_intent=pi, amount_refunded=40_000))
+    taken = await db("SELECT -sum(amount_satang) FROM core.wallet_ledger WHERE user_id = :u AND kind = 'reversal'",
+                     u=uid)
+    assert taken[0][0] == 100_000
+    await db("DELETE FROM core.stripe_events WHERE id LIKE :p", p=f"evt_rd%_{uid}")
+
+
+async def test_a_spent_disputed_top_up_is_clawed_back_from_other_lots_then_carried_as_debt():
+    uid = await make_user(email("wallet"))
+    pi_a, pi_b = f"pi_ca_{uid}", f"pi_cb_{uid}"
+    await _stripe_lot(uid, pi_a, 30_000)
+    s = await _session()
+    account = await lock_account(s, uid)
+    await wallet.debit(s, account, 30_000)  # lot A fully spent
+    await s.commit()
+    await s.close()
+    await _stripe_lot(uid, pi_b, 10_000)  # lot B, paid for legitimately
+    out = await _deliver(f"evt_ca_{uid}", "charge.dispute.created",
+                         SimpleNamespace(object="dispute", payment_intent=pi_a, amount=30_000, charge="ch_a"))
+    assert out == "topup_reversed_short"
+    assert await _balance(uid) == 0  # B covered ฿100 of it
+    s = await _session()
+    assert await wallet.debt(s, uid) == 20_000  # the rest is owed
+    await s.close()
+    flagged = await db(
+        "SELECT detail FROM core.admin_audit_events WHERE action = 'topup_reversal_shortfall' AND target_user_id = :u",
+        u=uid,
+    )
+    assert flagged[0][0]["clawed_back_satang"] == 10_000 and flagged[0][0]["debt_satang"] == 20_000
+    # B's OWN later refund is still measured against B alone (the clawback is
+    # not B's payer getting money back): nothing is left in B to take.
+    assert await _deliver(f"evt_cb_{uid}", "charge.refunded",
+                          SimpleNamespace(object="charge", payment_intent=pi_b, amount_refunded=0)) == "topup_reversed"
+    # The next purchase pays the debt first: ฿300 in, ฿200 owed → ฿100 spendable.
+    await _stripe_lot(uid, f"pi_cc_{uid}", 30_000)
+    assert await _balance(uid) == 10_000
+    s = await _session()
+    assert await wallet.debt(s, uid) == 0
+    await s.close()
+    await db("DELETE FROM core.stripe_events WHERE id LIKE :p", p=f"evt_c%_{uid}")
+
+
+async def test_debt_blocks_wallet_spending_until_it_is_paid():
+    uid = await make_user(email("wallet"))
+    s = await _session()
+    await wallet.clawback(s, uid, 5_000, note="test")
+    await s.commit()
+    account = await lock_account(s, uid)
+    assert await wallet.available(s, account) == 0
+    await s.close()
+
+
+async def test_a_refund_processed_before_the_credit_is_applied_at_credit_time():
+    """The credit's first delivery failed; the refund event came first, found
+    no lot, and is never delivered again — the retried credit must not mint an
+    unreversed lot."""
+    uid = await make_user(email("wallet"))
+    pi = f"pi_early_{uid}"
+    charge = SimpleNamespace(object="charge", payment_intent=pi, amount_refunded=10_000)
+
+    class Sessions:
+        async def list_async(self, params):
+            return SimpleNamespace(data=[])
+
+    class Intents:
+        async def retrieve_async(self, pid, params=None):
+            assert pid == pi and params == {"expand": ["latest_charge"]}
+            return SimpleNamespace(latest_charge=SimpleNamespace(id="ch_early", amount_refunded=10_000,
+                                                                 disputed=False))
+
+    fake = SimpleNamespace(v1=SimpleNamespace(checkout=SimpleNamespace(sessions=Sessions()),
+                                              payment_intents=Intents()))
+    assert await _deliver(f"evt_e1_{uid}", "charge.refunded", charge, client=fake) == "topup_not_topup"
+    session_obj = SimpleNamespace(
+        id=f"cs_early_{uid}", object="checkout.session", mode="payment", payment_status="paid",
+        amount_total=10_000, client_reference_id=str(uid), payment_method_types=["card"], payment_intent=pi,
+        metadata={"noey_topup": "10000", "user_id": str(uid), "method": "card"},
+    )
+    assert await _deliver(f"evt_e2_{uid}", "checkout.session.completed", session_obj, client=fake) == "topup_credited"
+    assert await _balance(uid) == 0
+    # The refund event arriving again later (normal order) takes nothing twice.
+    assert await _deliver(f"evt_e3_{uid}", "charge.refunded", charge, client=fake) == "topup_reversed"
+    assert await _balance(uid) == 0
+    await db("DELETE FROM core.stripe_events WHERE id LIKE :p", p=f"evt_e%_{uid}")

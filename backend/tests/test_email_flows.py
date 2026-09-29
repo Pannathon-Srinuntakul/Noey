@@ -141,6 +141,24 @@ async def test_register_mails_a_single_use_verification_link(mail):
     assert stored and all(row[0] != token for row in stored)  # only the hash is stored
 
 
+async def test_a_registrants_display_name_never_reaches_an_unproven_mailbox(mail):
+    """Anyone can register anyone's address with 80 characters of their own
+    text as the display name; it used to land in the To header and the
+    greeting of a genuine verification mail to the victim."""
+    lure = "Your account is suspended - visit evil.example now"
+    async with _client() as c:
+        email = _email("spoof")
+        r = await c.post("/auth/register", json={"email": email, "password": "correct horse battery",
+                                                 "display_name": lure})
+        assert r.status_code == 201, r.text
+        verify = mail.last("verify_email")
+        await c.post("/auth/forgot-password", json={"email": email})
+    assert not verify.to.name
+    assert lure not in verify.content.text and lure not in (verify.content.html or "")
+    reset = mail.last("reset_password")
+    assert not reset.to.name
+
+
 async def test_registration_succeeds_without_email_configured():
     async with _client() as c:
         email, tokens = await _register(c)

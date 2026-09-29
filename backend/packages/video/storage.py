@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import json
 import os
 import pathlib
+import re
 import shutil
 import stat
 import time
@@ -68,41 +68,64 @@ def _rmtree_resilient(path: pathlib.Path) -> None:
     raise last_err
 
 
+#: A project directory name: what `uuid.uuid4()` produces, plus the legacy
+#: ids still on disk. Never '.', '..', a separator or anything else that could
+#: walk out of `video_uploads/` / `video_outputs/`.
+_PROJECT_DIR_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
+_PROJECT_PARENTS = ("video_uploads", "video_outputs")
+
+
+def _safe_project_dir(root: pathlib.Path, parent: str, name: str) -> pathlib.Path | None:
+    """`root/parent/name` when it is exactly one level under that parent, else None."""
+    if parent not in _PROJECT_PARENTS or not _PROJECT_DIR_RE.fullmatch(name):
+        return None
+    candidate = root / parent / name
+    if candidate.resolve().parent != (root / parent).resolve():
+        return None
+    return candidate
+
+
 def _collect_project_dirs(project_uid: str, source_files: list[str] | None) -> list[pathlib.Path]:
-    """Return unique upload/output dirs to remove for a project."""
-    dirs = {upload_dir(project_uid), output_dir(project_uid)}
+    """Return unique upload/output dirs to remove for a project.
+
+    Cross-references to OTHER project folders come only from `source_files`
+    (the DB column, written by the server-render upload route). The
+    `upload_sources.json` manifest is deliberately NOT read here: the web build
+    stores it through `PUT /videos/{uid}/files/upload_sources.json`, so its
+    contents are client-controlled — trusting it let one account point a
+    delete at `video_outputs/..` (the whole DATA_DIR) or another user's
+    project. The server chain writes that manifest as a copy of `source_files`,
+    so nothing is lost by ignoring it.
+    """
     root = data_root()
-    rel_paths = list(source_files or [])
-    manifest = output_dir(project_uid) / "upload_sources.json"
-    if manifest.is_file():
-        try:
-            rel_paths.extend(json.loads(manifest.read_text(encoding="utf-8")))
-        except (json.JSONDecodeError, OSError):
-            log.warning("upload_sources_invalid", path=str(manifest))
-    for rel in rel_paths:
-        # The WEB build's manifest holds {id, file, original} dicts, not the
-        # server-render chain's plain strings. pathlib.Path(dict) raised
-        # TypeError, which aborted DELETE /videos/{uid} before the S3 prefix
-        # and the DB row were touched -- the "deleted" project came back on the
-        # next restore, in every browser, forever.
+    dirs: set[pathlib.Path] = set()
+    for parent in _PROJECT_PARENTS:
+        own = _safe_project_dir(root, parent, project_uid)
+        if own is not None:
+            dirs.add(own)
+    for rel in list(source_files or []):
         if isinstance(rel, dict):
             rel = rel.get("file") or ""
         if not isinstance(rel, str) or not rel:
             continue
-        rel_path = pathlib.Path(rel)
-        parts = rel_path.parts
-        if not parts:
+        parts = pathlib.PurePosixPath(rel.replace("\\", "/")).parts
+        if len(parts) < 2:
             continue
-        if parts[0] == "video_uploads" and len(parts) >= 2:
-            dirs.add(root / "video_uploads" / parts[1])
-        elif parts[0] == "video_outputs" and len(parts) >= 2:
-            dirs.add(root / "video_outputs" / parts[1])
+        safe = _safe_project_dir(root, parts[0], parts[1])
+        if safe is not None:
+            dirs.add(safe)
     return sorted(dirs, key=lambda p: str(p))
 
 
 def delete_project_files(project_uid: str, *, source_files: list[str] | None = None) -> None:
     """Remove all upload + output files for a project."""
+    root = data_root()
     for d in _collect_project_dirs(project_uid, source_files):
+        # Belt and braces: never rmtree anything but a direct child of the two
+        # project parents, whatever _collect_project_dirs returned.
+        if _safe_project_dir(root, d.parent.name, d.name) != d:
+            log.warning("video_files_delete_refused", path=str(d))
+            continue
         _rmtree_resilient(d)
 
 

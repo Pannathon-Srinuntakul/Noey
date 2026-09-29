@@ -5,6 +5,10 @@ import { randomUUID } from 'crypto'
 import { isSafeUid } from './uid'
 import { appendLog } from './logger'
 import { prefsSync } from './prefs'
+import { checkReadablePath, hasMediaExtension, openFolderTarget } from './ipcGuards'
+import { fileGrants } from './fileGrants'
+import { lanInboxDir } from './lanReceive'
+import { statSync } from 'fs'
 
 /**
  * Local project registry — one directory per project under
@@ -413,6 +417,18 @@ async function deleteProject(uid: string): Promise<void> {
  * this is the ONLY server/editor-visible copy, not a second source of truth. */
 async function importMusicFile(uid: string, srcPath: string): Promise<string> {
   const dir = projectDir(uid)
+  // The copy lands where media:// serves it, so an unchecked source would let
+  // the renderer read any file on disk. Only a media file the user picked (or
+  // one already in the library / LAN inbox) may come in.
+  if (typeof srcPath !== 'string' || !hasMediaExtension(srcPath)) {
+    throw new Error(`refused: not an audio/video file: ${JSON.stringify(srcPath)}`)
+  }
+  checkReadablePath(
+    srcPath,
+    [projectsRoot(), lanInboxDir()],
+    fileGrants,
+    process.platform === 'win32'
+  )
   const musicDir = join(dir, 'music')
   await mkdir(musicDir, { recursive: true })
   const base = srcPath.replace(/\\/g, '/').split('/').pop() || 'track'
@@ -465,8 +481,18 @@ export function registerProjectsIpc(): void {
   ipcMain.handle('projects:importMusic', (_e, uid: string, srcPath: string) =>
     importMusicFile(uid, srcPath)
   )
-  ipcMain.handle('projects:openFolder', async (_e, uid: string, relPath = '.') => {
-    await shell.openPath(join(projectDir(uid), relPath))
+  ipcMain.handle('projects:openFolder', async (_e, uid: string, relPath?: string) => {
+    // Never `openPath` a file: on Windows that EXECUTES it (a .bat written via
+    // projects:writeFile would run). Files are revealed in their folder.
+    const target = openFolderTarget(projectDir(uid), relPath, (abs) => {
+      try {
+        return statSync(abs).isDirectory()
+      } catch {
+        return false
+      }
+    })
+    if (target.action === 'open') await shell.openPath(target.path)
+    else shell.showItemInFolder(target.path)
   })
   ipcMain.handle('projects:exportFile', (_e, uid: string, relPath: string, suggestedName: string) =>
     exportProjectFile(uid, relPath, suggestedName)

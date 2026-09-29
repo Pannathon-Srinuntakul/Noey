@@ -4,16 +4,28 @@ services:
     image: redis:7-alpine
     container_name: noey_redis
     restart: unless-stopped
+    # Loopback only. A bare "6380:6379" publishes on 0.0.0.0, so on shared
+    # Wi-Fi anyone could reach the queue — and arq job payloads are executable
+    # to the worker. The host-run backend still reaches it on localhost:6380.
+    # Host port 6380 avoids a clash with another local Redis.
     ports:
-      - "6380:6379"   # Use 6380 on host to avoid conflict with other local Redis instances.
+      - "127.0.0.1:6380:6379"
+    # Optional password: set REDIS_PASSWORD in the root .env and put it in your
+    # host REDIS_URL too (redis://:<password>@localhost:6380/0). Empty (the
+    # default) means no AUTH — `requirepass ""` is Redis's own "off" — so an
+    # existing checkout keeps working after `docker compose up`.
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:-}"]
     # The queue lives here: a job enqueued but not yet picked up, the rate-limit
     # counters and the usage outbox. Without the mount a `docker compose down`
     # dropped every queued job with the container (the volume was declared but
     # never attached). The image's default config snapshots to /data.
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
     volumes:
       - noey_redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      # REDISCLI_AUTH, not -a: the password stays out of `ps` output.
+      test: ["CMD-SHELL", "if [ -n \"$$REDIS_PASSWORD\" ]; then export REDISCLI_AUTH=\"$$REDIS_PASSWORD\"; fi; redis-cli ping | grep -q PONG"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -26,8 +38,10 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-noey}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me}
       POSTGRES_DB: ${POSTGRES_DB:-noey_tiktok}
+    # Loopback only, like redis: the dev database (default password
+    # change_me) is not published to the LAN.
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - noey_pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -49,7 +63,7 @@ services:
       # listens on 5432 — POSTGRES_PORT in .env only moves the published host
       # port, so inheriting it from env_file would break this connection.
       POSTGRES_PORT: "5432"
-      REDIS_URL: redis://redis:6379/0
+      REDIS_URL: redis://:${REDIS_PASSWORD:-}@redis:6379/0
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:5174}
       # Where uploads, renders and web project files live. Must be the SAME
       # volume the worker mounts — see the `noey_data` note below.
@@ -84,7 +98,7 @@ services:
     environment:
       POSTGRES_HOST: postgres
       POSTGRES_PORT: "5432"   # see the api service — host publish port is separate
-      REDIS_URL: redis://redis:6379/0
+      REDIS_URL: redis://:${REDIS_PASSWORD:-}@redis:6379/0
       DATA_DIR: /data
     volumes:
       - noey_data:/data

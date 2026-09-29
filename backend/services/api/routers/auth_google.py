@@ -119,6 +119,17 @@ _STATUS = {
 }
 
 
+#: Linking needs the account's OWN address proven first. Anyone can register an
+#: address they do not own; a Google link made on such an account survived the
+#: real owner's password reset and let the squatter sign straight back in.
+_LINK_NEEDS_VERIFIED_MSG = "ยืนยันอีเมลของบัญชีก่อน จึงจะเชื่อมบัญชี Google ได้"
+
+
+def _require_verified_for_link(auth: AuthUser) -> None:
+    if auth.user.email_verified_at is None:
+        raise _refuse(403, "email_not_verified", _LINK_NEEDS_VERIFIED_MSG)
+
+
 def _refuse(status_code: int, code: str, message: str | None = None) -> HTTPException:
     return HTTPException(
         status_code=status_code, detail={"code": code, "message": message or _MSG.get(code, code)}
@@ -227,6 +238,8 @@ async def google_start(
     if body.intent in ("link", "reauth"):
         auth = await _caller(request, creds, session)
         user_id = auth.user_id
+        if body.intent == "link":
+            _require_verified_for_link(auth)
         if body.intent == "reauth" and await _identity_of_user(session, auth.user_id) is None:
             raise _refuse(409, "no_google_link")
     else:
@@ -284,6 +297,7 @@ async def google_callback(
     if flow.user_id is None or flow.user_id != auth.user_id:
         raise _refuse(403, "wrong_account")
     if flow.intent == "link":
+        _require_verified_for_link(auth)
         return await _link(session, auth, flow.identity)
     identity = await _identity_of_user(session, auth.user_id)
     if identity is None or identity.subject != flow.identity.sub:

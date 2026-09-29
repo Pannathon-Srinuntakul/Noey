@@ -118,6 +118,57 @@ async def _claim_by_metadata(
     return account
 
 
+async def _subscription_charge_reversed(
+    session: AsyncSession, client: stripe.StripeClient | None, event: stripe.Event, obj: Any
+) -> str | None:
+    """A refund / chargeback of a charge that is NOT a top-up — a
+    subscription invoice. Stripe does not cancel a subscription when a dispute
+    opens, so the paid plan (and the rest of the period's quota) stayed with
+    the disputer until renewal failed, with nothing for the admin to see.
+
+    Dispute → every live subscription is cancelled now, the plan mirror
+    re-synced, and an audit event written. Refund → audited only (the owner
+    issued it, and decides what follows). None when the charge's customer is
+    not one of ours (nothing to do)."""
+    customer_id = id_of(field(obj, "customer"))
+    charge_id = id_of(field(obj, "charge")) if field(obj, "object") == "dispute" else id_of(obj)
+    if not customer_id and client is not None and charge_id:
+        charge = await client.v1.charges.retrieve_async(charge_id)
+        customer_id = id_of(field(charge, "customer"))
+    if not customer_id:
+        return None
+    account = await lock_account_by_customer(session, customer_id)
+    if account is None:
+        return None
+    user = (
+        await session.execute(
+            select(User).where(User.id == account.user_id).execution_options(populate_existing=True)
+        )
+    ).scalar_one()
+    from packages.admin import auth as admin_auth
+
+    if event.type == "charge.dispute.created":
+        cancelled = 0
+        if client is not None:
+            from packages.billing.service import cancel_subscriptions_now
+
+            cancelled = await cancel_subscriptions_now(session, client, user)
+            await sync_account(session, client, account, user)
+        await admin_auth.audit(
+            session, "subscription_charge_disputed", target_user_id=int(user.id),
+            detail={"event_id": event.id, "charge": charge_id, "amount": field(obj, "amount"),
+                    "subscriptions_cancelled": cancelled},
+        )
+        log.error("subscription_charge_disputed", user_id=user.id, charge=charge_id, cancelled=cancelled)
+        return "subscription_disputed"
+    await admin_auth.audit(
+        session, "subscription_charge_refunded", target_user_id=int(user.id),
+        detail={"event_id": event.id, "charge": charge_id, "amount_refunded": field(obj, "amount_refunded")},
+    )
+    log.warning("subscription_charge_refunded", user_id=user.id, charge=charge_id)
+    return "subscription_refunded"
+
+
 async def handle_event(session: AsyncSession, client: stripe.StripeClient, event: stripe.Event) -> str:
     """Apply one verified event and commit. Returns what happened (for the log).
 
@@ -135,6 +186,11 @@ async def handle_event(session: AsyncSession, client: stripe.StripeClient, event
         # Only a top-up's money is ours to take back here; a subscription
         # charge is not in the wallet (reverse_from_event answers not_topup).
         outcome = await topup.reverse_from_event(session, event.type, event.id, obj, client=client)
+        if outcome == "not_topup":
+            handled = await _subscription_charge_reversed(session, client, event, obj)
+            if handled is not None:
+                await session.commit()
+                return handled
         await session.commit()
         return f"topup_{outcome}"
     if event.type == "checkout.session.async_payment_failed":
@@ -147,7 +203,7 @@ async def handle_event(session: AsyncSession, client: stripe.StripeClient, event
             # A one-time top-up (packages/billing/topup.py): credit the wallet
             # once per session — completed (card) or async_payment_succeeded
             # (PromptPay) may both arrive; the unique session id dedupes.
-            outcome = await topup.credit_from_session(session, obj)
+            outcome = await topup.credit_from_session(session, obj, client=client)
             await session.commit()
             return f"topup_{outcome}"
         if field(obj, "mode") != "subscription":

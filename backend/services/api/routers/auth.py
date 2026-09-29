@@ -48,7 +48,7 @@ import jwt
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import AfterValidator, BaseModel, EmailStr, Field
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import set_committed_value
@@ -361,6 +361,19 @@ async def _revoke_sessions(session: AsyncSession, user: User) -> None:
     set_committed_value(user, "token_version", new_version)
 
 
+async def _drop_oauth_identities(session: AsyncSession, user: User) -> None:
+    """Forget every linked sign-in identity (Google) for this account.
+
+    Called where the mailbox owner proves themselves for the first time, or
+    takes the account back with a reset link. A link made before that was not
+    made by a proven owner — a squatter who registered the address first could
+    link their own Google account, and without this it survived the real
+    owner's reset and signed the squatter straight back in. The owner can link
+    again from settings.
+    """
+    await session.execute(delete(OAuthIdentity).where(OAuthIdentity.user_id == user.id))
+
+
 def _brand() -> str:
     return get_settings().email_from_name.strip() or "Noey Studio"
 
@@ -387,13 +400,23 @@ async def _send_quietly(mailer: Mailer, message: OutgoingEmail) -> None:
         log.warning("email_not_delivered", category=message.category, to=mask_email(message.to.email))
 
 
+def _name_for_mail(user: User) -> str | None:
+    """The account's display name for a mail header / greeting — only once
+    the address is proven. Before that the name was typed by whoever
+    registered the address, and anyone can register anyone's: 80 characters
+    of their text in the To header and greeting of a genuine Noey mail to the
+    victim is content spoofing (phishing inside our own mail)."""
+    return user.display_name if user.email_verified_at is not None else None
+
+
 def _verification_mail(user: User, raw_token: str) -> OutgoingEmail:
+    # Always to an unproven address: never the registrant's chosen name.
     return OutgoingEmail(
-        to=Address(str(user.email), user.display_name),
+        to=Address(str(user.email), None),
         content=templates.verify_email(
             brand=_brand(),
             link=_link(templates.VERIFY_PATH, raw_token),
-            display_name=user.display_name,
+            display_name=None,
         ),
         category=PURPOSE_VERIFY_EMAIL,
     )
@@ -662,6 +685,7 @@ async def verify_email(body: VerifyEmailIn, session: CoreSession) -> VerifyEmail
     if token.purpose == PURPOSE_VERIFY_EMAIL:
         if user.email_verified_at is None:
             user.email_verified_at = now
+            await _drop_oauth_identities(session, user)
         await session.commit()
         log.info("email_verified", user_id=user.id)
         return VerifyEmailOut(email=str(user.email), purpose="verify_email")
@@ -751,7 +775,7 @@ async def forgot_password(
     raw_token = await issue_token(session, int(user.id), PURPOSE_RESET_PASSWORD)
     await session.commit()
     message = OutgoingEmail(
-        to=Address(str(user.email), user.display_name),
+        to=Address(str(user.email), _name_for_mail(user)),
         content=templates.reset_password(
             brand=_brand(), link=_link(templates.RESET_PATH, raw_token)
         ),
@@ -785,6 +809,7 @@ async def reset_password(body: ResetPasswordIn, session: CoreSession) -> TokenOu
     user.password_hash = await asyncio.to_thread(hash_password, body.new_password)
     if user.email_verified_at is None:
         user.email_verified_at = datetime.now(UTC)
+    await _drop_oauth_identities(session, user)
     await _revoke_sessions(session, user)
     await session.commit()
     log.info("password_reset", user_id=user.id)
@@ -827,7 +852,8 @@ async def change_email(
     await session.commit()
     brand = _brand()
     await _send_now(mailer, OutgoingEmail(
-        to=Address(new_email, auth.user.display_name),
+        # The new address is not proven yet: no caller-chosen name on it.
+        to=Address(new_email, None),
         content=templates.change_email_confirm(
             brand=brand, link=_link(templates.VERIFY_PATH, raw_token), new_email=new_email
         ),

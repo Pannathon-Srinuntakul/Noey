@@ -80,13 +80,15 @@ import uuid
 from pathlib import Path
 from typing import Literal
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
-from fastapi import Response
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from packages.billing import estimate as estimator
+from packages.billing import plan_features, runs
+from packages.billing import resume as resume_mod
 from packages.core.errors import format_exception_message, validation_error_fields
 from packages.core.logging import get_logger
 from packages.core.settings import get_settings
@@ -112,17 +114,21 @@ from packages.video.s3 import (
     output_upload_url,
     pull_scratch_file,
     push_output_file,
-    push_scratch_file,
     push_project_files,
+    push_scratch_file,
     resolve_stored_output,
 )
 from packages.video.storage import data_root
 from packages.video.timeline import cuts_duration, normalize_dub_edit_script
-from packages.billing import estimate as estimator
-from packages.billing import plan_features
-from packages.billing import resume as resume_mod
-from packages.billing import runs
-from services.api.billing_start import load_run, release_on_error, settle_run, start_paid_run
+from services.api import ratelimit
+from services.api.billing_start import (
+    acquire_inline_slot,
+    load_run,
+    release_on_error,
+    release_run,
+    settle_run,
+    start_paid_run,
+)
 from services.api.deps import CurrentUser, db_session
 from services.api.routers.videos import (
     _enqueue,
@@ -515,6 +521,13 @@ def _parse_manifest(raw: str, model: type[BaseModel], *, label: str = "manifest"
         ) from exc
 
 
+def local_job_id(uid: str) -> str:
+    """The ``core.jobs`` id a project's runs share. The WHOLE uid: ``uid[:8]``
+    was 32 random bits, so across enough projects two users' ids collided and
+    the upsert below handed one user's job row (and its result) to the other."""
+    return f"vlocal_{uid}"
+
+
 async def _queue_job_row(session: AsyncSession, auth: CurrentUser, job_id: str, queued: dict) -> None:
     """Upsert the ``core.jobs`` row a client polls, then re-bind the tenant
     search path. The owner is (re)stamped even on a row that already exists:
@@ -522,6 +535,14 @@ async def _queue_job_row(session: AsyncSession, auth: CurrentUser, job_id: str, 
     the same row this start reuses."""
     await session.execute(text("SET search_path TO core, public"))
     existing = await session.get(Job, job_id)
+    if existing is not None and (
+        existing.tenant_id != auth.tenant_id
+        or (existing.user_id is not None and existing.user_id != auth.user_id)
+    ):
+        # Never re-stamp another account's row onto this caller.
+        log.error("job_id_owner_mismatch", job_id=job_id, user_id=auth.user_id)
+        await bind_tenant_search_path(session, auth.tenant_slug)
+        raise HTTPException(409, "งานนี้ชนกับงานอื่นในระบบ — ลองใหม่อีกครั้ง")
     if existing:
         existing.status = "queued"
         existing.progress = 2
@@ -832,7 +853,7 @@ async def analyze_frames(
     )
     run_id = await start_paid_run(
         auth, request, est,
-        allow_wallet=allow_wallet, job_id=f"vlocal_{uid[:8]}", reference_id=uid,
+        allow_wallet=allow_wallet, job_id=local_job_id(uid), reference_id=uid,
         mode=proj.mode, engine=proj.engine, precision=proj.precision,
     )
     async with release_on_error(run_id):
@@ -852,7 +873,7 @@ async def analyze_frames(
         )
         await push_project_files(uid)  # JPEGs + manifest only — no video bytes
 
-        job_id = f"vlocal_{uid[:8]}"
+        job_id = local_job_id(uid)
         await _queue_job_row(
             session, auth, job_id,
             {"step": "queued", "message": "รับ frames แล้ว รอ worker วิเคราะห์…"},
@@ -1003,7 +1024,7 @@ async def analyze_video(
     try:
         run_id = await start_paid_run(
             auth, request, est,
-            allow_wallet=allow_wallet, job_id=f"vlocal_{uid[:8]}", reference_id=uid,
+            allow_wallet=allow_wallet, job_id=local_job_id(uid), reference_id=uid,
             mode=proj.mode, engine=proj.engine, precision=proj.precision,
         )
     except BaseException:
@@ -1013,7 +1034,7 @@ async def analyze_video(
         staging.install(root / "video_outputs" / uid / "proxy")
         await push_project_files(uid)  # proxy MP4s + manifest only
 
-        job_id = f"vlocal_{uid[:8]}"
+        job_id = local_job_id(uid)
         await _queue_job_row(
             session, auth, job_id,
             {
@@ -1060,6 +1081,7 @@ async def plan_dub(
     # at once would each write a ticket over the other's. (The lock ends at
     # the commit below, before the model call — a row lock is not the place
     # to hold a 30-second wait.)
+    await ratelimit.enforce([(ratelimit.PLAN_DUB_ACCOUNT, str(auth.user_id))])
     proj = await _get_local_project(session, uid, auth.user_id, for_update=True)
     if not proj.edit_script_path:
         raise HTTPException(400, "ยังไม่มี edit script — ต้อง analyze ก่อน")
@@ -1094,6 +1116,20 @@ async def plan_dub(
         allow_wallet=body.allow_wallet, job_id=None, reference_id=uid,
         mode=proj.mode, engine=proj.engine, precision=proj.precision,
     )
+    # The plan's concurrency slot, exactly as a worker task takes it: parallel
+    # calls would otherwise each spend against the same quota snapshot.
+    try:
+        slot = await acquire_inline_slot(run_id)
+    except BaseException:
+        await release_run(run_id)
+        raise
+    if slot != "run":
+        await release_run(run_id)
+        raise HTTPException(
+            429,
+            {"code": "busy", "message": "มีงาน AI อื่นของบัญชีนี้กำลังทำอยู่ — รอให้เสร็จแล้วลองใหม่อีกครั้ง"},
+            headers={"Retry-After": "10"},
+        )
     run = await load_run(run_id)
     usage_token = set_usage_ctx(
         UsageCtx(
@@ -1418,6 +1454,12 @@ def _web_file_path(uid: str, rel: str) -> Path:
     # of this system. One that reached the store was invisible to the manifest,
     # the quota and the stale sweep -- storable, hidden, undeletable.
     if any(seg.startswith(".") for seg in segments):
+        raise HTTPException(400, "path ไม่ถูกต้อง")
+    # A backslash is a separator on Windows and to anything that "normalises"
+    # it to '/': `clips/a\..\..\X` has no '..' segment here but became the
+    # object key `clips/a/../../X`, which a worker's pull wrote outside the
+    # project. Control characters (NUL included) have no business in a name.
+    if "\\" in cleaned or any(ord(ch) < 32 or ord(ch) == 127 for ch in cleaned):
         raise HTTPException(400, "path ไม่ถูกต้อง")
     head = cleaned.split("/")[0]
     if head not in _WEB_FILE_ROOTS and cleaned not in _WEB_FILE_NAMES:
@@ -1793,7 +1835,12 @@ async def create_direct_upload(
     replacing = await _stored_size(uid, rel, dest)
     await _storage_check(session, auth.user_id, body.bytes, replacing)
     content_type = body.content_type.strip() if body.content_type else ""
-    url = await output_upload_url(uid, rel, content_type, expires=_UPLOAD_URL_TTL_SEC)
+    # The declared size is signed into the URL: the object written must be
+    # exactly that many bytes, so the per-file cap and the storage check above
+    # hold even when `uploads/complete` is skipped or the URL is re-used.
+    url = await output_upload_url(
+        uid, rel, content_type, expires=_UPLOAD_URL_TTL_SEC, content_length=body.bytes
+    )
     if url is None:
         raise HTTPException(
             409, {"code": "direct_upload_unavailable", "message": "อัปโหลดตรงไม่พร้อมใช้บนเซิร์ฟเวอร์นี้"}
@@ -1950,7 +1997,7 @@ async def transcribe_audio(
         )
         run_id = await start_paid_run(
             auth, request, est,
-            allow_wallet=allow_wallet, job_id=f"vlocal_{uid[:8]}", reference_id=uid,
+            allow_wallet=allow_wallet, job_id=local_job_id(uid), reference_id=uid,
             mode=proj.mode, engine=proj.engine, precision=proj.precision,
         )
     except BaseException:
@@ -1971,7 +2018,7 @@ async def transcribe_audio(
 
         await push_project_files(uid)  # WAVs only
 
-        job_id = f"vlocal_{uid[:8]}"
+        job_id = local_job_id(uid)
         await _queue_job_row(
             session, auth, job_id,
             {"step": "queued", "message": "รับไฟล์เสียงแล้ว รอ worker ถอดเสียง…"},
@@ -2247,7 +2294,7 @@ async def resume_project(
         est = resume_mod.estimate_for(state, engine=proj.engine, precision=proj.precision)
         if est is None:  # pragma: no cover — is_current() already vouched for it
             raise HTTPException(409, "ข้อมูลการทำต่อไม่ครบ — กรุณาเริ่มขั้นตอนนี้ใหม่")
-        job_id = str((state or {}).get("job_id") or f"vlocal_{uid[:8]}")
+        job_id = str((state or {}).get("job_id") or local_job_id(uid))
         run_id = await start_paid_run(
             auth, request, est,
             allow_wallet=allow_wallet, job_id=job_id, reference_id=uid,
@@ -2576,7 +2623,7 @@ async def reedit_dub_scenes(
         )
         run_id = await start_paid_run(
             auth, request, est,
-            allow_wallet=allow_wallet, job_id=f"vlocal_{uid[:8]}", reference_id=uid,
+            allow_wallet=allow_wallet, job_id=local_job_id(uid), reference_id=uid,
             mode=proj.mode, engine=proj.engine, precision=proj.precision,
         )
     except BaseException:
@@ -2597,7 +2644,7 @@ async def reedit_dub_scenes(
         )
         await push_project_files(uid)  # preview MP4 + request JSON only
 
-        job_id = f"vlocal_{uid[:8]}"
+        job_id = local_job_id(uid)
         await _queue_job_row(
             session, auth, job_id,
             {
@@ -2692,7 +2739,7 @@ async def plan_effects(
     # placement runs beside it), so the status guard above cannot tell that a
     # placement is ALREADY running. The job row can — and the row lock makes
     # this read and the enqueue below one decision.
-    if await _job_busy(session, auth, f"vlocal_{uid[:8]}"):
+    if await _job_busy(session, auth, local_job_id(uid)):
         raise HTTPException(400, "กำลังวางเอฟเฟกต์อยู่แล้ว — รอให้รอบนี้เสร็จก่อน")
 
     root = data_root()
@@ -2731,7 +2778,7 @@ async def plan_effects(
                 kind="plan_effects", engine=proj.engine, precision="standard",
                 clip_secs=media_secs, frame_count=image_refs,
             ),
-            allow_wallet=allow_wallet, job_id=f"vlocal_{uid[:8]}", reference_id=uid,
+            allow_wallet=allow_wallet, job_id=local_job_id(uid), reference_id=uid,
             mode=proj.mode, engine=proj.engine, precision=proj.precision,
         )
     except BaseException:
@@ -2807,7 +2854,7 @@ async def plan_effects(
 
         await push_project_files(uid)  # proxy MP4 + prompt + script + optional reference
 
-        job_id = f"vlocal_{uid[:8]}"
+        job_id = local_job_id(uid)
         await _queue_job_row(
             session, auth, job_id,
             {

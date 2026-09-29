@@ -58,6 +58,10 @@ def _no_redis_no_mail(monkeypatch):
     monkeypatch.setenv("SENTRY_DSN", "")
     # A developer's .env may turn the mock top-up on; tests opt in explicitly.
     monkeypatch.setenv("WALLET_MOCK_TOPUP", "false")
+    # A developer's .env may hold REAL bucket credentials (a Railway bucket):
+    # no test writes objects there. Tests that exercise the S3 layer stub its
+    # client or `_s3_enabled` themselves.
+    monkeypatch.setenv("S3_BUCKET", "")
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()

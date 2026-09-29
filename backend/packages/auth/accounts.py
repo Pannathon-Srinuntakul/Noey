@@ -45,6 +45,29 @@ def normalize_email(raw: str) -> str:
     return raw.strip().lower()
 
 
+#: Providers where dots in the local part are ignored: one inbox, many spellings.
+_DOTLESS_DOMAINS = {"gmail.com": "gmail.com", "googlemail.com": "gmail.com"}
+
+
+def canonical_email(raw: str) -> str:
+    """The INBOX an address delivers to, for "one free credit per mailbox".
+
+    ``normalize_email`` is the stored spelling and stays exact; this folds the
+    aliases one person gets for free: ``+tag`` suffixes (every major provider)
+    and, on Gmail, dots in the local part. Never used to sign in or to send
+    mail — only to recognise the same mailbox behind different accounts.
+    """
+    email = normalize_email(raw)
+    local, sep, domain = email.rpartition("@")
+    if not sep or not local:
+        return email
+    local = local.split("+", 1)[0]
+    if domain in _DOTLESS_DOMAINS:
+        domain = _DOTLESS_DOMAINS[domain]
+        local = local.replace(".", "")
+    return f"{local}@{domain}"
+
+
 def password_problem(password: str) -> str | None:
     """Why a password is unacceptable, or None. Length is the whole policy."""
     if len(password) < PASSWORD_MIN_CHARS:

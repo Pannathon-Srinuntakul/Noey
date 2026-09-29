@@ -1,7 +1,11 @@
-import { ipcMain } from 'electron'
-import { readFile } from 'fs/promises'
+import { app, ipcMain } from 'electron'
+import { readFile, realpath } from 'fs/promises'
 import { basename } from 'path'
 import { appendLog } from './logger'
+import { DEFAULT_BACKEND_URL, vetApiFetchJob } from './ipcGuards'
+import { fileGrants } from './fileGrants'
+import { projectsRoot } from './projects'
+import { lanInboxDir } from './lanReceive'
 
 /** Renderer → main HTTP bridge. Bypasses browser CORS (Electron file:// / dev origin). */
 export interface ApiFetchJob {
@@ -100,6 +104,29 @@ async function runFetch(job: ApiFetchJob): Promise<ApiFetchResult> {
   }
 }
 
+/** The API this build talks to — the same value the renderer bakes in. */
+function backendUrl(): string {
+  return import.meta.env.VITE_BACKEND_URL ?? DEFAULT_BACKEND_URL
+}
+
 export function registerApiProxyIpc(): void {
-  ipcMain.handle('api:fetch', (_evt, job: ApiFetchJob) => runFetch(job))
+  // Vetted before anything is read or sent: this runs in main, outside the
+  // renderer's CSP, with full disk access — without the check it would fetch
+  // any URL and upload any file the renderer names.
+  ipcMain.handle('api:fetch', async (_evt, job: ApiFetchJob) => {
+    try {
+      await vetApiFetchJob(job, {
+        backendUrl: backendUrl(),
+        allowLocalDev: !app.isPackaged,
+        roots: [projectsRoot(), lanInboxDir()],
+        grants: fileGrants,
+        realpath: (p) => realpath(p),
+        caseInsensitive: process.platform === 'win32'
+      })
+    } catch (err) {
+      void appendLog('api', `fetch REFUSED ${String((err as Error)?.message ?? err)}`)
+      throw err
+    }
+    return runFetch(job)
+  })
 }

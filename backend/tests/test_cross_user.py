@@ -279,3 +279,34 @@ async def test_a_cached_job_that_names_an_owner_is_not_served_to_another(monkeyp
     finally:
         app.dependency_overrides.clear()
     assert r.status_code == 404
+
+
+async def test_a_job_id_never_re_stamps_another_accounts_row():
+    """Job ids were ``vlocal_<uid[:8]>`` (32 random bits), and the upsert
+    re-stamped whatever row had that id onto the caller: a chance collision
+    handed one user's job row (and its result) to another."""
+    import uuid
+    from types import SimpleNamespace
+
+    from fastapi import HTTPException
+
+    assert videos_local.local_job_id("0123456789abcdef") == "vlocal_0123456789abcdef"
+    a = await make_user(email("jobown"))
+    b = await make_user(email("jobown"))
+    [(tenant_id,)] = await db("SELECT id FROM core.tenants WHERE slug = 'default'")
+    victim = SimpleNamespace(user_id=a, tenant_id=tenant_id, tenant_slug="default")
+    other = SimpleNamespace(user_id=b, tenant_id=tenant_id, tenant_slug="default")
+    job_id = "vlocal_collide-test-" + uuid.uuid4().hex[:8]
+    try:
+        async with get_sessionmaker()() as s:
+            await videos_local._queue_job_row(s, victim, job_id, {"step": "queued"})
+            await s.commit()
+        async with get_sessionmaker()() as s:
+            with pytest.raises(HTTPException) as err:
+                await videos_local._queue_job_row(s, other, job_id, {"step": "queued"})
+            await s.rollback()
+        assert err.value.status_code == 409
+        rows = await db("SELECT user_id FROM core.jobs WHERE id = :j", j=job_id)
+        assert rows == [(a,)]
+    finally:
+        await db("DELETE FROM core.jobs WHERE id = :j", j=job_id)

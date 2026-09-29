@@ -101,13 +101,24 @@ GOOGLE_START_IP = Limit("google_start:ip", 60, _15_MIN)
 GOOGLE_CALLBACK_IP = Limit("google_callback:ip", 60, _15_MIN)
 #: Account deletion re-checks the password: bounded like change-password.
 DELETE_ACCOUNT_ACCOUNT = Limit("delete_account:account", 10, _15_MIN)
+#: Phone → web transfer (services/api/routers/transfer.py). A ticket lives 30
+#: minutes, so 6 an hour caps an account at a handful of open tickets; the
+#: phone side is unauthenticated, so its uploads are bounded per IP too.
+TRANSFER_TICKET_ACCOUNT = Limit("transfer_ticket:account", 6, _HOUR)
+TRANSFER_UPLOAD_IP = Limit("transfer_upload:ip", 60, _15_MIN)
+#: The synchronous /plan-dub calls the model inline (paid work). The
+#: concurrency slot is the main guard; this stops a runaway loop, and like
+#: every rule but the wizard's estimate it refuses rather than guesses when
+#: the store is down.
+PLAN_DUB_ACCOUNT = Limit("plan_dub:account", 30, _15_MIN)
 
 ALL_LIMITS: tuple[Limit, ...] = (
     LOGIN_EMAIL_IP, LOGIN_EMAIL, LOGIN_IP, REGISTER_EMAIL, REGISTER_IP, REGISTER_IP_DAY, FORGOT_EMAIL, FORGOT_IP,
     RESEND_ACCOUNT, RESEND_IP, CHANGE_EMAIL_ACCOUNT, CHANGE_EMAIL_IP, CONTACT_EMAIL, CONTACT_IP,
     CHANGE_PASSWORD_ACCOUNT, USAGE_ESTIMATE_ACCOUNT, ADMIN_LOGIN_EMAIL, ADMIN_LOGIN_IP, ADMIN_OTP_CHALLENGE, ADMIN_OTP_IP,
     ADMIN_RESEND_CHALLENGE, ADMIN_RESEND_IP, ADMIN_REFRESH_IP, GOOGLE_START_IP, GOOGLE_CALLBACK_IP,
-    DELETE_ACCOUNT_ACCOUNT,
+    DELETE_ACCOUNT_ACCOUNT, TRANSFER_TICKET_ACCOUNT, TRANSFER_UPLOAD_IP,
+    PLAN_DUB_ACCOUNT,
 )
 
 

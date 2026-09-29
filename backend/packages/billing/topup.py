@@ -116,8 +116,16 @@ def is_topup_session(obj: Any) -> bool:
     return field(obj, "mode") == "payment" and metadata_value(obj, METADATA_KEY) is not None
 
 
-async def credit_from_session(session: AsyncSession, obj: Any, *, now: datetime | None = None) -> str:
-    """Credit a paid top-up Checkout Session once. Returns what happened."""
+async def credit_from_session(
+    session: AsyncSession, obj: Any, *, now: datetime | None = None, client: Any = None
+) -> str:
+    """Credit a paid top-up Checkout Session once. Returns what happened.
+
+    With a Stripe ``client``, the payment's charge is read back right after
+    the lot is created: a refund or dispute processed BEFORE this credit (the
+    credit's first delivery failed and Stripe retried it later) found no lot,
+    was recorded as ``not_topup``, and is never delivered again — so it is
+    applied here instead of leaving a full, unreversed lot."""
     if field(obj, "payment_status") != "paid":
         return "awaiting_payment"
     raw_user = metadata_value(obj, "user_id") or field(obj, "client_reference_id")
@@ -133,12 +141,65 @@ async def credit_from_session(session: AsyncSession, obj: Any, *, now: datetime 
         return "no_amount"
     types = field(obj, "payment_method_types") or []
     method = metadata_value(obj, "method") or (types[0] if isinstance(types, list) and types else None)
+    payment_intent = id_of(field(obj, "payment_intent"))
     lot = await wallet.credit(
         session, int(raw_user), satang, source="stripe", now=now,
         stripe_session_id=str(field(obj, "id")), payment_method=str(method)[:16] if method else None,
-        stripe_payment_intent=id_of(field(obj, "payment_intent")),
+        stripe_payment_intent=payment_intent,
     )
-    return "credited" if lot is not None else "duplicate"
+    if lot is None:
+        return "duplicate"
+    if client is not None and payment_intent:
+        await _apply_earlier_reversals(session, lot, payment_intent, client)
+    return "credited"
+
+
+async def _apply_earlier_reversals(session: AsyncSession, lot: Any, payment_intent: str, client: Any) -> None:
+    """Reverse what the payment's charge already reports refunded/disputed.
+
+    Notes start with the same event types ``reverse_from_event`` writes, so a
+    refund/dispute event that arrives AFTER this (the usual order) subtracts
+    what was taken here instead of taking it twice."""
+    intent = await client.v1.payment_intents.retrieve_async(payment_intent, {"expand": ["latest_charge"]})
+    charge = field(intent, "latest_charge")
+    if charge is None or isinstance(charge, str):
+        return
+    refunded = int(field(charge, "amount_refunded") or 0)
+    charge_id = id_of(charge) or ""
+    if refunded > 0:
+        await _reverse_and_cover(session, lot, "charge.refunded", f"at-credit {charge_id}", refunded)
+    if field(charge, "disputed"):
+        await _reverse_and_cover(session, lot, "charge.dispute.created", f"at-credit {charge_id}", int(lot.amount_satang))
+
+
+async def _reverse_and_cover(
+    session: AsyncSession, lot: Any, event_type: str, event_id: str, owed: int
+) -> tuple[int, int, int, int]:
+    """Reverse ``owed`` from the lot, then cover any shortfall from the user's
+    other lots and carry the rest as debt. Audits a shortfall.
+    Returns ``(taken, shortfall, clawed_back, debt)``."""
+    taken, shortfall = await wallet.reverse_lot(
+        session, lot, owed, note=f"{event_type} {event_id}"[:200], category=event_type,
+    )
+    clawed = recorded_debt = 0
+    if shortfall > 0:
+        clawed, recorded_debt = await wallet.clawback(
+            session, int(lot.user_id), shortfall, note=f"lot {int(lot.id)} {event_type} {event_id}",
+        )
+        from packages.admin import auth as admin_auth
+
+        log.error(
+            "topup_reversal_shortfall", user_id=int(lot.user_id), lot_id=int(lot.id),
+            shortfall_satang=shortfall, clawed_back_satang=clawed, debt_satang=recorded_debt,
+            event_type=event_type,
+        )
+        await admin_auth.audit(
+            session, "topup_reversal_shortfall", target_user_id=int(lot.user_id),
+            detail={"lot_id": int(lot.id), "event": event_type, "event_id": event_id,
+                    "shortfall_satang": shortfall, "taken_satang": taken,
+                    "clawed_back_satang": clawed, "debt_satang": recorded_debt},
+        )
+    return taken, shortfall, clawed, recorded_debt
 
 
 # ── money coming back: refunds and disputes ─────────────────────────────────
@@ -194,23 +255,9 @@ async def reverse_from_event(
         owed = int(field(obj, "amount") or 0) or int(lot.amount_satang)
     else:
         owed = int(field(obj, "amount_refunded") or 0)
-    taken, shortfall = await wallet.reverse_lot(
-        session, lot, owed, note=f"{event_type} {event_id}"[:200],
-    )
+    taken, shortfall, _clawed, _debt = await _reverse_and_cover(session, lot, event_type, event_id, owed)
     log.info(
         "topup_reversed", user_id=int(lot.user_id), lot_id=int(lot.id), event_type=event_type,
         taken_satang=taken, shortfall_satang=shortfall,
     )
-    if shortfall > 0:
-        from packages.admin import auth as admin_auth
-
-        log.error(
-            "topup_reversal_shortfall", user_id=int(lot.user_id), lot_id=int(lot.id),
-            shortfall_satang=shortfall, event_type=event_type,
-        )
-        await admin_auth.audit(
-            session, "topup_reversal_shortfall", target_user_id=int(lot.user_id),
-            detail={"lot_id": int(lot.id), "event": event_type, "event_id": event_id,
-                    "shortfall_satang": shortfall, "taken_satang": taken},
-        )
     return "reversed" if shortfall == 0 else "reversed_short"

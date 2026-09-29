@@ -1,5 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { newCspNonce, nonceContentSecurityPolicy, usesNonceCsp } from "@/lib/csp";
 import { isPaidTier } from "@/lib/plans";
+import { sentryDsn, sentryIngestOrigin } from "@/lib/sentry-config";
 import {
   ACCESS_COOKIE,
   DISPLAY_NAME_COOKIE,
@@ -25,6 +27,9 @@ import {
  *    response and are made visible to this same request's render.
  *  - /login, /signup: a signed-in visitor goes to /account (or `next`, or to
  *    the billing page with the plan they clicked).
+ *  - /account/*, /checkout/* also get a per-request nonce CSP (production
+ *    only, like the static one in next.config.ts): Next.js reads the nonce
+ *    from the forwarded request header and stamps its scripts with it.
  *
  * These are optimistic checks (cookie presence, unverified `exp`); every
  * backend call is still authorised by the backend itself.
@@ -33,6 +38,8 @@ import {
 const API_URL = (process.env.API_URL || "http://localhost:8000").replace(/\/+$/, "");
 const SECURE = process.env.NODE_ENV === "production";
 const PATHNAME_HEADER = "x-noey-pathname";
+const CSP_ENABLED = process.env.NODE_ENV === "production";
+const SENTRY_ORIGIN = sentryIngestOrigin(sentryDsn());
 
 type Refreshed = TokenPair | "invalid" | "unavailable";
 
@@ -84,14 +91,22 @@ export async function proxy(request: NextRequest) {
 
   const forwarded = new Headers(request.headers);
   forwarded.set(PATHNAME_HEADER, returnTo);
+  const policy = CSP_ENABLED && usesNonceCsp(pathname) ? nonceContentSecurityPolicy(newCspNonce(), SENTRY_ORIGIN) : null;
+  // Next.js parses the nonce out of the REQUEST header while rendering.
+  if (policy) forwarded.set("Content-Security-Policy", policy);
+  const render = (): NextResponse => {
+    const response = NextResponse.next({ request: { headers: forwarded } });
+    if (policy) response.headers.set("Content-Security-Policy", policy);
+    return response;
+  };
 
-  if (isTokenFresh(access)) return NextResponse.next({ request: { headers: forwarded } });
+  if (isTokenFresh(access)) return render();
   if (!refresh) return redirectToLogin(request, returnTo, true);
 
   const refreshed = await refreshTokens(refresh, request.headers.get("x-forwarded-for") ?? request.headers.get("x-real-ip"));
   if (refreshed === "invalid") return redirectToLogin(request, returnTo, true);
   // Backend unreachable: keep the cookies and let the page show a calm error.
-  if (refreshed === "unavailable") return NextResponse.next({ request: { headers: forwarded } });
+  if (refreshed === "unavailable") return render();
 
   const specs = sessionCookieSpecs(refreshed, {
     secure: SECURE,
@@ -111,7 +126,7 @@ export async function proxy(request: NextRequest) {
     [...jar].map(([name, value]) => `${name}=${encodeURIComponent(value)}`).join("; "),
   );
 
-  const response = NextResponse.next({ request: { headers: forwarded } });
+  const response = render();
   for (const spec of specs) response.cookies.set(spec.name, spec.value, spec.options);
   return response;
 }

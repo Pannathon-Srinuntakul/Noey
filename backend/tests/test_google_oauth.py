@@ -325,7 +325,7 @@ async def test_no_auto_link_onto_an_unverified_account_the_takeover_path(google)
 async def test_explicit_link_from_settings_then_google_sign_in_works(google):
     email = _email("linker")
     async with _client() as c:
-        tokens = await _register(c, email, verified=False)
+        tokens = await _register(c, email, verified=True)
         auth = _bearer(tokens["access_token"])
         linked = await _google(c, google, "link", auth, sub="sub-linked", email=_gmail())
         assert linked.status_code == 200, linked.text
@@ -333,6 +333,58 @@ async def test_explicit_link_from_settings_then_google_sign_in_works(google):
         me = (await c.get("/auth/me", headers=_bearer(signin.json()["access_token"]))).json()
     assert linked.json()["intent"] == "link"
     assert signin.status_code == 200 and me["email"] == email
+
+
+async def _mint(email: str, purpose: str) -> str:
+    from packages.auth.email_tokens import issue_token
+    from packages.db.session import get_sessionmaker
+
+    (uid,) = (await _db("SELECT id FROM core.users WHERE email = :e", e=email))[0]
+    async with get_sessionmaker()() as s:
+        raw = await issue_token(s, int(uid), purpose)
+        await s.commit()
+    return raw
+
+
+async def test_an_unverified_account_cannot_link_google(google):
+    # Pre-account takeover: anyone can register an address they do not own.
+    email = _email("squatter")
+    async with _client() as c:
+        auth = _bearer((await _register(c, email, verified=False))["access_token"])
+        start = await c.post("/auth/google/start",
+                             json={"redirect_uri": REDIRECT, "intent": "link"}, headers=auth)
+    assert start.status_code == 403 and start.json()["detail"]["code"] == "email_not_verified"
+
+
+async def test_a_squatters_google_link_does_not_survive_the_owners_reset(google):
+    """Squatter registers the victim's address and links their own Google
+    (legacy row, or a flow started before this fix); the victim resets the
+    password from their inbox; the squatter's Google must no longer sign in."""
+    email = _email("victim")
+    async with _client() as c:
+        await _register(c, email, verified=False)
+        (uid,) = (await _db("SELECT id FROM core.users WHERE email = :e", e=email))[0]
+        await _db("INSERT INTO core.oauth_identities (user_id, provider, subject, email) "
+                  "VALUES (:u, 'google', 'sub-squatter', 'attacker@gmail.example.com')", u=uid)
+        token = await _mint(email, "reset_password")
+        reset = await c.post("/auth/reset-password", json={"token": token, "new_password": "brand new secret"})
+        again = await _google(c, google, sub="sub-squatter", email=_gmail())
+    assert reset.status_code == 200, reset.text
+    assert again.status_code != 200 or again.json().get("created") is True
+    assert await _db("SELECT 1 FROM core.oauth_identities WHERE user_id = :u", u=uid) == []
+
+
+async def test_first_email_verification_drops_links_made_before_it(google):
+    email = _email("victim2")
+    async with _client() as c:
+        await _register(c, email, verified=False)
+        (uid,) = (await _db("SELECT id FROM core.users WHERE email = :e", e=email))[0]
+        await _db("INSERT INTO core.oauth_identities (user_id, provider, subject, email) "
+                  "VALUES (:u, 'google', 'sub-squatter2', 'attacker2@gmail.example.com')", u=uid)
+        token = await _mint(email, "verify_email")
+        r = await c.post("/auth/verify-email", json={"token": token})
+    assert r.status_code == 200, r.text
+    assert await _db("SELECT 1 FROM core.oauth_identities WHERE user_id = :u", u=uid) == []
 
 
 async def test_link_requires_the_same_signed_in_user(google):

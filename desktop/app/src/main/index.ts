@@ -1,12 +1,13 @@
 import { app, screen, shell, BrowserWindow } from 'electron'
 import { join } from 'path'
+import { pathToFileURL } from 'url'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { registerSidecarIpc } from './sidecar'
 import { registerAuthIpc } from './authStore'
 import { registerProjectsIpc } from './projects'
 import { registerMediaProtocol, registerMediaScheme } from './media'
-import { registerLogIpc } from './logger'
+import { appendLog, registerLogIpc } from './logger'
 import { registerApiProxyIpc } from './apiProxy'
 import { registerLanIpc, stopLanReceive } from './lanReceive'
 import { registerRemoteIpc, restoreRemoteMode, stopRemote } from './remoteAccess'
@@ -15,6 +16,8 @@ import { loadPrefs, registerPrefsIpc } from './prefs'
 import { registerStorageIpc } from './storage'
 import { attachUnsavedGuard, registerUnsavedIpc } from './unsavedGuard'
 import { registerTasteLogIpc } from './tasteLog'
+import { isAllowedExternalUrl, isAppNavigation } from './ipcGuards'
+import { loadFileGrants, registerFileGrantsIpc } from './fileGrants'
 
 // Privileged scheme registration must happen before app is ready.
 registerMediaScheme()
@@ -64,7 +67,11 @@ function createWindow(): void {
         : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
-      sandbox: false
+      // The preload needs nothing but contextBridge/ipcRenderer/webUtils, so
+      // it runs sandboxed: a preload bug can no longer reach Node.
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false
     }
   })
 
@@ -75,17 +82,36 @@ function createWindow(): void {
   // Closing the app is the one exit the renderer cannot intercept itself.
   attachUnsavedGuard(mainWindow)
 
+  // Only the payment pages the backend returns go to the OS (https + allow-
+  // listed host). Anything else — file:, UNC, ms-msdt:, search-ms: — is
+  // dropped: openExternal hands the URL to the OS shell as-is.
   mainWindow.webContents.setWindowOpenHandler((details) => {
-    shell.openExternal(details.url)
+    if (isAllowedExternalUrl(details.url)) void shell.openExternal(details.url)
+    else void appendLog('main', `window.open refused: ${details.url.slice(0, 200)}`)
     return { action: 'deny' }
   })
 
   // HMR for renderer base on electron-vite cli.
   // Load the remote URL for development or the local html file for production.
-  if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
-    mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
+  const devUrl = is.dev ? process.env['ELECTRON_RENDERER_URL'] : undefined
+  const indexHtml = join(__dirname, '../renderer/index.html')
+  const appUrl = devUrl ?? pathToFileURL(indexHtml).href
+
+  // The window never leaves the app's own page. Without this a file dropped
+  // outside a drop zone (or any link) navigated the main frame to it, and the
+  // preload — window.noey with every privileged IPC — attached to that page.
+  const guardNavigation = (event: Electron.Event, url: string): void => {
+    if (isAppNavigation(url, appUrl)) return
+    event.preventDefault()
+    void appendLog('main', `navigation refused: ${url.slice(0, 200)}`)
+  }
+  mainWindow.webContents.on('will-navigate', guardNavigation)
+  mainWindow.webContents.on('will-redirect', guardNavigation)
+
+  if (devUrl) {
+    mainWindow.loadURL(devUrl)
   } else {
-    mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
+    mainWindow.loadFile(indexHtml)
   }
 }
 
@@ -126,6 +152,7 @@ app.whenReady().then(async () => {
   // location synchronously from the prefs cache, so the cache has to be warm
   // or the first requests would resolve against the default folder.
   await loadPrefs()
+  await loadFileGrants()
 
   // Default open or close DevTools by F12 in development
   // and ignore CommandOrControl + R in production.
@@ -137,6 +164,7 @@ app.whenReady().then(async () => {
   registerMediaProtocol()
   registerLogIpc()
   registerApiProxyIpc()
+  registerFileGrantsIpc()
   registerSidecarIpc()
   registerAuthIpc()
   registerProjectsIpc()

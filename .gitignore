@@ -1,7 +1,10 @@
 # ── Secrets & env ─────────────────────────────────────────────────────────────
+# `.env.*` covers every variant (.env.production, .env.staging, …): only the
+# example files are meant to be tracked. backend/.env.production predates this
+# pattern and is still tracked (ignoring does not untrack): the owner reviews
+# it, then `git rm --cached` it and rotates anything real it ever held.
 .env
-.env.local
-.env.*.local
+.env.*
 !.env.example
 
 # ── Python (backend/) ─────────────────────────────────────────────────────────

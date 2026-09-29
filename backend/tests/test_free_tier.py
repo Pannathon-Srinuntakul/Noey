@@ -100,3 +100,25 @@ async def test_signup_is_limited_per_ip_per_day_and_stores_only_hashes(monkeypat
     assert len(rows) == 5
     assert {r[0] for r in rows} == {free_tier.identity_hash("127.0.0.1")}
     assert {r[1] for r in rows} == {free_tier.identity_hash("device-123")}
+
+
+def test_canonical_email_folds_aliases_of_one_inbox():
+    from packages.auth.accounts import canonical_email
+
+    assert canonical_email("J.Doe+promo@GMail.com") == "jdoe@gmail.com"
+    assert canonical_email("jdoe@googlemail.com") == "jdoe@gmail.com"
+    assert canonical_email("a.b+x@example.co.th") == "a.b@example.co.th"  # dots only fold on Gmail
+    assert canonical_email("not-an-email") == "not-an-email"
+
+
+async def test_one_free_credit_per_mailbox_across_aliases_and_re_registration():
+    """+tag / dotted-Gmail aliases, and delete-then-re-register (a new user id
+    on the same address), each used to start a fresh lifetime credit."""
+    await free_tier.check_start(user_id=501, ip=None, device=None, email="victim.x+1@gmail.com")
+    await free_tier.check_start(user_id=501, ip=None, device=None, email="victimx@gmail.com")  # same account
+    for other_id, alias in ((502, "v.i.c.t.i.m.x@gmail.com"), (503, "victimx+2@googlemail.com"),
+                            (504, "victimx@gmail.com")):
+        with pytest.raises(free_tier.FreeTierLimited) as exc:
+            await free_tier.check_start(user_id=other_id, ip=None, device=None, email=alias)
+        assert exc.value.reason == "mailbox_accounts"
+    await free_tier.check_start(user_id=505, ip=None, device=None, email="someone.else@gmail.com")

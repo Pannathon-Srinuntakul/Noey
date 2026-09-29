@@ -26,6 +26,7 @@ from packages.db.models.video_project import (
 from packages.db.tenancy import SHARED_DATA_SCHEMA
 from packages.video.storage import data_root
 from services.api.routers import videos_local
+from services.api.routers.videos_local import local_job_id
 from services.worker import tasks
 from tests.admin_helpers import (  # noqa: F401
     _admin_env,
@@ -240,7 +241,7 @@ async def test_a_paused_project_says_where_it_stopped_and_what_finishing_costs(c
         uid = await _project(c, token)
         try:
             await _analyze(c, token, uid)
-            await _pause(uid, f"vlocal_{uid[:8]}")
+            await _pause(uid, local_job_id(uid))
             r = await c.get(f"/videos/{uid}/resume", headers=bearer(token))
         finally:
             _cleanup(uid)
@@ -267,7 +268,7 @@ async def test_resuming_re_runs_the_paused_stage_and_nothing_before_it(captured)
         try:
             await _analyze(c, token, uid)
             started = list(captured)
-            await _pause(uid, f"vlocal_{uid[:8]}")
+            await _pause(uid, local_job_id(uid))
             r = await c.post(f"/videos/{uid}/resume", json={}, headers=bearer(token))
             row = await _row(uid)
         finally:
@@ -275,7 +276,7 @@ async def test_resuming_re_runs_the_paused_stage_and_nothing_before_it(captured)
     assert r.status_code == 200, r.text
     view = r.json()
     assert view["action"] == "server_job" and view["resumed"] is True
-    assert view["job_id"] == f"vlocal_{uid[:8]}" and len(view["run_id"]) == 32
+    assert view["job_id"] == local_job_id(uid) and len(view["run_id"]) == 32
     # Exactly the job the pause interrupted, with the kwargs it was given.
     assert len(captured) == len(started) + 1
     again = captured[-1]
@@ -296,7 +297,7 @@ async def test_resuming_twice_neither_duplicates_the_work_nor_charges_twice(capt
         uid = await _project(c, token)
         try:
             await _analyze(c, token, uid)
-            await _pause(uid, f"vlocal_{uid[:8]}")
+            await _pause(uid, local_job_id(uid))
             first = await c.post(f"/videos/{uid}/resume", json={}, headers=bearer(token))
             enqueued = len(captured)
             second = await c.post(f"/videos/{uid}/resume", json={}, headers=bearer(token))
@@ -325,7 +326,7 @@ async def test_two_resumes_at_once_still_start_the_work_once(captured):
         try:
             await _analyze(c, token, uid)
             enqueued = len(captured)
-            await _pause(uid, f"vlocal_{uid[:8]}")
+            await _pause(uid, local_job_id(uid))
             a, b = await asyncio.gather(
                 c.post(f"/videos/{uid}/resume", json={}, headers=bearer(token)),
                 c.post(f"/videos/{uid}/resume", json={}, headers=bearer(token)),
@@ -348,12 +349,12 @@ async def test_a_resume_that_still_does_not_fit_pauses_again_instead_of_erroring
         uid = await _project(c, token, seconds=10)
         try:
             await _analyze(c, token, uid)
-            await _pause(uid, f"vlocal_{uid[:8]}")
+            await _pause(uid, local_job_id(uid))
             await _fill_the_window(user, "free")
             view = await c.get(f"/videos/{uid}/resume", headers=bearer(token))
             r = await c.post(f"/videos/{uid}/resume", json={}, headers=bearer(token))
             # …and the worker runs straight into the same empty window.
-            await _pause(uid, f"vlocal_{uid[:8]}")
+            await _pause(uid, local_job_id(uid))
             row = await _row(uid)
         finally:
             _cleanup(uid)
@@ -424,7 +425,7 @@ async def test_a_paused_re_cut_resumes_as_itself_without_moving_the_boundary(cap
                 s=json.dumps(resume_mod.mark_paused(
                     resume_mod.ticket(
                         stage="reedit", kind="reedit", media_sec=24.0,
-                        task="reedit_dub_scenes_local", job_id=f"vlocal_{uid[:8]}",
+                        task="reedit_dub_scenes_local", job_id=local_job_id(uid),
                         kwargs={"project_uid": uid, "tenant_slug": "default", "style_uid": ""},
                     ),
                     window="weekly", resets_at=RESETS,
@@ -468,7 +469,7 @@ async def test_reporting_a_finished_stage_retires_the_ticket(captured):
         uid = await _project(c, token)
         try:
             await _analyze(c, token, uid)
-            await _pause(uid, f"vlocal_{uid[:8]}")
+            await _pause(uid, local_job_id(uid))
             r = await c.patch(
                 f"/videos/{uid}/local-status",
                 json={"status": "waiting_vo", "stage": "analyze"},

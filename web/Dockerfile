@@ -11,7 +11,11 @@
 #      changing which API this build talks to means rebuilding the image, not
 #      restarting the container.
 
-FROM node:24-alpine AS build
+# Base images are pinned to a manifest-list digest (resolves on amd64 and arm64),
+# not a moving tag: a push to main is a production deploy, so the base must not
+# change under a commit that touched nothing. Bump deliberately:
+#   docker buildx imagetools inspect <image:tag>   (digests fetched 2026-09-30)
+FROM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS build
 WORKDIR /app
 
 ARG VITE_BACKEND_URL=https://noey-api-production.up.railway.app
@@ -33,7 +37,7 @@ RUN npm ci
 COPY . .
 RUN npm run build
 
-FROM nginx:1.27-alpine
+FROM nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
 COPY --from=build /app/dist /usr/share/nginx/html
 
 # Into templates/, not conf.d/: the image's entrypoint runs envsubst over this

@@ -5,6 +5,7 @@ import contextlib
 import pathlib
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from typing import Any
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -40,12 +41,27 @@ from services.api.routers import (
 log = get_logger(__name__)
 
 
+def _alembic_config() -> Any:
+    """The Config for running Alembic INSIDE this process.
+
+    ``configure_logger=False`` tells env.py not to apply alembic.ini's logging:
+    its ``fileConfig`` (default ``disable_existing_loggers=True``) disabled
+    uvicorn's error and access loggers for the rest of the process's life —
+    access logs and uvicorn's own "Exception in ASGI application" tracebacks
+    were silently gone after every startup."""
+    from alembic.config import Config
+
+    ini = pathlib.Path(__file__).parent.parent.parent / "alembic.ini"
+    cfg = Config(str(ini))
+    cfg.attributes["configure_logger"] = False
+    return cfg
+
+
 def _alembic_upgrade() -> None:
     from alembic import command
-    from alembic.config import Config
-    ini = pathlib.Path(__file__).parent.parent.parent / "alembic.ini"
+
     log.info("alembic_upgrade_start")
-    command.upgrade(Config(str(ini)), "head")
+    command.upgrade(_alembic_config(), "head")
     log.info("alembic_upgrade_done")
 
 

@@ -87,25 +87,34 @@ async def start_paid_run(
         )
     if free:
         try:
-            await free_tier.check_start(user_id=auth.user_id, ip=ip, device=device)
+            await free_tier.check_start(
+                user_id=auth.user_id, ip=ip, device=device, email=str(user.email or "") or None
+            )
+            # Counted atomically with the cap (INCR, compare, give back): a
+            # read-then-count let a burst of parallel starts all see the same
+            # count and all get through.
+            await free_tier.claim_run(user_id=auth.user_id, ip=ip, device=device)
         except free_tier.FreeTierLimited as exc:
             raise HTTPException(
                 status_code=429, detail={"code": "free_tier_limited", "message": str(exc)}
             ) from None
 
-    async with get_sessionmaker()() as session:
-        await session.execute(text("SET search_path TO core, public"))
-        run = await runs.open_run(
-            session, user=user, tenant_id=auth.tenant_id, estimate=estimate,
-            allow_wallet=allow_wallet, job_id=job_id, reference_id=reference_id,
-            mode=mode, engine=engine, precision=precision,
-        )
-        run_id = str(run.id)
-        await session.commit()
-    if free:
-        # Counted only now: a start refused above must not use up the daily
-        # free runs every other account behind the same IP shares.
-        await free_tier.count_run(ip=ip, device=device)
+    try:
+        async with get_sessionmaker()() as session:
+            await session.execute(text("SET search_path TO core, public"))
+            run = await runs.open_run(
+                session, user=user, tenant_id=auth.tenant_id, estimate=estimate,
+                allow_wallet=allow_wallet, job_id=job_id, reference_id=reference_id,
+                mode=mode, engine=engine, precision=precision,
+            )
+            run_id = str(run.id)
+            await session.commit()
+    except BaseException:
+        if free:
+            # The run never opened: a start refused here must not use up the
+            # daily free runs every other account behind the same IP shares.
+            await free_tier.unclaim_run(ip=ip, device=device)
+        raise
     return run_id
 
 
@@ -118,6 +127,18 @@ async def release_run(run_id: str) -> None:
             await session.commit()
     except Exception as exc:  # noqa: BLE001 — the sweeper settles it within minutes anyway
         log.error("run_release_failed", run_id=run_id, error=str(exc)[:200])
+
+
+async def acquire_inline_slot(run_id: str) -> runs.SlotResult:
+    """Take the plan's concurrency slot for a run the API works on itself
+    (the synchronous ``/plan-dub``). The worker's ``billed_task`` does this for
+    every queued task; without it, N parallel calls each ran against the same
+    quota snapshot and together overspent the window."""
+    async with get_sessionmaker()() as session:
+        await session.execute(text("SET search_path TO core, public"))
+        slot = await runs.acquire_slot(session, run_id)
+        await session.commit()
+    return slot
 
 
 async def settle_run(run_id: str, outcome: str) -> None:

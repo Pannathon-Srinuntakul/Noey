@@ -72,6 +72,36 @@ def _bucket() -> str:
 
 # ── sync helpers (run in executor) ───────────────────────────────────────────
 
+def safe_relpath(rel: str) -> str:
+    """A project-relative object path, or ValueError.
+
+    Keys are joined onto local directories on download, so a key segment that
+    is empty, '.', '..', or carries a backslash or a control character is
+    refused outright. Backslashes are NOT translated to '/': that translation is
+    what once turned a stored file named ``a\\..\\..\\X`` into the key
+    ``a/../../X``, which a worker then wrote outside the project folder.
+    """
+    rel = rel.lstrip("/")
+    if not rel or "\\" in rel or any(ord(ch) < 32 or ord(ch) == 127 for ch in rel):
+        raise ValueError(f"unsafe object path: {rel!r}")
+    if any(seg in ("", ".", "..") for seg in rel.split("/")):
+        raise ValueError(f"unsafe object path: {rel!r}")
+    return rel
+
+
+def _contained(local_dir: pathlib.Path, rel: str) -> pathlib.Path | None:
+    """`local_dir / rel` when rel is safe and resolves inside local_dir."""
+    try:
+        rel = safe_relpath(rel)
+    except ValueError:
+        return None
+    base = local_dir.resolve()
+    dest = (base / rel).resolve()
+    if base not in dest.parents:
+        return None
+    return dest
+
+
 def _sync_upload_dir(local_dir: pathlib.Path, prefix: str) -> int:
     """Upload all files in local_dir to S3 prefix. Returns file count."""
     client = _client()
@@ -84,7 +114,12 @@ def _sync_upload_dir(local_dir: pathlib.Path, prefix: str) -> int:
         # torn file that is then counted, hidden and undeletable in the bucket.
         if f.name.startswith("."):
             continue
-        key = prefix + str(f.relative_to(local_dir)).replace("\\", "/")
+        rel = f.relative_to(local_dir).as_posix()
+        try:
+            key = prefix + safe_relpath(rel)
+        except ValueError:
+            log.warning("s3_upload_skipped_unsafe_name", path=str(f))
+            continue
         client.upload_file(str(f), bucket, key, Config=_transfer_config())
         count += 1
     return count
@@ -102,7 +137,13 @@ def _sync_download_prefix(prefix: str, local_dir: pathlib.Path) -> int:
             rel = key[len(prefix):]
             if not rel:
                 continue
-            dest = local_dir / rel
+            contained = _contained(local_dir, rel)
+            if contained is None:
+                # A key that would land outside local_dir (or is otherwise not
+                # a plain relative path) is never written, whatever put it there.
+                log.warning("s3_download_skipped_unsafe_key", key=key)
+                continue
+            dest = contained
             # Already here and the same size: skip it. On a single-host setup
             # (API and worker on one machine) every file is local the moment it
             # is written, and re-downloading it is pure risk — a 145 MB WAV
@@ -228,12 +269,18 @@ def _sync_delete_object(key: str) -> bool:
 
 
 def _output_object_key(project_uid: str, relative_path: str) -> str:
-    rel = relative_path.replace("\\", "/").lstrip("/")
+    rel = safe_relpath(relative_path)
     return f"videos/{project_uid}/outputs/{rel}"
 
 
-def _sync_presigned_put(key: str, content_type: str, expires: int) -> str:
-    params: dict[str, str] = {"Bucket": _bucket(), "Key": key}
+def _sync_presigned_put(key: str, content_type: str, expires: int, content_length: int | None = None) -> str:
+    params: dict[str, str | int] = {"Bucket": _bucket(), "Key": key}
+    if content_length is not None:
+        # Signed in as well: the browser sends Content-Length itself, and a
+        # PUT of any other size fails the signature. Without it the URL wrote
+        # an object of any size (up to 5 GB) for as long as it stayed valid,
+        # past the per-file cap and the plan's storage.
+        params["ContentLength"] = int(content_length)
     if content_type:
         # Signed in: the browser has to send exactly this header, so a signed
         # URL cannot be reused to store some other kind of file under the key.
@@ -242,13 +289,20 @@ def _sync_presigned_put(key: str, content_type: str, expires: int) -> str:
 
 
 async def output_upload_url(
-    project_uid: str, relative_path: str, content_type: str, expires: int = 900
+    project_uid: str,
+    relative_path: str,
+    content_type: str,
+    expires: int = 900,
+    *,
+    content_length: int | None = None,
 ) -> str | None:
-    """A presigned PUT for one project file, or None when storage is off."""
+    """A presigned PUT for one project file, or None when storage is off.
+
+    ``content_length`` binds the object's exact size into the signature."""
     if not _s3_enabled():
         return None
     key = _output_object_key(project_uid, relative_path)
-    return await asyncio.to_thread(_sync_presigned_put, key, content_type, expires)
+    return await asyncio.to_thread(_sync_presigned_put, key, content_type, expires, content_length)
 
 
 def _sync_object_size(key: str) -> int | None:
@@ -325,8 +379,7 @@ async def delete_output_file(project_uid: str, relative_path: str) -> None:
     """
     if not _s3_enabled():
         return
-    rel = relative_path.replace("\\", "/").lstrip("/")
-    key = f"videos/{project_uid}/outputs/{rel}"
+    key = _output_object_key(project_uid, relative_path)
     deleted = await asyncio.to_thread(_sync_delete_object, key)
     if deleted:
         log.info("s3_delete_output_file", project_uid=project_uid, key=key)
@@ -385,9 +438,9 @@ async def push_output_file(project_uid: str, relative_path: str, local_path: pat
     """
     if not _s3_enabled() or not local_path.is_file():
         return
-    rel = relative_path.replace("\\", "/").lstrip("/")
+    key = _output_object_key(project_uid, relative_path)
     async with _upload_gate():
-        await asyncio.to_thread(_sync_upload_one, local_path, f"videos/{project_uid}/outputs/{rel}")
+        await asyncio.to_thread(_sync_upload_one, local_path, key)
 
 
 def _sync_list_outputs(project_uid: str) -> list[tuple[str, int]]:
@@ -478,13 +531,16 @@ async def ensure_local_output(project_uid: str, filename: str) -> pathlib.Path:
 
     from packages.video.storage import output_dir
 
-    local = output_dir(project_uid) / filename
+    contained = _contained(output_dir(project_uid), filename)
+    if contained is None:
+        raise FileNotFoundError(filename)
+    local = contained
     if local.exists():
         return local
     if not _s3_enabled():
         raise FileNotFoundError(filename)
 
-    key = _output_key(project_uid, filename)
+    key = _output_key(project_uid, safe_relpath(filename))
 
     def _download() -> None:
         local.parent.mkdir(parents=True, exist_ok=True)

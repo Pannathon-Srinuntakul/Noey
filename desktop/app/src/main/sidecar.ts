@@ -6,6 +6,8 @@ import { writeFile, mkdtemp, rm } from 'fs/promises'
 import { existsSync } from 'fs'
 import { tmpdir } from 'os'
 import { appendLog } from './logger'
+import { checkSidecarJob } from './ipcGuards'
+import { projectsRoot } from './projects'
 
 /** One JSON-lines event emitted by the Python sidecar on stdout. */
 export interface SidecarEvent {
@@ -217,6 +219,9 @@ export function registerSidecarIpc(): void {
   ]
   for (const [channel, command] of jobChannels) {
     ipcMain.handle(channel, (evt, job: unknown) => {
+      // The sidecar writes wherever the job says; confine it to the project
+      // (and the generic render's output to the library) before it runs.
+      checkSidecarJob(job, projectsRoot(), process.platform === 'win32')
       // Progress is broadcast to the whole renderer, so every project running
       // the same command hears every other project's events. Stamping the
       // project dir is what lets a listener keep only its own — without it two

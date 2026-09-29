@@ -124,7 +124,7 @@ async def test_a_start_opens_the_run_and_hands_it_to_the_worker(captured):
     [call] = captured
     runs = await _open_runs(uid_user)
     assert call["fn"] == "analyze_dub_video_local" and len(call["run_id"]) == 32
-    assert runs == [("analyze_video", "queued", runs[0][2], 0, f"vlocal_{project[:8]}")]
+    assert runs == [("analyze_video", "queued", runs[0][2], 0, videos_local.local_job_id(project))]
     held = await db("SELECT reserved_tokens FROM core.usage_accounts WHERE user_id = :u", u=uid_user)
     assert held == [] or held[0][0] == 0
 
@@ -571,3 +571,88 @@ async def test_a_style_reference_that_cannot_be_measured_or_is_too_long_is_refus
         )
     assert junk.status_code == 422 and long.status_code == 400
     assert await _open_runs(uid_user) == []
+
+
+# ── the synchronous /plan-dub takes a concurrency slot (security 2026-09-30) ──
+
+async def _plan_ready_project(c, token: str, user_id: int) -> str:
+    project = await _project(c, token, 10)
+    out = data_root() / "video_outputs" / project
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "edit_script.json").write_text(json.dumps({"segments": []}), encoding="utf-8")
+    # Every account's projects live in tenant "default" (services/api/deps.py).
+    await db(
+        'UPDATE "tenant_default".video_projects SET edit_script_path = :p WHERE uid = :uid',
+        p=f"video_outputs/{project}/edit_script.json", uid=project,
+    )
+    return project
+
+
+async def test_parallel_plan_dub_calls_do_not_share_one_quota_snapshot(captured, monkeypatch):
+    """N parallel POSTs each ran against the same quota snapshot (none took
+    the plan's concurrency slot), so together they overspent the window. The
+    second call while the first holds the slot is refused and its run released."""
+    import asyncio
+
+    from packages.video import dub_ai
+
+    gate = asyncio.Event()
+    entered = asyncio.Event()
+    calls = 0
+
+    async def slow_plan(*_a, **_k):
+        nonlocal calls
+        calls += 1
+        entered.set()
+        await gate.wait()
+        return []
+
+    monkeypatch.setattr(dub_ai, "plan_dub_timeline_cuts", slow_plan)
+    uid_user = await make_user(email("plandub"), plan="free")
+    token = await user_token(uid_user)
+    body = {"voDurationSec": 10, "clipDurations": [10]}
+    async with client() as c:
+        project = await _plan_ready_project(c, token, uid_user)
+        try:
+            first = asyncio.create_task(c.post(f"/videos/{project}/plan-dub", json=body, headers=bearer(token)))
+            await asyncio.wait_for(entered.wait(), 10)
+            # Bounded: without the slot the second call reaches the model and
+            # would wait on the gate forever.
+            try:
+                second = await asyncio.wait_for(
+                    c.post(f"/videos/{project}/plan-dub", json=body, headers=bearer(token)), 10
+                )
+            finally:
+                gate.set()
+            first_r = await first
+        finally:
+            gate.set()
+            _cleanup(project)
+    assert second.status_code == 429, second.text
+    assert second.json()["detail"]["code"] == "busy"
+    assert first_r.status_code == 200, first_r.text
+    assert calls == 1
+    statuses = sorted(s for (s,) in await db("SELECT status FROM core.ai_runs WHERE user_id = :u", u=uid_user))
+    assert "released" in statuses and "running" not in statuses and "queued" not in statuses
+
+
+async def test_free_runs_are_claimed_atomically_with_the_daily_cap(monkeypatch):
+    """check-then-count let a burst all read the same count; claim_run
+    increments first and gives back what went over."""
+    import asyncio
+
+    monkeypatch.setenv("FREE_RUNS_PER_IP_DAY", "2")
+    get_settings.cache_clear()
+    monkeypatch.setattr(free_tier, "_store", free_tier.MemoryFreeTierStore())
+    results = await asyncio.gather(
+        *(free_tier.claim_run(user_id=i, ip="203.0.113.50", device=None) for i in range(5)),
+        return_exceptions=True,
+    )
+    admitted = [r for r in results if r is None]
+    assert len(admitted) == 2
+    assert all(isinstance(r, free_tier.FreeTierLimited) for r in results if r is not None)
+    # The refused hits were given back: today's count is exactly the cap.
+    key = free_tier._runs_key("ip", free_tier.identity_hash("203.0.113.50"))
+    assert free_tier._store.counts[key] == 2
+    await free_tier.unclaim_run(ip="203.0.113.50", device=None)
+    await free_tier.claim_run(user_id=9, ip="203.0.113.50", device=None)

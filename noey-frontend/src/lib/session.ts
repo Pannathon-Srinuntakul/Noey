@@ -178,6 +178,10 @@ export function sanitizeNextPath(next: unknown, fallback = "/account"): string {
   }
   if (url.origin !== "https://placeholder.invalid") return fallback;
   const path = url.pathname;
+  // Re-check the NORMALISED path: dot segments collapse `/.//evil.com`,
+  // `/..//evil.com` and `/%2e//evil.com` to `//evil.com`, which every sink
+  // (redirect(), `Location:`) resolves as a protocol-relative, off-site URL.
+  if (path.startsWith("//") || path.startsWith("/\\")) return fallback;
   if (path === "/login" || path === "/signup" || path.startsWith("/api/")) return fallback;
   return `${path}${url.search}${url.hash}`;
 }

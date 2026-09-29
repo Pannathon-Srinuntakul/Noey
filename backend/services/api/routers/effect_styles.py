@@ -113,10 +113,18 @@ async def _create_distill_job(session: AsyncSession, style: EffectStyle, auth: C
     tenant schema and must already be flushed by the caller). Does NOT enqueue
     or commit — the caller commits, then calls _enqueue_distill.
     """
-    job_id = f"style_{style.uid[:8]}"
+    job_id = f"style_{style.uid}"
     await session.execute(text("SET search_path TO core, public"))
     queued = {"step": "queued", "message": "รับสไตล์แล้ว รอ AI วิเคราะห์…"}
     existing = await session.get(Job, job_id)
+    if existing is not None and (
+        existing.tenant_id != auth.tenant_id
+        or (existing.user_id is not None and existing.user_id != auth.user_id)
+    ):
+        # The id is the whole style uid, so this is never a real collision —
+        # but another account's row is never re-stamped onto this caller.
+        log.error("job_id_owner_mismatch", job_id=job_id, user_id=auth.user_id)
+        raise HTTPException(409, "งานนี้ชนกับงานอื่นในระบบ — ลองใหม่อีกครั้ง")
     if existing:
         existing.status = "queued"
         existing.progress = 2
@@ -133,7 +141,7 @@ async def _create_distill_job(session: AsyncSession, style: EffectStyle, auth: C
 
 async def _enqueue_distill(style_uid: str, auth: CurrentUser, run_id: str) -> None:
     await _enqueue(
-        f"style_{style_uid[:8]}", "distill_style_local",
+        f"style_{style_uid}", "distill_style_local",
         style_uid=style_uid, tenant_slug=auth.tenant_slug, run_id=run_id, user=auth.user,
     )
 
@@ -178,7 +186,7 @@ async def _reserve_distill(
         estimator.estimate_run(
             kind="distill_style", clip_secs=[ref_sec], model=model, frame_count=1 if image_ref else None,
         ),
-        allow_wallet=allow_wallet, job_id=f"style_{style_uid[:8]}", reference_id=style_uid,
+        allow_wallet=allow_wallet, job_id=f"style_{style_uid}", reference_id=style_uid,
     )
 
 
@@ -354,7 +362,7 @@ async def regenerate_style(
     if style.status == "pending":
         from services.api.routers.videos_local import _job_busy
 
-        if await _job_busy(session, auth, f"style_{style.uid[:8]}"):
+        if await _job_busy(session, auth, f"style_{style.uid}"):
             raise HTTPException(409, "สไตล์นี้กำลังวิเคราะห์อยู่แล้ว — รอให้รอบนี้เสร็จก่อน")
     run_id = await _reserve_distill(
         auth, request, style, style.uid, style.kind, style.reference_clip_path, allow_wallet,

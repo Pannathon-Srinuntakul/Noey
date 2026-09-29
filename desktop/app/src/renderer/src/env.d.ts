@@ -1,11 +1,10 @@
 /// <reference types="vite/client" />
 
-import type { ElectronAPI } from '@electron-toolkit/preload'
-import type { NoeyApi } from '../../preload/index'
+import type { ElectronBridge, NoeyApi } from '../../preload/index'
 
 declare global {
   interface Window {
-    electron: ElectronAPI
+    electron: ElectronBridge
     noey: NoeyApi
   }
 }

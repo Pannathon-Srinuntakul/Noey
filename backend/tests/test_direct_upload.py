@@ -30,11 +30,15 @@ class FakeBucket:
     def __init__(self) -> None:
         self.objects: dict[str, int] = {}
         self.signed: list[tuple[str, str]] = []
+        self.lengths: list[int | None] = []
         self.deleted: list[str] = []
 
     def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        async def upload_url(uid: str, rel: str, content_type: str, expires: int = 900) -> str:
+        async def upload_url(
+            uid: str, rel: str, content_type: str, expires: int = 900, *, content_length: int | None = None
+        ) -> str:
             self.signed.append((rel, content_type))
+            self.lengths.append(content_length)
             return f"https://bucket.test/videos/{uid}/outputs/{rel}?sig=1&ttl={expires}"
 
         async def object_size(uid: str, rel: str) -> int | None:
@@ -150,7 +154,7 @@ async def test_someone_elses_project_is_a_404(bucket):
 
 
 async def test_no_bucket_means_the_client_falls_back(bucket, monkeypatch):
-    async def no_url(uid: str, rel: str, content_type: str, expires: int = 900) -> None:
+    async def no_url(uid: str, rel: str, content_type: str, expires: int = 900, **_kw) -> None:
         return None
 
     monkeypatch.setattr(videos_local, "output_upload_url", no_url)
@@ -266,3 +270,35 @@ def test_upload_origin_is_the_virtual_hosted_bucket(monkeypatch):
         assert s3.upload_origin() == "https://noey-media.s3.ap-southeast-1.amazonaws.com"
     finally:
         get_settings.cache_clear()
+
+
+
+async def test_the_declared_size_is_signed_into_the_url(bucket):
+    """An unbound presigned PUT wrote an object of any size for an hour, past
+    the per-file cap and the plan's storage, whenever `complete` was skipped."""
+    user = await make_user(email("direct"), plan="pro")
+    token = await user_token(user)
+    async with client() as c:
+        uid = await _project(c, token)
+        r = await c.post(
+            f"/videos/{uid}/uploads",
+            json={"path": "clips/clip_001.mp4", "bytes": 1234, "content_type": "video/mp4"},
+            headers=bearer(token),
+        )
+    assert r.status_code == 200, r.text
+    assert bucket.lengths == [1234]
+
+
+def test_the_presigned_put_signs_content_length(monkeypatch):
+    import boto3
+
+    from packages.video import s3 as s3_mod
+
+    fake = boto3.client(
+        "s3", region_name="auto", endpoint_url="https://bucket.invalid",
+        aws_access_key_id="k", aws_secret_access_key="s",
+    )
+    monkeypatch.setattr(s3_mod, "_client", lambda: fake)
+    monkeypatch.setattr(s3_mod, "_bucket", lambda: "b")
+    url = s3_mod._sync_presigned_put("videos/u/outputs/clips/a.mp4", "video/mp4", 60, 1234)
+    assert "content-length" in url.split("X-Amz-SignedHeaders=")[1].split("&")[0]

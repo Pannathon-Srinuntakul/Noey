@@ -127,12 +127,18 @@ class FakeStripe:
         self.update_calls: list[tuple[str, dict]] = []
         self.released: list[str] = []
         self.sub_list_calls = 0
+        self.cancelled: list[str] = []
+        self.charges: dict[str, dict] = {}
         self.price_list_calls = 0
         self.v1 = SimpleNamespace(
             customers=SimpleNamespace(
                 create_async=self._customer_create, retrieve_async=self._customer_retrieve
             ),
-            subscriptions=SimpleNamespace(list_async=self._sub_list, update_async=self._sub_update),
+            subscriptions=SimpleNamespace(
+                list_async=self._sub_list, update_async=self._sub_update,
+                cancel_async=self._sub_cancel, retrieve_async=self._sub_retrieve,
+            ),
+            charges=SimpleNamespace(retrieve_async=self._charge_retrieve),
             prices=SimpleNamespace(list_async=self._price_list),
             checkout=SimpleNamespace(
                 sessions=SimpleNamespace(
@@ -184,6 +190,18 @@ class FakeStripe:
             )
         return _sobj(stripe.Subscription, sub)
 
+    async def _sub_cancel(self, sub_id: str, params: Any = None) -> Any:
+        sub = next(s for s in self.subscriptions if s["id"] == sub_id)
+        sub["status"] = "canceled"
+        self.cancelled.append(sub_id)
+        return _sobj(stripe.Subscription, sub)
+
+    async def _sub_retrieve(self, sub_id: str, params: Any = None) -> Any:
+        return _sobj(stripe.Subscription, next(s for s in self.subscriptions if s["id"] == sub_id))
+
+    async def _charge_retrieve(self, charge_id: str, params: Any = None) -> Any:
+        return _sobj(stripe.Charge, self.charges[charge_id])
+
     async def _price_list(self, params: dict) -> Any:
         self.price_list_calls += 1
         found = [self.prices[k] for k in params["lookup_keys"] if k in self.prices]
@@ -207,6 +225,8 @@ class FakeStripe:
         )
 
     async def _checkout_list(self, params: dict) -> Any:
+        if "payment_intent" in params:  # the top-up reversal lookup: no top-up here
+            return _sobj(stripe.ListObject, {"object": "list", "data": []})
         assert params["status"] == "open"
         data = [{"id": sid, "object": "checkout.session"} for sid in self.open_sessions]
         return _sobj(stripe.ListObject, {"object": "list", "data": data})
@@ -1026,3 +1046,46 @@ async def test_a_stripe_failure_is_a_retryable_500_and_not_marked_processed(fake
     assert failed.status_code == 500
     assert retried.json() == {"status": "synced"}
     assert (await _row(user_id))["plan"] == "pro"
+
+
+
+# ── a refund / chargeback of a SUBSCRIPTION charge (security 2026-09-30) ─────
+
+async def test_a_disputed_subscription_charge_cancels_the_plan_and_is_audited(fake):
+    """Stripe does not cancel a subscription when a dispute opens; the event
+    used to be dropped as "not a top-up", leaving the paid plan in place."""
+    customer = _customer()
+    user_id, _ = await _user(customer=customer)
+    fake.subscriptions = [_sub(customer, "pro", sub_id="sub_disputed")]
+    async with _client() as c:
+        await _deliver(c, _event("customer.subscription.created", fake.subscriptions[0]))
+        assert (await _row(user_id))["plan"] == "pro"
+        fake.charges["ch_sub_1"] = {"id": "ch_sub_1", "object": "charge", "customer": customer}
+        dispute = {"id": "dp_1", "object": "dispute", "charge": "ch_sub_1",
+                   "payment_intent": "pi_sub_invoice", "amount": 99_000}
+        r = await _deliver(c, _event("charge.dispute.created", dispute))
+    assert r.status_code == 200 and r.json() == {"status": "subscription_disputed"}
+    assert fake.cancelled == ["sub_disputed"]
+    assert (await _row(user_id))["plan"] == "free"
+    async with get_engine().connect() as conn:
+        audited = (await conn.execute(text(
+            "SELECT count(*) FROM core.admin_audit_events "
+            "WHERE action = 'subscription_charge_disputed' AND target_user_id = :u"), {"u": user_id})).scalar_one()
+    assert audited == 1
+
+
+async def test_a_refunded_subscription_charge_is_audited_not_cancelled(fake):
+    customer = _customer()
+    user_id, _ = await _user(customer=customer)
+    fake.subscriptions = [_sub(customer, "pro", sub_id="sub_refunded")]
+    charge = {"id": "ch_sub_2", "object": "charge", "customer": customer,
+              "payment_intent": "pi_sub_invoice_2", "amount_refunded": 99_000}
+    async with _client() as c:
+        r = await _deliver(c, _event("charge.refunded", charge))
+    assert r.status_code == 200 and r.json() == {"status": "subscription_refunded"}
+    assert fake.cancelled == []
+    async with get_engine().connect() as conn:
+        audited = (await conn.execute(text(
+            "SELECT count(*) FROM core.admin_audit_events "
+            "WHERE action = 'subscription_charge_refunded' AND target_user_id = :u"), {"u": user_id})).scalar_one()
+    assert audited == 1

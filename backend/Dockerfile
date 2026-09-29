@@ -20,10 +20,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -r
 # (`--no-deps` both times: nothing may be resolved at build time — that is how
 # a push used to pull a new litellm nobody had run). `pip check` fails the
 # build if the lock is missing something the project imports transitively.
+# `--require-hashes`: the lock carries the sha256 of every release file
+# (scripts/lock_requirements.py), so a version replaced upstream fails the
+# build instead of deploying. No `pip install --upgrade pip` any more — that
+# pulled whatever pip was newest, unhashed; the digest-pinned base's pip is
+# what runs.
 # Editable install of the project itself, as before: services/ and packages/
 # are used in place, and alembic.ini + scripts/ are found relative to them.
 COPY pyproject.toml requirements.lock alembic.ini ./
-RUN pip install --upgrade pip && pip install --no-deps -r requirements.lock
+RUN pip install --no-deps --require-hashes -r requirements.lock
 COPY packages ./packages
 COPY services ./services
 COPY scripts ./scripts

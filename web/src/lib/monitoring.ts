@@ -15,8 +15,9 @@
  *     https://docs.sentry.io/platforms/javascript/guides/react/data-management/data-collected/
  *   - No Session Replay and no tracing: errors only.
  *   - `scrubEvent` runs as beforeSend AND on every breadcrumb, and masks
- *     e-mail addresses, bearer tokens, JWTs and the query of every URL (the
- *     Google callback URL carries a one-time `code` for a moment).
+ *     e-mail addresses, bearer tokens, JWTs, the query of every URL (the
+ *     Google callback URL carries a one-time `code` for a moment) and the
+ *     token in a `/transfer/<token>` path (the phone upload credential).
  * Setup follows https://docs.sentry.io/platforms/javascript/guides/react/
  * (fetched 2026-09-30): `Sentry.init` before render, `reactErrorHandler` on
  * createRoot's error hooks.
@@ -30,6 +31,9 @@ const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g
 const JWT_RE = /\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\b/g
 const BEARER_RE = /\b(Bearer)\s+[A-Za-z0-9._~+/=-]+/gi
 const URL_QUERY_RE = /(https?:\/\/[^\s?#"'<>]+)\?[^\s#"'<>]*/g
+// The phone-transfer page's path IS its credential: `/transfer/<32 hex>` is a
+// live single-use upload ticket until the desktop pulls the file.
+const TRANSFER_RE = /\/transfer\/[A-Fa-f0-9]{32}\b/g
 
 /** Mask secrets and personal data inside free text. */
 export function scrubText(text: string): string {
@@ -37,6 +41,7 @@ export function scrubText(text: string): string {
     .replace(BEARER_RE, '$1 [Filtered]')
     .replace(JWT_RE, '[Filtered]')
     .replace(URL_QUERY_RE, '$1?[Filtered]')
+    .replace(TRANSFER_RE, '/transfer/[Filtered]')
     .replace(EMAIL_RE, '[email]')
 }
 
@@ -72,6 +77,7 @@ function scrubValue(value: Json, depth = 0): Json {
 
 interface ScrubbableEvent {
   message?: string
+  transaction?: string
   request?: {
     url?: string
     headers?: unknown
@@ -109,6 +115,7 @@ export function scrubEvent<T extends ScrubbableEvent>(event: T): T {
     if (typeof event.request.url === 'string') event.request.url = scrubUrl(event.request.url)
   }
   if (typeof event.message === 'string') event.message = scrubText(event.message)
+  if (typeof event.transaction === 'string') event.transaction = scrubText(event.transaction)
   for (const ex of event.exception?.values ?? []) {
     if (typeof ex.value === 'string') ex.value = scrubText(ex.value)
   }

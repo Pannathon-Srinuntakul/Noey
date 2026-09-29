@@ -5,12 +5,16 @@
 # time, server-side only — this app has no NEXT_PUBLIC_* values at all.
 # Runs as the unprivileged `node` user.
 
-FROM node:24-alpine AS deps
+# Base images are pinned to a manifest-list digest (resolves on amd64 and arm64),
+# not a moving tag: a push to main is a production deploy, so the base must not
+# change under a commit that touched nothing. Bump deliberately:
+#   docker buildx imagetools inspect <image:tag>   (digests fetched 2026-09-30)
+FROM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 
-FROM node:24-alpine AS build
+FROM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS build
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
 COPY --from=deps /app/node_modules ./node_modules
@@ -20,7 +24,7 @@ COPY . .
 # exists instead of failing the build with "/app/public: not found".
 RUN mkdir -p public && npm run build
 
-FROM node:24-alpine AS run
+FROM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS run
 WORKDIR /app
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \

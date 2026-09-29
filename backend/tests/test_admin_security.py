@@ -237,6 +237,29 @@ async def test_lockout_after_five_failures_even_with_the_right_password(mail):
     assert mail.sent == []
 
 
+async def test_a_stranger_cannot_lock_the_admin_out_of_a_remembered_device(mail):
+    """The lockout and the per-address counter are keyed on the email alone:
+    anyone who knew the admin address kept them tripped. A valid remembered
+    device with the right password still signs in; without one the lock holds."""
+    from services.api import ratelimit
+
+    async with client() as c:
+        _, address, s = await new_admin(c, mail, remember=True)
+        device = s["device_token"]
+        for _ in range(ratelimit.ADMIN_LOGIN_EMAIL.max_hits + 2):
+            await c.post("/admin/auth/login", json={"email": address, "password": "nope"})
+        stranger = await c.post("/admin/auth/login", json={"email": address, "password": PASSWORD})
+        admin = await c.post(
+            "/admin/auth/login", json={"email": address, "password": PASSWORD, "device_token": device}
+        )
+        guessing = await c.post(
+            "/admin/auth/login", json={"email": address, "password": "nope", "device_token": device}
+        )
+    assert stranger.status_code == 429
+    assert admin.status_code == 200 and admin.json()["status"] == "signed_in"
+    assert guessing.status_code == 401
+
+
 async def test_password_step_is_rate_limited_per_email(mail):
     address = email("admin")
     async with client() as c:

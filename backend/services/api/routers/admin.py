@@ -270,14 +270,29 @@ async def login(
 ) -> SessionOut | ChallengeOut:
     ip = ratelimit.client_ip(request)
     email = normalize_email(body.email)
-    await ratelimit.enforce([(ratelimit.ADMIN_LOGIN_EMAIL, email), (ratelimit.ADMIN_LOGIN_IP, ip)])
 
-    if await _locked(db, email):
-        await admin_auth.audit(db, "login_failed", email=email, ip=ip, user_agent=_ua(request), detail={"reason": "locked"})
-        await db.commit()
-        raise HTTPException(status_code=429, detail=LOCKED)
-
+    # The per-address counters and the lockout are keyed on the email alone,
+    # so anyone who knows the admin address could keep them tripped and hold
+    # the real admin out. A valid remembered-device token (a secret only the
+    # admin's browser holds) takes its own buckets instead: a stranger cannot
+    # exhaust them, and guesses through a device are still counted and capped.
     user = await _user_by_email(db, email)
+    device = (
+        await admin_auth.valid_device(db, user, body.device_token)
+        if user is not None and body.device_token
+        else None
+    )
+    if device is None:
+        await ratelimit.enforce([(ratelimit.ADMIN_LOGIN_EMAIL, email), (ratelimit.ADMIN_LOGIN_IP, ip)])
+        if await _locked(db, email):
+            await admin_auth.audit(db, "login_failed", email=email, ip=ip, user_agent=_ua(request), detail={"reason": "locked"})
+            await db.commit()
+            raise HTTPException(status_code=429, detail=LOCKED)
+    else:
+        await ratelimit.enforce([
+            (ratelimit.ADMIN_LOGIN_EMAIL, f"{email}#device:{device.id}"), (ratelimit.ADMIN_LOGIN_IP, ip),
+        ])
+
     password_ok = admin_auth.password_ok(user, body.password)
     if user is None or not password_ok or not user.is_admin or not user.is_active:
         reason = (
@@ -293,7 +308,6 @@ async def login(
         await db.commit()
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=BAD_CREDENTIALS)
 
-    device = await admin_auth.valid_device(db, user, body.device_token)
     if device is not None:
         device.last_used_at = admin_auth.now()
         sess = await admin_auth.start_session(db, user, ip, _ua(request))

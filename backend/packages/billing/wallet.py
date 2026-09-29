@@ -43,6 +43,17 @@ PACKS_SATANG: tuple[int, ...] = (10_000, 30_000, 50_000, 100_000)
 METHODS: tuple[str, ...] = ("promptpay", "card")
 LOT_VALID_DAYS = 365
 HISTORY_ROWS = 30
+#: A chargeback / refund of top-up baht that were ALREADY SPENT, and that the
+#: user's other lots could not cover, is carried as DEBT: a lot of this source
+#: with NEGATIVE remaining. It nets against the balance (so no wallet spending
+#: happens while it is owed) and the next money credited pays it off first. An
+#: admin clears it by crediting (``adjust``) — the credit repays it.
+DEBT_SOURCE = "debt"
+_DEBT_VALID_DAYS = 100 * 365
+#: Ledger notes of a reversal booked for a Stripe event start with the event
+#: type; a clawback from ANOTHER lot starts with this, so it never counts as
+#: that other lot's own refund/dispute.
+CLAWBACK_NOTE = "clawback"
 
 
 def _now() -> datetime:
@@ -64,18 +75,31 @@ def tokens_for_satang(satang: int) -> int:
 
 
 async def balance(session: AsyncSession, user_id: int, now: datetime | None = None) -> int:
-    """Σ remaining of the user's unexpired lots (satang)."""
+    """Σ remaining of the user's unexpired lots minus any debt (satang), never
+    below zero."""
     at = now or _now()
     total = (
         await session.execute(
             select(func.coalesce(func.sum(WalletLot.remaining_satang), 0)).where(
                 WalletLot.user_id == int(user_id),
-                WalletLot.expires_at > at,
-                WalletLot.remaining_satang > 0,
+                ((WalletLot.expires_at > at) & (WalletLot.remaining_satang > 0))
+                | (WalletLot.remaining_satang < 0),
             )
         )
     ).scalar_one()
-    return int(total or 0)
+    return max(0, int(total or 0))
+
+
+async def debt(session: AsyncSession, user_id: int) -> int:
+    """Satang the user still owes from a chargeback/refund of spent baht."""
+    owed = (
+        await session.execute(
+            select(func.coalesce(func.sum(WalletLot.remaining_satang), 0)).where(
+                WalletLot.user_id == int(user_id), WalletLot.remaining_satang < 0
+            )
+        )
+    ).scalar_one()
+    return -int(owed or 0)
 
 
 async def available(
@@ -157,7 +181,37 @@ async def credit(
     )
     await session.flush()
     log.info("wallet_credited", user_id=user_id, satang=amount_satang, source=source)
-    return await session.get(WalletLot, int(lot_id))
+    lot = await session.get(WalletLot, int(lot_id))
+    assert lot is not None
+    await _repay_debt(session, account, lot, at)
+    return lot
+
+
+async def _repay_debt(session: AsyncSession, account: UsageAccount, lot: WalletLot, at: datetime) -> None:
+    """Pay outstanding debt (oldest first) out of a freshly credited lot."""
+    debts = (
+        await session.execute(
+            select(WalletLot)
+            .where(WalletLot.user_id == account.user_id, WalletLot.remaining_satang < 0)
+            .order_by(WalletLot.id)
+            .with_for_update()
+        )
+    ).scalars().all()
+    for owed_lot in debts:
+        pay = min(-int(owed_lot.remaining_satang), int(lot.remaining_satang))
+        if pay <= 0:
+            break
+        owed_lot.remaining_satang = int(owed_lot.remaining_satang) + pay
+        lot.remaining_satang = int(lot.remaining_satang) - pay
+        await session.flush()
+        _ledger(
+            session, user_id=account.user_id, kind="debit", amount=-pay,
+            balance_after=await balance(session, account.user_id, at), lot_id=int(lot.id),
+            note=f"repays debt (lot {int(owed_lot.id)})",
+        )
+        log.warning("wallet_debt_repaid", user_id=account.user_id, satang=pay, debt_lot=int(owed_lot.id))
+    await session.flush()
+    await _refresh_cache(session, account, at)
 
 
 async def debit(
@@ -290,16 +344,22 @@ async def reverse_lot(
     *,
     note: str,
     now: datetime | None = None,
+    category: str | None = None,
 ) -> tuple[int, int]:
     """Take a refunded / disputed top-up back out of ITS lot (not FIFO — the
     money that left Stripe is this purchase's).
 
     ``owed_total_satang`` is the cumulative amount the payer got back so far
-    (Stripe reports refunds cumulatively); what earlier reversals of this lot
-    already took is subtracted, so a second partial refund takes only the
-    difference. Never below zero: baht already spent on runs cannot be taken
-    back from the lot, and that part is returned as the shortfall for the
-    caller to flag. Returns ``(taken, shortfall)``.
+    IN THIS ``category`` (the Stripe event type the ``note`` starts with:
+    refunds are reported cumulatively, a dispute carries its own amount).
+    What earlier reversals of the same category already took is subtracted,
+    so a second partial refund takes only the difference — and a dispute
+    after a partial refund is NOT reduced by that refund (it used to be: a
+    ฿1,000 lot refunded ฿400 then disputed for the other ฿600 reversed only
+    ฿200). Everything together never exceeds the lot's amount. Never below
+    zero: baht already spent on runs cannot be taken back from the lot, and
+    that part is returned as the shortfall for the caller. Returns
+    ``(taken, shortfall)``.
     """
     at = now or _now()
     account = await lock_account(session, int(lot.user_id))
@@ -309,17 +369,25 @@ async def reverse_lot(
             .execution_options(populate_existing=True)
         )
     ).scalar_one()
-    already = -int(
-        (
-            await session.execute(
-                select(func.coalesce(func.sum(WalletLedger.amount_satang), 0)).where(
-                    WalletLedger.lot_id == lot.id, WalletLedger.kind == "reversal"
+    async def _taken(prefix: str) -> int:
+        return -int(
+            (
+                await session.execute(
+                    select(func.coalesce(func.sum(WalletLedger.amount_satang), 0)).where(
+                        WalletLedger.lot_id == lot.id,
+                        WalletLedger.kind == "reversal",
+                        WalletLedger.note.like(f"{prefix}%"),
+                    )
                 )
-            )
-        ).scalar_one()
-        or 0
-    )
-    owed = max(0, min(int(owed_total_satang), int(lot.amount_satang)) - already)
+            ).scalar_one()
+            or 0
+        )
+
+    # Only this lot's OWN reversals ("charge.…" notes) — a clawback taken from
+    # it to cover another lot's shortfall is not its payer getting money back.
+    already_total = await _taken("charge.")
+    already = await _taken(category) if category else already_total
+    owed = max(0, min(int(owed_total_satang) - already, int(lot.amount_satang) - already_total))
     take = min(owed, int(lot.remaining_satang))
     if take > 0:
         lot.remaining_satang = int(lot.remaining_satang) - take
@@ -331,6 +399,33 @@ async def reverse_lot(
     await session.flush()
     await _refresh_cache(session, account, at)
     return take, owed - take
+
+
+async def clawback(
+    session: AsyncSession, user_id: int, amount_satang: int, *, note: str, now: datetime | None = None
+) -> tuple[int, int]:
+    """Cover a reversal shortfall: take it from the user's OTHER live lots
+    (FIFO), and carry what they cannot cover as debt. Returns
+    ``(taken_from_other_lots, debt_recorded)``."""
+    if amount_satang <= 0:
+        return 0, 0
+    at = now or _now()
+    account = await lock_account(session, int(user_id))
+    taken = await debit(
+        session, account, amount_satang, now=at, kind="reversal", note=f"{CLAWBACK_NOTE}: {note}"[:200]
+    )
+    owed = int(amount_satang) - taken
+    if owed > 0:
+        session.add(
+            WalletLot(
+                user_id=int(user_id), source=DEBT_SOURCE, amount_satang=owed, remaining_satang=-owed,
+                expires_at=at + timedelta(days=_DEBT_VALID_DAYS), created_at=at,
+            )
+        )
+        await session.flush()
+        await _refresh_cache(session, account, at)
+        log.error("wallet_debt_recorded", user_id=int(user_id), satang=owed)
+    return taken, owed
 
 
 async def expire_due(session: AsyncSession, now: datetime | None = None) -> int:
@@ -398,7 +493,7 @@ async def summary(session: AsyncSession, user_id: int, now: datetime | None = No
         )
     ).scalar_one_or_none()
     return {
-        "balance_satang": sum(int(lot.remaining_satang) for lot in lots),
+        "balance_satang": await balance(session, int(user_id), at),
         "reserved_satang": int(reserved or 0),
         "lots": [
             {"remaining_satang": int(lot.remaining_satang), "expires_at": _iso(lot.expires_at)} for lot in lots

@@ -34,6 +34,19 @@ describe('scrubbing', () => {
     expect(out).toContain('https://x.test/auth/google/callback?[Filtered]')
   })
 
+  it('masks the phone-transfer token in a /transfer/<token> path', () => {
+    const token = '0123456789abcdef0123456789abcdef'
+    const page = `https://editor.noey.test/transfer/${token}`
+    expect(scrubUrl(page)).toBe('https://editor.noey.test/transfer/[Filtered]')
+    expect(scrubText(`upload failed on /transfer/${token} (HTTP 500)`)).not.toContain(token)
+    const event = scrubEvent({
+      transaction: `/transfer/${token}`,
+      request: { url: page },
+      breadcrumbs: [{ message: `navigation to ${page}`, data: { from: page, to: page, url: page } }]
+    })
+    expect(JSON.stringify(event)).not.toContain(token)
+  })
+
   it('drops query and fragment from URLs', () => {
     expect(scrubUrl('https://s/auth/google/callback?code=1&state=2#x')).toBe(
       'https://s/auth/google/callback'

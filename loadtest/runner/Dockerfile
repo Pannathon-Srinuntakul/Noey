@@ -25,7 +25,11 @@
 #
 # Synthetic footage compresses better than a real camera's, so treat the proxy
 # size as a floor, not an average.
-FROM jrottenberg/ffmpeg:6.1-alpine AS fixtures
+# Base images are pinned to a manifest-list digest (resolves on amd64 and arm64),
+# not a moving tag: a push to main is a production deploy, so the base must not
+# change under a commit that touched nothing. Bump deliberately:
+#   docker buildx imagetools inspect <image:tag>   (digests fetched 2026-09-30)
+FROM jrottenberg/ffmpeg:6.1-alpine@sha256:4641478865a2387bb1d180dd9263e7226dab887c0789e02fa077fe919ef543df AS fixtures
 WORKDIR /out
 
 # A phone's portrait clip: 1080x1920, 7 minutes, ~10 Mbit/s → ~530 MB.
@@ -41,7 +45,7 @@ RUN ffmpeg -v error -y \
       -c:v libx264 -preset veryfast -crf 28 -pix_fmt yuv420p -movflags +faststart \
       proxy_long.mp4
 
-FROM grafana/k6:latest
+FROM grafana/k6:latest@sha256:e66db15b860113878fa74670e31f5e274830b7b6e42c8bff28b2f2d86a257603
 
 USER root
 WORKDIR /loadtest
