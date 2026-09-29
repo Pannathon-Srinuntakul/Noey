@@ -3,13 +3,17 @@ import Link from "next/link";
 import { JsonLd } from "@/components/JsonLd";
 import { SignupForm } from "@/components/forms/SignupForm";
 import { PLAN_COPY } from "@/lib/plans";
+import { googleSignInEnabled } from "@/lib/server/google";
 import { jsonLdGraph, webPageNode } from "@/lib/jsonld";
 import { pageMetadata } from "@/lib/seo";
 import { PAGES } from "@/lib/site";
 
 export const metadata: Metadata = pageMetadata("signup");
+// Static, refreshed every 5 minutes: only whether the Google button shows can change.
+export const revalidate = 300;
 
-export default function SignupPage() {
+export default async function SignupPage() {
+  const googleEnabled = await googleSignInEnabled();
   const page = PAGES.signup;
   const jsonLd = jsonLdGraph(
     webPageNode({ path: page.path, name: page.title, description: page.description, dateModified: page.updated }),
@@ -18,7 +22,7 @@ export default function SignupPage() {
   return (
     <main id="main" className="container page auth-page">
       <div className="auth-page__form">
-        <SignupForm />
+        <SignupForm googleEnabled={googleEnabled} />
         <section aria-labelledby="signup-free-title" style={{ marginTop: 40 }}>
           <h2 id="signup-free-title" className="subsection-title" style={{ marginBottom: 12, fontSize: 17 }}>
             แพลนฟรีได้อะไรบ้าง

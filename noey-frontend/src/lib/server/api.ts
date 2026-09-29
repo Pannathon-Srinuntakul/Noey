@@ -85,6 +85,10 @@ export interface MeOut {
   is_admin: boolean;
   display_name?: string | null;
   email_verified?: boolean;
+  /** False for a Google-only account (no password yet). Older backends omit it: treat as true. */
+  has_password?: boolean;
+  google_linked?: boolean;
+  google_email?: string | null;
 }
 
 /** `GET /usage/me` — only the fields this site renders. */

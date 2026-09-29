@@ -23,6 +23,12 @@ export default async function AccountAppPage({ searchParams }: { searchParams: P
           <p>ตั้งรหัสผ่านใหม่เรียบร้อยแล้ว ตอนนี้เข้าสู่ระบบด้วยรหัสผ่านใหม่อยู่</p>
         </div>
       ) : null}
+      {notice === "google-welcome" ? (
+        <div className="notice" role="status" style={{ marginTop: 32 }}>
+          <p>สร้างบัญชีด้วย Google เรียบร้อยแล้ว ครั้งหน้ากด “เข้าสู่ระบบด้วย Google” ได้เลย</p>
+          <p>บัญชีนี้ยังไม่มีรหัสผ่าน ถ้าอยากเข้าสู่ระบบด้วยอีเมลได้ด้วย ตั้งรหัสผ่านได้ที่หน้าข้อมูลส่วนตัว</p>
+        </div>
+      ) : null}
       <section className="account-grid" aria-label="ห้องตัดต่อและสรุปบัญชี">
         <div className="card account-card">
           <div className="card-kicker">ห้องตัดต่อ</div>

@@ -59,6 +59,8 @@ the build again. `next build` prints a warning when one of them is missing.
 | `CONTACT_EMAIL` | optional | `hello@noeystudio.com` | The address shown under the contact form. It is also the `mailto:` fallback when the backend cannot send email (503). |
 | `GOOGLE_SITE_VERIFICATION` | optional | empty | Content of the Search Console `<meta>` verification tag. |
 | `BING_SITE_VERIFICATION` | optional | empty | Content of the Bing `msvalidate.01` tag. |
+| `NEXT_PUBLIC_SENTRY_DSN` | optional | empty | Sentry DSN for this site's own project. Empty = no SDK loaded, nothing sent, CSP unchanged. Set = browser + server errors reported with every data-collection category off, and `connect-src` gains exactly the DSN's ingest origin. |
+| `NEXT_PUBLIC_SENTRY_ENVIRONMENT`, `NEXT_PUBLIC_SENTRY_RELEASE`, `NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE` | optional | `production`/`development`, none, `0` | Sentry tags and trace sampling (0..1, clamped). |
 | `NEXT_SERVER_ACTIONS_ENCRYPTION_KEY` | multi-instance | — | A Next.js variable. Set the same value on every instance when you run more than one, or Server Actions fail across instances. |
 
 Do not put Stripe keys or email-provider keys here. Those belong to the backend.
@@ -79,7 +81,9 @@ Do not put Stripe keys or email-provider keys here. Those belong to the backend.
 | `/account` | dynamic | noindex, robots-disallowed | Summary: plan, quota, storage |
 | `/account/quota` | dynamic | noindex | Real `/usage/me` numbers only |
 | `/account/billing` | dynamic | noindex | Plan, card, upgrade and cancel dialogs, resume, portal |
-| `/account/profile` | dynamic | noindex | Name, email change, password change, account-deletion pointer |
+| `/account/profile` | dynamic | noindex | Name, email change, password change (or "set a password" for a Google-only account), Google link/unlink, self-service account deletion |
+| `/account-deleted` | static | noindex | Goodbye page after a deletion |
+| `/auth/google/callback` | route handler | robots-disallowed | Google returns here; state check, then session cookies (see "Sign in with Google") |
 | `/checkout/success` | dynamic | noindex | Polls `/billing/me` until the webhook lands |
 | `/reset-password?token=` | dynamic, `no-store` | noindex, robots-disallowed | New password from the emailed link |
 | `/verify-email?token=` | dynamic, `no-store` | noindex, robots-disallowed | Confirms the emailed link server-side |
@@ -90,6 +94,7 @@ Do not put Stripe keys or email-provider keys here. Those belong to the backend.
 | `/api/contact` (POST) | route handler | — | Contact form, Origin-checked |
 | `/api/auth/refresh` (GET) | route handler | — | Token refresh for server renders |
 | `/api/billing/me` (GET) | route handler | — | The polling endpoint for `/checkout/success` |
+| `/api/auth/google/start` (POST) | route handler | — | Origin-checked form POST from every Google button; 303 to Google |
 
 `/account/*` and `/checkout/*` redirect to `/login?next=<page>` when there is no
 session. A signed-in visitor who opens `/login` or `/signup` goes to `/account`,
@@ -186,8 +191,23 @@ The site sends these headers:
   `Permissions-Policy`;
 - in production: HSTS, and a CSP that allows only `'self'`, Turnstile
   (`challenges.cloudflare.com`) and a form-action to Stripe Checkout and the
-  portal (the no-JS path);
-- on the token pages: `Referrer-Policy: no-referrer`.
+  portal (the no-JS path), plus the Sentry ingest origin in `connect-src`
+  only when `NEXT_PUBLIC_SENTRY_DSN` is set. Google sign-in needs no CSP
+  entry: accounts.google.com is reached by a 303 from our own server;
+- on the token pages and `/auth/google/callback`: `Referrer-Policy: no-referrer`.
+
+### Error monitoring (Sentry)
+
+Off unless `NEXT_PUBLIC_SENTRY_DSN` is set at build time; then
+`src/instrumentation.ts` (server, `onRequestError`),
+`src/instrumentation-client.ts` (browser, dynamic import so an unset DSN
+ships no SDK) and `src/app/global-error.tsx` report errors. SDK v11 collects
+cookies, headers, bodies, query strings and user info BY DEFAULT, so
+`src/lib/sentry-config.ts` switches every `dataCollection` category off and
+`beforeSend` also strips request data, URLs' query strings, emails, JWTs and
+one-time `token`/`code`/`state` values. No Session Replay. `withSentryConfig`
+(source-map upload) is not used: it needs a Sentry auth token at build time;
+add it later if readable stack traces are wanted.
 
 `'unsafe-inline'` is needed for scripts, because static pages carry the
 pre-paint script and JSON-LD and cannot use a per-request nonce. If the backend
@@ -217,6 +237,11 @@ The backend's own reference is in `docs/billing-stripe.md` §10 and
 | `POST /auth/change-email` `{new_email, current_password}` | profile | 202 shows "ส่งลิงก์ยืนยันไปที่อีเมลใหม่แล้ว" · 400 wrong password · 409 taken · 429 · 503 |
 | `POST /auth/change-password` `{current_password, new_password}` | profile | **200 TokenOut, and the cookies are replaced** · 400 wrong current · 422 · 429 |
 | `POST /contact` `{name, email, message, turnstile_token?, company}` | `/api/contact` | 202 success · 422 field errors · 400 captcha · 429 · 503 shows the `mailto:CONTACT_EMAIL` fallback. `company` is the honeypot and is passed through; the backend answers 202 and sends nothing. |
+| `GET /auth/google/config` | `/login`, `/signup` (ISR 300 s), profile | `enabled: false` hides the button. A stale page is harmless: start re-asks. |
+| `POST /auth/google/start` `{redirect_uri, intent, turnstile_token?}` | `/api/auth/google/start` | 200 `{authorization_url, state}` → state cookie + 303 (only to `https://accounts.google.com`). Errors → `?google=<code>` on the page it came from |
+| `POST /auth/google/callback` `{code, state, redirect_uri}` | `/auth/google/callback` | signin → TokenOut into the session cookies; link → profile notice; reauth → proof into `noey_reauth` (HttpOnly, `Path=/account`, ≤300 s) |
+| `DELETE /auth/google` | profile | 204 · 409 `password_required` explains "set a password first" |
+| `POST /auth/delete-account` `{password? , reauth_token?, forfeit_wallet_balance}` | profile dialog | 204 → cookies cleared, `/account-deleted` · 400 wrong password/reauth · 403 admin · 409 `wallet_balance` → second confirmation · 502/503 → "not deleted, try again" (the backend message is never shown: some name server variables) |
 | `GET /usage/me` | account, quota | Only real fields are rendered |
 | `GET /videos/storage` | account, quota | Used vs allowed bytes |
 | `GET /billing/plans` | prices | See "Prices" |
@@ -292,6 +317,39 @@ Next.js adds the socket address itself. For this to be correct in production:
   dialog. It always shows the neutral 202 message. The reset page asks for the
   new password and a confirmation. Success signs the visitor in, and
   `/account` confirms it with a notice.
+- **Sign in with Google** (no Google JavaScript; plain top-level redirects).
+  1. The button is a form POST to `/api/auth/google/start` (works without
+     JavaScript). The handler checks `Origin`, asks the backend for the
+     authorization URL with `redirect_uri = ${NEXT_PUBLIC_SITE_URL}/auth/google/callback`,
+     stores `state` in `noey_g_state` and `{intent, next, from}` in `noey_g_ctx`
+     (both HttpOnly, `SameSite=Lax` — Strict would be dropped on the way back
+     from Google — `Path=/auth/google`, 600 s) and answers 303.
+  2. `/auth/google/callback` treats `?error=` as a cancel (no API call),
+     compares `state` with the cookie exactly (login-CSRF), clears both
+     cookies, calls the backend and writes the SAME session cookies a password
+     login writes. It always redirects (the code leaves the address bar) with
+     `Referrer-Policy: no-referrer`.
+  3. Outcomes travel as `?google=<code>`; the page shows fixed Thai text for
+     that code (`src/lib/google-auth.ts`), never text from the URL.
+  - Sign-up with Google obeys the same terms tick as the email form (the
+    button stays disabled until it is ticked; the handler re-checks). Login
+    shows a line that a new account will be created under the terms.
+  - Turnstile: only a Google sign-UP needs it (backend answers
+    `captcha_required`); the page then shows the widget next to the button.
+  - The button follows Google's branding guidelines for a custom button
+    (colours, Google Sans Medium 14/20 via `next/font`, padding, 20 px "G").
+  - Only the backend holds the Google client id and secret. Setup:
+    `docs/google-sign-in.md` in the repo root.
+- **Account deletion** (profile → "ลบบัญชี…"). An in-app dialog lists what is
+  deleted and what is kept for accounting, needs an explicit tick, and
+  re-authenticates: the current password, or — for a Google-only account —
+  a Google re-auth whose 5-minute proof waits in an HttpOnly cookie until the
+  final click. A prepaid wallet balance gets a second confirmation. Files in
+  the editor's browser storage or the desktop app are on the user's device;
+  the dialog says so.
+- **Google-only accounts** have no password: the profile shows "ส่งลิงก์ตั้งรหัสผ่าน"
+  (the forgot-password email) instead of "change password", and change-email
+  asks them to set a password first.
 - **Change email.** The new address and the current password are required. The
   address changes only after the visitor opens the link sent to the new
   address.

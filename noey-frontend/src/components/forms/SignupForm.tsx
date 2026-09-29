@@ -5,10 +5,11 @@ import { useActionState, useState } from "react";
 import { signupAction } from "@/app/actions/auth";
 import type { ActionState } from "@/lib/messages";
 import { PLAN_COPY, isPaidTier } from "@/lib/plans";
+import { GoogleSignInForm, OrDivider } from "../auth/GoogleSignInForm";
 import { SearchParam } from "./SearchParam";
 import { TURNSTILE_SITE_KEY, TurnstileWidget } from "./TurnstileWidget";
 
-export function SignupForm() {
+export function SignupForm({ googleEnabled = false }: { googleEnabled?: boolean }) {
   const [state, action, pending] = useActionState<ActionState | undefined, FormData>(signupAction, undefined);
 
   const errors = state?.fieldErrors ?? {};
@@ -31,29 +32,34 @@ export function SignupForm() {
       <p className="auth-page__switch">
         มีบัญชีอยู่แล้ว <Link href="/login">เข้าสู่ระบบ</Link>
       </p>
-      <form action={action} className="stack">
+      {/* Outside both forms (bound to the email form by `form=`) because the
+          Google button honours the same tick: no account is created without it. */}
+      <label className="agree">
+        <input
+          type="checkbox"
+          name="agree"
+          value="yes"
+          className="agree__box"
+          checked={agreed}
+          onChange={(event) => setAgreed(event.target.checked)}
+          required
+          form="signup-form"
+          aria-describedby={errors.agree ? "s-agree-error" : undefined}
+        />
+        <span className="agree__text">
+          ฉันได้อ่านและยอมรับ <Link href="/terms">เงื่อนไขการใช้งาน</Link> และ <Link href="/privacy">นโยบายความเป็นส่วนตัว</Link>{" "}
+          รวมถึงการเก็บและประมวลผลไฟล์ที่ฉันนำเข้ามาเพื่อให้บริการ
+        </span>
+      </label>
+      {errors.agree ? (
+        <p className="field-error" id="s-agree-error" style={{ marginTop: -8 }}>
+          {errors.agree}
+        </p>
+      ) : null}
+      <GoogleSignInForm from="signup" agreed={agreed} enabled={googleEnabled} />
+      {googleEnabled ? <OrDivider label="หรือสมัครด้วยอีเมล" /> : null}
+      <form id="signup-form" action={action} className="stack">
         <SearchParam name="plan" render={(plan) => <input type="hidden" name="plan" value={isPaidTier(plan) ? plan : ""} />} />
-        <label className="agree">
-          <input
-            type="checkbox"
-            name="agree"
-            value="yes"
-            className="agree__box"
-            checked={agreed}
-            onChange={(event) => setAgreed(event.target.checked)}
-            required
-            aria-describedby={errors.agree ? "s-agree-error" : undefined}
-          />
-          <span className="agree__text">
-            ฉันได้อ่านและยอมรับ <Link href="/terms">เงื่อนไขการใช้งาน</Link> และ <Link href="/privacy">นโยบายความเป็นส่วนตัว</Link>{" "}
-            รวมถึงการเก็บและประมวลผลไฟล์ที่ฉันนำเข้ามาเพื่อให้บริการ
-          </span>
-        </label>
-        {errors.agree ? (
-          <p className="field-error" id="s-agree-error" style={{ marginTop: -8 }}>
-            {errors.agree}
-          </p>
-        ) : null}
         <div className="field">
           <label htmlFor="s-name">ชื่อ</label>
           <input

@@ -2076,3 +2076,139 @@ html[data-beta-banner] .site-header {
   font-size: 12.5px;
   color: var(--color-neutral-700);
 }
+
+/* ── Sign in with Google ──────────────────────────────────────────────────
+   Custom button per https://developers.google.com/identity/branding-guidelines
+   (light: #FFFFFF / 1px #747775 / #1F1F1F, dark: #131314 / 1px #8E918F /
+   #E3E3E3; Google Sans Medium 14/20; web padding 12 · 10 · 12; pill).
+   The colours are Google's, not the site's tokens, on purpose. Thai glyphs
+   fall back to the site font. */
+
+.gsi-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid #747775;
+  border-radius: 20px;
+  background: #ffffff;
+  color: #1f1f1f;
+  font-family: var(--font-google-sans), var(--font-thai);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+  letter-spacing: 0.25px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 0.2s, box-shadow 0.2s;
+}
+
+.gsi-button--block {
+  width: 100%;
+}
+
+.gsi-button__logo {
+  flex-shrink: 0;
+  display: block;
+}
+
+.gsi-button:hover:not(:disabled) {
+  background: color-mix(in srgb, #1f1f1f 8%, #ffffff);
+}
+
+.gsi-button:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.gsi-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+html[data-theme="dark"] .gsi-button {
+  background: #131314;
+  border-color: #8e918f;
+  color: #e3e3e3;
+}
+
+html[data-theme="dark"] .gsi-button:hover:not(:disabled) {
+  background: color-mix(in srgb, #e3e3e3 8%, #131314);
+}
+
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]) .gsi-button {
+    background: #131314;
+    border-color: #8e918f;
+    color: #e3e3e3;
+  }
+
+  html:not([data-theme="light"]) .gsi-button:hover:not(:disabled) {
+    background: color-mix(in srgb, #e3e3e3 8%, #131314);
+  }
+}
+
+.google-signin {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.google-signin .form-error,
+.google-signin .form-success {
+  margin: 0;
+}
+
+.google-signin__note {
+  margin: 0;
+  font-size: 12px;
+}
+
+.or-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 22px 0;
+  font-size: 13px;
+  color: var(--color-neutral-600);
+}
+
+.or-divider::before,
+.or-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--color-divider);
+}
+
+/* ── Account deletion ─────────────────────────────────────────────────── */
+
+.btn-danger {
+  color: var(--color-danger);
+  border-color: var(--color-danger);
+}
+
+.btn-danger:hover {
+  color: var(--color-danger);
+  background: color-mix(in srgb, var(--color-danger) 10%, transparent);
+}
+
+.btn-danger:active {
+  background: color-mix(in srgb, var(--color-danger) 18%, transparent);
+}
+
+.delete-summary h3 {
+  font-size: 14px;
+  font-weight: 500;
+  margin: 14px 0 6px;
+}
+
+.delete-summary .ruled-list {
+  font-size: 13px;
+}
+
+.delete-summary .fine {
+  margin-top: 12px;
+}

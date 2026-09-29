@@ -1,15 +1,20 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { JsonLd } from "@/components/JsonLd";
+import { GoogleSignInForm, OrDivider } from "@/components/auth/GoogleSignInForm";
 import { LoginForm } from "@/components/forms/LoginForm";
 import { jsonLdGraph, webPageNode } from "@/lib/jsonld";
 import { pageMetadata } from "@/lib/seo";
+import { googleSignInEnabled } from "@/lib/server/google";
 import { PAGES } from "@/lib/site";
 
 // noindex (see the page registry): a login form answers no search query.
 export const metadata: Metadata = pageMetadata("login");
+// Static, refreshed every 5 minutes: only whether the Google button shows can change.
+export const revalidate = 300;
 
-export default function LoginPage() {
+export default async function LoginPage() {
+  const googleEnabled = await googleSignInEnabled();
   return (
     <main id="main" className="container page auth-page">
       <div className="auth-page__form">
@@ -17,6 +22,8 @@ export default function LoginPage() {
         <p className="auth-page__switch">
           ยังไม่มีบัญชี <Link href="/signup">สมัครใช้งานฟรี</Link>
         </p>
+        <GoogleSignInForm from="login" enabled={googleEnabled} />
+        {googleEnabled ? <OrDivider /> : null}
         <LoginForm />
       </div>
       <JsonLd

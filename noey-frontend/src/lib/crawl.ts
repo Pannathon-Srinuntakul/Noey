@@ -12,7 +12,7 @@ import { SITE_URL } from "./site";
  * (Crawler user-agent names are the one place vendor names appear; they are
  * directives, not UI.)
  */
-export const PRIVATE_PATHS = ["/account", "/checkout", "/reset-password", "/verify-email", "/api"];
+export const PRIVATE_PATHS = ["/account", "/checkout", "/reset-password", "/verify-email", "/api", "/auth/google"];
 
 export const SEARCH_AND_AI_CRAWLERS = [
   "Googlebot",

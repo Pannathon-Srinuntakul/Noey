@@ -1,5 +1,6 @@
 import type { NextConfig } from "next";
 import { PHASE_PRODUCTION_BUILD } from "next/constants";
+import { sentryDsn, sentryIngestOrigin } from "./src/lib/sentry-config";
 
 const isProduction = process.env.NODE_ENV === "production";
 
@@ -24,7 +25,15 @@ function warnAboutBuildTimeEnv(): void {
  * hosted pages because a no-JavaScript plan-button submit is answered with a
  * 303 redirect to Checkout / the Customer Portal — if the backend ever uses a
  * Stripe custom domain, add it here.
+ *
+ * `connect-src` gains exactly one origin — the Sentry ingest host inside
+ * NEXT_PUBLIC_SENTRY_DSN — and only when that DSN is set (it is inlined at
+ * build time, as are these headers). No DSN, no change. The Google sign-in
+ * flow needs nothing here: accounts.google.com is a top-level navigation (a
+ * 303 from our own server), not a fetch, frame or script.
  */
+const sentryOrigin = sentryIngestOrigin(sentryDsn());
+
 const contentSecurityPolicy = [
   "default-src 'self'",
   "script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com",
@@ -32,7 +41,7 @@ const contentSecurityPolicy = [
   "img-src 'self' data: blob: https:",
   "media-src 'self' blob: https:",
   "font-src 'self' data:",
-  "connect-src 'self'",
+  sentryOrigin ? `connect-src 'self' ${sentryOrigin}` : "connect-src 'self'",
   "frame-src https://challenges.cloudflare.com",
   "form-action 'self' https://checkout.stripe.com https://billing.stripe.com",
   "frame-ancestors 'none'",
@@ -81,6 +90,8 @@ const nextConfig: NextConfig = {
       // (Listed after the site-wide rule so this value wins.)
       { source: "/reset-password", headers: [{ key: "Referrer-Policy", value: "no-referrer" }] },
       { source: "/verify-email", headers: [{ key: "Referrer-Policy", value: "no-referrer" }] },
+      // Google returns here with ?code=&state= (the handler also sets it on its redirect).
+      { source: "/auth/google/callback", headers: [{ key: "Referrer-Policy", value: "no-referrer" }] },
     ];
   },
 };
