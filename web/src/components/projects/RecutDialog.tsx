@@ -10,7 +10,7 @@ import { Textarea } from '../ui/Input'
 import { UsageEstimateLine } from '../wizard/UsageEstimate'
 import { useUsageEstimate } from '../../lib/useUsageEstimate'
 import { startDecision } from '../../lib/usageEstimate'
-import type { EstimateRequest } from '../../lib/usageLimits'
+import { runCostChip, type EstimateRequest } from '../../lib/usageLimits'
 
 /** A recut is the same analysis over the same clips at the same tiers, so it
  * is estimated exactly like the first cut was. */
@@ -72,6 +72,11 @@ export function RecutDialog({
   const { estimate, loading: estimating } = useUsageEstimate(session, recutEstimateRequest(project))
   const [allowWallet, setAllowWallet] = useState(false)
   const decision = startDecision(estimate, allowWallet)
+  // A recut is not a cheap touch-up: the model re-reads the footage and
+  // re-reasons from scratch, so the fixed cost repeats. Said on the button,
+  // because the alternative is learning it from a meter that has already
+  // fallen.
+  const cost = runCostChip(estimate)
   // Mounted only while open (see the card), so a comment typed and cancelled
   // dies with the dialog — no reset effect needed.
   const [text, setText] = useState('')
@@ -149,11 +154,11 @@ export function RecutDialog({
               discriminated union and cannot be narrowed through a spread. */}
           {canSubmit ? (
             <Button variant="primary" onClick={() => onSubmit(text.trim(), allowWallet)}>
-              ตัดใหม่
+              {cost ? `ตัดใหม่ · ${cost}` : 'ตัดใหม่'}
             </Button>
           ) : (
             <Button variant="primary" disabled disabledReason={blockedReason}>
-              ตัดใหม่
+              {cost ? `ตัดใหม่ · ${cost}` : 'ตัดใหม่'}
             </Button>
           )}
         </>
@@ -214,6 +219,9 @@ export function RecutDialog({
             </p>
             <p className="mt-0.5 text-[13px] leading-[1.5] text-muted">
               เก็บได้ครั้งละหนึ่งเวอร์ชัน — ตัดใหม่อีกรอบจะทับของเก่า
+            </p>
+            <p className="mt-1.5 text-[13px] leading-[1.5] text-muted">
+              ตัดใหม่ใช้โควตาเกือบเท่ารอบแรก
             </p>
           </div>
         </div>

@@ -3,7 +3,7 @@ import { useState } from 'react'
 import { bannerKey, nearLimit, paymentFailedNotice } from '../../lib/planLadder'
 import { useRouter } from '../../lib/router'
 import { useUsageInfo } from '../../lib/usageInfo'
-import { limitLabel, pctText, resetLine } from '../../lib/usageLimits'
+import { meterCopy, windowTitle } from '../../lib/usageLimits'
 
 const DISMISS_KEY = 'noey.usageBanner.dismissed'
 
@@ -27,6 +27,11 @@ function writeDismissed(key: string): void {
  * "เตือนก่อนเต็ม" (docs/design/editor-limits.md §2): an accent strip under the
  * title bar once a quota window reaches 80%. Dismissing it hides it for THAT
  * window and reset only — the next window warns again.
+ *
+ * It words itself through the same `meterCopy` as the usage card, so the
+ * warning and the meter the user goes on to open cannot disagree. A limit
+ * that never resets (the Free trial credit) has no next window, so it offers
+ * the upgrade instead of a reset time.
  */
 export function UsageBanner(): React.JSX.Element | null {
   const { usage } = useUsageInfo()
@@ -57,6 +62,7 @@ export function UsageBanner(): React.JSX.Element | null {
   if (!hot) return null
   const key = bannerKey(hot)
   if (dismissed === key) return null
+  const copy = meterCopy(hot)
 
   return (
     <div
@@ -64,7 +70,7 @@ export function UsageBanner(): React.JSX.Element | null {
       className="mx-3 mt-2 flex flex-wrap items-center gap-3 rounded-md border border-[rgb(217_164_65_/_0.4)] bg-accent-tint px-3.5 py-[9px] md:mx-5"
     >
       <span className="text-[13.5px] tabular-nums text-accent-hover-text">
-        {limitLabel(hot.key)} ใช้ไป {pctText(hot.used_pct)} · {resetLine(hot.key, hot.resets_at)}
+        {windowTitle(hot)} {copy.value} · {copy.line}
       </span>
       <span className="flex-1" />
       <button

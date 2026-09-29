@@ -2,18 +2,36 @@ import { describe, expect, it } from 'vitest'
 import {
   bannerKey,
   type BannerLimit,
+  BETA_PRICE_ENDS_AT,
+  betaPriceCallout,
+  betaPricing,
   canChangePlan,
   featureLockedLine,
   footageNotice,
+  FULL_PRICE_SATANG,
+  APPROX_CUTS_NOTE,
+  fullPriceAfterBeta,
+  HIGH_PRECISION_MIN_PLAN,
+  highPrecisionLocked,
   nearLimit,
+  PLAN_CONSENT,
+  PLAN_FOOTER,
   PLAN_ROWS,
   planButtonLabel,
   planChangeBody,
+  PLAN_APPROX_CUTS,
+  planApproxCuts,
+  planConsentText,
+  planFooter,
   priceText,
   projectLimitNotice,
   queueLimitNotice,
   storageNotice
 } from './planLadder'
+
+/** Inside the beta window, and the first day after it. */
+const BETA = new Date('2026-09-29T00:00:00Z')
+const AFTER_BETA = new Date(Date.parse(BETA_PRICE_ENDS_AT) + 1)
 
 describe('plan list (design §5)', () => {
   it('lists the seven plans of the pricing page in order', () => {
@@ -26,7 +44,7 @@ describe('plan list (design §5)', () => {
       'agency',
       'max'
     ])
-    expect(PLAN_ROWS[3].sub).toBe('5x · ฟุตเทจ 2 ชม. · 10 GB')
+    expect(PLAN_ROWS[3].sub).toBe('ตัดได้ราว 22 คลิป/เดือน · ฟุตเทจ 30 นาที · ระดับละเอียด')
   })
 
   it('labels the row button by direction', () => {
@@ -44,18 +62,128 @@ describe('plan list (design §5)', () => {
     expect(priceText(199_000)).toBe('฿1,990')
     expect(priceText(0)).toBe('฿0')
   })
+
+  it('describes Free as a credit spent once, not a monthly allowance', () => {
+    expect(PLAN_ROWS[0].sub).toContain('ครั้งเดียว')
+    expect(PLAN_ROWS[0].sub).not.toContain('เดือน')
+  })
+
+  it('carries the footage cap each plan actually gives', () => {
+    expect(PLAN_ROWS[0].sub).toContain('10 นาที')
+    expect(PLAN_ROWS[1].sub).toContain('10 นาที')
+    expect(PLAN_ROWS[2].sub).toContain('20 นาที')
+    expect(PLAN_ROWS[3].sub).toContain('30 นาที')
+  })
+
+  it('states every cut count as an approximation, and which tier it may pick', () => {
+    // "ราว" is what keeps the number a claim rather than an allowance.
+    expect(PLAN_ROWS.every((r) => r.sub.includes('ราว'))).toBe(true)
+    // The three cheapest plans are Standard-only (owner, 2026-09-29 revision).
+    expect(PLAN_ROWS.slice(0, 3).every((r) => r.sub.endsWith('ระดับปกติ'))).toBe(true)
+    expect(PLAN_ROWS.slice(3).every((r) => r.sub.endsWith('ระดับละเอียด'))).toBe(true)
+  })
+
+  it('keeps the printed count and the figure from drifting apart', () => {
+    expect(PLAN_APPROX_CUTS).toEqual({
+      free: 2,
+      lite: 4,
+      starter: 9,
+      pro: 22,
+      studio: 45,
+      agency: 90,
+      max: 160
+    })
+    for (const row of PLAN_ROWS) {
+      expect(row.sub).toContain(`ราว ${PLAN_APPROX_CUTS[row.key]} คลิป`)
+    }
+    expect(planApproxCuts('pro')).toBe(22)
+    // An admin-set or unknown plan advertises none, so nothing may show one.
+    expect(planApproxCuts('enterprise')).toBeNull()
+    expect(planApproxCuts(null)).toBeNull()
+  })
+
+  it('never states a cut count without its basis AND that it is not a quota', () => {
+    expect(APPROX_CUTS_NOTE).toContain('5 นาที')
+    expect(APPROX_CUTS_NOTE).toContain('ระดับละเอียด')
+    expect(APPROX_CUTS_NOTE).toContain('ไม่ใช่โควตา')
+  })
+})
+
+describe('beta pricing (owner, 2026-09-29)', () => {
+  it('runs to the last instant of 31 Dec 2026 Bangkok time and not past it', () => {
+    expect(betaPricing(BETA)).toBe(true)
+    expect(betaPricing(new Date(Date.parse(BETA_PRICE_ENDS_AT)))).toBe(true)
+    expect(betaPricing(AFTER_BETA)).toBe(false)
+  })
+
+  it('halves every paid plan — the full price is the struck-through one', () => {
+    expect(FULL_PRICE_SATANG.pro).toBe(99_000)
+    expect(fullPriceAfterBeta('pro', BETA)).toBe(99_000)
+    // Free has no price to strike through, and neither has an admin-set plan.
+    expect(fullPriceAfterBeta('free', BETA)).toBeNull()
+    expect(fullPriceAfterBeta('enterprise', BETA)).toBeNull()
+  })
+
+  it('says nothing at all once the date has passed', () => {
+    expect(fullPriceAfterBeta('pro', AFTER_BETA)).toBeNull()
+    expect(betaPriceCallout('pro', 49_900, AFTER_BETA)).toBeNull()
+    expect(planConsentText('pro', AFTER_BETA)).toBe(PLAN_CONSENT)
+    expect(planFooter(AFTER_BETA)).toBe(PLAN_FOOTER)
+  })
+
+  it('states both prices and both dates as numbers in the callout', () => {
+    expect(betaPriceCallout('pro', 49_900, BETA)).toBe(
+      '฿499 คือราคาเบต้า ถึง 31 ธ.ค. 2026 / รอบบิลตั้งแต่ 1 ม.ค. 2027 เป็นต้นไป ตัดบัตร ฿990 ตามราคาปกติ ยกเลิกได้ทุกเมื่อก่อนถึงวันนั้น'
+    )
+  })
+
+  it('puts the rise inside what the user ticks', () => {
+    const consent = planConsentText('pro', BETA)
+    expect(consent.startsWith(PLAN_CONSENT)).toBe(true)
+    expect(consent).toContain('1 ม.ค. 2027')
+    expect(consent).toContain('฿990')
+    // Moving to Free is not a subscription, so nothing is added to it.
+    expect(planConsentText('free', BETA)).toBe(PLAN_CONSENT)
+  })
+
+  it('dates the footnote under the plan table', () => {
+    expect(planFooter(BETA)).toBe(`${PLAN_FOOTER} · ราคาเบต้าสิ้นสุด 31 ธ.ค. 2026`)
+  })
+})
+
+describe('the High precision tier', () => {
+  it('is closed to Free, Lite AND Starter', () => {
+    expect(HIGH_PRECISION_MIN_PLAN).toBe('pro')
+    expect(highPrecisionLocked('free')).toBe(true)
+    expect(highPrecisionLocked('lite')).toBe(true)
+    expect(highPrecisionLocked('starter')).toBe(true)
+    expect(highPrecisionLocked(HIGH_PRECISION_MIN_PLAN)).toBe(false)
+    expect(highPrecisionLocked('max')).toBe(false)
+    // An admin-set plan is the server's business, not this table's.
+    expect(highPrecisionLocked('enterprise')).toBe(false)
+  })
+
+  it('names the cheapest plan that has it', () => {
+    expect(featureLockedLine('precision', HIGH_PRECISION_MIN_PLAN)).toBe(
+      'ระดับละเอียดใช้ได้ตั้งแต่แผน Pro ขึ้นไป'
+    )
+  })
 })
 
 describe('confirm dialog body (design §6)', () => {
   it('states the prorated charge now and the next month', () => {
     expect(
-      planChangeBody({
-        tier: 'pro',
-        direction: 'upgrade',
-        due_now_satang: 70_300,
-        next_price_satang: 99_000,
-        effective_at: null
-      })
+      planChangeBody(
+        {
+          tier: 'pro',
+          direction: 'upgrade',
+          due_now_satang: 70_300,
+          next_price_satang: 99_000,
+          effective_at: null
+        },
+        undefined,
+        AFTER_BETA
+      )
     ).toBe(
       'โควตาใหม่มีผลทันทีหลังชำระเงิน ครั้งนี้ตัดบัตร ฿703 ตามวันที่เหลือของรอบบิล เดือนถัดไป ฿990'
     )
@@ -63,14 +191,65 @@ describe('confirm dialog body (design §6)', () => {
 
   it('charges a first subscription in full, without the proration wording', () => {
     expect(
-      planChangeBody({
+      planChangeBody(
+        {
+          tier: 'pro',
+          direction: 'upgrade',
+          due_now_satang: 99_000,
+          next_price_satang: 99_000,
+          effective_at: null
+        },
+        undefined,
+        AFTER_BETA
+      )
+    ).toBe('โควตาใหม่มีผลทันทีหลังชำระเงิน ครั้งนี้ตัดบัตร ฿990 แล้วตัดทุกเดือนในราคาเดียวกัน')
+  })
+
+  it('never says "the same price every month" while a rise is already dated', () => {
+    const body = planChangeBody(
+      {
         tier: 'pro',
         direction: 'upgrade',
-        due_now_satang: 99_000,
-        next_price_satang: 99_000,
+        due_now_satang: 49_900,
+        next_price_satang: 49_900,
         effective_at: null
-      })
-    ).toBe('โควตาใหม่มีผลทันทีหลังชำระเงิน ครั้งนี้ตัดบัตร ฿990 แล้วตัดทุกเดือนในราคาเดียวกัน')
+      },
+      undefined,
+      BETA
+    )
+    expect(body).toBe(
+      'โควตาใหม่มีผลทันทีหลังชำระเงิน ครั้งนี้ตัดบัตร ฿499 แล้วตัดเดือนละ ฿499 ถึง 31 ธ.ค. 2026 · รอบบิลตั้งแต่ 1 ม.ค. 2027 ตัดบัตร ฿990 ตามราคาปกติ'
+    )
+    expect(body).not.toContain('ราคาเดียวกัน')
+  })
+
+  it('carries the same two numbers into a prorated upgrade and a downgrade', () => {
+    const up = planChangeBody(
+      {
+        tier: 'studio',
+        direction: 'upgrade',
+        due_now_satang: 30_000,
+        next_price_satang: 99_900,
+        effective_at: null
+      },
+      undefined,
+      BETA
+    )
+    expect(up).toContain('เดือนถัดไป ฿999 ถึง 31 ธ.ค. 2026')
+    expect(up).toContain('ตัดบัตร ฿1,990 ตามราคาปกติ')
+    const down = planChangeBody(
+      {
+        tier: 'lite',
+        direction: 'downgrade',
+        due_now_satang: 0,
+        next_price_satang: 9_900,
+        effective_at: '2026-10-10T00:00:00Z'
+      },
+      'UTC',
+      BETA
+    )
+    expect(down).toContain('เดือนถัดไป ฿99 ถึง 31 ธ.ค. 2026')
+    expect(down).toContain('฿199 ตามราคาปกติ')
   })
 
   it('says a downgrade waits for the next cycle and charges nothing now', () => {
@@ -82,23 +261,28 @@ describe('confirm dialog body (design §6)', () => {
         next_price_satang: 19_900,
         effective_at: '2026-10-10T00:00:00Z'
       },
-      'UTC'
+      'UTC',
+      AFTER_BETA
     )
     expect(body).toContain('มีผลรอบบิลถัดไป')
     expect(body).toContain('ไม่ตัดบัตรตอนนี้')
     expect(body).toContain('฿199')
   })
 
-  it('explains moving to Free', () => {
-    expect(
-      planChangeBody({
+  it('explains moving to Free as a credit spent once', () => {
+    const body = planChangeBody(
+      {
         tier: 'free',
         direction: 'downgrade',
         due_now_satang: 0,
         next_price_satang: 0,
         effective_at: null
-      })
-    ).toContain('กลับเป็นแผนฟรี')
+      },
+      undefined,
+      BETA
+    )
+    expect(body).toContain('กลับเป็นแผนฟรี')
+    expect(body).toContain('เครดิตทดลองใช้ครั้งเดียว ไม่รีเซ็ตรายเดือน')
   })
 })
 

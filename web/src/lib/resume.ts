@@ -22,6 +22,8 @@ import {
   estimateBlockLine,
   formatBaht,
   limitLabel,
+  TRIAL_CREDIT_ACTION,
+  TRIAL_CREDIT_SPENT,
   whenBack,
   type LimitKey,
   type UsageEstimate
@@ -76,6 +78,9 @@ export interface ResumeState {
   /** The window that ran out (frozen at pause time). */
   window: LimitKey | null
   windowResetsAt: string | null
+  /** False = that allowance never comes back (the Free trial credit), so there
+   * is no reset to wait for. Absent on an older server = it does reset. */
+  windowResets: boolean
   /** The server's own Thai sentence, only while paused. */
   message: string | null
   resumable: boolean
@@ -105,7 +110,7 @@ function num(v: unknown, fallback = 0): number {
 }
 
 function limitKey(v: unknown): LimitKey | null {
-  return v === 'five_hour' || v === 'weekly' || v === 'monthly' ? v : null
+  return v === 'five_hour' || v === 'weekly' || v === 'monthly' || v === 'lifetime' ? v : null
 }
 
 function pctMap(v: unknown): Partial<Record<LimitKey, number>> {
@@ -136,6 +141,7 @@ export function parseQuota(v: unknown): ResumeQuota {
     balance_satang: num(o.balance_satang),
     binding: limitKey(o.binding),
     resets_at: str(o.resets_at),
+    resets: o.resets !== false,
     unlimited: o.unlimited === true
   }
 }
@@ -176,6 +182,7 @@ export function parseResumeState(body: unknown): ResumeState {
     pausedAt: str(o.paused_at),
     window: limitKey(o.window),
     windowResetsAt: str(o.window_resets_at),
+    windowResets: o.window_resets !== false,
     message: str(o.message),
     resumable: o.resumable === true,
     charges: o.charges === true,
@@ -282,14 +289,19 @@ export function stagePosition(state: ResumeState): string | null {
  */
 export function pausedHeadline(state: ResumeState): string {
   if (!state.paused) return ''
+  if (!state.windowResets) return `หยุดไว้ชั่วคราว — ${TRIAL_CREDIT_SPENT}`
   return state.window ? `หยุดไว้ชั่วคราว — ${limitLabel(state.window)}หมด` : 'หยุดไว้ชั่วคราว'
 }
 
 /**
  * When the window that ran out comes back, in the VIEWER's timezone — which
  * the server's own message cannot do. Empty when no time was frozen.
+ *
+ * An allowance that never resets (`window_resets: false`) has no such time at
+ * all: it says so, and points at the only way forward.
  */
 export function windowResetLine(state: ResumeState, now: Date = new Date()): string {
+  if (!state.windowResets) return `${TRIAL_CREDIT_SPENT} · ${TRIAL_CREDIT_ACTION}`
   const back = whenBack(state.windowResetsAt, now)
   if (!back) return ''
   const label = state.window ? limitLabel(state.window) : 'โควตา'

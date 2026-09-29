@@ -185,7 +185,7 @@ export interface Usage {
    * up weekly + 5-hour. Empty for an unlimited account. */
   limits: UsageLimit[]
   /** The fullest window has no room left: a start then needs the balance. */
-  blocked: { key: LimitKey; resets_at: string | null } | null
+  blocked: { key: LimitKey; resets_at: string | null; resets?: boolean } | null
   concurrency: { max: number; running: number; queued: number }
   /** Null until the first top-up. */
   wallet: { balance_satang: number; next_expiry: string | null } | null
@@ -203,6 +203,13 @@ export interface Usage {
 
 /** Per-plan features the pricing page promises. Null limits = unlimited. */
 export interface PlanFeatures {
+  /**
+   * Roughly how many cuts a month the plan buys — MARKETING COPY, never
+   * subtracted from. Nothing counts down from it and no meter may read it;
+   * the quota is the percentage in `limits`. (Renamed from `clips` by the
+   * server, 2026-09-29, for exactly that reason.)
+   */
+  approx_cuts?: number | null
   footage_sec: number | null
   max_projects: number | null
   music: boolean

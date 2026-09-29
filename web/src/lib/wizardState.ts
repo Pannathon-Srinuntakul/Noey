@@ -8,6 +8,7 @@ import { CAPTION_STYLE_DEFAULT, type CaptionStyle } from './captionStyle'
 import { buildDubBrief, dubTargetDurationSec } from './dubBrief'
 import type { ProjectMode } from './projectFlow'
 import { canSnapToBeat } from './platformFeatures'
+import { ENGINE_NAMES, PRECISION_NAMES, precisionLevelName } from './qualityTiers'
 
 /** What the user picks. `highlight` (ตัดฉากเด่น) fans out into three backend
  * modes via the voice choice; `longform` (R17) is its own card because its
@@ -269,7 +270,7 @@ export function outcomeStepGate(state: WizardState): Gate {
   if (total !== null && total > capSecFor(state.uiMode, state.precision)) {
     const fix =
       state.precision === 'high' && total <= capSecFor(state.uiMode, 'standard')
-        ? 'เลือกความละเอียด Standard หรือลดคลิป'
+        ? `เลือกความละเอียด${PRECISION_NAMES.standard} หรือลดคลิป`
         : 'ลดคลิปหรือเลือกโหมดอื่น'
     return {
       ok: false,
@@ -382,7 +383,9 @@ export function buildSubmission(state: WizardState): WizardSubmission {
     // Speech modes: the free-text note travels alone — the duration prefix
     // buildDubBrief adds exists for the video prompt, and the speech selector
     // receives duration as a real field instead.
-    brief: isCut ? (buildDubBrief(state.duration, state.customSec, state.note) ?? '') : state.note.trim(),
+    brief: isCut
+      ? (buildDubBrief(state.duration, state.customSec, state.note) ?? '')
+      : state.note.trim(),
     userScript: state.voiceover === 'own' && mode === 'dub_first' ? state.userScript.trim() : '',
     // speech_highlights decides each highlight's length from the content, so it
     // sends none at all — see outcomeStepGate. Every other paid mode still does.
@@ -493,9 +496,7 @@ export function summaryRows(state: WizardState, cutStyleName: string | null): Su
     rows.push({
       key: 'quality',
       label: 'คุณภาพ AI',
-      value: `${state.engine === 'pro' ? 'Pro' : 'Lite'} · ความละเอียด${
-        state.precision === 'high' ? ' High' : ' Standard'
-      }`,
+      value: `${ENGINE_NAMES[state.engine]} · ${precisionLevelName(state.precision)}`,
       step: 2
     })
   }

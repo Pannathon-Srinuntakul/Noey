@@ -37,6 +37,8 @@ import { useUsageInfo } from '../lib/usageInfo'
 import {
   featureLockedLine,
   footageNotice,
+  HIGH_PRECISION_MIN_PLAN,
+  highPrecisionLocked,
   projectLimitNotice,
   storageNotice,
   type LimitNotice
@@ -155,20 +157,37 @@ export default function WizardPage({
   const [pendingMusicFile, setPendingMusicFile] = useState<File | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  // Pre-flight estimate (docs/token-billing-plan.md §4.1): asked as soon as
-  // every chosen clip has a length, re-asked when the mode or tiers change.
-  const { estimate, loading: estimating } = useUsageEstimate(session, estimateRequestFor(state))
   // "Continue with my balance" — consent for THIS start only; it rides to the
   // pipeline on the project row (`allowWallet`) and is spent there.
   const [allowWallet, setAllowWallet] = useState(false)
   const [quotaOpen, setQuotaOpen] = useState(false)
   const { usage } = useUsageInfo()
-  const planNotices = wizardPlanNotices(state, usage)
-  const planBlocked = planNotices.some((n) => n.block)
   const musicLocked =
     usage?.features && !usage.features.music
       ? featureLockedLine('music', usage.features.music_min_plan)
       : null
+  // Free and Lite cannot pick High precision (owner, 2026-09-29).
+  const precisionLocked =
+    usage && highPrecisionLocked(usage.plan)
+      ? featureLockedLine('precision', HIGH_PRECISION_MIN_PLAN)
+      : null
+  /**
+   * What the form MEANS once the plan is known.
+   *
+   * The plan answer arrives after mount and can change in another tab, so a
+   * "high" that came from a saved default has to stop being sent — but writing
+   * the correction back into state would be a render reacting to a render.
+   * Derived instead: everything downstream (the estimate, the gates, the step
+   * components, the projects that get created) reads THIS, and `setState`
+   * still owns what the user typed.
+   */
+  const effective: WizardState =
+    precisionLocked && state.precision === 'high' ? { ...state, precision: 'standard' } : state
+  // Pre-flight estimate (docs/token-billing-plan.md §4.1): asked as soon as
+  // every chosen clip has a length, re-asked when the mode or tiers change.
+  const { estimate, loading: estimating } = useUsageEstimate(session, estimateRequestFor(effective))
+  const planNotices = wizardPlanNotices(effective, usage)
+  const planBlocked = planNotices.some((n) => n.block)
   // Kept so re-opening the range picker on the same track does not force the
   // user back through the native file dialog.
   const musicFileRef = useRef<File | null>(null)
@@ -366,7 +385,7 @@ export default function WizardPage({
     setBusy(true)
     setError(null)
     try {
-      const s = buildSubmission(state)
+      const s = buildSubmission(effective)
       const groups: WizardFile[][] =
         state.uploadMode === 'separate' && state.files.length > 1
           ? state.files.map((f) => [f])
@@ -379,7 +398,7 @@ export default function WizardPage({
       // with nothing watchable anywhere else.
       const created: LocalProject[] = []
       for (const group of groups) {
-        const name = resolvedProjectName(state, group)
+        const name = resolvedProjectName(effective, group)
         const project = await window.noey.projects.create({ name, mode: s.mode })
 
         // Into the store BEFORE anything is written down. A picked file is a
@@ -416,8 +435,8 @@ export default function WizardPage({
           userScript: s.userScript,
           targetDurationSec: s.targetDurationSec,
           cutStyleUid: s.cutStyleUid,
-          engine: state.engine,
-          precision: state.precision,
+          engine: effective.engine,
+          precision: effective.precision,
           captionStyle: s.captionStyle,
           beatSync: s.beatSync,
           allowWallet: payWithWallet || undefined
@@ -462,7 +481,7 @@ export default function WizardPage({
   )
 
   const baseGate: { ok: boolean; reason?: string } =
-    step === 1 ? fileStepGate(state) : step === 2 ? outcomeStepGate(state) : { ok: true }
+    step === 1 ? fileStepGate(effective) : step === 2 ? outcomeStepGate(effective) : { ok: true }
   // A plan refusal (footage / storage / projects) stops the wizard at the
   // files step, where the fix is — the reason is the notice itself.
   const gate =
@@ -490,7 +509,7 @@ export default function WizardPage({
 
       {step === 1 ? (
         <WizardStepFiles
-          state={state}
+          state={effective}
           setFiles={(update) => setState((prev) => ({ ...prev, files: update(prev.files) }))}
           estimate={
             planNotices.length || estimating || (estimate && !estimate.unlimited)
@@ -500,7 +519,7 @@ export default function WizardPage({
         />
       ) : step === 2 ? (
         <WizardStepOutcome
-          state={state}
+          state={effective}
           patch={patch}
           cutStyles={cutStyles}
           previewThumb={previewThumb}
@@ -510,11 +529,12 @@ export default function WizardPage({
             else pickMusicFile()
           }}
           musicLocked={musicLocked}
+          precisionLocked={precisionLocked}
           onSeePlans={() => navigate({ name: 'settings' })}
         />
       ) : (
         <WizardStepReview
-          state={state}
+          state={effective}
           cutStyleName={cutStyleName}
           onEditStep={(s) => setStep(s)}
           onChangeName={(projectName) => patch({ projectName, projectNameTouched: true })}
@@ -570,6 +590,7 @@ export default function WizardPage({
         open={quotaOpen}
         limitKey={estimate?.binding ?? null}
         resetsAt={estimate?.resets_at ?? null}
+        resets={estimate?.resets !== false}
         walletSatang={estimate?.fits === 'wallet' ? estimate.wallet_satang : null}
         onClose={() => setQuotaOpen(false)}
         onUseWallet={() => {

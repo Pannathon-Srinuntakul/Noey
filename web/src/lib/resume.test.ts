@@ -221,6 +221,16 @@ describe('what a paused project says', () => {
     expect(windowResetLine(state({ window_resets_at: null }), NOW)).toBe('')
   })
 
+  it('does not promise a reset to an allowance that never comes back', () => {
+    const s = state({ window: 'monthly', window_resets: false })
+    expect(s.windowResets).toBe(false)
+    expect(windowResetLine(s, NOW)).toBe('เครดิตทดลองใช้หมดแล้ว · เปลี่ยนแผนเพื่อใช้ต่อ')
+    expect(windowResetLine(s, NOW)).not.toMatch(/รีเซ็ต(อีก| )/)
+    expect(pausedHeadline(s)).toBe('หยุดไว้ชั่วคราว — เครดิตทดลองใช้หมดแล้ว')
+    // Absent on an older payload means it does reset.
+    expect(state().windowResets).toBe(true)
+  })
+
   it('says which stage continuing picks up', () => {
     expect(nextStageLine(state())).toBe('ทำต่อที่: ให้ AI วิเคราะห์วิดีโอ · ขั้นที่ 3 จาก 8')
     expect(nextStageLine(state({ next_stage: null }))).toBe('ไม่มีขั้นตอนค้างอยู่')

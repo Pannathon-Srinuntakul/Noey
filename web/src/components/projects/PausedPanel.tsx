@@ -133,9 +133,11 @@ export function PausedPanel({ job }: { job: ProjectPipeline }): React.JSX.Elemen
         {/* Offered whenever the plan cannot pay, wallet consent or not: with a
             balance the press above spends it, without one this is the only
             way forward before the window rolls. */}
-        {state.quota.fits !== 'plan' ? (
+        {/* A credit that never resets cannot be waited out, so the way on is a
+            plan change rather than topping the balance up. */}
+        {state.quota.fits !== 'plan' || !state.windowResets ? (
           <Button variant="secondary" onClick={() => navigate({ name: 'settings' })}>
-            เพิ่มโควตา
+            {state.windowResets ? 'เพิ่มโควตา' : 'เปลี่ยนแผน'}
           </Button>
         ) : null}
         <button

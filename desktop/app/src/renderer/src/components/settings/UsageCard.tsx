@@ -1,14 +1,14 @@
 import type { Usage } from '../../lib/api'
 import { cn } from '../../lib/cn'
+import { FREE_TRIAL_NOTE } from '../../lib/planLadder'
 import {
-  limitLabel,
-  pctText,
+  meterCopy,
   planName,
   queueNotice,
-  resetLine,
   shortDate,
   storageText,
-  usageTone
+  usageTone,
+  windowTitle
 } from '../../lib/usageLimits'
 
 /** Tone → classes. The value and its bar share one colour (design §1). */
@@ -62,6 +62,17 @@ function MeterRow({
  * limit the plan enforces, then storage. Percentages and reset times only —
  * `Usage` carries no token count and this card must never derive one.
  * Reset times are formatted in the viewer's own timezone.
+ *
+ * Meters are PERCENT ONLY (owner, 2026-09-22, re-confirmed 2026-09-29). A
+ * count of cuts cannot survive this cost shape — a 30-minute high-quality cut
+ * costs several times an ordinary one, so a countable meter would fall by
+ * four on a single upload and read as broken. What a run will cost is said
+ * before it starts instead (`usageLimits.runCostLine`), which is what makes
+ * the percentage answer "how many more runs do I have".
+ *
+ * A limit the server marks `resets: false` is the Free plan's one-time trial
+ * credit, not a window: `meterCopy` offers the upgrade instead of counting
+ * down to a reset that never arrives.
  */
 export function UsageCard({ usage }: { usage: Usage }): React.JSX.Element {
   const storagePct =
@@ -100,19 +111,28 @@ export function UsageCard({ usage }: { usage: Usage }): React.JSX.Element {
         </p>
       ) : null}
 
+      {/* Free is a credit spent once, not a cycle. Said here as well as on the
+          meter, because an older server sends no `resets` flag to read. */}
+      {usage.plan === 'free' ? (
+        <p className="mt-2 text-sm leading-[1.6] text-muted">{FREE_TRIAL_NOTE}</p>
+      ) : null}
+
       <div className="mt-4 flex flex-col gap-4">
         {usage.unlimited ? (
           <p className="text-sm text-muted">แผนนี้ไม่จำกัดโควตา</p>
         ) : (
-          usage.limits.map((l) => (
-            <MeterRow
-              key={l.key}
-              name={limitLabel(l.key)}
-              value={`ใช้ไป ${pctText(l.used_pct)}`}
-              pct={l.used_pct}
-              line={resetLine(l.key, l.active ? l.resets_at : null)}
-            />
-          ))
+          usage.limits.map((l) => {
+            const copy = meterCopy(l)
+            return (
+              <MeterRow
+                key={l.key}
+                name={windowTitle(l)}
+                value={copy.value}
+                pct={l.used_pct}
+                line={copy.line}
+              />
+            )
+          })
         )}
         <MeterRow
           name="ที่เก็บไฟล์"

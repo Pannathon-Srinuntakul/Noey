@@ -77,6 +77,37 @@ describe('the UI never names the AI stack', () => {
 })
 
 /**
+ * A quota meter states a PERCENTAGE and nothing else (owner: percent-only,
+ * 2026-09-22, re-confirmed 2026-09-29 after one round of counting in cuts).
+ *
+ * The reason is arithmetic, not taste: an ordinary cut and a 30-minute
+ * high-quality one differ in cost by more than fourfold, so a countable meter
+ * falls by four on a single upload and reads as broken — while a percentage
+ * cannot contradict itself that way. "คลิป" is also already this codebase's
+ * word for a SOURCE VIDEO FILE (`local_meta.clips`, `clip_secs`), which a
+ * unit of spending may not also mean.
+ *
+ * So: the modules that word the meters may not carry the word at all. The
+ * plan TABLE may — it advertises "ตัดได้ราว 22 คลิป/เดือน" as marketing copy
+ * with its basis attached — which is exactly why this guard names the meter
+ * files one by one instead of scanning everything.
+ */
+describe('a quota meter never counts in clips', () => {
+  const METER_FILES = [
+    'lib/usageLimits.ts',
+    'components/settings/UsageCard.tsx',
+    'components/shell/UsageBanner.tsx'
+  ]
+
+  for (const rel of METER_FILES) {
+    it(`${rel} has no clip count in any string`, () => {
+      const hits = stringsOf(readFileSync(join(SRC, rel), 'utf8')).filter((s) => /คลิป/.test(s))
+      expect(hits, `a meter in ${rel} counts in clips`).toEqual([])
+    })
+  }
+})
+
+/**
  * Users never see token counts (docs/token-billing-plan.md §1): limits are
  * percentages, the top-up balance is baht. The word itself in a rendered
  * string is the tell — a label, a unit, a "N tokens" — so screens (.tsx) and

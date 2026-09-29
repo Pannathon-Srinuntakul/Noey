@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { ApiError, type PlanChangePreview } from '../../lib/api'
-import { PLAN_CONSENT, planChangeBody, planLabel } from '../../lib/planLadder'
+import { betaPriceCallout, planChangeBody, planConsentText, planLabel } from '../../lib/planLadder'
 import { Button } from '../ui/Button'
 import { Checkbox } from '../ui/Checkbox'
 import { Dialog } from '../ui/Dialog'
@@ -13,6 +13,12 @@ import { Dialog } from '../ui/Dialog'
  *
  * `onConfirm` resolves when the change is done or the payment page is open;
  * it rejects with the reason to show otherwise.
+ *
+ * While the beta discount runs (`lib/planLadder.ts BETA_PRICE_ENDS_AT`) the
+ * callout names the price this cycle, the day it stops being the price and
+ * the number that replaces it — and the consent line says the same, because a
+ * rise that is already decided belongs inside what the user ticks. Both
+ * disappear on their own once the date passes.
  */
 export function PlanChangeDialog({
   tier,
@@ -53,6 +59,8 @@ export function PlanChangeDialog({
   const needsConsent = tier !== 'free'
   const unavailable = preview?.mode === 'unavailable'
   const ready = preview !== null && !unavailable && (!needsConsent || agree)
+  const betaNote =
+    preview && !unavailable ? betaPriceCallout(tier, preview.next_price_satang) : null
 
   const confirm = async (): Promise<void> => {
     if (!ready) return
@@ -117,9 +125,14 @@ export function PlanChangeDialog({
       ) : !error ? (
         <p className="text-sm text-muted">กำลังคำนวณราคา…</p>
       ) : null}
+      {betaNote ? (
+        <p className="mt-3 rounded-sm border border-[rgb(217_164_65_/_0.4)] bg-accent-tint px-3 py-2.5 text-[13.5px] leading-[1.7] text-accent-hover-text">
+          {betaNote}
+        </p>
+      ) : null}
       {needsConsent && preview && !unavailable ? (
         <div className="mt-4">
-          <Checkbox checked={agree} onChange={setAgree} label={PLAN_CONSENT} />
+          <Checkbox checked={agree} onChange={setAgree} label={planConsentText(tier)} />
         </div>
       ) : null}
       {error ? (

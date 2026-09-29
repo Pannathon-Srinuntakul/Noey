@@ -19,6 +19,8 @@ import type { ApiSession } from '../lib/videosLocalApi'
 import { getEffectsDoc, putEffectsDoc } from '../lib/effectsLocalApi'
 import { renderEffectsDoc, runAiEffects } from '../lib/effectsPipeline'
 import { useFxJobs } from '../lib/fxJobs'
+import { useUsageEstimate } from '../lib/useUsageEstimate'
+import { runCostLine } from '../lib/usageLimits'
 import { useUnsavedGuard } from '../lib/unsavedGuard'
 import { isLegacyEffectsStyle, listStyles, type StyleSummary } from '../lib/stylesApi'
 import { buildEffectsScriptText } from '../lib/effectsScript'
@@ -430,6 +432,21 @@ export default function EffectsCanvasEditor({
   const [currentTime, setCurrentTime] = useState(0)
 
   const [aiOpen, setAiOpen] = useState(false)
+  // What placing the zooms will cost, as a share of the plan's quota. Asked
+  // only while the panel is open and the cut's length is known — an estimate
+  // for a video that has not reported its duration is a guess, and this
+  // surface shows nothing rather than guess.
+  const { estimate: aiEstimate } = useUsageEstimate(
+    session,
+    aiOpen && duration > 0
+      ? {
+          kind: 'plan_effects',
+          mode: project.mode ?? 'dub_first',
+          clips: [{ duration_sec: duration, has_audio: false }]
+        }
+      : null
+  )
+  const aiCost = runCostLine(aiEstimate)
   const [aiPrompt, setAiPrompt] = useState('')
   const [refPath, setRefPath] = useState<string | undefined>(undefined)
   const [styles, setStyles] = useState<StyleSummary[]>([])
@@ -1542,6 +1559,9 @@ export default function EffectsCanvasEditor({
                 </Chip>
               )}
               <span className="flex-1" />
+              {aiCost ? (
+                <span className="text-[13px] tabular-nums text-muted">{aiCost}</span>
+              ) : null}
               <Button variant="ghost" onClick={() => setAiOpen(false)}>
                 ยกเลิก
               </Button>

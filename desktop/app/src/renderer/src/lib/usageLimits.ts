@@ -18,7 +18,9 @@
 
 // ── shapes (docs/token-billing-design.md §19) ────────────────────────────────
 
-export type LimitKey = 'five_hour' | 'weekly' | 'monthly'
+/** `lifetime` is the Free plan's one-time credit: a window that never ends,
+ * and therefore never resets (`resets: false` rides with it). */
+export type LimitKey = 'five_hour' | 'weekly' | 'monthly' | 'lifetime'
 
 export interface UsageLimit {
   key: LimitKey
@@ -29,6 +31,12 @@ export interface UsageLimit {
   /** Null while the window is inactive — it starts at the next use. */
   resets_at: string | null
   active: boolean
+  /**
+   * False = this allowance NEVER comes back: it is the Free plan's one-time
+   * trial credit, not a window. Absent on an older server, which only ever
+   * sent windows that do reset — so absent means it resets.
+   */
+  resets?: boolean
 }
 
 export interface UsageEstimate {
@@ -39,10 +47,15 @@ export interface UsageEstimate {
   wallet_satang: number
   binding: LimitKey | null
   resets_at: string | null
+  /** False = the binding allowance never comes back (see `UsageLimit.resets`). */
+  resets?: boolean
   unlimited: boolean
 }
 
 export interface EstimateRequest {
+  /** Route-level kind when the caller knows it (`plan_effects`, `reedit`);
+   * the server derives it from `mode` when absent. */
+  kind?: string
   mode: string
   engine?: 'lite' | 'pro'
   precision?: 'standard' | 'high'
@@ -56,6 +69,9 @@ export interface BillingRefusal {
   code: RefusalCode
   window: LimitKey | null
   resetsAt: string | null
+  /** False = the allowance never comes back (see `UsageLimit.resets`); there
+   * is no waiting it out, only a plan change. */
+  resets: boolean
   /** The top-up balance can pay for this run ("continue with balance"). */
   walletCanCover: boolean
   walletSatang: number
@@ -68,7 +84,8 @@ export interface BillingRefusal {
 export const LIMIT_LABELS: Record<LimitKey, string> = {
   monthly: 'โควตารายเดือน',
   weekly: 'โควตารายสัปดาห์',
-  five_hour: 'โควตารอบ 5 ชั่วโมง'
+  five_hour: 'โควตารอบ 5 ชั่วโมง',
+  lifetime: 'เครดิตทดลองใช้'
 }
 
 export function limitLabel(key: string | null | undefined): string {
@@ -166,6 +183,61 @@ export function resetLine(
   return `รีเซ็ต ${dayMonth(resetsAt, timeZone)}`
 }
 
+// ── an allowance that never resets (the Free trial credit) ───────────────────
+
+/**
+ * `resets: false` means the allowance does not come back — there is no window
+ * to count down to, and a countdown would read "รีเซ็ตใน 0 วินาที" forever.
+ * What is left to say is whether it is spent and how to get more.
+ */
+export const TRIAL_CREDIT_SPENT = 'เครดิตทดลองใช้หมดแล้ว'
+export const TRIAL_CREDIT_LEFT = 'เครดิตทดลองใช้ครั้งเดียว ไม่รีเซ็ตรายเดือน'
+/** The action offered wherever a reset time would otherwise have been. */
+export const TRIAL_CREDIT_ACTION = 'เปลี่ยนแผนเพื่อใช้ต่อ'
+
+/** The standing advice on a credit that does not come back. */
+export const TRIAL_CREDIT_HINT = 'ใช้หมดแล้วอัปเกรด'
+
+/** True when the server said this allowance never comes back. Absent = it does. */
+export function neverResets(o: { resets?: boolean | null } | null | undefined): boolean {
+  return o?.resets === false
+}
+
+/**
+ * The NAME of a quota meter. A credit that never returns must not be called
+ * "โควตารายเดือน": the window name is the very thing that is untrue about it.
+ */
+export function windowTitle(l: { key: LimitKey; resets?: boolean }): string {
+  return neverResets(l) ? 'เครดิตทดลองใช้' : limitLabel(l.key)
+}
+
+/** The line under a non-resetting meter: spent, or not spent yet. */
+export function trialCreditLine(usedPct: number): string {
+  return usedPct >= 100 ? TRIAL_CREDIT_SPENT : TRIAL_CREDIT_LEFT
+}
+
+/**
+ * The line under ONE quota meter, whichever kind it is: a reset time for a
+ * rolling window, the trial-credit sentence for an allowance that never
+ * returns. Every meter in the editor goes through here so neither can ever
+ * be shown with the other's wording.
+ */
+export function windowLine(
+  l: Pick<UsageLimit, 'key' | 'used_pct' | 'resets_at' | 'active'> & { resets?: boolean },
+  now: Date = new Date(),
+  timeZone?: string
+): string {
+  if (neverResets(l)) return trialCreditLine(l.used_pct)
+  // `active` is NOT a gate on the date any more. A monthly window now runs
+  // from one billing anniversary to the next (packages/billing/runs.py), so a
+  // paid account that has not cut anything yet this month reads as inactive
+  // and still has a real next reset — the subscription's date, not the
+  // usage's. Dropping it here told that user "the cycle starts at your next
+  // use", which was true of a rolling window and is false of this one. The
+  // rolling sub-windows send no date while inactive, so they are unaffected.
+  return resetLine(l.key, l.resets_at, now, timeZone)
+}
+
 /**
  * When work can start again (design §3, "กลับมาเริ่มงานใหม่ได้ …"):
  * under a day → "อีก 1 ชม. 48 นาที"; within a week → "พฤหัสบดี 09:40";
@@ -182,6 +254,91 @@ export function whenBack(
   if (left < DAY) return `อีก ${durationTh(left)}`
   if (left < 7 * DAY) return `${weekday(resetsAt, timeZone)} ${clock(resetsAt, timeZone)}`
   return dayMonth(resetsAt, timeZone)
+}
+
+// ── what a run costs, before it starts ───────────────────────────────────────
+
+/**
+ * This run's share of the quota it will be charged against, as a whole
+ * percent.
+ *
+ * A PERCENTAGE, never a count of anything (owner: percent-only meters,
+ * 2026-09-22 and again 2026-09-29). A countable unit cannot survive this cost
+ * shape — an ordinary cut and a 30-minute high-quality one differ by more
+ * than fourfold, so a meter reading "22 คลิป" would drop by four on a single
+ * upload and read as broken. A percentage cannot contradict itself that way:
+ * one run takes 5%, a longer one takes 12%, and nobody expected them to be
+ * equal. ("คลิป" is also already this codebase's word for a source video
+ * file — `local_meta.clips`, `clip_secs` — so it cannot mean a unit of
+ * spending as well.)
+ *
+ * Floored at 1: a run that is charged at all must not read as free. Null when
+ * nothing can answer — an unlimited account, or no estimate — and the caller
+ * then says NOTHING rather than guess.
+ */
+export function runSharePct(est: UsageEstimate | null | undefined): number | null {
+  if (!est || est.unlimited) return null
+  const binding = est.binding ? est.pct[est.binding] : undefined
+  const others = Object.values(est.pct).filter(
+    (n): n is number => typeof n === 'number' && Number.isFinite(n)
+  )
+  // The binding window is the one the run is measured against; the fullest is
+  // the honest fallback for a payload that named none.
+  const share =
+    typeof binding === 'number' && Number.isFinite(binding)
+      ? binding
+      : others.length
+        ? Math.max(...others)
+        : 0
+  if (!(share > 0)) return null
+  return Math.max(1, Math.round(share))
+}
+
+/**
+ * "งานนี้ใช้ประมาณ 5% ของโควตารายเดือน" — what a run costs, said before the
+ * user commits to it.
+ *
+ * This line is what makes a percentage answer the question a person actually
+ * has ("how many more runs do I have?"). Null when the estimate cannot say.
+ */
+export function runCostLine(est: UsageEstimate | null | undefined): string | null {
+  const pct = runSharePct(est)
+  if (pct === null || !est) return null
+  return `งานนี้ใช้ประมาณ ${pct}% ของ${limitLabel(est.binding)}`
+}
+
+/** "~5%" — the same fact on a button, where there is no room for prose. */
+export function runCostChip(est: UsageEstimate | null | undefined): string | null {
+  const pct = runSharePct(est)
+  return pct === null ? null : `~${pct}%`
+}
+
+/** The two strings of one quota meter. */
+export interface MeterCopy {
+  /** The headline, right of the window's name. */
+  value: string
+  /** The muted line under the bar. */
+  line: string
+}
+
+/**
+ * What one quota meter says: the percentage used, and under it either when
+ * the window comes back or — for a credit that never does — what to do when
+ * it runs out. Every meter in the editor goes through here, so neither kind
+ * can ever be shown with the other's wording, and no meter can drift back to
+ * counting in clips (`usageLimits.test.ts` pins that).
+ */
+export function meterCopy(
+  l: Pick<UsageLimit, 'key' | 'used_pct' | 'resets_at' | 'active'> & { resets?: boolean },
+  now: Date = new Date(),
+  timeZone?: string
+): MeterCopy {
+  return {
+    value: `ใช้ไป ${pctText(l.used_pct)}`,
+    // A credit that never comes back has no countdown to give, so its line is
+    // the only thing left to say: what to do when it runs out.
+    line: neverResets(l) ? TRIAL_CREDIT_HINT : windowLine(l, now, timeZone)
+  }
 }
 
 // ── money ────────────────────────────────────────────────────────────────────
@@ -283,9 +440,20 @@ export function estimateLine(est: UsageEstimate): string | null {
   return [head, ...tail].join(' · ')
 }
 
-/** Why a run does not fit, for the line under the estimate. */
+/**
+ * Why a run does not fit, for the line under the estimate. NOT the run's
+ * price — that is `runCostLine`, which every paid start shows.
+ */
 export function estimateBlockLine(est: UsageEstimate, now: Date = new Date()): string | null {
   if (est.unlimited || est.fits === 'plan') return null
+  // A credit that never resets has no "wait for the next window" way out: the
+  // only honest ending is the plan change.
+  if (neverResets(est)) {
+    const base = `เครดิตทดลองใช้เหลือไม่พอสำหรับงานนี้ · ${TRIAL_CREDIT_ACTION}`
+    return est.fits === 'wallet'
+      ? `${base} — ใช้ยอดเงินคงเหลือ ${formatBaht(est.wallet_satang)} ทำต่อได้`
+      : base
+  }
   const label = limitLabel(est.binding)
   const back = whenBack(est.resets_at, now)
   const base = `${label}เหลือไม่พอสำหรับงานนี้${back ? ` · รอบใหม่${back.startsWith('อีก') ? '' : ' '}${back}` : ''}`
@@ -304,7 +472,7 @@ const REFUSAL_CODES: readonly RefusalCode[] = [
 ]
 
 function asKey(v: unknown): LimitKey | null {
-  return v === 'five_hour' || v === 'weekly' || v === 'monthly' ? v : null
+  return v === 'five_hour' || v === 'weekly' || v === 'monthly' || v === 'lifetime' ? v : null
 }
 
 /** The refusal object inside `detail`, from a parsed error body; null when the
@@ -326,6 +494,8 @@ export function refusalFrom(
     code: code as RefusalCode,
     window: asKey(o.window),
     resetsAt: typeof o.resets_at === 'string' ? o.resets_at : null,
+    // Absent on an older server, which only refused windows that do reset.
+    resets: o.resets !== false,
     walletCanCover: o.wallet_can_cover === true,
     walletSatang: typeof o.wallet_satang === 'number' ? o.wallet_satang : 0,
     serverMessage: typeof o.message === 'string' && o.message.trim() ? o.message.trim() : null
@@ -339,10 +509,12 @@ export function refusalFrom(
 export function refusalMessage(r: BillingRefusal, now: Date = new Date()): string {
   switch (r.code) {
     case 'limit_reached': {
+      const wallet = r.walletCanCover ? ' — ใช้ยอดเงินคงเหลือทำงานนี้ต่อได้' : ''
+      // Nothing to wait for: the credit is spent once and does not return.
+      if (!r.resets) return `${TRIAL_CREDIT_SPENT} · ${TRIAL_CREDIT_ACTION}${wallet}`
       const back = whenBack(r.resetsAt, now)
       const head = `${limitLabel(r.window)}หมดแล้ว`
       const when = back ? ` · เริ่มงานใหม่ได้${back.startsWith('อีก') ? '' : ' '}${back}` : ''
-      const wallet = r.walletCanCover ? ' — ใช้ยอดเงินคงเหลือทำงานนี้ต่อได้' : ''
       return `${head}${when}${wallet}`
     }
     case 'limit_stop':
@@ -374,6 +546,7 @@ export function jobStopRefusal(
       code: 'limit_stop',
       window: null,
       resetsAt: null,
+      resets: true,
       walletCanCover: false,
       walletSatang: 0,
       serverMessage: typeof result.message === 'string' ? result.message : null

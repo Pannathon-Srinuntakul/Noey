@@ -3,6 +3,7 @@ import { Check, ChevronDown, Clapperboard, Layers, Mic, Music2, Scissors, X } fr
 import { cn } from '../../lib/cn'
 import { DUB_DURATION_AUTO, DUB_DURATION_FIXED, dubTargetDurationSec } from '../../lib/dubBrief'
 import type { StyleSummary } from '../../lib/stylesApi'
+import { ENGINE_OPTIONS, PRECISION_OPTIONS } from '../../lib/qualityTiers'
 import {
   UI_MODE_LABEL,
   VOICEOVER_LABEL,
@@ -13,6 +14,7 @@ import {
   type WizardState
 } from '../../lib/wizardState'
 import { Segmented } from '../ui/Segmented'
+import { ChoiceMenu } from '../ui/ChoiceMenu'
 import { Select } from '../ui/Select'
 import { Switch } from '../ui/Switch'
 import { Textarea } from '../ui/Input'
@@ -136,6 +138,7 @@ export function WizardStepOutcome({
   onPickMusic,
   onEditMusicRange,
   musicLocked = null,
+  precisionLocked = null,
   onSeePlans
 }: {
   state: WizardState
@@ -147,6 +150,9 @@ export function WizardStepOutcome({
   /** Set when the plan has no background music (docs/token-billing-plan.md
    * §8): the line to show instead of the picker. */
   musicLocked?: string | null
+  /** Set when the plan may not pick the High precision tier (Free, Lite): the
+   * line to show instead of the second option. */
+  precisionLocked?: string | null
   onSeePlans?: () => void
 }): React.JSX.Element {
   const isCut = state.uiMode === 'highlight'
@@ -160,6 +166,13 @@ export function WizardStepOutcome({
   // uiMode changes after mount go through the handler, not this useState.)
   const [advancedOpen, setAdvancedOpen] = useState(!isCut)
   const captions = captionGate(state)
+  // The longer line under each menu: what the CURRENT choice means, kept
+  // outside the menu so it is readable without opening anything.
+  const engineHint = (ENGINE_OPTIONS.find((o) => o.value === state.engine) ?? ENGINE_OPTIONS[0])
+    .hint
+  const precisionHint = (
+    PRECISION_OPTIONS.find((o) => o.value === state.precision) ?? PRECISION_OPTIONS[0]
+  ).hint
   const musicLen = state.music ? state.music.trimOutSec - state.music.trimInSec : null
   // The number the submission will actually send, not a second guess at it.
   const musicTargetSec = dubTargetDurationSec(state.duration, state.customSec, musicLen)
@@ -362,39 +375,40 @@ export function WizardStepOutcome({
             ) : null}
 
             {/* Two quality dials. Deliberately worded around what the user
-                gets, never how it works — no vendor, no frame rate. */}
-            <Row label="รุ่น AI" hint="ตัวไหนเป็นคนตัด">
-              <Segmented
-                ariaLabel="รุ่น AI"
+                gets, never how it works — no vendor, no frame rate. Menus, not
+                rails: every option's description is readable at once instead of
+                only the chosen one's, and a third tier can join without
+                squeezing the row (R19.1). */}
+            <Row label="โมเดล" hint="ตัวไหนเป็นคนตัด">
+              <ChoiceMenu
+                ariaLabel="โมเดล"
                 value={state.engine}
                 onChange={(v) => patch({ engine: v as WizardState['engine'] })}
-                options={[
-                  { value: 'lite', label: 'Lite' },
-                  { value: 'pro', label: 'Pro' }
-                ]}
+                options={ENGINE_OPTIONS}
               />
-              <p className="mt-[7px] text-[13px] leading-[1.55] text-[#8a8681]">
-                {state.engine === 'lite'
-                  ? 'เร็วและประหยัดกว่า เหมาะกับคลิปง่าย ๆ หรือลองดูก่อน'
-                  : 'อ่านฟุตเทจได้ลึกกว่า เลือกช็อตแม่นกว่า — แนะนำสำหรับงานจริง'}
-              </p>
+              <p className="mt-[7px] text-[13px] leading-[1.55] text-[#8a8681]">{engineHint}</p>
             </Row>
 
+            {/* A tier the plan cannot use stays in the list, locked, with the
+                reason where its description was and the way to the plans in
+                place of its number. Removing it — which is what this row used
+                to do — teaches a creator who never had it that it does not
+                exist. */}
             <Row label="ความละเอียด" hint="AI ดูคลิปถี่แค่ไหน">
-              <Segmented
+              <ChoiceMenu
                 ariaLabel="ความละเอียด"
                 value={state.precision}
                 onChange={(v) => patch({ precision: v as WizardState['precision'] })}
-                options={[
-                  { value: 'standard', label: 'Standard' },
-                  { value: 'high', label: 'High' }
-                ]}
+                onLockedAction={onSeePlans}
+                options={
+                  precisionLocked
+                    ? PRECISION_OPTIONS.map((o) =>
+                        o.value === 'high' ? { ...o, lockedReason: precisionLocked } : o
+                      )
+                    : PRECISION_OPTIONS
+                }
               />
-              <p className="mt-[7px] text-[13px] leading-[1.55] text-[#8a8681]">
-                {state.precision === 'high'
-                  ? 'AI ดูคลิปละเอียดขึ้น 5 เท่า จับจังหวะสั้น ๆ ที่ระดับปกติมองข้าม — ใช้เวลานานขึ้นและคิดค่าใช้จ่ายมากกว่า'
-                  : 'สมดุลระหว่างคุณภาพกับความเร็ว เหมาะกับงานทั่วไป'}
-              </p>
+              <p className="mt-[7px] text-[13px] leading-[1.55] text-[#8a8681]">{precisionHint}</p>
             </Row>
 
             <Row label="เพลงประกอบ">

@@ -120,7 +120,7 @@ describe('fileStepGate', () => {
     expect(fileStepGate({ ...late, precision: 'standard' }).ok).toBe(true)
     expect(outcomeStepGate(late).ok).toBe(false)
     expect(outcomeStepGate(late).reason).toContain('44 นาที')
-    expect(outcomeStepGate(late).reason).toContain('Standard')
+    expect(outcomeStepGate(late).reason).toContain('ปกติ')
     expect(outcomeStepGate({ ...late, precision: 'standard' }).ok).toBe(true)
     // The mode is picked on the same step: 90 min passed the files step as
     // ตัดช่วงเงียบ (2 h) and fails once ตัดฉากเด่น is chosen.

@@ -132,8 +132,11 @@ export interface LocalProject {
    * comes from `GET /videos/{uid}/resume`, which is recomputed live. */
   billingStop?: {
     code: 'limit_reached' | 'free_tier_limited' | 'service_paused' | 'limit_stop'
-    window: 'five_hour' | 'weekly' | 'monthly' | null
+    window: 'five_hour' | 'weekly' | 'monthly' | 'lifetime' | null
     resetsAt: string | null
+    /** False = the allowance never comes back (the Free trial credit), so
+     * there is no reset to wait for. Absent on a record written earlier. */
+    resets?: boolean
     walletCanCover: boolean
     walletSatang: number
     serverMessage: string | null

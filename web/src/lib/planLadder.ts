@@ -1,7 +1,8 @@
 /**
  * The plan list, the plan-change dialog copy and the one-line limit notices of
  * docs/design/editor-limits.md (§2, §4, §5, §6). Pure and self-contained (no
- * import from `api.ts`): the desktop keeps a byte-identical copy at
+ * import from `api.ts`; `qualityTiers.ts` is pure copy and is the one place the
+ * quality dials' words live): the desktop keeps a byte-identical copy at
  * `desktop/app/src/renderer/src/lib`.
  *
  * The plan facts mirror the pricing page (noey-frontend/src/lib/plans.ts, the
@@ -9,18 +10,102 @@
  * NOT here — they come from `GET /billing/plans`.
  */
 
+import { precisionLevelName } from './qualityTiers'
+
 export const PLAN_ORDER = ['free', 'lite', 'starter', 'pro', 'studio', 'agency', 'max'] as const
 export type PlanKey = (typeof PLAN_ORDER)[number]
 
-/** Design §5 rows: name and the one-line summary under it. */
+/**
+ * What the Free plan actually is (owner, 2026-09-29): a trial credit spent
+ * once, NOT a monthly allowance. Nothing in the editor may describe it as a
+ * recurring cycle, because it never comes back.
+ */
+export const FREE_TRIAL_NOTE = 'แผนฟรีเป็นเครดิตทดลองใช้ครั้งเดียว ไม่รีเซ็ตรายเดือน'
+
+/**
+ * Roughly how many cuts a month each plan buys — a MARKETING CLAIM, and only
+ * that.
+ *
+ * It is not a quota and nothing counts down from it. The quota is the
+ * percentage the meters show (`usageLimits.meterCopy`), because a cut's cost
+ * varies more than fourfold with its length and quality: a countable figure
+ * would drop by four on one upload and read as broken. Named `APPROX` so
+ * nobody later wires it to a meter — and `usageLimits.ts` deliberately has no
+ * access to it.
+ *
+ * `GET /usage/me` sends the same figure as `features.approx_cuts`, with the
+ * same rule attached. Free's is the whole one-time credit, not a monthly one.
+ *
+ * Never shown without `APPROX_CUTS_NOTE`.
+ */
+export const PLAN_APPROX_CUTS: Record<PlanKey, number> = {
+  free: 2,
+  lite: 4,
+  starter: 9,
+  pro: 22,
+  studio: 45,
+  agency: 90,
+  max: 160
+}
+
+/** What the advertised cut count is counted from, and the fact that it is not
+ * a quota. Without both, the count is a promise we break on the first
+ * 20-minute clip. */
+export const APPROX_CUTS_NOTE = `คิดจากคลิปดิบ 5 นาที · คลิปที่ยาวกว่าหรือ${precisionLevelName('high')}ใช้โควตามากกว่า · ไม่ใช่โควตา ระบบไม่ได้นับถอยหลังจากจำนวนนี้`
+
+/** A plan's advertised cut count; null for an admin-set or unknown plan,
+ * which advertises none and must therefore show none. */
+export function planApproxCuts(plan: string | null | undefined): number | null {
+  const n = PLAN_APPROX_CUTS[(plan ?? '') as PlanKey]
+  return n > 0 ? n : null
+}
+
+/**
+ * Design §5 rows: name and the one-line summary under it — the approximate
+ * cut count first, then the footage cap per project, then the quality tier
+ * the plan may pick.
+ *
+ * "ราว" is load-bearing: the count is a claim about a typical clip, not an
+ * allowance. Its basis is `APPROX_CUTS_NOTE`, printed once under the table
+ * rather than seven times inside it, and the figures are pinned against
+ * `PLAN_APPROX_CUTS` by a test so copy and number cannot drift apart.
+ */
 export const PLAN_ROWS: { key: PlanKey; name: string; sub: string }[] = [
-  { key: 'free', name: 'ฟรี', sub: 'ทดลองใช้ · ฟุตเทจ 5 นาที/โปรเจกต์' },
-  { key: 'lite', name: 'Lite', sub: '1x · ฟุตเทจ 10 นาที · 3 GB' },
-  { key: 'starter', name: 'Starter', sub: '2x · ฟุตเทจ 20 นาที · 5 GB' },
-  { key: 'pro', name: 'Pro', sub: '5x · ฟุตเทจ 2 ชม. · 10 GB' },
-  { key: 'studio', name: 'Studio', sub: '10x · พร้อมกัน 3 งาน · 30 GB' },
-  { key: 'agency', name: 'Agency', sub: '20x · พร้อมกัน 4 งาน · 60 GB' },
-  { key: 'max', name: 'Max', sub: '35x · พร้อมกัน 5 งาน · 100 GB' }
+  {
+    key: 'free',
+    name: 'ฟรี',
+    sub: `ราว 2 คลิป · ทดลองใช้ครั้งเดียว ไม่รีเซ็ต · ฟุตเทจ 10 นาที · ${precisionLevelName('standard')}`
+  },
+  {
+    key: 'lite',
+    name: 'Lite',
+    sub: `ตัดได้ราว 4 คลิป/เดือน · ฟุตเทจ 10 นาที · ${precisionLevelName('standard')}`
+  },
+  {
+    key: 'starter',
+    name: 'Starter',
+    sub: `ตัดได้ราว 9 คลิป/เดือน · ฟุตเทจ 20 นาที · ${precisionLevelName('standard')}`
+  },
+  {
+    key: 'pro',
+    name: 'Pro',
+    sub: `ตัดได้ราว 22 คลิป/เดือน · ฟุตเทจ 30 นาที · ${precisionLevelName('high')}`
+  },
+  {
+    key: 'studio',
+    name: 'Studio',
+    sub: `ตัดได้ราว 45 คลิป/เดือน · ฟุตเทจ 30 นาที · ${precisionLevelName('high')}`
+  },
+  {
+    key: 'agency',
+    name: 'Agency',
+    sub: `ตัดได้ราว 90 คลิป/เดือน · ฟุตเทจ 30 นาที · ${precisionLevelName('high')}`
+  },
+  {
+    key: 'max',
+    name: 'Max',
+    sub: `ตัดได้ราว 160 คลิป/เดือน · ฟุตเทจ 30 นาที · ${precisionLevelName('high')}`
+  }
 ]
 
 export function planRank(plan: string | null | undefined): number {
@@ -50,9 +135,113 @@ export function canChangePlan(current: string | null | undefined): boolean {
   return planRank(current) >= 0
 }
 
+// ── beta pricing (owner, 2026-09-29) ─────────────────────────────────────────
+
+/**
+ * The 50% beta discount ends at the last instant of 31 Dec 2026, Bangkok time
+ * (UTC+7). It is a HARD stop for everyone, existing subscribers included:
+ * from the first billing cycle of 2027 every subscription is charged the full
+ * price. There are no coupon codes — the discounted number goes to the
+ * payment provider directly and the full price is struck-through text only.
+ *
+ * Every sentence, badge and struck-through price about the discount hangs off
+ * THIS constant. Once the date passes they all disappear on their own and the
+ * plain wording — true again by then — comes back, with no deploy.
+ */
+export const BETA_PRICE_ENDS_AT = '2026-12-31T16:59:59.999Z'
+/** How the last discounted day is written to a person. */
+export const BETA_PRICE_END_TEXT = '31 ธ.ค. 2026'
+/** The first billing cycle charged at the full price. */
+export const FULL_PRICE_FROM_TEXT = '1 ม.ค. 2027'
+
+/**
+ * The full (undiscounted) monthly price in satang.
+ *
+ * `GET /billing/plans` sends the price the card is actually charged, which is
+ * the BETA price while the discount runs — so the full price exists nowhere
+ * on the wire and lives here, as the struck-through number and as what the
+ * next-cycle sentences promise.
+ */
+export const FULL_PRICE_SATANG: Record<PlanKey, number> = {
+  free: 0,
+  lite: 19_900,
+  starter: 39_900,
+  pro: 99_000,
+  studio: 199_000,
+  agency: 399_000,
+  max: 699_000
+}
+
+/** True while the beta discount is still in force. */
+export function betaPricing(now: Date = new Date()): boolean {
+  return now.getTime() <= Date.parse(BETA_PRICE_ENDS_AT)
+}
+
+/**
+ * The full price a plan returns to, or null when there is nothing to say —
+ * the beta is over, the plan is free, or the plan is not one of ours.
+ */
+export function fullPriceAfterBeta(
+  tier: string | null | undefined,
+  now: Date = new Date()
+): number | null {
+  if (!betaPricing(now)) return null
+  const full = FULL_PRICE_SATANG[(tier ?? '') as PlanKey]
+  return full > 0 ? full : null
+}
+
+export const BETA_BADGE = 'เบต้า'
+export const BETA_STRIP_TEXT = `ราคาเบต้า ลด 50% ถึง ${BETA_PRICE_END_TEXT} · หลังจากนั้นทุกบัญชีคิดราคาปกติในรอบบิลถัดไป`
+
 export const PLAN_FOOTER = 'เปลี่ยนขึ้นมีผลทันที เปลี่ยนลงมีผลรอบบิลถัดไป'
+
+/** The footnote under the plan table; carries the beta end date while it runs. */
+export function planFooter(now: Date = new Date()): string {
+  return betaPricing(now) ? `${PLAN_FOOTER} · ราคาเบต้าสิ้นสุด ${BETA_PRICE_END_TEXT}` : PLAN_FOOTER
+}
+
 export const PLAN_CONSENT =
   'ฉันเข้าใจว่าระบบจะตัดบัตรทุกเดือนจนกว่าจะยกเลิก และรอบที่ใช้ไปแล้วไม่คืนเงิน'
+
+/**
+ * What the user actually ticks. A price rise that is already decided is part
+ * of the agreement, not a footnote: while the beta runs the clause names the
+ * full price and the date it starts. After 31 Dec 2026 the sentence is the
+ * original one again.
+ */
+export function planConsentText(tier: string | null | undefined, now: Date = new Date()): string {
+  const full = fullPriceAfterBeta(tier, now)
+  if (full === null) return PLAN_CONSENT
+  return `${PLAN_CONSENT} และฉันรับทราบว่าราคานี้เป็นราคาเบต้าถึง ${BETA_PRICE_END_TEXT} · รอบบิลตั้งแต่ ${FULL_PRICE_FROM_TEXT} จะตัดบัตร ${priceText(full)} ตามราคาปกติ`
+}
+
+/**
+ * The highlighted callout in the plan-change dialog: this cycle's price, the
+ * day it stops being the price, and the number that replaces it. Null once
+ * the beta is over — there is then nothing to warn about.
+ */
+export function betaPriceCallout(
+  tier: string | null | undefined,
+  currentPriceSatang: number,
+  now: Date = new Date()
+): string | null {
+  const full = fullPriceAfterBeta(tier, now)
+  if (full === null) return null
+  return `${priceText(currentPriceSatang)} คือราคาเบต้า ถึง ${BETA_PRICE_END_TEXT} / รอบบิลตั้งแต่ ${FULL_PRICE_FROM_TEXT} เป็นต้นไป ตัดบัตร ${priceText(full)} ตามราคาปกติ ยกเลิกได้ทุกเมื่อก่อนถึงวันนั้น`
+}
+
+// ── quality tiers ────────────────────────────────────────────────────────────
+
+/** The cheapest plan allowed to pick the high quality tier (owner,
+ * 2026-09-29, revised: Free, Lite AND Starter cannot). */
+export const HIGH_PRECISION_MIN_PLAN = 'pro'
+
+/** True when this plan may not choose the high quality tier. An unknown or
+ * admin-set plan is never locked — the server is the one that refuses. */
+export function highPrecisionLocked(plan: string | null | undefined): boolean {
+  const rank = planRank(plan)
+  return rank >= 0 && rank < planRank(HIGH_PRECISION_MIN_PLAN)
+}
 
 function dateTh(iso: string | null | undefined, timeZone?: string): string {
   if (!iso) return 'รอบบิลถัดไป'
@@ -61,7 +250,14 @@ function dateTh(iso: string | null | undefined, timeZone?: string): string {
   return new Intl.DateTimeFormat('th-TH', { day: 'numeric', month: 'short', timeZone }).format(d)
 }
 
-/** The confirm dialog body (design §6), from `POST /billing/plan-preview`. */
+/**
+ * The confirm dialog body (design §6), from `POST /billing/plan-preview`.
+ *
+ * While the beta discount runs, every sentence that promises a monthly price
+ * says WHICH price until WHEN and what replaces it — as numbers and a date.
+ * "ตัดทุกเดือนในราคาเดียวกัน" stops being true on 1 Jan 2027, and a sentence
+ * that is false on a known date must not be the one the user agrees to.
+ */
 export function planChangeBody(
   p: {
     tier: string
@@ -70,25 +266,37 @@ export function planChangeBody(
     next_price_satang: number
     effective_at: string | null
   },
-  timeZone?: string
+  timeZone?: string,
+  now: Date = new Date()
 ): string {
+  const full = fullPriceAfterBeta(p.tier, now)
+  /** "ถึง 31 ธ.ค. 2026 · ตั้งแต่ 1 ม.ค. 2027 ตัดบัตร ฿990 ตามราคาปกติ" */
+  const afterBeta =
+    full === null
+      ? ''
+      : ` ถึง ${BETA_PRICE_END_TEXT} · รอบบิลตั้งแต่ ${FULL_PRICE_FROM_TEXT} ตัดบัตร ${priceText(full)} ตามราคาปกติ`
+
   if (p.direction === 'upgrade') {
     // A first subscription (from Free) pays the full price now — "ตามวันที่เหลือ
     // ของรอบบิล" is only true when an existing paid period is being prorated.
     if (p.due_now_satang > 0 && p.due_now_satang >= p.next_price_satang) {
-      return `โควตาใหม่มีผลทันทีหลังชำระเงิน ครั้งนี้ตัดบัตร ${priceText(p.due_now_satang)} แล้วตัดทุกเดือนในราคาเดียวกัน`
+      const monthly =
+        full === null
+          ? 'แล้วตัดทุกเดือนในราคาเดียวกัน'
+          : `แล้วตัดเดือนละ ${priceText(p.next_price_satang)}${afterBeta}`
+      return `โควตาใหม่มีผลทันทีหลังชำระเงิน ครั้งนี้ตัดบัตร ${priceText(p.due_now_satang)} ${monthly}`
     }
-    const now =
+    const head =
       p.due_now_satang > 0
         ? `ครั้งนี้ตัดบัตร ${priceText(p.due_now_satang)} ตามวันที่เหลือของรอบบิล `
         : ''
-    return `โควตาใหม่มีผลทันทีหลังชำระเงิน ${now}เดือนถัดไป ${priceText(p.next_price_satang)}`
+    return `โควตาใหม่มีผลทันทีหลังชำระเงิน ${head}เดือนถัดไป ${priceText(p.next_price_satang)}${afterBeta}`
   }
   if (p.tier === 'free') {
     const until = p.effective_at ? `วันที่ ${dateTh(p.effective_at, timeZone)}` : 'สิ้นรอบบิล'
-    return `ใช้แผนปัจจุบันได้ถึง${until} จากนั้นกลับเป็นแผนฟรี ไม่ตัดบัตรอีก`
+    return `ใช้แผนปัจจุบันได้ถึง${until} จากนั้นกลับเป็นแผนฟรี ไม่ตัดบัตรอีก · ${FREE_TRIAL_NOTE}`
   }
-  return `มีผลรอบบิลถัดไป (${dateTh(p.effective_at, timeZone)}) ไม่ตัดบัตรตอนนี้ เดือนถัดไป ${priceText(p.next_price_satang)}`
+  return `มีผลรอบบิลถัดไป (${dateTh(p.effective_at, timeZone)}) ไม่ตัดบัตรตอนนี้ เดือนถัดไป ${priceText(p.next_price_satang)}${afterBeta}`
 }
 
 // ── one-line notices (design §4) ─────────────────────────────────────────────
@@ -187,8 +395,16 @@ export function paymentFailedNotice(graceUntil: string, timeZone?: string): Limi
 }
 
 /** "เพลงประกอบใช้ได้ตั้งแต่แผน Lite ขึ้นไป" — the locked music control. */
-export function featureLockedLine(feature: 'music' | 'transcode', minPlan: string): string {
-  const what = feature === 'music' ? 'เพลงประกอบ' : 'การแปลงไฟล์ที่เบราว์เซอร์เปิดไม่ได้'
+export function featureLockedLine(
+  feature: 'music' | 'transcode' | 'precision',
+  minPlan: string
+): string {
+  const what =
+    feature === 'music'
+      ? 'เพลงประกอบ'
+      : feature === 'precision'
+        ? precisionLevelName('high')
+        : 'การแปลงไฟล์ที่เบราว์เซอร์เปิดไม่ได้'
   return `${what}ใช้ได้ตั้งแต่แผน ${planLabel(minPlan)} ขึ้นไป`
 }
 
@@ -197,10 +413,13 @@ export function featureLockedLine(feature: 'music' | 'transcode', minPlan: strin
 export const BANNER_THRESHOLD = 80
 
 export interface BannerLimit {
-  key: 'five_hour' | 'weekly' | 'monthly'
+  key: 'five_hour' | 'weekly' | 'monthly' | 'lifetime'
   used_pct: number
   resets_at: string | null
   active: boolean
+  /** False = the allowance never comes back (the Free trial credit). Absent
+   * on an older server, which only ever sent windows that do reset. */
+  resets?: boolean
 }
 
 /** The fullest ACTIVE quota window at or past 80%, else null. */

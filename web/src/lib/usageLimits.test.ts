@@ -10,7 +10,11 @@ import {
   LEDGER_LABELS,
   jobStopRefusal,
   limitLabel,
+  meterCopy,
   orderedMethods,
+  runCostChip,
+  runCostLine,
+  runSharePct,
   parseRefusal,
   pctText,
   planName,
@@ -19,8 +23,12 @@ import {
   resetLine,
   shortDate,
   storageText,
+  TRIAL_CREDIT_LEFT,
+  TRIAL_CREDIT_SPENT,
   usageTone,
   whenBack,
+  windowLine,
+  windowTitle,
   type UsageEstimate
 } from './usageLimits'
 
@@ -128,6 +136,165 @@ describe('money', () => {
   })
 })
 
+describe('what a run costs — a percentage, never a count', () => {
+  const est = (over: Partial<UsageEstimate> = {}): UsageEstimate => ({
+    fits: 'plan',
+    pct: { monthly: 4.6 },
+    wallet_satang: 0,
+    binding: 'monthly',
+    resets_at: null,
+    unlimited: false,
+    ...over
+  })
+
+  it('prices the run against the window it is charged to', () => {
+    expect(runSharePct(est())).toBe(5)
+    expect(runCostLine(est())).toBe('งานนี้ใช้ประมาณ 5% ของโควตารายเดือน')
+    expect(runCostChip(est())).toBe('~5%')
+  })
+
+  it('names whichever window is binding, not always the month', () => {
+    const weekly = est({ binding: 'weekly', pct: { weekly: 11.8, monthly: 3 } })
+    expect(runCostLine(weekly)).toBe('งานนี้ใช้ประมาณ 12% ของโควตารายสัปดาห์')
+    const trial = est({ binding: 'lifetime', pct: { lifetime: 50 } })
+    expect(runCostLine(trial)).toBe('งานนี้ใช้ประมาณ 50% ของเครดิตทดลองใช้')
+    // A payload that named no binding window falls back to the fullest one.
+    expect(runSharePct(est({ binding: null, pct: { weekly: 2, five_hour: 40 } }))).toBe(40)
+  })
+
+  it('floors at 1% so a cheap run never reads as free', () => {
+    expect(runSharePct(est({ pct: { monthly: 0.2 } }))).toBe(1)
+    expect(runCostLine(est({ pct: { monthly: 0.2 } }))).toContain('1%')
+  })
+
+  it('says nothing at all when nothing can answer', () => {
+    expect(runSharePct(null)).toBeNull()
+    expect(runCostLine(null)).toBeNull()
+    expect(runCostChip(undefined)).toBeNull()
+    expect(runSharePct(est({ unlimited: true }))).toBeNull()
+    expect(runSharePct(est({ pct: {} }))).toBeNull()
+    expect(runSharePct(est({ binding: null, pct: {} }))).toBeNull()
+  })
+})
+
+describe('the meter is percent-only and can never drift back to counting', () => {
+  // The reversal of 2026-09-29: a cut's cost varies more than fourfold with
+  // its length and quality, so a countable meter drops by four on one upload
+  // and reads as broken. "คลิป" is also this codebase's word for a SOURCE
+  // video file, which a unit of spending may not also mean.
+  const cases = [0, 0.4, 18.2, 50, 99.9, 100, 140]
+  const kinds = [
+    { key: 'monthly' as const, resets: undefined },
+    { key: 'weekly' as const, resets: true },
+    { key: 'lifetime' as const, resets: false }
+  ]
+
+  it('never writes a count of clips, at any fill, on any window', () => {
+    for (const { key, resets } of kinds) {
+      for (const used_pct of cases) {
+        const copy = meterCopy(
+          { key, used_pct, resets_at: '2026-09-22T11:48:00Z', active: true, resets },
+          NOW
+        )
+        expect(`${copy.value} ${copy.line}`).not.toMatch(/คลิป/)
+        expect(copy.value).toBe(`ใช้ไป ${pctText(used_pct)}`)
+      }
+    }
+  })
+
+  it('keeps the reset line for a window and the upgrade for a credit', () => {
+    const w = {
+      key: 'weekly' as const,
+      used_pct: 18.2,
+      resets_at: '2026-09-22T11:48:00Z',
+      active: true
+    }
+    expect(meterCopy(w, NOW)).toEqual({
+      value: 'ใช้ไป 18%',
+      line: resetLine('weekly', w.resets_at, NOW)
+    })
+    expect(
+      meterCopy(
+        { key: 'lifetime', used_pct: 50, resets_at: null, active: true, resets: false },
+        NOW
+      )
+    ).toEqual({ value: 'ใช้ไป 50%', line: 'ใช้หมดแล้วอัปเกรด' })
+  })
+
+  it('names the one-time credit, which is a window key of its own now', () => {
+    expect(limitLabel('lifetime')).toBe('เครดิตทดลองใช้')
+    expect(parseRefusal({ detail: { code: 'limit_reached', window: 'lifetime' } })?.window).toBe(
+      'lifetime'
+    )
+  })
+})
+
+describe('an allowance that never resets (the Free trial credit)', () => {
+  const credit = (used: number): Parameters<typeof windowLine>[0] => ({
+    key: 'monthly',
+    used_pct: used,
+    // The server still sends a time; it is meaningless here and must not be
+    // shown — left as-is, this is the "รีเซ็ตใน 0 วินาที" a free user saw forever.
+    resets_at: '2026-09-22T09:00:00Z',
+    active: true,
+    resets: false
+  })
+
+  it('never counts down to a reset that does not come', () => {
+    expect(windowLine(credit(100), NOW)).toBe(TRIAL_CREDIT_SPENT)
+    expect(windowLine(credit(40), NOW)).toBe(TRIAL_CREDIT_LEFT)
+    expect(windowLine(credit(100), NOW)).not.toMatch(/รีเซ็ต|รอบใหม่/)
+  })
+
+  it('is not called a monthly quota — that name is the untrue part', () => {
+    expect(windowTitle(credit(10))).toBe('เครดิตทดลองใช้')
+    expect(windowTitle({ key: 'monthly' })).toBe('โควตารายเดือน')
+  })
+
+  it('leaves a normal window exactly as it was', () => {
+    const w = {
+      key: 'five_hour' as const,
+      used_pct: 40,
+      resets_at: '2026-09-22T11:48:00Z',
+      active: true
+    }
+    expect(windowLine(w, NOW)).toBe(resetLine('five_hour', w.resets_at, NOW))
+    // An older server omits the flag; absent means it does reset.
+    expect(windowLine({ ...w, resets: undefined }, NOW)).toBe(windowLine(w, NOW))
+  })
+
+  it('offers the plan change where a refusal would have named a reset time', () => {
+    const r = parseRefusal({
+      detail: {
+        code: 'limit_reached',
+        window: 'monthly',
+        resets_at: '2026-09-22T09:00:00Z',
+        resets: false,
+        wallet_can_cover: false
+      }
+    })!
+    expect(r.resets).toBe(false)
+    expect(refusalMessage(r, NOW)).toBe('เครดิตทดลองใช้หมดแล้ว · เปลี่ยนแผนเพื่อใช้ต่อ')
+    expect(refusalMessage(r, NOW)).not.toMatch(/เริ่มงานใหม่ได้/)
+  })
+
+  it('says the same in the pre-flight estimate', () => {
+    const est: UsageEstimate = {
+      fits: 'none',
+      pct: { monthly: 90 },
+      wallet_satang: 0,
+      binding: 'monthly',
+      resets_at: '2026-09-22T09:00:00Z',
+      resets: false,
+      unlimited: false
+    }
+    expect(estimateBlockLine(est, NOW)).toBe(
+      'เครดิตทดลองใช้อาจไม่พอสำหรับงานนี้ — เปลี่ยนแผนเพื่อใช้ต่อ'
+    )
+    expect(estimateBlockLine(est, NOW)).not.toMatch(/รอบใหม่/)
+  })
+})
+
 describe('estimate lines', () => {
   const base: UsageEstimate = {
     fits: 'plan',
@@ -176,6 +343,7 @@ describe('refusals', () => {
       code: 'limit_reached',
       window: 'five_hour',
       resetsAt: '2026-09-22T11:48:00Z',
+      resets: true,
       walletCanCover: true,
       walletSatang: 1500,
       serverMessage: 'ใช้งานครบ 5-hour limit แล้ว'
@@ -247,5 +415,31 @@ describe('device id', () => {
     }
     const a = deviceId(broken)
     expect(a).toBe(deviceId(broken))
+  })
+})
+
+describe('a monthly window that has not been used yet', () => {
+  // The billing-anniversary change (packages/billing/runs.py): a paid account
+  // that has cut nothing this month reads as inactive and still has a real
+  // next reset. Before this, windowLine dropped the date on !active and said
+  // "เริ่มนับรอบใหม่เมื่อใช้งานครั้งถัดไป" — true of a rolling window, false now.
+  const now = new Date('2026-10-01T00:00:00Z')
+  const untouched = {
+    key: 'monthly' as const,
+    used_pct: 0,
+    resets_at: '2026-10-15T00:00:00Z',
+    active: false
+  }
+
+  it('states the date the server sent instead of "at your next use"', () => {
+    const line = windowLine(untouched, now)
+    expect(line).not.toContain('ครั้งถัดไป')
+    expect(line.length).toBeGreaterThan(0)
+  })
+
+  it('reads the same whether or not the window has been charged', () => {
+    expect(windowLine({ ...untouched, active: true, used_pct: 40 }, now)).toBe(
+      windowLine(untouched, now)
+    )
   })
 })
