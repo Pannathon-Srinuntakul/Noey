@@ -1,11 +1,15 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { contentSecurityPolicy } from "@/lib/csp";
+import { sentryDsn, sentryIngestOrigin } from "@/lib/sentry-config";
 import { cookieName, isAdminTokens, isFresh, sessionSpecs, type AdminTokens } from "@/lib/session";
 
 /**
  * Next.js 16 Proxy (formerly middleware), on every page request:
  *
  *  1. A fresh CSP nonce per request (strict CSP: only this origin's scripts
- *     carrying the nonce run — no third-party script at all).
+ *     carrying the nonce run — no third-party script at all). `connect-src`
+ *     gains exactly one origin — the Sentry ingest host inside SENTRY_DSN —
+ *     and only while that run-time DSN is set (lib/sentry-config.ts).
  *  2. Signed-out visitors go to /login; an expiring access token is refreshed
  *     here, because a Server Component render cannot write cookies.
  *
@@ -16,27 +20,8 @@ import { cookieName, isAdminTokens, isFresh, sessionSpecs, type AdminTokens } fr
 const API_URL = (process.env.API_URL || "http://localhost:8000").replace(/\/+$/, "");
 const SECURE = process.env.NODE_ENV === "production";
 const DEV = process.env.NODE_ENV === "development";
-
-function csp(nonce: string, https: boolean): string {
-  return [
-    "default-src 'self'",
-    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${DEV ? " 'unsafe-eval'" : ""}`,
-    `style-src 'self' 'nonce-${nonce}'`,
-    // React renders `style` attributes (bar widths, colours); attributes cannot
-    // carry a nonce. No <style> element or stylesheet outside this origin runs.
-    "style-src-attr 'unsafe-inline'",
-    "img-src 'self' data: blob:",
-    "font-src 'self'",
-    `connect-src 'self'${DEV ? " ws:" : ""}`,
-    "object-src 'none'",
-    "base-uri 'none'",
-    "form-action 'self'",
-    "frame-ancestors 'none'",
-    // Only behind HTTPS: on a plain-http local run it would rewrite every
-    // asset URL to https:// and break the page.
-    ...(https ? ["upgrade-insecure-requests"] : []),
-  ].join("; ");
-}
+/** Read once per process: SENTRY_DSN is a run-time setting, fixed for the process's life. */
+const SENTRY_ORIGIN = sentryIngestOrigin(sentryDsn());
 
 type Refreshed = AdminTokens | "invalid" | "unavailable";
 
@@ -71,7 +56,7 @@ function withSecurityHeaders(response: NextResponse, policy: string): NextRespon
 export async function proxy(request: NextRequest) {
   const nonce = Buffer.from(crypto.randomUUID()).toString("base64");
   const https = request.nextUrl.protocol === "https:" || request.headers.get("x-forwarded-proto") === "https";
-  const policy = csp(nonce, https);
+  const policy = contentSecurityPolicy({ nonce, https, dev: DEV, sentryOrigin: SENTRY_ORIGIN });
   const forwarded = new Headers(request.headers);
   forwarded.set("x-nonce", nonce);
   forwarded.set("Content-Security-Policy", policy);

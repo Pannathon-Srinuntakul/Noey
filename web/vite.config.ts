@@ -22,6 +22,14 @@ const UPLOAD_ORIGIN = (process.env.VITE_UPLOAD_ORIGIN ?? '').trim()
 const SENTRY_DSN = (process.env.VITE_SENTRY_DSN ?? '').trim()
 const SENTRY_ENVIRONMENT = (process.env.VITE_SENTRY_ENVIRONMENT ?? '').trim()
 const SENTRY_RELEASE = (process.env.VITE_SENTRY_RELEASE ?? '').trim()
+/**
+ * Cloudflare Turnstile (src/lib/turnstile.ts) — optional, build-time, public.
+ * Set, the login screen can show the bot check a Google sign-UP needs while
+ * the API has TURNSTILE_SECRET_KEY, and the CSP allows Cloudflare's script and
+ * iframe. Unset, the CSP names no third party and no widget ever appears.
+ */
+const TURNSTILE_SITE_KEY = (process.env.VITE_TURNSTILE_SITE_KEY ?? '').trim()
+const TURNSTILE_ORIGIN = 'https://challenges.cloudflare.com'
 
 /** The DSN's ingest origin (`https://o<org>.ingest.<region>.sentry.io`), or ''. */
 function sentryIngestOrigin(dsn: string): string {
@@ -67,6 +75,7 @@ function cspBackendOrigin(): Plugin {
         .replaceAll('%UPLOAD_ORIGIN%', UPLOAD_ORIGIN ? new URL(UPLOAD_ORIGIN).origin : '')
         .replaceAll('%DEV_ORIGINS%', serving ? DEV_ORIGINS : '')
         .replaceAll('%SENTRY_ORIGIN%', sentryIngestOrigin(SENTRY_DSN))
+        .replaceAll('%TURNSTILE_ORIGIN%', TURNSTILE_SITE_KEY ? TURNSTILE_ORIGIN : '')
     }
   }
 }
@@ -82,7 +91,8 @@ export default defineConfig({
     'import.meta.env.VITE_BACKEND_URL': JSON.stringify(BACKEND_URL),
     'import.meta.env.VITE_SENTRY_DSN': JSON.stringify(SENTRY_DSN),
     'import.meta.env.VITE_SENTRY_ENVIRONMENT': JSON.stringify(SENTRY_ENVIRONMENT),
-    'import.meta.env.VITE_SENTRY_RELEASE': JSON.stringify(SENTRY_RELEASE)
+    'import.meta.env.VITE_SENTRY_RELEASE': JSON.stringify(SENTRY_RELEASE),
+    'import.meta.env.VITE_TURNSTILE_SITE_KEY': JSON.stringify(TURNSTILE_SITE_KEY)
   },
   server: { port: 5174 },
   worker: { format: 'es' }

@@ -84,12 +84,14 @@ Full notes: `docs/email-sendgrid.md`.
 
 ## 3. Cloudflare Turnstile (bot check on sign-up / forgot password / contact / Google sign-up)
 
-- [ ] Create a widget for `<site-host>` — https://developers.cloudflare.com/turnstile/get-started/
+- [ ] Create a widget for `<site-host>` AND `<editor-host>` (one widget, both hostnames in its hostname list — the editor uses the same site key) — https://developers.cloudflare.com/turnstile/get-started/
 - [ ] **`NEXT_PUBLIC_TURNSTILE_SITE_KEY`** (public site key) → **Noey Studio** (rebuild).
+- [ ] **`VITE_TURNSTILE_SITE_KEY`** (the same public site key) → **Noey Frontend** as a build variable (`web/Dockerfile` `ARG`) → redeploy to rebuild. The editor's CSP gains `https://challenges.cloudflare.com` in `script-src` + `frame-src` only when it is set.
 - [ ] **`TURNSTILE_SECRET_KEY`** (secret) → **Noey Api**. Server check per https://developers.cloudflare.com/turnstile/get-started/server-side-validation/
-- Order: set the site key FIRST and deploy Noey Studio, then the secret — once the secret is set the API refuses register / forgot-password / contact / Google sign-UP without a token.
+- Order: set the site keys FIRST and deploy Noey Studio AND Noey Frontend, then the secret — once the secret is set the API refuses register / forgot-password / contact / Google sign-UP without a token.
 - Test: sign up on the site → widget shows, sign-up succeeds; `curl -X POST https://<api-host>/auth/register ... ` with no `turnstile_token` → **400 captcha**.
-- Known gap: the web editor (`web/`) has no Turnstile widget, so while the secret is set a NEW user cannot sign UP with Google from the editor (they get `captcha_required`); existing users signing in are unaffected. New users should sign up on the marketing site.
+- Editor test (Google sign-UP): with a Google account that has no Noey account, press เข้าสู่ระบบด้วย Google in the editor → back on the login screen with "กรุณายืนยันว่าไม่ใช่บอทก่อนสมัครด้วย Google" and the widget → solve it → press the Google button again → signed in to a new account. A returning user never sees the widget. Like the marketing site, the widget appears only after that refusal (the editor has no email sign-up or forgot-password form — those live on the marketing site).
+- Desktop app: no widget (it has no Google sign-in yet) — `PARITY.md`.
 
 ## 4. Stripe (subscriptions + wallet top-up)
 
@@ -159,7 +161,9 @@ https://docs.sentry.io/concepts/key-terms/dsn-explainer/ . Nothing is sent while
 - [ ] Marketing site project (platform Next.js — https://docs.sentry.io/platforms/javascript/guides/nextjs/):
   **`NEXT_PUBLIC_SENTRY_DSN`** (optional `NEXT_PUBLIC_SENTRY_ENVIRONMENT`, `…_RELEASE`, `…_TRACES_SAMPLE_RATE`) → **Noey Studio** → rebuild.
   - Test: same as the editor. Stack traces stay minified until source-map upload (`withSentryConfig` + `SENTRY_AUTH_TOKEN`) is added — not built.
-- Not built: Sentry for **Noey Dashboard** (admin) and the desktop app (`@sentry/electron`).
+- [ ] Admin dashboard project (platform Next.js): **`SENTRY_DSN`** (optional `SENTRY_ENVIRONMENT`, `SENTRY_RELEASE`, `SENTRY_TRACES_SAMPLE_RATE`) → **Noey Dashboard**. RUN-time variables (the admin has no build-time ones) → a redeploy/restart, no rebuild. Environment/release default to `RAILWAY_ENVIRONMENT_NAME` / `RAILWAY_GIT_COMMIT_SHA`. The per-request CSP `connect-src` gains the DSN's ingest origin automatically. Use a separate project from the backend's (locally, docker-compose maps `ADMIN_SENTRY_DSN` → the admin's `SENTRY_DSN`).
+  - Test: response header `Content-Security-Policy` on `/login` lists the ingest origin in `connect-src`; run `setTimeout(() => { throw new Error("sentry test") })` in the console on the dashboard → event appears with no email, cookie or query string.
+- Not built: Sentry for the desktop app (`@sentry/electron`).
 
 ## 8. Open registration (last)
 

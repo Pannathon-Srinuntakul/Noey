@@ -159,6 +159,8 @@ services:
       ADMIN_URL: http://localhost:3001
       SITE_URL: http://site:3000
       PRICES_REVALIDATE_SECRET: ${PRICES_REVALIDATE_SECRET:-}
+      # The admin's own Sentry project — NOT the backend's SENTRY_DSN from .env.
+      SENTRY_DSN: ${ADMIN_SENTRY_DSN:-}
     depends_on:
       - api
     ports:

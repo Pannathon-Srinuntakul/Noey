@@ -3,6 +3,8 @@ import { Eye, EyeOff } from 'lucide-react'
 import { BrandMark } from '../components/ui/BrandMark'
 import { ApiError, googleConfig, login, me } from '../lib/api'
 import { beginGoogle, googleErrorText } from '../lib/googleAuth'
+import { isCaptchaCode, turnstileSiteKey } from '../lib/turnstile'
+import { TurnstileWidget } from '../components/TurnstileWidget'
 import type { Session } from '../App'
 import { Button } from '../components/ui/Button'
 import { Input } from '../components/ui/Input'
@@ -47,11 +49,14 @@ function GoogleMark(): React.JSX.Element {
 export default function LoginPage({
   backendUrl,
   initialError = null,
+  initialNeedsCaptcha = false,
   onLogin
 }: {
   backendUrl: string
   /** A message carried over from a Google return (cancelled, expired, refused). */
   initialError?: string | null
+  /** The Google return was refused for want of a bot check — show the widget. */
+  initialNeedsCaptcha?: boolean
   onLogin: (s: Session) => void
 }): React.JSX.Element {
   const [email, setEmail] = useState('')
@@ -63,6 +68,15 @@ export default function LoginPage({
   // server without the keys never shows a button that cannot work.
   const [googleEnabled, setGoogleEnabled] = useState(false)
   const [googleBusy, setGoogleBusy] = useState(false)
+  // Turnstile, mirroring the marketing site: a returning user needs none, so
+  // the widget appears only after the server answered `captcha_required` /
+  // `captcha_failed` (a Google sign-UP while the bot check is on). With no
+  // site key in this build it never appears and nothing changes.
+  const siteKey = turnstileSiteKey()
+  const [needsCaptcha, setNeedsCaptcha] = useState(initialNeedsCaptcha)
+  const [captchaToken, setCaptchaToken] = useState('')
+  const [captchaReset, setCaptchaReset] = useState(0)
+  const showCaptcha = needsCaptcha && !!siteKey
 
   useEffect(() => {
     let cancelled = false
@@ -79,6 +93,10 @@ export default function LoginPage({
   /** Leave for Google. The page navigates away on success, so `googleBusy`
    * is only ever reset on a failure. */
   const signInWithGoogle = async (): Promise<void> => {
+    if (showCaptcha && !captchaToken) {
+      setError('กรุณายืนยันว่าไม่ใช่บอทก่อนสมัครด้วย Google')
+      return
+    }
     setGoogleBusy(true)
     setError(null)
     try {
@@ -86,11 +104,15 @@ export default function LoginPage({
         baseUrl: backendUrl,
         origin: window.location.origin,
         intent: 'signin',
-        returnTo: 'login'
+        returnTo: 'login',
+        turnstileToken: showCaptcha ? captchaToken : undefined
       })
     } catch (err) {
       void window.noey.log.write('login', `google start failed: ${String(err)}`)
       setError(googleErrorText(err))
+      if (err instanceof ApiError && isCaptchaCode(err.code)) setNeedsCaptcha(true)
+      // The token was spent (or refused) either way: fetch a fresh one.
+      if (showCaptcha) setCaptchaReset((n) => n + 1)
       setGoogleBusy(false)
     }
   }
@@ -273,6 +295,13 @@ export default function LoginPage({
                   หรือ
                   <span className="h-px flex-1 bg-divider" />
                 </div>
+                {showCaptcha ? (
+                  <TurnstileWidget
+                    siteKey={siteKey}
+                    onToken={setCaptchaToken}
+                    resetKey={captchaReset}
+                  />
+                ) : null}
                 <Button
                   type="button"
                   variant="secondary"

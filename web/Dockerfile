@@ -31,6 +31,10 @@ ARG VITE_SENTRY_ENVIRONMENT=
 ENV VITE_SENTRY_ENVIRONMENT=$VITE_SENTRY_ENVIRONMENT
 ARG VITE_SENTRY_RELEASE=
 ENV VITE_SENTRY_RELEASE=$VITE_SENTRY_RELEASE
+# Cloudflare Turnstile site key (src/lib/turnstile.ts). Empty = no widget, and
+# challenges.cloudflare.com stays out of the CSP (vite.config.ts).
+ARG VITE_TURNSTILE_SITE_KEY=
+ENV VITE_TURNSTILE_SITE_KEY=$VITE_TURNSTILE_SITE_KEY
 
 COPY package.json package-lock.json ./
 RUN npm ci

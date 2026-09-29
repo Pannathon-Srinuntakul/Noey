@@ -13,7 +13,7 @@
  *   4. only then POST the code to the API, which holds the PKCE verifier.
  */
 
-import { googleCallback, me, restoreSession, type Me } from './api'
+import { ApiError, googleCallback, me, restoreSession, type Me } from './api'
 import {
   GOOGLE_CANCELLED_TEXT,
   GOOGLE_INVALID_STATE_TEXT,
@@ -23,6 +23,7 @@ import {
   parseGoogleReturn,
   stashGoogleOutcome
 } from './googleAuth'
+import { isCaptchaCode } from './turnstile'
 import type { Route } from './routes'
 
 export interface GoogleBoot {
@@ -34,6 +35,10 @@ export interface GoogleBoot {
   }
   /** Shown on the login screen when nobody ends up signed in. */
   loginError?: string
+  /** The server refused to CREATE the account without a bot check
+   * (`captcha_required` / `captcha_failed`): the login screen shows the
+   * Turnstile widget for the retry. */
+  needsCaptcha?: boolean
   /** Where the workspace should open (link / reauth return to settings). */
   route?: Route
 }
@@ -78,7 +83,8 @@ async function run(baseUrl: string): Promise<GoogleBoot> {
       }
     } catch (err) {
       void window.noey.log.write('google', `sign-in callback failed: ${String(err)}`)
-      return { loginError: googleErrorText(err) }
+      const needsCaptcha = err instanceof ApiError && isCaptchaCode(err.code)
+      return { loginError: googleErrorText(err), ...(needsCaptcha ? { needsCaptcha } : {}) }
     }
   }
 

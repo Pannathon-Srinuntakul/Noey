@@ -71,6 +71,35 @@ describe('beginGoogle', () => {
     expect(navigate).toHaveBeenCalledWith('https://accounts.google.com/o/oauth2/v2/auth?x=1')
   })
 
+  it('sends the Turnstile token on a sign-in only, never on link / reauth', async () => {
+    const start = vi.fn(async () => ({
+      authorization_url: 'https://g',
+      state: 's',
+      expires_in: 600
+    }))
+    const common = {
+      baseUrl: 'b',
+      origin: 'https://o',
+      storage: memoryStore(),
+      navigate: vi.fn(),
+      start
+    }
+    await beginGoogle({ ...common, intent: 'signin', returnTo: 'login', turnstileToken: 'tok' })
+    await beginGoogle({ ...common, intent: 'signin', returnTo: 'login' })
+    await beginGoogle({
+      ...common,
+      intent: 'link',
+      returnTo: 'settings',
+      turnstileToken: 'tok',
+      accessToken: 'a'
+    })
+    expect(start.mock.calls.map((c) => (c as unknown[])[1])).toEqual([
+      { redirect_uri: 'https://o/auth/google/callback', intent: 'signin', turnstile_token: 'tok' },
+      { redirect_uri: 'https://o/auth/google/callback', intent: 'signin' },
+      { redirect_uri: 'https://o/auth/google/callback', intent: 'link' }
+    ])
+  })
+
   it('stores nothing and does not navigate when the server refuses', async () => {
     const start = async (): Promise<never> => {
       throw new ApiError(503, 'x', null, 'not_configured')

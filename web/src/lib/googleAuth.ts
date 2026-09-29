@@ -57,6 +57,9 @@ export async function beginGoogle(opts: {
   intent: GoogleIntent
   returnTo: GoogleFlow['returnTo']
   accessToken?: string
+  /** Turnstile token (signin only) — needed for a sign-UP while the server
+   * requires the bot check. Never sent for link / reauth. */
+  turnstileToken?: string
   storage?: KeyValueStore
   navigate?: (url: string) => void
   /** Injected by tests; the real API call otherwise. */
@@ -65,11 +68,12 @@ export async function beginGoogle(opts: {
   const storage = opts.storage ?? window.sessionStorage
   const navigate = opts.navigate ?? ((url: string) => window.location.assign(url))
   const start = opts.start ?? googleStart
-  const res = await start(
-    opts.baseUrl,
-    { redirect_uri: googleRedirectUri(opts.origin), intent: opts.intent },
-    opts.accessToken
-  )
+  const body: Parameters<typeof googleStart>[1] = {
+    redirect_uri: googleRedirectUri(opts.origin),
+    intent: opts.intent
+  }
+  if (opts.intent === 'signin' && opts.turnstileToken) body.turnstile_token = opts.turnstileToken
+  const res = await start(opts.baseUrl, body, opts.accessToken)
   const flow: GoogleFlow = { state: res.state, intent: opts.intent, returnTo: opts.returnTo }
   storage.setItem(GOOGLE_FLOW_KEY, JSON.stringify(flow))
   navigate(res.authorization_url)

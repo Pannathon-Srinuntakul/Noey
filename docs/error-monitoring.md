@@ -92,6 +92,44 @@ Web owner check: rebuild with the DSN, open the editor, run
 `setTimeout(() => { throw new Error('sentry test') })` in the browser console,
 and confirm the event arrives with no e-mail, token or query string.
 
+### Admin dashboard (`admin/`) — built
+
+Mirrors noey-frontend (`@sentry/nextjs`, same `dataCollection` all-off and the
+same scrubbing: `admin/src/lib/sentry-config.ts`, tested in
+`sentry-config.test.ts`), with one deliberate difference: the DSN is a RUN-time
+variable. The admin has no `NEXT_PUBLIC_*` values at all — every setting is
+read server-side at run time — so instead of `instrumentation-client.ts` the
+root layout renders `components/Monitoring.tsx`, which reads the config per
+request and hands it to `MonitoringClient.tsx` as a prop; that component
+dynamic-imports the SDK in the browser only when a config arrived.
+`src/instrumentation.ts` starts the server SDK (`serverName: "noey-admin"`) and
+reports render / Server Action / Route Handler / Proxy errors through
+`onRequestError`.
+
+CSP: the admin's policy is per request with a nonce (`src/proxy.ts`, built by
+`src/lib/csp.ts`). The SDK chunk is loaded by the nonce'd Next.js runtime, so
+`'strict-dynamic'` covers it and `script-src` is unchanged; `connect-src` gains
+the DSN's ingest origin only while `SENTRY_DSN` is set (tested in
+`csp.test.ts`). A DSN whose origin the CSP could not allow (not https, except
+a localhost relay) turns monitoring off rather than producing blocked requests.
+
+| Variable (admin service, run time) | Default | Effect |
+|---|---|---|
+| `SENTRY_DSN` | empty | Empty = off on server and browser; CSP unchanged. |
+| `SENTRY_ENVIRONMENT` | `RAILWAY_ENVIRONMENT_NAME`, else `production`/`development` | Environment tag. |
+| `SENTRY_RELEASE` | `RAILWAY_GIT_COMMIT_SHA` | Release tag. |
+| `SENTRY_TRACES_SAMPLE_RATE` | `0` | Tracing share (0 = errors only). |
+
+docker-compose passes `ADMIN_SENTRY_DSN` from the root `.env` as the admin's
+`SENTRY_DSN`, so the backend's `SENTRY_DSN` there is never reused by accident.
+Not built: `app/global-error.tsx` (the admin keeps Next's default; client
+render errors still reach the browser SDK's global handlers, server ones
+`onRequestError`) and source-map upload (`withSentryConfig`).
+
+Verified 2026-09-30: `next start` with `SENTRY_DSN=http://k@localhost:9/1`
+answers `/login` with `connect-src 'self' http://localhost:9` and the config
+in the page; without it, `connect-src 'self'` and no mention of Sentry.
+
 ## Owner checklist
 
 1. Create a Sentry project (platform: Python/FastAPI); copy its DSN.

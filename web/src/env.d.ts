@@ -26,6 +26,9 @@ interface ImportMetaEnv {
   readonly VITE_SENTRY_DSN?: string
   readonly VITE_SENTRY_ENVIRONMENT?: string
   readonly VITE_SENTRY_RELEASE?: string
+  /** Cloudflare Turnstile site key (lib/turnstile.ts). Empty = no widget and
+   *  no challenges.cloudflare.com in the CSP. Public, build-time. */
+  readonly VITE_TURNSTILE_SITE_KEY?: string
 }
 
 interface ImportMeta {

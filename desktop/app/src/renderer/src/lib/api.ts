@@ -333,10 +333,12 @@ export function googleConfig(
   return request(baseUrl, '/auth/google/config')
 }
 
-/** `POST /auth/google/start` — link/reauth need the caller's access token. */
+/** `POST /auth/google/start` — link/reauth need the caller's access token.
+ * `turnstile_token` (signin only) lets the flow CREATE an account while the
+ * server has TURNSTILE_SECRET_KEY set; verified here, `captcha_failed` if bad. */
 export function googleStart(
   baseUrl: string,
-  body: { redirect_uri: string; intent: GoogleIntent },
+  body: { redirect_uri: string; intent: GoogleIntent; turnstile_token?: string },
   accessToken?: string
 ): Promise<{ authorization_url: string; state: string; expires_in: number }> {
   return request(baseUrl, '/auth/google/start', {

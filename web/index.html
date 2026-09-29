@@ -27,12 +27,15 @@
 
       `%SENTRY_ORIGIN%` is the error-monitoring ingest host taken from
       VITE_SENTRY_DSN, and empty when that is unset (monitoring off).
+      `%TURNSTILE_ORIGIN%` is https://challenges.cloudflare.com when
+      VITE_TURNSTILE_SITE_KEY is set (the bot check's script + iframe) and
+      empty otherwise; `frame-src 'self'` alone is what default-src gave.
       Google sign-in adds nothing here: accounts.google.com is a top-level
       navigation, not a fetch, script or frame.
     -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; worker-src 'self' blob:; connect-src 'self' blob: %BACKEND_ORIGIN% %UPLOAD_ORIGIN% %SENTRY_ORIGIN% %DEV_ORIGINS%"
+      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' %TURNSTILE_ORIGIN%; frame-src 'self' %TURNSTILE_ORIGIN%; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; worker-src 'self' blob:; connect-src 'self' blob: %BACKEND_ORIGIN% %UPLOAD_ORIGIN% %SENTRY_ORIGIN% %DEV_ORIGINS%"
     />
   </head>
 

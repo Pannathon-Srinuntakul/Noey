@@ -167,6 +167,7 @@ function App(): React.JSX.Element {
   // Set by a page load that came back from Google: an error for the login
   // screen, or the screen the workspace opens on (link / re-auth → settings).
   const [loginError, setLoginError] = useState<string | null>(null)
+  const [loginNeedsCaptcha, setLoginNeedsCaptcha] = useState(false)
   const [initialRoute, setInitialRoute] = useState<Route | undefined>(undefined)
   const [goodbye, setGoodbye] = useState(false)
 
@@ -278,6 +279,7 @@ function App(): React.JSX.Element {
         return
       }
       if (google?.loginError) setLoginError(google.loginError)
+      if (google?.needsCaptcha) setLoginNeedsCaptcha(true)
       if (google?.route) setInitialRoute(google.route)
       const stored = await window.noey.auth.load()
       if (!stored) return
@@ -385,6 +387,7 @@ function App(): React.JSX.Element {
           <LoginPage
             backendUrl={BACKEND_URL}
             initialError={loginError}
+            initialNeedsCaptcha={loginNeedsCaptcha}
             onLogin={(next) => void onLogin(next)}
           />
         )}

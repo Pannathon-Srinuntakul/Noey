@@ -1,8 +1,9 @@
 # Noey Studio admin dashboard (Next.js, `output: "standalone"`).
 #
 # No secrets and no environment-specific values are baked in: every setting
-# (API_URL, ADMIN_URL, SITE_URL, PRICES_REVALIDATE_SECRET) is read at RUN
-# time, server-side only — this app has no NEXT_PUBLIC_* values at all.
+# (API_URL, ADMIN_URL, SITE_URL, PRICES_REVALIDATE_SECRET, SENTRY_*) is read
+# at RUN time, server-side only — this app has no NEXT_PUBLIC_* values at all
+# (the browser Sentry config is handed over by the server; lib/sentry-config.ts).
 # Runs as the unprivileged `node` user.
 
 # Base images are pinned to a manifest-list digest (resolves on amd64 and arm64),

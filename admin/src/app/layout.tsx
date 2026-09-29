@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Noto_Sans_Thai } from "next/font/google";
 import "./globals.css";
 import "./admin.css";
+import { Monitoring } from "@/components/Monitoring";
 
 // Self-hosted by next/font at build time — no request to Google at runtime,
 // which the strict CSP (font-src 'self') requires.
@@ -27,7 +28,10 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="th" data-theme="light" className={notoSansThai.variable}>
-      <body>{children}</body>
+      <body>
+        {children}
+        <Monitoring />
+      </body>
     </html>
   );
 }
