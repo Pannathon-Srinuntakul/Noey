@@ -96,16 +96,3 @@ async def get_session() -> AsyncIterator[AsyncSession]:
         except Exception:
             await session.rollback()
             raise
-
-
-async def get_tenant_session(tenant_slug: str) -> AsyncIterator[AsyncSession]:
-    """Session with search_path scoped to a tenant's schema (+ core fallback)."""
-    maker = get_sessionmaker()
-    async with maker() as session:
-        await bind_tenant_search_path(session, tenant_slug)
-        try:
-            yield session
-            await session.commit()
-        except Exception:
-            await session.rollback()
-            raise

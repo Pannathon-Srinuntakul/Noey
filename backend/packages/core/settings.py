@@ -103,7 +103,6 @@ class Settings(BaseSettings):
     llm_vision_timeout_sec: int = 900  # vision (22 frames) — up to 15 min
     llm_max_retries: int = 2  # retries on connection / 5xx / timeout
     llm_base_url: str | None = None
-    llm_web_search_enabled: bool = True
     # API keys — passed explicitly to LiteLLM so os.environ is not required.
     # `anthropic_api_key`/`openai_api_key` stay declared but unset: the gateway
     # still resolves a key per model, so pointing any setting at one of those

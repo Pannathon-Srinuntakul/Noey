@@ -773,10 +773,6 @@ async def renew_lease(
     )
 
 
-async def run_status(session: AsyncSession, run_id: str) -> str | None:
-    return (await session.execute(select(AiRun.status).where(AiRun.id == run_id))).scalar_one_or_none()
-
-
 async def sweep_orphans(session: AsyncSession, now: datetime | None = None) -> int:
     """Settle runs whose worker died (lapsed lease) or that never started.
     Charged nothing (``orphaned``). Worker cron; returns how many."""

@@ -98,19 +98,6 @@ export function fmtFrames(deltaSec: number, fps = 30): string {
   return `${sign}${Math.abs(frames)} เฟรม`
 }
 
-/** Frame-accurate timecode "m:ss:ff" (ff = frame within the second, 00–29 at
- * 30 fps). Rounds to the nearest frame, so 29.5 frames carries into the next
- * second rather than printing a frame 30 that does not exist. */
-export function fmtTimecodeFrames(sec: number, fps = 30): string {
-  if (!Number.isFinite(sec) || sec < 0 || !(fps > 0)) return '0:00:00'
-  const totalFrames = Math.round(sec * fps)
-  const ff = totalFrames % fps
-  const wholeSec = Math.floor(totalFrames / fps)
-  const m = Math.floor(wholeSec / 60)
-  const s = wholeSec % 60
-  return `${m}:${String(s).padStart(2, '0')}:${String(ff).padStart(2, '0')}`
-}
-
 /**
  * `"0:22.4"` / `"1:02"` / `"22.4"` → seconds, or null when it is not a time.
  *
@@ -689,10 +676,6 @@ export function withReorderMany(
 export function cutIndexInLine(cuts: EditCut[], cut: EditCut): number {
   const idx = cutsInLine(cuts, cutLineId(cut)).findIndex((c) => c.id === cut.id)
   return idx >= 0 ? idx + 1 : 1
-}
-
-export function countVoiceoverLines(cuts: EditCut[]): number {
-  return new Set(cuts.map(cutLineId).filter((id) => id > 0)).size
 }
 
 /** One block per voiceover line on the เสียงพากย์ track: where the line's

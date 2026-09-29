@@ -430,12 +430,6 @@ def build_vision_content(frames: list[dict[str, Any]]) -> tuple[list[dict[str, A
     return content, stats
 
 
-def frames_to_vision_content(frames: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Convert frame dicts to LiteLLM image_url content blocks (base64 JPEG)."""
-    content, _stats = build_vision_content(frames)
-    return content
-
-
 async def build_vision_content_uploaded(
     frames: list[dict[str, Any]],
     *,

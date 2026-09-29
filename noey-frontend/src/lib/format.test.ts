@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatBytes, formatThaiDate, formatThaiDateTime, isoDate, toDate } from "./format";
+import { formatBytes, formatThaiDate, isoDate, toDate } from "./format";
 
 describe("formatBytes", () => {
   it("picks the unit like the backend does", () => {
@@ -26,10 +26,6 @@ describe("Thai dates", () => {
     expect(formatThaiDate(seconds)).toBe("21 ตุลาคม 2569");
     expect(formatThaiDate(seconds * 1000)).toBe("21 ตุลาคม 2569");
     expect(formatThaiDate(String(seconds))).toBe("21 ตุลาคม 2569");
-  });
-
-  it("includes the Bangkok time when asked", () => {
-    expect(formatThaiDateTime("2026-09-21T00:00:00Z")).toContain("07:00");
   });
 
   it("returns null for missing or invalid input", () => {

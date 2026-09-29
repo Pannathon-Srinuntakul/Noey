@@ -84,12 +84,6 @@ function call(
   })
 }
 
-/** Test seam: outstanding calls, and a way to kill the worker as the browser would. */
-export const __workerRpc = {
-  pendingCount: (): number => pending.size,
-  current: (): Worker | null => current
-}
-
 // ── which path does this browser take? ───────────────────────────────────────
 
 let capability: Promise<'writable' | 'worker' | 'none'> | null = null

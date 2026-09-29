@@ -191,28 +191,6 @@ export async function renderMix(spec: MixSpec): Promise<AudioBuffer | null> {
 }
 
 /**
- * Speech audio for transcription.
- *
- * `audio_extract.py` produces mono 16 kHz PCM specifically because that is
- * Scribe's fast path. The loudness pass it also runs (`loudnorm I=-16`) has no
- * browser equivalent, so this normalises by peak instead — enough to stop a
- * quietly-recorded clip transcribing badly, without pretending to be EBU R128.
- */
-export async function extractSpeechWav(source: Blob, signal?: AbortSignal): Promise<Uint8Array> {
-  const { stream, bytes } = await speechWavStream(source, signal)
-  const out = new Uint8Array(bytes)
-  let at = 0
-  const reader = stream.getReader()
-  for (;;) {
-    const { done, value } = await reader.read()
-    if (done) break
-    out.set(value, at)
-    at += value.byteLength
-  }
-  return out
-}
-
-/**
  * The same WAV as a stream, with its size known up front.
  *
  * The file is produced in slices from the decoded samples as the writer

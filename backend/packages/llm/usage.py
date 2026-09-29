@@ -258,23 +258,6 @@ def build_usage_tasks(per_feature: dict[str, int]) -> list[dict[str, object]]:
 # DB helpers (lazy import to avoid circular deps at module load time)
 # ---------------------------------------------------------------------------
 
-async def record_stt_usage(
-    ctx: UsageCtx, audio_sec: float, model: str = "", *, keyterms: bool = False,
-    clip_index: int | None = None,
-) -> None:
-    """Record one transcribed file. Durable; never raises.
-
-    Attribution lives here because the ElevenLabs key is one shared account —
-    its own totals are every user's usage combined, so they can never be shown
-    to an individual user. Thin wrapper over packages/billing/metering.py.
-    """
-    from packages.billing.metering import record_stt_clip
-
-    await record_stt_clip(
-        ctx, clip_index=clip_index, billed_sec=audio_sec, model=model, keyterms=keyterms
-    )
-
-
 async def check_ai_access(ctx: UsageCtx) -> None:
     """Raise ``EmailNotVerified`` if the account may not use paid AI.
 
@@ -293,23 +276,3 @@ async def check_ai_access(ctx: UsageCtx) -> None:
         ).scalar_one_or_none()
         if user is not None and ai_access_problem(user):
             raise EmailNotVerified()
-
-
-async def record_usage(
-    ctx: UsageCtx,
-    model: str,
-    input_tokens: int,
-    output_tokens: int,
-    cached_tokens: int = 0,
-) -> None:
-    """Record one successful model call. Durable; never raises.
-
-    Kept for callers outside the gateway; the gateway records every attempt
-    itself via packages/billing/metering.py (``record_llm_attempt``).
-    """
-    from packages.billing.metering import record_llm_attempt
-
-    await record_llm_attempt(
-        ctx, model=model, status="ok", input_tokens=input_tokens,
-        cached_tokens=cached_tokens, output_tokens=output_tokens,
-    )

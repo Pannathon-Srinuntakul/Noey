@@ -183,29 +183,6 @@ body {
   background: var(--sb-dark-track);
 }
 
-/* Light override — light/cream cards (ProjectCard, script lists on white bg). */
-:root {
-  --sb-light-track: #f1f1f1;
-  --sb-light-thumb: #c7c7c7;
-  --sb-light-thumb-hover: #a3a3a3;
-}
-.scroll-light,
-.scroll-light * {
-  scrollbar-color: var(--sb-light-thumb) var(--sb-light-track);
-}
-.scroll-light::-webkit-scrollbar-track {
-  background: var(--sb-light-track);
-}
-.scroll-light::-webkit-scrollbar-thumb {
-  background: var(--sb-light-thumb);
-}
-.scroll-light::-webkit-scrollbar-thumb:hover {
-  background: var(--sb-light-thumb-hover);
-}
-.scroll-light::-webkit-scrollbar-corner {
-  background: var(--sb-light-track);
-}
-
 /* Ghost scrollbar — transparent track (scene sequence list). */
 .scroll-ghost {
   scrollbar-color: var(--sb-dark-thumb) transparent;
@@ -223,35 +200,6 @@ body {
 .scroll-ghost::-webkit-scrollbar-thumb:hover {
   background: var(--sb-dark-thumb-hover);
 }
-
-/* Fully hidden scrollbar — timeline editor main lane (overrides global * rules). */
-.scroll-none {
-  -ms-overflow-style: none;
-  scrollbar-width: none !important;
-  scrollbar-color: transparent transparent !important;
-}
-.scroll-none::-webkit-scrollbar {
-  display: none !important;
-  width: 0 !important;
-  height: 0 !important;
-  background: transparent !important;
-}
-.scroll-none::-webkit-scrollbar-thumb,
-.scroll-none::-webkit-scrollbar-track,
-.scroll-none::-webkit-scrollbar-corner {
-  display: none !important;
-  background: transparent !important;
-}
-
-/** Clip the horizontal scrollbar gutter on Windows/Chromium. */
-.scroll-none-clip {
-  overflow: hidden;
-}
-.scroll-none-clip > .scroll-none {
-  margin-bottom: -14px;
-  padding-bottom: 14px;
-}
-
 
 /** Seek/slider head. Global on purpose: `.noey-slider` is used by the Slider
  * primitive AND by the video transports, and while this lived in Slider.tsx's

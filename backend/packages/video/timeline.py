@@ -766,8 +766,6 @@ DUB_MMSS_MAX_CUT_SEC = 15.0
 DUB_MAX_HOLD_SEC = 3.5
 # When model picks sourceIn far from a sampled frame, snap trim to that frame.
 DUB_ANCHOR_TOLERANCE_SEC = 0.35
-# Treat sample anchors within this window as the same scene (no reuse).
-DUB_FRAME_DEDUPE_TOLERANCE_SEC = 0.5
 # Segments starting within this many seconds of each other are considered duplicates.
 DUB_SOURCE_DEDUPE_SEC = 1.0
 
@@ -824,11 +822,6 @@ def _resolve_frame_anchor(
     if nearest is not None:
         return clip_id, float(nearest["time"]), nearest
     return clip_id, round(target_t, 1), None
-
-
-def _frame_dedupe_key(clip_id: str, anchor_t: float) -> tuple[str, float]:
-    bucket = round(anchor_t / DUB_FRAME_DEDUPE_TOLERANCE_SEC) * DUB_FRAME_DEDUPE_TOLERANCE_SEC
-    return clip_id, round(bucket, 1)
 
 
 def _apply_frame_to_segment(

@@ -160,19 +160,3 @@ def gemini_file_kwargs() -> dict:
     if key:
         extra["api_key"] = key
     return extra
-
-
-def llm_call_extra(
-    model: str,
-    base_url: str | None = None,
-    *,
-    web_search_enabled: bool = True,
-) -> dict:
-    """Extra kwargs for a chat completion (model, optional api_base, web search)."""
-    extra: dict = {"model": model}
-    if base_url:
-        extra["api_base"] = base_url
-    if web_search_enabled and model.startswith("anthropic/"):
-        # LiteLLM maps this to Anthropic's hosted web_search tool (server-side).
-        extra["web_search_options"] = {"search_context_size": "medium"}
-    return extra

@@ -66,7 +66,7 @@ function text(formData: FormData, key: string, max = 300): string {
   return typeof v === "string" ? v.slice(0, max) : "";
 }
 
-export async function loginAction(_prev: LoginState, formData: FormData): Promise<LoginState> {
+async function loginAction(_prev: LoginState, formData: FormData): Promise<LoginState> {
   const email = text(formData, "email").trim();
   const password = text(formData, "password", 200);
   if (!(await sameOrigin())) return { step: "login", error: GENERIC, email };
@@ -97,7 +97,7 @@ export async function loginAction(_prev: LoginState, formData: FormData): Promis
   return { step: "login", error: GENERIC, email };
 }
 
-export async function verifyAction(_prev: LoginState, formData: FormData): Promise<LoginState> {
+async function verifyAction(_prev: LoginState, formData: FormData): Promise<LoginState> {
   const code = text(formData, "code", 12).replace(/\D/g, "");
   const sentTo = text(formData, "sentTo", 255);
   if (!(await sameOrigin())) return { step: "otp", error: GENERIC, sentTo };
@@ -130,7 +130,7 @@ export async function resendAction(): Promise<ActionResult<{ sentTo: string }>> 
   return { ok: true, data: { sentTo: r.data.sent_to } };
 }
 
-export async function backToLoginAction(): Promise<void> {
+async function backToLoginAction(): Promise<void> {
   if (!(await sameOrigin())) return;
   await deleteCookie("challenge");
 }

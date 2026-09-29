@@ -37,7 +37,6 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 .card-title { margin: 0; font-size: 17px; font-weight: 500; }
 .card-sub { margin: 0; font-size: 12.5px; color: var(--color-neutral-600); }
 .small { font-size: 12.5px; color: var(--color-neutral-700); }
-.muted { color: var(--color-neutral-600); }
 .eyebrow { font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--color-neutral-600); }
 .grid { display: grid; gap: 20px; margin-top: 20px; align-items: start; }
 .rule-fill { flex: 1; height: 1px; background: var(--color-divider); }

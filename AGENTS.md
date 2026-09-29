@@ -71,7 +71,7 @@ that removed system and are historical only.
 
 Two-layer schema design in PostgreSQL:
 
-- **`core` schema** — auth + platform: `users`, `tenants`, `memberships`, `jobs` (arq job status), `llm_usage_logs`, `stt_usage_logs` (per attempt / per file: rate-card `tokens`, `cost_thb`, `status`, `run_id`). Token billing: `ai_runs` (one paid run: estimate vs what it actually spent — charged per vendor request as the run goes, nothing reserved), `usage_accounts` (rolling 5-hour/weekly/monthly windows, the per-user lock row), `wallet_lots` + `wallet_ledger` (top-up baht balance), `fx_rates`, `vendor_invoices`.
+- **`core` schema** — auth + platform: `users` (`deleted_at` set when an account is erased), `oauth_identities` (Google sign-in links), `tenants`, `memberships`, `jobs` (arq job status), `llm_usage_logs`, `stt_usage_logs` (per attempt / per file: rate-card `tokens`, `cost_thb`, `status`, `run_id`). Token billing: `ai_runs` (one paid run: estimate vs what it actually spent — charged per vendor request as the run goes, nothing reserved), `usage_accounts` (rolling 5-hour/weekly/monthly windows, the per-user lock row), `wallet_lots` + `wallet_ledger` (top-up baht balance), `fx_rates`, `vendor_invoices`.
 - **`tenant_<slug>` schema** — per-tenant business data: `video_projects`, `effect_styles`.
   (The analytics/CSV tables, `custom_table_meta` + `udt_*`, chat, prompts and
   scrape-run tables were dropped 2026-09-09 with the dashboard — migration
@@ -84,7 +84,7 @@ Every API request sets `SET search_path TO "tenant_<slug>", core` via `deps.py` 
 - **`backend/packages/`** — shared libs:
   - `core/` — `settings.py` (Pydantic settings from `.env`), `logging.py` (structured JSON), `errors.py` (structured error helpers), `monitoring.py` (Sentry for API + worker — off without `SENTRY_DSN`, never under pytest or `LOADTEST_FAKE_AI`; privacy scrubbing in `scrub_event`; error-level structlog lines are forwarded).
   - `email/` — one `Mailer` interface, two transports picked by `EMAIL_TRANSPORT`: `sendgrid.py` (HTTP API) and `smtp.py` (any SMTP relay); `client.py:get_mailer` is the only way mail is sent (docs/email-sendgrid.md).
-  - `auth/` — JWT access + refresh tokens (`tokens.py`), bcrypt hashing (`hashing.py`), Fernet encryption (`crypto.py` — for AI keys stored in DB).
+  - `auth/` — JWT access + refresh tokens (`tokens.py`), bcrypt hashing (`hashing.py`), Fernet encryption (`crypto.py` — for AI keys stored in DB). `accounts.py` (email/password account lifecycle), `email_tokens.py` (verify/reset/change-email tokens), `refresh_store.py` (refresh rotation + reuse detection), `turnstile.py` (Cloudflare captcha check), `google_oauth.py` (Sign in with Google: authorization-code + OIDC, identities in `core.oauth_identities`; HTTP side `routers/auth_google.py`, off until the Google client keys are set — docs/google-sign-in.md), `account_deletion.py` (self-service PDPA erasure behind `POST /auth/delete-account` in `routers/account.py`: cancel Stripe first, then content, then one transaction that anonymises the user and sets `users.deleted_at`).
   - `db/` — `base.py`, `session.py`, `config.py`, `upserts.py`, `tenancy.py` (schema management).
     - `models/core_auth.py` — Tenant, User, Membership, Job (core schema).
     - `models/custom_table.py` — CustomTableMeta (user-defined table registry, per-tenant).

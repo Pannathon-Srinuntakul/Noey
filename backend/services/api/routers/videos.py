@@ -396,9 +396,6 @@ class EditTimelineSaveIn(BaseModel):
     cuts: list[EditTimelineSaveCut]
 
 
-UPLOAD_MODES = ("merge", "separate")
-
-
 async def _save_upload_clip(
     upload_dir_path: pathlib.Path,
     data_root_path: pathlib.Path,
@@ -459,13 +456,6 @@ async def _create_video_project(
 
 
 # ── endpoints ─────────────────────────────────────────────────────────────────
-
-# Only "full" remains — talking_head's highlight/custom mode was removed
-# (Gemini reviews every clip now regardless of mode). The Literal on the form
-# field is what refuses a legacy "auto"/"custom"; the tuple stays for the
-# tests that assert the set.
-DURATION_MODES = ("full",)
-
 
 @router.post("", response_model=UploadResponse, status_code=201)
 async def upload_video(

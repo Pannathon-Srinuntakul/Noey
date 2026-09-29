@@ -232,16 +232,6 @@ export function isTerminal(step: ProjectStep): boolean {
   return step === 'done' || step === 'error' || step === 'waiting_vo' || step === 'paused'
 }
 
-/**
- * The server stopped this run for quota and kept the work. Distinct from
- * `error` on purpose: nothing failed, nothing is lost, and the way out is
- * "ทำต่อ" rather than "ลองใหม่" — a restart would re-buy the boundaries that
- * already succeeded.
- */
-export function isPaused(step: ProjectStep): boolean {
-  return step === 'paused'
-}
-
 export function isBusy(step: ProjectStep): boolean {
   return (
     step === 'importing' ||

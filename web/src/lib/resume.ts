@@ -378,20 +378,6 @@ export function localFootageWarning(
   return 'ขั้นตอนถัดไปทำบนเครื่องนี้ แต่ไม่พบไฟล์วิดีโอของโปรเจกต์นี้ในเบราว์เซอร์นี้ — ไฟล์เก็บไว้ต่อเบราว์เซอร์ ทำต่อได้จากเบราว์เซอร์หรืออุปกรณ์ที่สร้างโปรเจกต์นี้เท่านั้น'
 }
 
-/** What the POST actually did, for the toast after pressing "ทำต่อ". */
-export function outcomeMessage(outcome: ResumeOutcome): string {
-  switch (outcome.action) {
-    case 'server_job':
-      return `ทำต่อแล้ว — ${stageLabel(outcome.nextStage)}`
-    case 'already_running':
-      return 'งานนี้กำลังทำอยู่แล้ว'
-    case 'client_step':
-      return `ทำต่อแล้ว — ${stageLabel(outcome.nextStage)}`
-    case 'nothing_to_resume':
-      return outcome.detail ?? 'ไม่มีขั้นตอนค้างอยู่'
-  }
-}
-
 /**
  * Where a resumed project should sit locally once the pause is cleared.
  *

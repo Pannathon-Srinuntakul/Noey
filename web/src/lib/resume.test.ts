@@ -9,7 +9,6 @@ import {
   localFootageWarning,
   needsWalletConsent,
   nextStageLine,
-  outcomeMessage,
   parseQuota,
   parseResumeOutcome,
   parseResumeState,
@@ -316,14 +315,6 @@ describe('the case that cannot work', () => {
 describe('after the POST', () => {
   const outcome = (over: Record<string, unknown>): ReturnType<typeof parseResumeOutcome> =>
     parseResumeOutcome(pausedPayload(over))
-
-  it('tells the user what actually happened', () => {
-    expect(outcomeMessage(outcome({ action: 'server_job' }))).toContain('ให้ AI วิเคราะห์วิดีโอ')
-    expect(outcomeMessage(outcome({ action: 'already_running' }))).toBe('งานนี้กำลังทำอยู่แล้ว')
-    expect(
-      outcomeMessage(outcome({ action: 'nothing_to_resume', detail: 'ไม่มีขั้นตอนค้างอยู่' }))
-    ).toBe('ไม่มีขั้นตอนค้างอยู่')
-  })
 
   it('puts the project where the SERVER says it now is', () => {
     expect(stepAfterResume(outcome({ status: 'done' }), 'dub_first', 'imported')).toBe('done')

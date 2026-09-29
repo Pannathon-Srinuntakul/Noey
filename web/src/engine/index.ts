@@ -56,10 +56,6 @@ function withProjectLock<T>(projectDir: string | undefined, fn: () => Promise<T>
 // ── cancellation ─────────────────────────────────────────────────────────────
 const aborters = new Map<string, AbortController>()
 
-export function currentAbortSignal(projectDir: string): AbortSignal | undefined {
-  return aborters.get(projectDir)?.signal
-}
-
 function cancel(projectDir: string): void {
   aborters.get(projectDir)?.abort()
 }

@@ -124,12 +124,6 @@ export async function readFile(path: string): Promise<File | null> {
   }
 }
 
-export async function readBytes(path: string): Promise<Uint8Array | null> {
-  const file = await readFile(path)
-  if (!file) return null
-  return new Uint8Array(await file.arrayBuffer())
-}
-
 export async function readText(path: string): Promise<string | null> {
   const file = await readFile(path)
   return file ? file.text() : null

@@ -27,8 +27,6 @@ htmlcov/
 
 # ── Node (web/, noey-frontend/) ───────────────────────────────────────────────
 node_modules/
-frontend/dist/
-frontend/.vite/
 .vite/
 *.tsbuildinfo
 .eslintcache

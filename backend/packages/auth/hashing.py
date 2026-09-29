@@ -10,13 +10,24 @@ import secrets
 
 import bcrypt
 
+# bcrypt only reads the first 72 bytes of a password. bcrypt>=5 raises instead
+# of ignoring the rest, which turned a long password (a Thai one passes 72 bytes
+# at ~25 characters, since each Thai letter is 3 bytes in UTF-8) into a 500 on
+# register and login. Truncating here is what bcrypt<5 did silently, so every
+# hash stored before stays verifiable.
+_BCRYPT_MAX_BYTES = 72
+
+
+def _secret(plain: str) -> bytes:
+    return plain.encode()[:_BCRYPT_MAX_BYTES]
+
 
 def hash_password(plain: str) -> str:
-    return bcrypt.hashpw(plain.encode(), bcrypt.gensalt()).decode()
+    return bcrypt.hashpw(_secret(plain), bcrypt.gensalt()).decode()
 
 
 def verify_password(plain: str, hashed: str) -> bool:
-    return bcrypt.checkpw(plain.encode(), hashed.encode())
+    return bcrypt.checkpw(_secret(plain), hashed.encode())
 
 
 _DUMMY_HASH: str | None = None

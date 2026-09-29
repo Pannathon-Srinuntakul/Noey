@@ -496,16 +496,6 @@ export function putLocalTimeline(
   })
 }
 
-/** Delete the server-side project record (best-effort; 404 = already gone). */
-export async function deleteRemote(session: ApiSession, remoteUid: string): Promise<void> {
-  try {
-    await request<void>(session, `/videos/${remoteUid}`, { method: 'DELETE' })
-  } catch (e) {
-    if (e instanceof ApiError && e.status === 404) return
-    throw e
-  }
-}
-
 export function putLocalEditScript(
   session: ApiSession,
   remoteUid: string,

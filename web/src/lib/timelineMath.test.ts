@@ -48,7 +48,6 @@ import {
   withSkipToggled,
   fmtSignedSec,
   fmtFrames,
-  fmtTimecodeFrames,
   rulerTicks
 } from './timelineMath'
 import { FRAME_SEC, MAX_PX_PER_SEC, MIN_PX_PER_SEC } from '../components/timeline/constants'
@@ -1264,16 +1263,6 @@ describe('frame and delta formatting', () => {
     expect(fmtFrames(0)).toBe('0 เฟรม')
     expect(fmtFrames(29 / 30)).toBe('+29 เฟรม')
     expect(fmtFrames(0.5, 25)).toBe('+13 เฟรม')
-  })
-
-  it('fmtTimecodeFrames is m:ss:ff with frame 29 the last of a second', () => {
-    expect(fmtTimecodeFrames(0)).toBe('0:00:00')
-    expect(fmtTimecodeFrames(7.4)).toBe('0:07:12')
-    expect(fmtTimecodeFrames(29 / 30)).toBe('0:00:29')
-    expect(fmtTimecodeFrames(29.5 / 30)).toBe('0:01:00')
-    expect(fmtTimecodeFrames(65 + 5 / 30)).toBe('1:05:05')
-    expect(fmtTimecodeFrames(-1)).toBe('0:00:00')
-    expect(fmtTimecodeFrames(NaN)).toBe('0:00:00')
   })
 })
 

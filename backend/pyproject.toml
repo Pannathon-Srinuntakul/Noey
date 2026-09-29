@@ -32,7 +32,7 @@ dependencies = [
     "structlog>=24.4",
     # auth + multi-tenancy
     "pyjwt>=2.10",
-    "passlib[bcrypt]>=1.7",
+    "bcrypt>=4.0",  # hashing.py calls bcrypt directly
     "cryptography>=44.0",
     # background workers
     "arq>=0.26",

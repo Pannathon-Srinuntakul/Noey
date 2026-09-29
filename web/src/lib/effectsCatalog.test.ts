@@ -4,7 +4,6 @@ import {
   PRESET_GROUPS,
   ZOOM_PRESETS,
   catalogEntry,
-  componentTitle,
   inertPropReason,
   instanceTitle,
   presetById,
@@ -38,11 +37,6 @@ describe('catalog', () => {
     const keys = catalogEntry('punch-zoom')!.props.map((p) => p.key)
     expect(keys).toContain('zoomFrom')
     expect(keys).toContain('zoomTo')
-  })
-
-  it('componentTitle falls back to the raw id', () => {
-    expect(componentTitle('whip-pan')).toBe('ปัดเปลี่ยนฉาก')
-    expect(componentTitle('nope')).toBe('nope')
   })
 })
 

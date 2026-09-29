@@ -42,16 +42,6 @@ export function effectEndSec(inst: EffectInstance): number {
   return inst.startSec + inst.durationSec
 }
 
-/** Instances left over from the removed overlay half — shown read-only so the
- * user can delete them, never rendered. See the module docstring. */
-export function legacyOverlayInstances(doc: EffectsDoc): EffectInstance[] {
-  return doc.instances.filter((i) => i.kind === 'overlay')
-}
-
-export function transformInstances(doc: EffectsDoc): EffectInstance[] {
-  return doc.instances.filter((i) => i.kind === 'transform')
-}
-
 let _counter = 0
 function genId(): string {
   _counter += 1

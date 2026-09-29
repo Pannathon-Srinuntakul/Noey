@@ -88,17 +88,6 @@ server {
         add_header Content-Security-Policy "frame-ancestors 'none'" always;
     }
 
-    # The caption fonts (public/fonts, unhashed names). A week: they change
-    # rarely, and a stale one costs a caption preview a font swap, not
-    # correctness — the render bakes the font it is given.
-    location /fonts/ {
-        add_header Cache-Control "public, max-age=604800" always;
-        add_header X-Content-Type-Options "nosniff" always;
-        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-        add_header Permissions-Policy "camera=(), geolocation=()" always;
-        add_header Content-Security-Policy "frame-ancestors 'none'" always;
-    }
-
     # /media/ belongs to the service worker alone. Before the worker controls
     # the page (first visit, hard reload) these requests reach nginx, and the
     # SPA fallback answered them 200 + index.html — which made every "does

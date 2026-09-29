@@ -282,14 +282,6 @@ export function applySwapsToScript(
   }
 }
 
-/** Sum of segment durations — the bar's "รวม 42 → 42.5 วิ" figures. */
-export function scriptTotalSec(script: DubEditScript | null): number {
-  return (script?.segments ?? []).reduce((acc, s) => {
-    const d = num(s.durationSec) || Math.max(0, num(s.sourceOut) - num(s.sourceIn))
-    return acc + d
-  }, 0)
-}
-
 /**
  * Locked-regime timeline patch: the locked rule kept every durationSec
  * identical, so a swap only has to re-point the planned cuts that showed the

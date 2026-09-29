@@ -136,29 +136,3 @@ export function scrubSnapDecision(
   if (!mods.active || mods.altKey || mods.shiftKey) return { sec: t, hit: null }
   return snap(t, targets, tolSec)
 }
-
-/** The last frame of a scene is shown a hair before its out-point: the
- * out-point itself is the first frame that is NOT in the scene. */
-export const TWO_UP_TAIL_SEC = 0.04
-
-/**
- * Which source-local second each side of the two-up viewer shows.
- *
- * A roll moves one junction: `out` is the left scene's new out-point and
- * `in` the right scene's new in-point, so the left pane shows the outgoing
- * last frame and the right pane the incoming first frame. A slip moves one
- * scene's window: `in`/`out` are that scene's new bounds, so the left pane
- * shows its new first frame and the right pane its new last frame.
- */
-export function twoUpTimes(
-  kind: 'roll' | 'slip',
-  patch: { in: number; out: number }
-): { leftSec: number; rightSec: number } {
-  if (kind === 'roll') {
-    return { leftSec: Math.max(0, patch.out - TWO_UP_TAIL_SEC), rightSec: patch.in }
-  }
-  return {
-    leftSec: patch.in,
-    rightSec: Math.max(patch.in, patch.out - TWO_UP_TAIL_SEC)
-  }
-}

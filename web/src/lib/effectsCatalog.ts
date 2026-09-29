@@ -283,11 +283,6 @@ export function instanceTitle(inst: EffectInstance): string {
   return presetForInstance(inst)?.title ?? catalogEntry(inst.componentId)?.title ?? inst.componentId
 }
 
-/** Human title for a componentId alone (no instance in hand). */
-export function componentTitle(componentId: string): string {
-  return catalogEntry(componentId)?.title ?? componentId
-}
-
 /** Prop keys that are meaningless for this preset — the right rail shows them
  * muted with a reason instead of hiding them (a control that disappears reads
  * as a bug; one that explains itself reads as a rule). */

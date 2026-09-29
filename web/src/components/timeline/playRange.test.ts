@@ -2,15 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { EditCut } from '../../lib/editorApi'
 import type { SnapTarget } from '../../lib/timelineSnap'
 import { FRAME_SEC } from './constants'
-import {
-  TWO_UP_TAIL_SEC,
-  canSkim,
-  playAroundRange,
-  rangeStop,
-  sceneRange,
-  scrubSnapDecision,
-  twoUpTimes
-} from './playRange'
+import { canSkim, playAroundRange, rangeStop, sceneRange, scrubSnapDecision } from './playRange'
 
 const cut = (id: string, source: string, inSec: number, outSec: number): EditCut => ({
   id,
@@ -156,26 +148,5 @@ describe('scrubSnapDecision', () => {
         hit: null
       })).sec
     ).toBe(2.1)
-  })
-})
-
-describe('twoUpTimes', () => {
-  it('a roll shows the outgoing last frame left and the incoming first frame right', () => {
-    expect(twoUpTimes('roll', { in: 40, out: 12 })).toEqual({
-      leftSec: 12 - TWO_UP_TAIL_SEC,
-      rightSec: 40
-    })
-  })
-
-  it('a slip shows the new first frame left and the new last frame right', () => {
-    expect(twoUpTimes('slip', { in: 10, out: 12 })).toEqual({
-      leftSec: 10,
-      rightSec: 12 - TWO_UP_TAIL_SEC
-    })
-  })
-
-  it('never goes before the start or before the in-point', () => {
-    expect(twoUpTimes('roll', { in: 5, out: 0 }).leftSec).toBe(0)
-    expect(twoUpTimes('slip', { in: 3, out: 3.01 }).rightSec).toBe(3)
   })
 })

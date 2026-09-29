@@ -4,8 +4,6 @@ import {
   effectEndSec,
   emptyEffectsDoc,
   normalizeEffectsDoc,
-  legacyOverlayInstances,
-  transformInstances,
   type EffectsDoc
 } from './effects'
 
@@ -112,13 +110,6 @@ describe('partition helpers', () => {
       }
     ]
   }
-
-  it('separates live transforms from leftover overlay instances', () => {
-    // An old effects.json still parses — the editor lists these read-only so
-    // the user can delete them rather than the page breaking on load.
-    expect(legacyOverlayInstances(doc).map((i) => i.componentId)).toEqual(['popup'])
-    expect(transformInstances(doc).map((i) => i.componentId)).toEqual(['punch-zoom'])
-  })
 
   it('computes end time', () => {
     expect(effectEndSec(doc.instances[1])).toBe(3)

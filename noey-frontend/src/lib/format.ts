@@ -33,16 +33,6 @@ export function formatThaiDate(value: string | number | null | undefined): strin
   return new Intl.DateTimeFormat("th-TH", { dateStyle: "long", timeZone: TIME_ZONE }).format(date);
 }
 
-export function formatThaiDateTime(value: string | number | null | undefined): string | null {
-  const date = toDate(value);
-  if (!date) return null;
-  return new Intl.DateTimeFormat("th-TH", {
-    dateStyle: "long",
-    timeStyle: "short",
-    timeZone: TIME_ZONE,
-  }).format(date);
-}
-
 /**
  * Bytes for people. Picks the unit rather than assuming GB — the same rule as
  * the backend's `_human_bytes` — so 614 MB reads "614.4 MB", not "0.6 GB".

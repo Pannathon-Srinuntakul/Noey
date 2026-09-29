@@ -225,10 +225,6 @@ def init_monitoring(service: str, settings: Settings | None = None) -> bool:
     return True
 
 
-def monitoring_active() -> bool:
-    return _active
-
-
 def forward_errors_to_sentry(
     _logger: Any, method: str, event_dict: MutableMapping[str, Any]
 ) -> MutableMapping[str, Any]:

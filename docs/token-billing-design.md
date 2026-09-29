@@ -52,7 +52,7 @@ called from `transcribe_video`, `plan_talking_local`, `plan_speech_local`.
 | `packages/billing/plan_change.py` (new) | Stripe-independent upgrade / downgrade / cancel / payment-failed / grace |
 | `packages/billing/free_tier.py` (new) | Per-IP / per-device free-tier limits (Redis, fail-open) |
 | `packages/billing/topup.py` (new) | Stripe Checkout one-time (PromptPay/card) + mock path |
-| `packages/llm/usage.py` | Keeps `UsageCtx` (+ `run_id`, `job_id`, in-process spend tracker), token extraction (+ cached). `check_limit`, `record_usage`, `record_stt_usage`, `_period_start`, `MODEL_PRICES`, `estimate_cost_usd` removed/redirected |
+| `packages/llm/usage.py` | Keeps `UsageCtx` (+ `run_id`, `job_id`, in-process spend tracker), token extraction (+ cached). `check_limit`, `_period_start`, `MODEL_PRICES`, `estimate_cost_usd` removed/redirected; `record_usage` / `record_stt_usage` (thin wrappers over `metering` with no callers) deleted 2026-09-30 |
 | `packages/llm/gateway.py` | Calls `guard.before_llm_call` → vendor limiter → send → `metering.record_llm_attempt` (awaited) per attempt |
 | `packages/video/elevenlabs_stt.py` | `run_transcription(..., on_clip_billed=, before_clip=)` callbacks; limiter around `_post_stt`. Billing imports stay **lazy** (sidecar imports `packages/video`) |
 | `packages/video/stt_pricing.py` | Credits model retired (pay-as-you-go now); keep only for historical rows or delete after admin migrates |

@@ -4,7 +4,6 @@ import {
   STEP_ORDER,
   TH_STEP_ORDER,
   isBusy,
-  isPaused,
   isTerminal,
   progressPercent,
   progressStagesFor,
@@ -31,8 +30,6 @@ describe('projectFlow', () => {
     // boundary the server is already holding a ticket for.
     expect(isTerminal('paused')).toBe(true)
     expect(isBusy('paused')).toBe(false)
-    expect(isPaused('paused')).toBe(true)
-    expect(isPaused('error')).toBe(false)
     // Not a stage either: no mode's order contains it.
     for (const mode of ['dub_first', 'talking_head', 'highlight', 'speech_scenes'] as const) {
       expect(stepOrderFor(mode)).not.toContain('paused')

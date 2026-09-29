@@ -5,7 +5,6 @@ import {
   countShotsWithAlternates,
   hasSwapOptions,
   retimeTimelineForSwap,
-  scriptTotalSec,
   segmentAlternates,
   segmentIndexForCutId,
   segmentSwappedFrom,
@@ -35,6 +34,10 @@ function seg(
     ...extra
   }
 }
+
+/** Sum of segment durations (the fixtures always set durationSec). */
+const totalSec = (s: DubEditScript): number =>
+  s.segments.reduce((acc, x) => acc + Number(x.durationSec ?? 0), 0)
 
 const alt = (sourceIn: number, sourceOut: number, note = 'ต่างมุม'): Record<string, unknown> => ({
   sourceClip: 'clip0',
@@ -200,7 +203,7 @@ describe('applySwapsToScript', () => {
       'free'
     )
     expect(applied).toHaveLength(1)
-    expect(scriptTotalSec(out)).toBeCloseTo(3.1 + 3)
+    expect(totalSec(out)).toBeCloseTo(3.1 + 3)
     expect(out.totalEstimatedSec).toBeCloseTo(6.1)
     // untouched segment identical; input not mutated
     expect(out.segments[1]).toEqual(script.segments[1])
@@ -213,7 +216,7 @@ describe('applySwapsToScript', () => {
       [{ segIndex: 0, window: toWindow(alt(30, 33.1)) }],
       'locked'
     )
-    expect(scriptTotalSec(out)).toBeCloseTo(scriptTotalSec(script))
+    expect(totalSec(out)).toBeCloseTo(totalSec(script))
   })
 
   it('selecting the current window again is a no-op (diff stays empty)', () => {

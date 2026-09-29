@@ -295,11 +295,6 @@ strong {
   margin-top: var(--space-2);
 }
 
-.btn-lg {
-  font-size: 15px;
-  padding: 11px 22px;
-}
-
 /* ── Forms ────────────────────────────────────────────────────────────────── */
 
 .field > label {
@@ -381,11 +376,6 @@ html[data-theme="dark"] .input {
 .tag-neutral {
   background: var(--color-neutral-100);
   color: var(--color-neutral-800);
-}
-
-.tag-outline {
-  border: 1px solid var(--color-accent);
-  color: var(--color-accent);
 }
 
 /* ── Tables ───────────────────────────────────────────────────────────────── */

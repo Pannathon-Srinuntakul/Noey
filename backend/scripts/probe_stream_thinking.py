@@ -10,7 +10,6 @@ Prints each thinking chunk as it arrives so you can verify the attribute name is
 from __future__ import annotations
 
 import asyncio
-import io
 import sys
 import time
 from pathlib import Path

@@ -48,16 +48,6 @@ def test_billable_length_survives_a_reply_without_the_field(monkeypatch) -> None
     assert result["billed_audio_sec"] == 0.0
 
 
-def test_record_stt_usage_ignores_a_zero_length_run() -> None:
-    """No row for nothing transcribed — and no DB hit to find that out."""
-    from packages.llm.usage import UsageCtx, record_stt_usage
-
-    ctx = UsageCtx(user_id=1, tenant_id=1, feature="video_cut", reference_id="p1")
-    # Would raise if it tried to open a session (no DB configured in tests).
-    asyncio.run(record_stt_usage(ctx, 0.0))
-    asyncio.run(record_stt_usage(ctx, -5.0))
-
-
 def test_stt_usage_log_is_scoped_to_a_user() -> None:
     """The ledger must carry the user, or attribution is impossible."""
     from packages.db.models.stt_usage import SttUsageLog

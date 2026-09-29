@@ -356,11 +356,6 @@ function encodePath(rel: string): string {
   return rel.split('/').map(encodeURIComponent).join('/')
 }
 
-/** The project store path, for callers that write what `pullProjectFile` returned. */
-export function localPathFor(uid: string, rel: string): string {
-  return projectFilePath(uid, rel)
-}
-
 export { projectDirPath }
 
 interface RemoteProject {

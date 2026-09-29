@@ -189,7 +189,6 @@ TRUSTED_PROXY_HOPS=1
 ```env
 ENCRYPTION_KEY=...        # Fernet — ถ้าไม่ตั้ง key ที่เก็บใน DB เป็น plaintext
 API_DOCS_ENABLED=false    # default ปิด — schema เปิดเผยชื่อ provider ใน docstring
-LLM_WEB_SEARCH_ENABLED=true
 PLAN_FREE_STORAGE_BYTES=10737418240   # 10 GB (default ทุกแพลน)
 ```
 

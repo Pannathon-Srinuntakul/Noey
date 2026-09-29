@@ -22,7 +22,6 @@ from dataclasses import dataclass
 from typing import Any, cast
 
 import stripe
-from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -156,8 +155,3 @@ async def change_prices(
     service.reset_plans_cache()
     await session.flush()
     return changes
-
-
-async def recorded_overrides(session: AsyncSession) -> dict[str, int]:
-    rows = (await session.execute(select(PlanPriceOverride.tier, PlanPriceOverride.unit_amount))).all()
-    return {t: int(a) for t, a in rows}
