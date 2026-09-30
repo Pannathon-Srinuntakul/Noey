@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { BetaPriceNote } from "@/components/BetaPriceNote";
 import { Breadcrumb } from "@/components/Breadcrumb";
 import { CheckoutCanceledNotice } from "@/components/CheckoutCanceledNotice";
@@ -6,6 +7,7 @@ import { FaqList } from "@/components/FaqList";
 import { JsonLd } from "@/components/JsonLd";
 import { PlanComparisonTable } from "@/components/PlanComparisonTable";
 import { PriceCards } from "@/components/PriceCards";
+import { CtaBand } from "@/components/ds/CtaBand";
 import { LevelMeter } from "@/components/ds/LevelMeter";
 import { PageHero } from "@/components/ds/PageHero";
 import { SectionHeader } from "@/components/ds/SectionHeader";
@@ -107,19 +109,10 @@ export default async function PricingPage() {
   return (
     <main id="main" className="pricing-page">
       <PageHero
+        className="phero--pricing"
         crumb={<Breadcrumb trail={TRAIL} />}
         title="เลือกตามปริมาณงาน"
-        lead={
-          <>
-            <p className="pricing-answer">{keepThai(answer(table))}</p>
-            <p>
-              {keepThai("เครื่องมือเหมือนกันทุกแพลน สิ่งที่ต่างคือจำนวนคลิปที่ AI ตัดให้ต่อเดือน ความยาวฟุตเทจที่รับต่อโปรเจกต์ ความละเอียดการวิเคราะห์ และพื้นที่เก็บโปรเจกต์บนบัญชี งานที่กินกำลังมากที่สุดคือการถอดเสียงกับการวางแผนตัด จึงเป็นตัวกำหนดราคา ส่วนการแก้ในไทม์ไลน์และการเรนเดอร์ซ้ำ ไม่จำกัดทุกแพลน")}
-            </p>
-            <p className="pricing-muted">
-              {keepThai("ทุกแพลนได้ร่างแรกจากการคัดช็อตเหมือนกัน แล้วยังต้องเกลาต่อเองในไทม์ไลน์ ระบบเหมาะกับคลิปสั้นที่โครงไม่ซับซ้อน ไม่ใช่งานโปรดักชันที่ต้องแทรกภาพหรือตัดซ้อนหลายชั้น")}
-            </p>
-          </>
-        }
+        lead={<p className="pricing-answer">{keepThai(answer(table))}</p>}
         meta={
           <p className="stamp">
             อัปเดตล่าสุด <time dateTime={page.updated}>{formatThaiDate(page.updated)}</time> · ราคาเป็นเงินบาทต่อเดือน
@@ -173,7 +166,15 @@ export default async function PricingPage() {
 
       <section className="sect compare" aria-labelledby="compare-title">
         <div className="wrap">
-          <SectionHeader id="compare-title" track="V7" timecode="00:01:12:00" title="ตารางเทียบแพลน" size="h-2" />
+          {/* What differs between plans, and what does not, said where the table shows it. */}
+          <SectionHeader id="compare-title" track="V1" timecode="00:01:12:00" title="ตารางเทียบแพลน" size="h-2">
+            <p>
+              {keepThai("เครื่องมือเหมือนกันทุกแพลน สิ่งที่ต่างคือจำนวนคลิปที่ AI ตัดให้ต่อเดือน ความยาวฟุตเทจที่รับต่อโปรเจกต์ ความละเอียดการวิเคราะห์ และพื้นที่เก็บโปรเจกต์บนบัญชี งานที่กินกำลังมากที่สุดคือการถอดเสียงกับการวางแผนตัด จึงเป็นตัวกำหนดราคา ส่วนการแก้ในไทม์ไลน์และการเรนเดอร์ซ้ำ ไม่จำกัดทุกแพลน")}
+            </p>
+            <p className="pricing-muted">
+              {keepThai("ทุกแพลนได้ร่างแรกจากการคัดช็อตเหมือนกัน แล้วยังต้องเกลาต่อเองในไทม์ไลน์ ระบบเหมาะกับคลิปสั้นที่โครงไม่ซับซ้อน ไม่ใช่งานโปรดักชันที่ต้องแทรกภาพหรือตัดซ้อนหลายชั้น")}
+            </p>
+          </SectionHeader>
           <PlanComparisonTable table={table} labelledBy="compare-title" />
         </div>
       </section>
@@ -184,6 +185,19 @@ export default async function PricingPage() {
           <FaqList items={pricingFaq(isBetaPriced(table))} compact />
         </div>
       </section>
+
+      <CtaBand
+        id="pricing-cta-title"
+        compact
+        title="ลองตัดคลิปแรกวันนี้"
+        actions={
+          <Link href="/signup" className="btn btn-primary btn-lg" data-magnetic="">
+            เริ่มใช้ฟรี
+          </Link>
+        }
+      >
+        <p>{keepThai("สมัครแล้วได้เครดิตทดลองฟรีทันที ไม่ต้องผูกบัตร ใช้หมดแล้วค่อยเลือกแพลนรายเดือน")}</p>
+      </CtaBand>
 
       <JsonLd data={jsonLd} />
     </main>

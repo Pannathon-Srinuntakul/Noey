@@ -221,10 +221,14 @@
   font-size: var(--fs-16);
   line-height: 1.8;
   color: var(--ink-2);
+  /* Centred lines of even length: no word left alone on the last line. */
+  text-wrap: balance;
 }
 
 .status__body p {
   margin: 0;
+  /* Set on the paragraphs themselves: they carry the site-wide "pretty". */
+  text-wrap: balance;
 }
 
 .status__body p + p {
@@ -305,10 +309,16 @@
   }
 }
 
-/* Phones: longer copy reads left to right, and the actions stack full width. */
+/* Phones: copy of more than one paragraph reads left to right (a centred
+   block that long is hard to follow); a short message stays centred under its
+   title. The actions stack full width. */
 @media (max-width: 560px) {
-  .status__body {
+  .status__body:has(> p + p) {
     text-align: start;
+  }
+
+  .status__body:has(> p + p) p {
+    text-wrap: pretty;
   }
 
   .status__actions {

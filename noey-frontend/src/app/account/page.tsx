@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
-import { IconArrowRight } from "@/components/ds/icons";
+import Link from "next/link";
+import { IconArrowRight, IconChevronRight } from "@/components/ds/icons";
+import { LevelMeter } from "@/components/ds/LevelMeter";
 import { Waveform } from "@/components/ds/Waveform";
 import { NoeyMark } from "@/components/NoeyMark";
 import { formatBytes } from "@/lib/format";
@@ -25,6 +27,8 @@ export default async function AccountAppPage({ searchParams }: { searchParams: P
   let quota = "—";
   if (usage?.unlimited) quota = "ไม่จำกัด";
   else if (typeof usage?.usage_pct === "number") quota = `ใช้ไป ${Math.round(usage.usage_pct)}%`;
+  const quotaPct = !usage?.unlimited && typeof usage?.usage_pct === "number" ? usage.usage_pct : null;
+  const storagePct = storage && storage.quota_bytes > 0 ? Math.min(100, (storage.used_bytes / storage.quota_bytes) * 100) : null;
 
   return (
     <>
@@ -67,14 +71,27 @@ export default async function AccountAppPage({ searchParams }: { searchParams: P
         </div>
         <div className="card account-card acct-summary">
           <div className="card-kicker">สรุปบัญชี</div>
-          <dl className="kv">
+          {/* Each row opens the tab that holds its detail; the levels are the same
+              meters the quota tab draws, small. */}
+          <dl className="kv acct-summary__rows">
             <div>
               <dt>แพลนปัจจุบัน</dt>
-              <dd>{plan ? planDisplayName(plan) : "—"}</dd>
+              <dd>
+                <Link href="/account/billing" className="acct-summary__link">
+                  {plan ? planDisplayName(plan) : "—"}
+                  <IconChevronRight size={15} />
+                </Link>
+              </dd>
             </div>
             <div>
               <dt>โควตารอบนี้</dt>
-              <dd className="num">{quota}</dd>
+              <dd className="num">
+                <Link href="/account/quota" className="acct-summary__link">
+                  {quota}
+                  <IconChevronRight size={15} />
+                </Link>
+              </dd>
+              {quotaPct !== null ? <LevelMeter value={quotaPct} segments={20} className="acct-summary__meter" /> : null}
             </div>
             {storage ? (
               <div>
@@ -82,6 +99,7 @@ export default async function AccountAppPage({ searchParams }: { searchParams: P
                 <dd className="num">
                   {formatBytes(storage.used_bytes)} / {storage.quota_bytes > 0 ? formatBytes(storage.quota_bytes) : "ไม่จำกัด"}
                 </dd>
+                {storagePct !== null ? <LevelMeter value={storagePct} segments={20} className="acct-summary__meter" /> : null}
               </div>
             ) : null}
           </dl>

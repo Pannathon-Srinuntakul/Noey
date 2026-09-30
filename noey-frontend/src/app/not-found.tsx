@@ -9,7 +9,9 @@ export const metadata: Metadata = {
 };
 
 /* Geometry of the drawing, in SVG units (viewBox 720 × 156). */
-const K = 0.2; // the splice's slant: x moves 0.2 for every 1 down, like the logo's diagonal
+// The splice's slant: x moves 0.2 back for every 1 down — the "/" of the cut
+// between the logo's two halves, the same as the page transition's cut.
+const K = -0.2;
 const GAP_TOP = 26;
 const GAP_L = 388;
 const GAP_R = 478;
@@ -73,15 +75,20 @@ function MissingClip() {
       {/* Ruler */}
       <line x1="50" y1="18" x2="716" y2="18" className="nf__rule" />
       <path d={TICKS_PATH} className="nf__tick" />
-      {/* 91 units a second: the hole's centre sits at 00:00:04:04, the readout on the right. */}
+      {/* 91 units a second: the hole's centre sits at 00:00:04:04. */}
       {[0, 2, 4].map((second) => (
         <text key={second} x={54 + second * 91} y="10" className="nf__tc">
           {`00:00:0${second}:00`}
         </text>
       ))}
-      <text x="712" y="10" textAnchor="end" className="nf__tc nf__tc--gold">
-        00:00:04:04
-      </text>
+      {/* The playhead's readout, boxed like an editor's current-time display
+          so it cannot be read as a label on the ruler. */}
+      <g className="nf__readout">
+        <rect x="626" y="0" width="88" height="14" rx="4" className="nf__readout-box" />
+        <text x="670" y="10" textAnchor="middle" className="nf__tc nf__tc--gold">
+          00:00:04:04
+        </text>
+      </g>
 
       {/* Track labels and lanes */}
       {[VIDEO, AUDIO].map((lane, index) => (
@@ -130,6 +137,7 @@ export default function NotFound() {
       <div className="wrap nf__inner">
         <div className="nf__stage">
           <MissingClip />
+          <span className="mock-tag nf__tag">ภาพจำลอง</span>
         </div>
 
         <div className="nf__copy">

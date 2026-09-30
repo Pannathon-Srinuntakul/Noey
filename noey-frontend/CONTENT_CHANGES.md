@@ -117,13 +117,51 @@ after the dot instead of stranding "Noey Studio" or starting a line with "·".
 The source no longer holds the literal "· เขียนโดย" in one piece; what a
 reader sees is unchanged.
 
+## 8. Plan picker: no "แนะนำ" on the plan already held
+
+Old: in the account's plan dialog the recommended plan carried "แนะนำ" even
+when it was the user's current plan, e.g.
+"Pro · 990499 บาท/เดือน · แพลนปัจจุบันแนะนำ".
+
+New: the current plan reads "Pro · 990 499 บาท/เดือน · แพลนปัจจุบัน"; "แนะนำ"
+still marks the recommended plan for everyone on another plan.
+
+Why: the tag suggests a move. On the plan already held it suggested nothing
+and read as a mistake (flagged by both design reviews).
+
+## 9. /pricing: two notes moved from the hero to the comparison table
+
+Old: the hero held three paragraphs — the price summary, "เครื่องมือเหมือนกัน
+ทุกแพลน …" and "ทุกแพลนได้ร่างแรกจากการคัดช็อตเหมือนกัน …".
+
+New: the hero keeps the price summary (the answer-first paragraph); the other
+two, word for word, open the "ตารางเทียบแพลน" section they explain.
+
+Why: on a phone the plans started some 1,500px down, behind twenty-odd lines
+of prose that the cards and the table repeat.
+
+## 10. Sign-up: the consent hint sits under the consent box
+
+Old: "ติ๊กยอมรับเงื่อนไขก่อนจึงจะสมัครได้" and, once ticked, "ยังไม่ต้องกรอกบัตร
+ในขั้นนี้ เริ่มที่แพลนฟรีได้เลย" shared one line under the submit button.
+
+New: the first shows right under the terms box while it is unticked; the
+second stays under the button once it is ticked. Same words.
+
+Why: the buttons are locked by the box, so the reason belongs at the box; it
+was about 480px away, below the fold on a phone.
+
 ## Text added (not replacing anything)
 
 Only labels, no claims:
 
 - "ภาพจำลองการทำงาน" / "ภาพจำลอง" on every UI illustration (hero editor,
-  sign-in stage, step illustrations, micro-demos, the example quota meters on
+  sign-in stage, step illustrations, the three feature pictures and the six
+  micro-demos on the home page, the 404 timeline, the example quota meters on
   /pricing, which also keep "ตัวอย่างการแสดงผล").
+- /pricing ends on the same closing band as the home page, with the home
+  page's own words ("ลองตัดคลิปแรกวันนี้", "สมัครแล้วได้เครดิตทดลองฟรีทันที …")
+  and the site's usual "เริ่มใช้ฟรี" button.
 - Editor furniture drawn as decoration and hidden from assistive technology:
   track labels (V1, A1, R1…, L1…, Q01…, CH1…), timecodes, file names in the
   guide bin ("ai-cut-tiktok.mov" …), "BIN", "MSG", "END".

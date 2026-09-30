@@ -1,4 +1,5 @@
 import type { CSSProperties } from "react";
+import "../../styles/parts/level.css";
 
 /**
  * A usage bar drawn as an audio level meter: a row of segments that light up
@@ -33,7 +34,7 @@ export function LevelMeter({
         <i
           key={index}
           data-on={index < lit ? "" : undefined}
-          data-hot={index >= segments * 0.8 ? "" : undefined}
+          data-hot={index >= Math.floor(segments * 0.8) ? "" : undefined}
           style={{ "--i": index } as CSSProperties}
         />
       ))}

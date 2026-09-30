@@ -66,10 +66,18 @@ export function SiteHeader() {
                   <IconChevronDown size={15} className="acct__chev" />
                 </summary>
                 <div className="acct__menu">
+                  {/* Who is signed in, as the head of the panel below it. */}
+                  <div className="acct__head" aria-hidden="true">
+                    <span className="acct__avatar">
+                      <IconUser size={16} />
+                    </span>
+                    <span className="auth-name" />
+                  </div>
                   <Link href="/account" prefetch={false}>
+                    <IconUser size={16} />
                     บัญชีของฉัน
                   </Link>
-                  <SignOutButton className="auth-signout" />
+                  <SignOutButton className="auth-signout" icon />
                 </div>
               </details>
               <a href={EDITOR_OPEN_PATH} className="btn btn-primary btn-sm" data-magnetic="">

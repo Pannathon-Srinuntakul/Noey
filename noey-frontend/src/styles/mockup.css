@@ -143,7 +143,7 @@
 }
 
 .ed__label {
-  font-size: calc(1 * var(--u));
+  font-size: max(8px, calc(1 * var(--u)));
   font-weight: 500;
   color: var(--ink-3);
 }
@@ -474,6 +474,12 @@
   font-style: italic;
 }
 
+/* A decoration does not reach into inline-blocks: each word draws the
+   strike itself, or the line would be struck only in the spaces. */
+:is(.ed__line--flub, .ed__line--gap) .ed__w {
+  text-decoration: inherit;
+}
+
 .ed__line-cut {
   display: none;
 }
@@ -644,9 +650,12 @@
 /* ── Phones: fewer panels, bigger type ── */
 
 @container (max-width: 560px) {
+  /* A larger unit on a phone: the drawing is re-laid out, not shrunk, so
+     its words stay near 10px instead of 6. */
   .ed__frame {
-    aspect-ratio: 76 / 74;
-    font-size: calc(1.6 * var(--u));
+    --u: calc(100cqw / 54);
+    aspect-ratio: 76 / 104;
+    font-size: calc(1.5 * var(--u));
   }
 
   .ed__body {

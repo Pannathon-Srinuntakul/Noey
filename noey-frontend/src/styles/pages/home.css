@@ -60,13 +60,15 @@
   opacity: var(--o, 0.5);
 }
 
+/* The frames keep to the edges and the corners: the headline, the lead and
+   the call to action are never drawn over. */
 .hero-bg__frame--1 {
   --blur: 1px;
   --o: 0.55;
   width: 190px;
   aspect-ratio: 16 / 9;
-  left: 4%;
-  top: 22%;
+  left: -110px;
+  top: 30%;
   rotate: -8deg;
 }
 
@@ -75,8 +77,8 @@
   --o: 0.35;
   width: 120px;
   aspect-ratio: 9 / 16;
-  left: 18%;
-  bottom: 8%;
+  left: 2%;
+  bottom: 4%;
   rotate: 6deg;
 }
 
@@ -95,8 +97,8 @@
   --o: 0.45;
   width: 230px;
   aspect-ratio: 16 / 9;
-  right: 14%;
-  bottom: 14%;
+  right: 2%;
+  bottom: 3%;
   rotate: -5deg;
 }
 
@@ -138,10 +140,23 @@
   }
 }
 
+/* Phones: the text runs edge to edge, so only two frames stay, pushed out
+   past the edges where they cannot sit on a line of copy. */
 @media (max-width: 760px) {
   .hero-bg__frame--1,
+  .hero-bg__frame--4,
   .hero-bg__frame--5 {
     display: none;
+  }
+
+  .hero-bg__frame--2 {
+    left: -64px;
+    bottom: 10%;
+  }
+
+  .hero-bg__frame--3 {
+    right: -96px;
+    top: 10%;
   }
 }
 
@@ -666,6 +681,14 @@
   box-shadow: var(--rim);
 }
 
+/* The clock only means something while it runs: held still it would read
+   00:00:00:00, so reduced motion shows none. */
+@media (prefers-reduced-motion: reduce) {
+  .problem__clock {
+    display: none;
+  }
+}
+
 .problem__clock-dot {
   width: 9px;
   height: 9px;
@@ -828,11 +851,23 @@
   }
 }
 
+.bento__tag {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+}
+
+.minis__tag {
+  display: flex;
+  justify-content: flex-end;
+  margin: 22px 0 0;
+}
+
 .minis {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 14px;
-  margin-top: 14px;
+  margin-top: 10px;
 }
 
 @media (max-width: 1024px) {

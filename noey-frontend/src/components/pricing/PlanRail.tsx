@@ -85,22 +85,37 @@ export function PlanRail({
             ใช้ประมาณกี่คลิปต่อเดือน
           </label>
           <div className="picker__row">
-            <input
-              id={sliderId}
-              className="picker__range"
-              type="range"
-              min={0}
-              max={SCALE}
-              step={1}
-              value={position}
-              aria-describedby={noteId}
-              aria-valuetext={`ราว ${clips} คลิปต่อเดือน แพลนที่พอดีคือ ${fit.name}`}
-              style={{ ["--fill" as string]: `${percent}%` }}
-              onChange={(event) => {
-                setPosition(Number(event.target.value));
-                setTouched(true);
-              }}
-            />
+            {/* The track and its plan markers share one box, so a marker sits
+                exactly where the playhead stops for that plan. */}
+            <div className="picker__track">
+              <input
+                id={sliderId}
+                className="picker__range"
+                type="range"
+                min={0}
+                max={SCALE}
+                step={1}
+                value={position}
+                aria-describedby={noteId}
+                aria-valuetext={`ราว ${clips} คลิปต่อเดือน แพลนที่พอดีคือ ${fit.name}`}
+                style={{ ["--fill" as string]: `${percent}%` }}
+                onChange={(event) => {
+                  setPosition(Number(event.target.value));
+                  setTouched(true);
+                }}
+              />
+              <div className="picker__ticks" aria-hidden="true">
+                {plans.map((plan) => (
+                  <span
+                    key={plan.tier}
+                    className={plan.tier === fit.tier ? "picker__tick picker__tick--on" : "picker__tick"}
+                    style={{ ["--at" as string]: toPosition(plan.cuts) / SCALE }}
+                  >
+                    {plan.name}
+                  </span>
+                ))}
+              </div>
+            </div>
             <output className="picker__out" htmlFor={sliderId} aria-live="polite">
               <span className="num picker__num">{clips}</span>
               <span className="picker__unit">คลิป / เดือน</span>
@@ -110,30 +125,20 @@ export function PlanRail({
               <span className="picker__plan">{fit.name}</span>
             </output>
           </div>
-          <div className="picker__ticks" aria-hidden="true">
-            {plans.map((plan) => (
-              <span
-                key={plan.tier}
-                className={plan.tier === fit.tier ? "picker__tick picker__tick--on" : "picker__tick"}
-                style={{ left: `${(toPosition(plan.cuts) / SCALE) * 100}%` }}
-              >
-                {plan.name}
-              </span>
-            ))}
-          </div>
           <p className="picker__note" id={noteId}>
             {keepThai(footnote)}
           </p>
           <p className="picker__note">{keepThai(freeNote)}</p>
         </div>
-        <div className="plan-rail__nav">
-          <button type="button" className="btn btn-secondary btn-icon" onClick={() => step(-1)} aria-label="แพลนก่อนหน้า">
-            <IconArrowLeft />
-          </button>
-          <button type="button" className="btn btn-secondary btn-icon" onClick={() => step(1)} aria-label="แพลนถัดไป">
-            <IconArrowRight />
-          </button>
-        </div>
+      </div>
+      {/* Beside the cards they move (hidden where every card is in view). */}
+      <div className="plan-rail__nav">
+        <button type="button" className="btn btn-secondary btn-icon" onClick={() => step(-1)} aria-label="แพลนก่อนหน้า">
+          <IconArrowLeft />
+        </button>
+        <button type="button" className="btn btn-secondary btn-icon" onClick={() => step(1)} aria-label="แพลนถัดไป">
+          <IconArrowRight />
+        </button>
       </div>
       {children}
     </div>

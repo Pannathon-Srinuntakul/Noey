@@ -8,6 +8,7 @@ import { PLAN_COPY, isPaidTier } from "@/lib/plans";
 import { GoogleSignInForm, OrDivider } from "../auth/GoogleSignInForm";
 import { SearchParam } from "./SearchParam";
 import { TURNSTILE_SITE_KEY, TurnstileWidget } from "./TurnstileWidget";
+import { keepThai } from "../ds/ThaiText";
 
 export function SignupForm({ googleEnabled = false }: { googleEnabled?: boolean }) {
   const [state, action, pending] = useActionState<ActionState | undefined, FormData>(signupAction, undefined);
@@ -48,9 +49,11 @@ export function SignupForm({ googleEnabled = false }: { googleEnabled?: boolean 
         />
         <span className="agree__text">
           ฉันได้อ่านและยอมรับ <Link href="/terms">เงื่อนไขการใช้งาน</Link> และ <Link href="/privacy">นโยบายความเป็นส่วนตัว</Link>{" "}
-          รวมถึงการเก็บและประมวลผลไฟล์ที่ฉันนำเข้ามาเพื่อให้บริการ
+          {keepThai("รวมถึงการเก็บและประมวลผลไฟล์ที่ฉันนำเข้ามาเพื่อให้บริการ")}
         </span>
       </label>
+      {/* Why the buttons below are locked, said where the fix is: at the box. */}
+      {agreed ? null : <p className="agree-hint">ติ๊กยอมรับเงื่อนไขก่อนจึงจะสมัครได้</p>}
       {errors.agree ? (
         <p className="field-error" id="s-agree-error" style={{ marginTop: -8 }}>
           {errors.agree}
@@ -134,9 +137,7 @@ export function SignupForm({ googleEnabled = false }: { googleEnabled?: boolean 
         >
           {pending ? "กำลังสมัคร…" : "สมัครและเริ่มใช้งาน"}
         </button>
-        <p className="legal-line">
-          {agreed ? "ยังไม่ต้องกรอกบัตรในขั้นนี้ เริ่มที่แพลนฟรีได้เลย" : "ติ๊กยอมรับเงื่อนไขก่อนจึงจะสมัครได้"}
-        </p>
+        {agreed ? <p className="legal-line">ยังไม่ต้องกรอกบัตรในขั้นนี้ เริ่มที่แพลนฟรีได้เลย</p> : null}
       </form>
     </>
   );

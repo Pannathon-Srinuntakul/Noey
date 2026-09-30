@@ -96,6 +96,20 @@
     border-radius var(--dur-4) var(--ease-out);
 }
 
+/* Scrolled: a scrim fills the gap between the beta strip and the floating
+   bar, so page text never runs through above it. */
+html[data-scrolled] .hdr::before {
+  content: "";
+  position: absolute;
+  top: calc(var(--header-top) * -1);
+  left: 0;
+  right: 0;
+  height: calc(var(--header-top) + 36px);
+  background: linear-gradient(var(--color-bg) 45%, transparent);
+  pointer-events: none;
+  z-index: -1;
+}
+
 /* Once content passes under it, the frosted bar turns nearly opaque: the
    blur softens what little shows through, and labels never sit on text. */
 html[data-scrolled] .hdr__bar {
@@ -350,6 +364,36 @@ html[data-auth-name] .auth-name {
   gap: 2px;
 }
 
+/* The panel's head: who is signed in (only when the name is known). */
+.acct__head {
+  display: none;
+}
+
+html[data-auth-name] .acct__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 4px;
+  padding: 8px 12px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.acct__head .auth-name {
+  max-width: 12em;
+  font-size: var(--fs-14);
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.acct__menu :is(a, button) svg {
+  flex: none;
+  color: var(--ink-3);
+}
+
+.acct__menu :is(a, button):hover svg {
+  color: var(--gold-ink);
+}
+
 /* Sign-out sits apart from the navigation above it. */
 .acct__menu .auth-signout {
   margin-top: 4px;
@@ -380,6 +424,7 @@ html[data-auth-name] .acct__fallback {
 .acct__menu a,
 .acct__menu button {
   display: flex;
+  gap: 10px;
   width: 100%;
   justify-content: flex-start;
   min-height: 40px;
@@ -565,6 +610,12 @@ html[data-auth-name] .acct__fallback {
     display: none;
   }
 
+  /* At the top of the page the line is empty: cues on it would read as
+     stray dots, so they appear once the page moves. */
+  html:not([data-scrolled]) .stl__marks {
+    opacity: 0;
+  }
+
   .stl__fill {
     width: calc(var(--p) * 100%);
     height: 2px;
@@ -716,7 +767,9 @@ html:not([data-auth="in"]) .menu__foot .auth-in {
   display: none;
 }
 
-.menu__foot .auth-in {
+/* As specific as the global `html[data-auth="in"] .auth-in { display: flex }`,
+   which would otherwise put all three actions on one row off the screen. */
+html[data-auth="in"] .menu__foot .auth-in {
   display: grid;
 }
 
@@ -740,6 +793,14 @@ html:not([data-auth="in"]) .menu__foot .auth-in {
   border-top: 1px solid var(--line);
   font-size: var(--fs-14);
   color: var(--ink-3);
+}
+
+/* A real target, drawn like the sheet's close button. */
+.menu__theme .theme-toggle {
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--line-2);
+  border-radius: 12px;
 }
 
 @media (prefers-reduced-motion: no-preference) {
@@ -1014,42 +1075,37 @@ html[data-theme="dark"] .ftr {
   }
 }
 
-/* The fade to black the page ends on: from the page's own ground into the night. */
-.ftr::before {
+/* Every page cuts to the night on the splice's diagonal, with a gold seam
+   along the cut (a long fade would pass through a flat grey on light pages).
+   After a closing band that has already gone dark, there is nothing to cut. */
+.ftr {
+  --ftr-cut: clamp(26px, 3.4vw, 48px);
+}
+
+.ftr:not([data-after-night]) {
+  clip-path: polygon(0 var(--ftr-cut), 100% 0, 100% 100%, 0 100%);
+}
+
+.ftr:not([data-after-night])::before {
   content: "";
   position: absolute;
   inset: 0 0 auto;
-  height: clamp(90px, 12vw, 180px);
-  background: linear-gradient(180deg, var(--page-bg), transparent);
-  z-index: -1;
-}
-
-.ftr[data-after-night]::before {
-  display: none;
-}
-
-/* On a light page the fade would pass through a flat grey: the page cuts to
-   the night on the splice's diagonal instead. Dark pages keep the fade. */
-html:not([data-theme="dark"]) .ftr:not([data-after-night]) {
-  clip-path: polygon(0 clamp(26px, 3.4vw, 48px), 100% 0, 100% 100%, 0 100%);
-}
-
-html:not([data-theme="dark"]) .ftr::before {
-  display: none;
-}
-
-@media (prefers-color-scheme: dark) {
-  html:not([data-theme="light"]) .ftr:not([data-after-night]) {
-    clip-path: none;
-  }
-
-  html:not([data-theme="light"]) .ftr:not([data-after-night])::before {
-    display: block;
-  }
+  height: var(--ftr-cut);
+  background: linear-gradient(
+    to bottom right,
+    transparent calc(50% - 1.5px),
+    color-mix(in srgb, var(--color-accent) 50%, transparent) calc(50% - 0.5px),
+    transparent calc(50% + 1px)
+  );
+  pointer-events: none;
 }
 
 body:has(main .cta-band--end) .ftr {
   clip-path: none;
+}
+
+body:has(main .cta-band--end) .ftr::before {
+  display: none;
 }
 
 .ftr__mark {

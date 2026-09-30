@@ -172,3 +172,29 @@
 .auth__mock {
   position: relative;
 }
+
+/* Sign-up: until the terms box is ticked, the box is drawn as the empty slot
+   the locked buttons are waiting on, and the reason sits right under it. */
+.auth__form .agree:has(.agree__box:not(:checked)) {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--color-accent) 55%, var(--line));
+}
+
+.agree-hint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: -12px 0 18px;
+  font-size: var(--fs-13);
+  font-weight: 400;
+  line-height: 1.6;
+  color: var(--gold-ink);
+}
+
+.agree-hint::before {
+  content: "";
+  flex: none;
+  border: 5px solid transparent;
+  border-bottom-color: currentColor;
+  translate: 0 -3px;
+}

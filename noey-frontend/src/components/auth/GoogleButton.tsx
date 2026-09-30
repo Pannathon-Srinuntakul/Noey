@@ -1,5 +1,6 @@
 import { Google_Sans } from "next/font/google";
 import type { ButtonHTMLAttributes } from "react";
+import "../../styles/parts/google.css";
 
 /**
  * The "Sign in with Google" button, drawn to Google's branding guidelines

@@ -267,6 +267,7 @@ export default async function HomePage() {
               <article key={feature.title} className={`bento__card bento__card--${index + 1}`}>
                 <div className="bento__visual" data-play="">
                   <FeatureVisual index={index} />
+                  <span className="mock-tag bento__tag">ภาพจำลอง</span>
                 </div>
                 <div className="bento__text">
                   <div className="num bento__num" aria-hidden="true">
@@ -278,6 +279,10 @@ export default async function HomePage() {
               </article>
             ))}
           </div>
+          {/* One label for the six small demos: each is an illustration too. */}
+          <p className="minis__tag">
+            <span className="mock-tag">ภาพจำลอง</span>
+          </p>
           <div className="minis" data-reveal="stagger">
             {MINI_CARDS.map((card, index) => (
               <ClipCard

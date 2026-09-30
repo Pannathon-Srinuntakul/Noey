@@ -6,6 +6,7 @@ import { LIVE_SUBSCRIPTION_STATUSES } from "@/lib/billing";
 import { EDITOR_OPEN_PATH } from "@/lib/editor-handoff";
 import { planDisplayName } from "@/lib/plans";
 import { StatusCard } from "../ds/StatusCard";
+import { keepThai } from "@/components/ds/ThaiText";
 
 type BillingSnapshot = { plan: string; status: string | null };
 
@@ -95,7 +96,7 @@ export function CheckoutStatus({ initial }: { initial: BillingSnapshot | null })
         }
       >
         <h2>อัปเกรดเป็นแพลน {planDisplayName(view.plan)} แล้ว</h2>
-        <p>โควตาใหม่พร้อมใช้ในห้องตัดต่อ ใบเสร็จจะส่งไปที่อีเมลของบัญชีนี้</p>
+        <p>{keepThai("โควตาใหม่พร้อมใช้ในห้องตัดต่อ ใบเสร็จจะส่งไปที่อีเมลของบัญชีนี้")}</p>
       </StatusCard>
     );
   }
@@ -113,7 +114,7 @@ export function CheckoutStatus({ initial }: { initial: BillingSnapshot | null })
         }
       >
         <h2>เซสชันหมดอายุ</h2>
-        <p>การชำระเงินไม่หายไปไหน เข้าสู่ระบบอีกครั้งเพื่อดูแพลนของคุณ</p>
+        <p>{keepThai("การชำระเงินไม่หายไปไหน เข้าสู่ระบบอีกครั้งเพื่อดูแพลนของคุณ")}</p>
       </StatusCard>
     );
   }
@@ -145,7 +146,7 @@ export function CheckoutStatus({ initial }: { initial: BillingSnapshot | null })
         }
       >
         <h2>ยังไม่เห็นแพลนใหม่ในบัญชี</h2>
-        <p>ถ้าชำระเงินเสร็จแล้ว ระบบอาจใช้เวลาอีกสักครู่ในการยืนยัน ไม่ต้องจ่ายซ้ำ ลองเช็กอีกครั้ง หรือดูสถานะได้ที่หน้าแพลนและการชำระเงิน</p>
+        <p>{keepThai("ถ้าชำระเงินเสร็จแล้ว ระบบอาจใช้เวลาอีกสักครู่ในการยืนยัน ไม่ต้องจ่ายซ้ำ ลองเช็กอีกครั้ง หรือดูสถานะได้ที่หน้าแพลนและการชำระเงิน")}</p>
       </StatusCard>
     );
   }
@@ -153,7 +154,7 @@ export function CheckoutStatus({ initial }: { initial: BillingSnapshot | null })
   return (
     <StatusCard tone="pending" eyebrow={EYEBROW} title={TITLE} role="status" busy>
       <h2>กำลังยืนยันการชำระเงิน…</h2>
-      <p>ใช้เวลาไม่กี่วินาที ไม่ต้องปิดหน้านี้และไม่ต้องกดจ่ายซ้ำ</p>
+      <p>{keepThai("ใช้เวลาไม่กี่วินาที ไม่ต้องปิดหน้านี้และไม่ต้องกดจ่ายซ้ำ")}</p>
     </StatusCard>
   );
 }

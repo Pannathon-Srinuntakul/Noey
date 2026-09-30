@@ -1,0 +1,104 @@
+/* Level meters: quota bars drawn as audio levels. Imported by LevelMeter,
+   so only /pricing and the quota tab load it. */
+
+/* ── Level meter (quota bars as audio levels) ───────────────────────────── */
+
+.lvl {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
+  grid-auto-flow: column;
+  gap: 3px;
+  height: 14px;
+  padding: 3px;
+  border-radius: 6px;
+  background: var(--well);
+  border: 1px solid var(--line);
+}
+
+.lvl i {
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--color-text) 8%, transparent);
+}
+
+/* The last fifth is the red zone of a level meter, visible before it lights. */
+.lvl i[data-hot] {
+  background: color-mix(in srgb, var(--color-danger) 16%, transparent);
+}
+
+.lvl i[data-on] {
+  background: var(--gold);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--color-accent) 40%, transparent);
+}
+
+/* Lit inside the red zone: past 80% the level runs hot. */
+.lvl i[data-on][data-hot] {
+  background: color-mix(in srgb, var(--color-danger) 75%, var(--color-accent));
+  box-shadow: 0 0 6px color-mix(in srgb, var(--color-danger) 35%, transparent);
+}
+
+.lvl--full i[data-on][data-hot] {
+  background: var(--danger);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--color-danger) 40%, transparent);
+}
+
+.lvl[data-reveal-state="wait"] i[data-on] {
+  opacity: 0.12;
+}
+
+.lvl:is([data-reveal-state="now"], [data-reveal-state="in"]) i[data-on] {
+  animation: lvl-on 260ms var(--ease-out) both;
+  animation-delay: calc(var(--i) * 30ms + 120ms);
+}
+
+@keyframes lvl-on {
+  from {
+    opacity: 0.12;
+    transform: scaleY(0.4);
+  }
+}
+
+/* Phones: segments pair up into blocks twice as wide, so the meter reads as
+   a meter, not a row of beads. Every segment stays, so no state is lost. */
+@media (max-width: 480px) {
+  .lvl {
+    column-gap: 0;
+  }
+
+  .lvl i:nth-child(odd) {
+    border-radius: 2px 0 0 2px;
+  }
+
+  .lvl i:nth-child(even):not(:last-child) {
+    margin-right: 3px;
+    border-radius: 0 2px 2px 0;
+  }
+
+  .lvl i:last-child {
+    border-radius: 0 2px 2px 0;
+  }
+}
+
+.meter-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 8px;
+  font-size: var(--fs-14);
+}
+
+.meter-row .num {
+  font-weight: 600;
+  color: var(--gold-ink);
+}
+
+.meter-note {
+  margin: 8px 0 20px;
+  font-size: var(--fs-13);
+  line-height: 1.6;
+  color: var(--ink-3);
+}
+
+.meter-note:last-child {
+  margin-bottom: 0;
+}

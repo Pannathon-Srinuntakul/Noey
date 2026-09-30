@@ -43,7 +43,8 @@ export function StatusCard({
     >
       <div className="status__emblem" aria-hidden="true">
         <span className="status__halo" />
-        <NoeyMark size={46} draw className="status__mark" />
+        {/* A lighter stroke at this size keeps the splice gap open (≈2px, not 1). */}
+        <NoeyMark size={46} strokeWidth={11} draw className="status__mark" />
         <span className="status__meter">
           <span className="status__bar">
             <span className="status__fill" />

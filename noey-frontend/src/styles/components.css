@@ -4,7 +4,7 @@
  *
  *   reveal states · word reveal · track label · section header · page hero ·
  *   breadcrumb · clip card · waveform · splice divider · FAQ cue list ·
- *   prose · misc · level meter · 404.
+ *   prose · misc · prices · 404.
  *
  * Components only some pages render keep their rules elsewhere, imported
  * where they are used, so every page ships this stylesheet plus as few of its
@@ -13,6 +13,8 @@
  *   styles/parts/plans.css   PriceCards + PlanComparisonTable
  *   styles/parts/story.css   FitLists + CtaBand
  *   styles/parts/status.css  StatusCard
+ *   styles/parts/level.css   LevelMeter (/pricing, the quota tab)
+ *   styles/parts/google.css  GoogleButton + GoogleSignInForm
  *   styles/mockup.css        the editor mock-ups
  *   styles/pages/article.css TimelineToc (articles only)
  *
@@ -82,7 +84,8 @@
 
 /* ── Word reveal ────────────────────────────────────────────────────────── */
 
-.wr__w {
+.wr__w,
+.wr__p {
   display: inline-block;
 }
 
@@ -942,9 +945,27 @@
   flex: 1;
 }
 
+/* An odd count never leaves one card alone on the last row: two columns
+   let the fifth run full width; wide screens set five as two over three. */
+.link-grid > li:nth-child(odd):last-child:not(:first-child) {
+  grid-column: 1 / -1;
+}
+
 @media (min-width: 1100px) {
   .link-grid:has(> li:nth-child(4):last-child) {
     grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .link-grid:has(> li:nth-child(5):last-child) {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+
+  .link-grid:has(> li:nth-child(5):last-child) > li:nth-child(n + 3) {
+    grid-column: span 2;
+  }
+
+  .link-grid:has(> li:nth-child(5):last-child) > li:nth-child(-n + 2) {
+    grid-column: span 3;
   }
 }
 
@@ -1019,89 +1040,6 @@
   margin: 28px 0 0;
 }
 
-/* ── Level meter (quota bars as audio levels) ───────────────────────────── */
-
-.lvl {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
-  grid-auto-flow: column;
-  gap: 3px;
-  height: 14px;
-  padding: 3px;
-  border-radius: 6px;
-  background: var(--well);
-  border: 1px solid var(--line);
-}
-
-.lvl i {
-  border-radius: 2px;
-  background: color-mix(in srgb, var(--color-text) 8%, transparent);
-}
-
-.lvl i[data-on] {
-  background: var(--gold);
-  box-shadow: 0 0 6px color-mix(in srgb, var(--color-accent) 40%, transparent);
-}
-
-/* The hot zone warms from gold toward the danger colour as a window fills. */
-.lvl--near i[data-on][data-hot] {
-  background: color-mix(in srgb, var(--color-danger) 45%, var(--color-accent));
-  box-shadow: 0 0 6px color-mix(in srgb, var(--color-danger) 30%, transparent);
-}
-
-.lvl--full i[data-on][data-hot] {
-  background: var(--danger);
-  box-shadow: 0 0 6px color-mix(in srgb, var(--color-danger) 40%, transparent);
-}
-
-.lvl[data-reveal-state="wait"] i[data-on] {
-  opacity: 0.12;
-}
-
-.lvl:is([data-reveal-state="now"], [data-reveal-state="in"]) i[data-on] {
-  animation: lvl-on 260ms var(--ease-out) both;
-  animation-delay: calc(var(--i) * 30ms + 120ms);
-}
-
-@keyframes lvl-on {
-  from {
-    opacity: 0.12;
-    transform: scaleY(0.4);
-  }
-}
-
-/* Phones: half the segments, each twice as wide, so the meter reads as a meter. */
-@media (max-width: 480px) {
-  .lvl i:nth-child(even) {
-    display: none;
-  }
-}
-
-.meter-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 12px;
-  margin-bottom: 8px;
-  font-size: var(--fs-14);
-}
-
-.meter-row .num {
-  font-weight: 600;
-  color: var(--gold-ink);
-}
-
-.meter-note {
-  margin: 8px 0 20px;
-  font-size: var(--fs-13);
-  line-height: 1.6;
-  color: var(--ink-3);
-}
-
-.meter-note:last-child {
-  margin-bottom: 0;
-}
-
 /* ── 404 ──────────────────────────────────────────────────────────────────
  * A timeline missing one clip. The hole is cut on the logo's diagonal
  * through every track; the playhead runs along the ruler, reaches the hole,
@@ -1125,6 +1063,7 @@
 }
 
 .nf__stage {
+  position: relative;
   width: min(100%, 760px);
   padding: 16px 16px 0;
   overflow: hidden;
@@ -1163,6 +1102,20 @@
 
 .nf__tc--gold {
   fill: var(--gold-ink);
+  font-weight: 600;
+}
+
+.nf__readout-box {
+  fill: var(--panel);
+  stroke: color-mix(in srgb, var(--color-accent) 45%, transparent);
+  stroke-width: 1;
+}
+
+/* Bottom right: the one corner no track, label or ruler reaches. */
+.nf__tag {
+  position: absolute;
+  right: 14px;
+  bottom: 8px;
 }
 
 .nf__trk {
@@ -1227,9 +1180,9 @@
   stroke-linecap: round;
 }
 
-/* Resting state: fallen into the hole. */
+/* Resting state: fallen into the hole, leaning with its cut. */
 .nf__head {
-  transform: translate(446px, 100px) rotate(-11.3deg);
+  transform: translate(419px, 100px) rotate(11.3deg);
   filter: drop-shadow(0 0 5px var(--gold-glow));
 }
 
@@ -1254,12 +1207,12 @@
     animation-timing-function: ease-in;
   }
   66% {
-    transform: translate(435px, 20px) rotate(-4deg);
+    transform: translate(431px, 20px) rotate(4deg);
     animation-timing-function: cubic-bezier(0.55, 0, 1, 0.45);
   }
   /* … and drops in */
   100% {
-    transform: translate(446px, 100px) rotate(-11.3deg);
+    transform: translate(419px, 100px) rotate(11.3deg);
   }
 }
 
@@ -1317,6 +1270,11 @@
     width: 175%;
     max-width: none;
     margin-left: -55%;
+  }
+
+  /* Into the zoomed crop, whose right edge is x ≈ 638. */
+  .nf__readout {
+    transform: translateX(-88px);
   }
 
   .nf__links {

@@ -55,11 +55,14 @@ export default async function SignupPage() {
               </li>
             </ul>
             <p className="fine auth-free__read">
-              {/* A no-break space keeps each "·" at the end of its line, never at the start of the next. */}
-              อ่านก่อนสมัคร: <Link href={PAGES.scope.path}>ระบบทำอะไรได้บ้าง</Link>
-              {"\u00a0· "}
-              <Link href={PAGES.guideHelp.path}>โหมด ไฟล์ และโควตา</Link>
-              {"\u00a0· "}
+              {/* Each link keeps its "·" on its own line: a line never starts with one. */}
+              อ่านก่อนสมัคร:{" "}
+              <span className="kt">
+                <Link href={PAGES.scope.path}>ระบบทำอะไรได้บ้าง</Link> ·
+              </span>{" "}
+              <span className="kt">
+                <Link href={PAGES.guideHelp.path}>โหมด ไฟล์ และโควตา</Link> ·
+              </span>{" "}
               <Link href={PAGES.pricing.path}>ราคาแพลนอื่น</Link>
             </p>
           </section>

@@ -115,11 +115,15 @@ export function BillingPanel(props: BillingPanelProps) {
           <ul className="plan-features">
             {planFeatures.map((feature) => (
               <li key={feature}>
-                {/* A line joins facts with " · ": lines break between facts, not inside one. */}
-                {feature.split(" · ").map((fact, index) => (
+                {/* A line joins facts with " · ": lines break between facts, not inside
+                    one, and each dot ends its line instead of starting the next. */}
+                {feature.split(" · ").map((fact, index, facts) => (
                   <Fragment key={fact}>
-                    {index > 0 ? " · " : null}
-                    <span className="fact">{keepThai(fact)}</span>
+                    {index > 0 ? " " : null}
+                    <span className="fact">
+                      {keepThai(fact)}
+                      {index < facts.length - 1 ? " ·" : null}
+                    </span>
                   </Fragment>
                 ))}
               </li>
@@ -232,30 +236,32 @@ export function BillingPanel(props: BillingPanelProps) {
                       </>
                     )}
                     {option.current ? keepThai(" · แพลนปัจจุบัน") : null}
-                    {option.recommended ? <span className="tag tag-outline plan-option__tag">แนะนำ</span> : null}
+                    {/* "แนะนำ" suggests a move; on the plan already held it says nothing. */}
+                    {option.recommended && !option.current ? <span className="tag tag-outline plan-option__tag">แนะนำ</span> : null}
                   </span>
                   <span className="plan-option__meta">{keepThai(option.summary)}</span>
                 </span>
               </label>
             ))}
           </fieldset>
-          <label className="agree agree--flush">
-            <input
-              type="checkbox"
-              name="pay_agree"
-              value="yes"
-              className="agree__box"
-              checked={payAgreed}
-              onChange={(event) => setPayAgreed(event.target.checked)}
-            />
-            <span className="agree__text">
-              ฉันเข้าใจว่าระบบจะเรียกเก็บเงินทุกเดือนโดยอัตโนมัติจนกว่าจะยกเลิก และยอมรับ <Link href="/terms">เงื่อนไขการใช้งาน</Link>{" "}
-              เรื่องค่าบริการและการคืนเงิน
-            </span>
-          </label>
           {betaNote ? <p className="beta-note beta-note--compact">{betaNote}</p> : null}
           <Message state={planState} />
+          {/* The consent sits in the sticky footer, beside the button it unlocks. */}
           <div className="dialog-actions">
+            <label className="agree agree--flush dialog-actions__consent">
+              <input
+                type="checkbox"
+                name="pay_agree"
+                value="yes"
+                className="agree__box"
+                checked={payAgreed}
+                onChange={(event) => setPayAgreed(event.target.checked)}
+              />
+              <span className="agree__text">
+                ฉันเข้าใจว่าระบบจะเรียกเก็บเงินทุกเดือนโดยอัตโนมัติจนกว่าจะยกเลิก และยอมรับ <Link href="/terms">เงื่อนไขการใช้งาน</Link>{" "}
+                เรื่องค่าบริการและการคืนเงิน
+              </span>
+            </label>
             <button type="button" className="btn btn-secondary" onClick={() => setUpgradeOpen(false)}>
               ยกเลิก
             </button>

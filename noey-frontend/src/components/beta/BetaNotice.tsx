@@ -156,7 +156,8 @@ export function BetaNotice({ betaPriced }: { betaPriced: boolean }) {
         <span className="agree__text">{BETA_NOTICE_NEVER}</span>
       </label>
       <div className="dialog-actions">
-        <button type="button" className="btn btn-primary" onClick={close}>
+        {/* Focus lands on the answer, not on the terms link in the fine print. */}
+        <button type="button" className="btn btn-primary" onClick={close} autoFocus>
           {BETA_NOTICE_DISMISS}
         </button>
       </div>

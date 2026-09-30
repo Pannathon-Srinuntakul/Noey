@@ -1156,15 +1156,26 @@ dialog.dialog::backdrop {
   padding: clamp(22px, 4vw, 34px);
 }
 
-/* A gold hairline above the title, cut once like the logo. */
+/* A rim of gold light along the top edge, fading out at both ends. */
 .dialog-inner::before {
   content: "";
   position: absolute;
-  top: calc(clamp(22px, 4vw, 34px) - 12px);
-  left: clamp(22px, 4vw, 34px);
-  width: 72px;
-  height: 2px;
-  background: linear-gradient(115deg, var(--gold) 0 46%, transparent 46% 56%, var(--gold) 56%);
+  top: 0;
+  left: 10%;
+  right: 10%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--gold) 30% 70%, transparent);
+}
+
+/* A destructive dialog carries the danger colour instead. */
+.dialog--danger .dialog-inner::before {
+  background: linear-gradient(90deg, transparent, var(--danger) 30% 70%, transparent);
+}
+
+/* A form inside a dialog does not box its contents: the actions it holds
+   stick to the dialog's foot, not to the bottom of the form. */
+.dialog-inner > form {
+  display: contents;
 }
 
 .dialog-title {
@@ -1234,6 +1245,34 @@ dialog.dialog::backdrop {
   padding: 14px var(--dialog-pad) clamp(18px, 3vw, 26px);
   border-top: 1px solid var(--line);
   background: var(--bg);
+}
+
+/* Content scrolling under the footer fades out instead of being sliced. */
+.dialog-actions::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 1px);
+  height: 22px;
+  background: linear-gradient(transparent, var(--bg));
+  pointer-events: none;
+}
+
+/* A consent box in the footer sits above the buttons it unlocks. */
+.dialog-actions__consent {
+  flex-basis: 100%;
+  order: -1;
+  margin: 0 0 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+}
+
+@media (max-width: 480px) {
+  .dialog-actions__consent {
+    order: 10;
+  }
 }
 
 /* ── Notices ────────────────────────────────────────────────────────────── */
@@ -1343,117 +1382,6 @@ dialog.dialog::backdrop {
   margin: 0;
   font-size: var(--fs-15);
   color: var(--ink-2);
-}
-
-/* ── Sign in with Google ────────────────────────────────────────────────────
-   Custom button per https://developers.google.com/identity/branding-guidelines
-   (light: #FFFFFF / 1px #747775 / #1F1F1F, dark: #131314 / 1px #8E918F /
-   #E3E3E3; Google Sans Medium 14/20; web padding 12 · 10 · 12; pill).
-   The colours and the Google Sans face are Google's, not the site's tokens,
-   on purpose: the guidelines require them. Thai glyphs fall back to the site
-   font. */
-
-.gsi-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  height: 40px;
-  padding: 0 12px;
-  border: 1px solid #747775;
-  border-radius: 20px;
-  background: #ffffff;
-  color: #1f1f1f;
-  font-family: var(--font-google-sans), var(--font-thai);
-  font-size: 14px;
-  font-weight: 500;
-  line-height: 20px;
-  letter-spacing: 0.25px;
-  white-space: nowrap;
-  cursor: pointer;
-  transition:
-    background-color 0.2s,
-    box-shadow 0.2s;
-}
-
-.gsi-button--block {
-  width: 100%;
-}
-
-.gsi-button__logo {
-  flex-shrink: 0;
-  display: block;
-}
-
-.gsi-button:hover:not(:disabled) {
-  background: color-mix(in srgb, #1f1f1f 8%, #ffffff);
-}
-
-.gsi-button:focus-visible {
-  outline: 2px solid var(--focus);
-  outline-offset: 2px;
-}
-
-.gsi-button:disabled {
-  cursor: not-allowed;
-  opacity: 0.45;
-}
-
-html[data-theme="dark"] .gsi-button {
-  background: #131314;
-  border-color: #8e918f;
-  color: #e3e3e3;
-}
-
-html[data-theme="dark"] .gsi-button:hover:not(:disabled) {
-  background: color-mix(in srgb, #e3e3e3 8%, #131314);
-}
-
-@media (prefers-color-scheme: dark) {
-  html:not([data-theme="light"]) .gsi-button {
-    background: #131314;
-    border-color: #8e918f;
-    color: #e3e3e3;
-  }
-
-  html:not([data-theme="light"]) .gsi-button:hover:not(:disabled) {
-    background: color-mix(in srgb, #e3e3e3 8%, #131314);
-  }
-}
-
-.google-signin {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.google-signin .form-error,
-.google-signin .form-success {
-  margin: 0;
-}
-
-.google-signin__note {
-  margin: 0;
-  font-size: var(--fs-13);
-  line-height: 1.6;
-  color: var(--ink-3);
-}
-
-.or-divider {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  margin: 24px 0;
-  font-size: var(--fs-13);
-  color: var(--ink-3);
-}
-
-.or-divider::before,
-.or-divider::after {
-  content: "";
-  flex: 1;
-  height: 1px;
-  background: var(--line);
 }
 
 /* ── Reduced motion: everything still, instantly ─────────────────────────── */

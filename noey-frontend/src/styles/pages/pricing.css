@@ -22,6 +22,43 @@
   color: var(--ink-3);
 }
 
+/* Wide screens: the title on the left, the one-paragraph answer beside it,
+   so the plans start within the first screen. */
+@media (min-width: 1100px) {
+  .phero--pricing .phero__copy {
+    grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+    grid-template-areas:
+      "crumb crumb"
+      "title lead"
+      "meta lead";
+    column-gap: clamp(40px, 6vw, 96px);
+    align-items: start;
+  }
+
+  .phero--pricing .phero__crumb {
+    grid-area: crumb;
+  }
+
+  .phero--pricing .phero__copy h1 {
+    grid-area: title;
+  }
+
+  .phero--pricing .phero__lead {
+    grid-area: lead;
+    padding-top: 0.6em;
+  }
+
+  .phero--pricing .phero__meta {
+    grid-area: meta;
+  }
+}
+
+/* The comparison section carries the two notes that explain the table. */
+.compare .sec-head__intro {
+  display: grid;
+  gap: 12px;
+}
+
 /* ── Plans: picker + rail ───────────────────────────────────────────────── */
 
 .pricing-plans {
@@ -49,7 +86,9 @@
 
 .plan-rail__nav {
   display: flex;
+  justify-content: flex-end;
   gap: 8px;
+  margin-bottom: -8px;
 }
 
 .picker {
@@ -65,14 +104,22 @@
 
 .picker__row {
   display: flex;
-  align-items: center;
-  gap: 18px;
+  align-items: flex-start;
+  gap: 12px 24px;
   flex-wrap: wrap;
+}
+
+.picker__track {
+  position: relative;
+  flex: 1 1 280px;
+  min-width: 0;
+  padding-bottom: 30px;
 }
 
 .picker__range {
   --fill: 50%;
-  flex: 1 1 280px;
+  display: block;
+  width: 100%;
   appearance: none;
   height: 34px;
   margin: 0;
@@ -149,15 +196,20 @@
   font-weight: 600;
 }
 
+/* Plan markers under the scrubber, placed where the playhead's centre stops:
+   the thumb is 16px wide, so its centre runs from 8px to 100% − 8px. */
 .picker__ticks {
-  position: relative;
-  height: 20px;
-  margin-right: 8px;
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 38px;
+  height: 22px;
 }
 
 .picker__tick {
   position: absolute;
-  top: 0;
+  top: 8px;
+  left: calc(8px + (100% - 16px) * var(--at, 0));
   translate: -50% 0;
   font-size: 11.5px;
   color: var(--ink-3);
@@ -165,14 +217,23 @@
   transition: color var(--dur-2) ease;
 }
 
+/* A keyframe diamond over each name, lit for the plan that fits. */
 .picker__tick::before {
   content: "";
   position: absolute;
   left: 50%;
-  top: -7px;
-  width: 1px;
-  height: 5px;
+  top: -9px;
+  width: 6px;
+  height: 6px;
+  translate: -50% 0;
+  rotate: 45deg;
+  border-radius: 1px;
   background: var(--line-3);
+  transition: background-color var(--dur-2) ease;
+}
+
+.picker__tick--on::before {
+  background: var(--gold);
 }
 
 .picker__tick--on {
@@ -196,9 +257,15 @@
     display: none;
   }
 
-  .picker__tick:nth-child(1),
-  .picker__tick:nth-child(3) {
-    display: none;
+  /* Too close to name them all: Lite, Pro and Max keep their names, the
+     rest keep their markers, and the plan that fits is always named. */
+  .picker__tick {
+    font-size: 0;
+  }
+
+  .picker__tick:is(:nth-child(1), :nth-child(3), :last-child),
+  .picker__tick--on {
+    font-size: 11.5px;
   }
 }
 
@@ -225,6 +292,93 @@
 .plan-rail__slot {
   scroll-snap-align: start;
   display: flex;
+}
+
+/* Below the grid width the rail runs to the screen's edges, so a card is cut
+   by the screen, not by the page margin, and the first card lines up. */
+@media (max-width: 1099px) {
+  .plan-rail__track {
+    margin-inline: calc(var(--gutter) * -1);
+    padding-inline: var(--gutter);
+    scroll-padding-inline: var(--gutter);
+  }
+}
+
+/* Wide screens: every plan in view at once — the free trial as one row on
+   top, the six monthly plans in two rows of three. The picker lights the
+   plan that fits instead of scrolling to it. */
+@media (min-width: 1100px) {
+  .plan-rail__track {
+    grid-auto-flow: row;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-auto-columns: auto;
+    overflow: visible;
+    scroll-snap-type: none;
+    padding: 12px 0 0;
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+
+  .plan-rail__nav {
+    display: none;
+  }
+
+  .plan-rail__slot:has(> .plan[data-tier="free"]) {
+    grid-column: 1 / -1;
+  }
+
+  .plan--full[data-tier="free"] {
+    display: grid;
+    grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.1fr) minmax(0, 1.4fr) auto;
+    gap: 8px 32px;
+    align-items: start;
+  }
+
+  .plan--full[data-tier="free"] > .plan__head {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .plan--full[data-tier="free"] > .plan__amount {
+    grid-column: 1;
+    grid-row: 2 / 4;
+  }
+
+  .plan--full[data-tier="free"] > .plan__usage {
+    grid-column: 2;
+    grid-row: 1;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  .plan--full[data-tier="free"] > .clip-note {
+    grid-column: 2;
+    grid-row: 2;
+    margin: 0;
+  }
+
+  .plan--full[data-tier="free"] > .plan__blurb {
+    grid-column: 2;
+    grid-row: 3;
+  }
+
+  .plan--full[data-tier="free"] > .plan__features {
+    grid-column: 3;
+    grid-row: 1 / 4;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: 20px;
+    margin: 0;
+  }
+
+  .plan--full[data-tier="free"] > .plan__foot {
+    grid-column: 4;
+    grid-row: 1 / 4;
+    align-self: center;
+    min-width: 200px;
+    margin: 0;
+    padding: 0;
+  }
 }
 
 .plan-rail__slot > .plan {

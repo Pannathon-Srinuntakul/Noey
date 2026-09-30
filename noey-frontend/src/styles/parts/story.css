@@ -22,7 +22,9 @@
   align-items: stretch;
 }
 
+/* A track header: as tall as its label, not the whole lane. */
 .lane__head {
+  align-self: start;
   display: flex;
   flex-direction: column;
   justify-content: flex-start;
@@ -48,9 +50,11 @@
   line-height: 1.45;
 }
 
+/* Clips fill each row of the track: an odd count leaves no hole, the last
+   row's clips simply run longer. */
 .lane__clips {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(250px, 100%), 1fr));
+  display: flex;
+  flex-wrap: wrap;
   gap: 10px;
   margin: 0;
   padding: 0;
@@ -68,7 +72,7 @@
   font-size: var(--fs-15);
   line-height: 1.7;
   color: var(--ink);
-  min-height: 100%;
+  flex: 1 1 min(250px, 100%);
 }
 
 .lane--fit .lane__clip {
@@ -129,6 +133,7 @@
 /* ── CTA band: fade to black ────────────────────────────────────────────── */
 
 .cta-band {
+  --cta-cut: clamp(26px, 3.4vw, 48px);
   position: relative;
   isolation: isolate;
   overflow: hidden;
@@ -156,12 +161,44 @@ html[data-theme="dark"] .cta-band {
   z-index: -1;
 }
 
+/* On a light page a fade to black passes through a flat grey: the scene cuts
+   to the night on the splice's diagonal instead, with a gold seam on the cut.
+   A dark page keeps the fade. */
+html:not([data-theme="dark"]) .cta-band {
+  clip-path: polygon(0 var(--cta-cut), 100% 0, 100% 100%, 0 100%);
+}
+
+html:not([data-theme="dark"]) .cta-band__fade {
+  height: var(--cta-cut);
+  background: linear-gradient(
+    to bottom right,
+    transparent calc(50% - 1.5px),
+    color-mix(in srgb, var(--color-accent) 50%, transparent) calc(50% - 0.5px),
+    transparent calc(50% + 1px)
+  );
+  z-index: 0;
+}
+
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]) .cta-band {
+    clip-path: none;
+  }
+
+  html:not([data-theme="light"]) .cta-band__fade {
+    height: 60%;
+    background: linear-gradient(180deg, var(--page-bg), transparent);
+    z-index: -1;
+  }
+}
+
+/* The glow sits inside the band and fades out before its edges: cut off by
+   the band's bottom it would end in a hard line above the footer. */
 .cta-band::after {
   content: "";
   position: absolute;
-  inset: auto 0 0;
-  height: 70%;
-  background: radial-gradient(50% 60% at 50% 100%, var(--gold-soft), transparent 70%);
+  inset: auto 0 4%;
+  height: 72%;
+  background: radial-gradient(46% 50% at 50% 55%, var(--gold-soft), transparent 72%);
   z-index: -1;
 }
 

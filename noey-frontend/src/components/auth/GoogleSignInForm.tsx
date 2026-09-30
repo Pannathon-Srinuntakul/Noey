@@ -6,6 +6,7 @@ import { isPaidTier } from "@/lib/plans";
 import { SearchParam } from "../forms/SearchParam";
 import { TURNSTILE_SITE_KEY, TurnstileWidget } from "../forms/TurnstileWidget";
 import { GoogleButton } from "./GoogleButton";
+import "../../styles/parts/google.css";
 
 const CAPTCHA_CODES = new Set(["captcha_required", "captcha_failed"]);
 

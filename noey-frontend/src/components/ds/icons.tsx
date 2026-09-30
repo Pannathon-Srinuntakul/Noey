@@ -57,6 +57,18 @@ export const IconChevronDown = (props: IconProps) => (
   </Svg>
 );
 
+export const IconChevronRight = (props: IconProps) => (
+  <Svg {...props}>
+    <path d="m9 6 6 6-6 6" />
+  </Svg>
+);
+
+export const IconSignOut = (props: IconProps) => (
+  <Svg {...props}>
+    <path d="M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4M10 16l-4-4 4-4M6 12h10" />
+  </Svg>
+);
+
 export const IconUser = (props: IconProps) => (
   <Svg {...props}>
     <circle cx="12" cy="8.5" r="3.5" />

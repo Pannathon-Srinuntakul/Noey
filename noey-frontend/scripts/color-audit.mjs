@@ -9,9 +9,9 @@
  * in src/app/globals.css (light and dark). Everything else is expected to be
  * a `var(--…)` token or a `color-mix()` of tokens (tints, shades, opacity).
  * Two documented exceptions:
- *   - the "Sign in with Google" button (`.gsi-button` in globals.css and the
- *     "G" in GoogleButton.tsx): its colours are Google's, required by the
- *     branding guidelines;
+ *   - the "Sign in with Google" button (`.gsi-button` in
+ *     styles/parts/google.css and the "G" in GoogleButton.tsx): its colours
+ *     are Google's, required by the branding guidelines;
  *   - keywords that are not colours: transparent, currentColor, inherit;
  *     and mask gradients, where only the alpha channel counts.
  *
@@ -67,9 +67,9 @@ for (const [, value] of globals.matchAll(/--color-[\w-]+:\s*([^;]+);/g)) {
   for (const fn of value.match(FUNC) ?? []) allowed.add(normalizeFunc(fn));
 }
 
-/** Line ranges of the Google button rules in globals.css (brand colours by requirement). */
+/** Line ranges of the Google button rules (brand colours by requirement). */
 function googleRanges(file, text) {
-  if (!file.endsWith("app/globals.css")) return [];
+  if (!file.endsWith("app/globals.css") && !file.endsWith("styles/parts/google.css")) return [];
   const ranges = [];
   const lines = text.split("\n");
   let inside = false;

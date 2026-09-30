@@ -1,0 +1,113 @@
+/* Google's sign-in button and the divider under it. Imported by the
+   components that draw them, so pages without the button do not load it. */
+
+/* ── Sign in with Google ────────────────────────────────────────────────────
+   Custom button per https://developers.google.com/identity/branding-guidelines
+   (light: #FFFFFF / 1px #747775 / #1F1F1F, dark: #131314 / 1px #8E918F /
+   #E3E3E3; Google Sans Medium 14/20; web padding 12 · 10 · 12; pill).
+   The colours and the Google Sans face are Google's, not the site's tokens,
+   on purpose: the guidelines require them. Thai glyphs fall back to the site
+   font. */
+
+.gsi-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid #747775;
+  border-radius: 20px;
+  background: #ffffff;
+  color: #1f1f1f;
+  font-family: var(--font-google-sans), var(--font-thai);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+  letter-spacing: 0.25px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color 0.2s,
+    box-shadow 0.2s;
+}
+
+.gsi-button--block {
+  width: 100%;
+}
+
+.gsi-button__logo {
+  flex-shrink: 0;
+  display: block;
+}
+
+.gsi-button:hover:not(:disabled) {
+  background: color-mix(in srgb, #1f1f1f 8%, #ffffff);
+}
+
+.gsi-button:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.gsi-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+html[data-theme="dark"] .gsi-button {
+  background: #131314;
+  border-color: #8e918f;
+  color: #e3e3e3;
+}
+
+html[data-theme="dark"] .gsi-button:hover:not(:disabled) {
+  background: color-mix(in srgb, #e3e3e3 8%, #131314);
+}
+
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]) .gsi-button {
+    background: #131314;
+    border-color: #8e918f;
+    color: #e3e3e3;
+  }
+
+  html:not([data-theme="light"]) .gsi-button:hover:not(:disabled) {
+    background: color-mix(in srgb, #e3e3e3 8%, #131314);
+  }
+}
+
+.google-signin {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.google-signin .form-error,
+.google-signin .form-success {
+  margin: 0;
+}
+
+.google-signin__note {
+  margin: 0;
+  font-size: var(--fs-13);
+  line-height: 1.6;
+  color: var(--ink-3);
+}
+
+.or-divider {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 24px 0;
+  font-size: var(--fs-13);
+  color: var(--ink-3);
+}
+
+.or-divider::before,
+.or-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}

@@ -70,17 +70,25 @@ export default function ScopePage() {
           </p>
         }
         aside={
+          // A map of the timeline below: the system's steps on one track, the
+          // cut where the draft is handed over, your work on the next track.
           <div className="handoff-key" aria-hidden="true">
+            <span className="handoff-key__ruler" />
             <span className="handoff-key__lane handoff-key__lane--ai">
               <span className="trk tc">AI</span>
-              <i />
-              <i />
-              <i />
+              {SCOPE_STEPS.map((step, index) => (
+                <i key={step.title}>
+                  <span className="tc">{String(index + 1).padStart(2, "0")}</span>
+                </i>
+              ))}
             </span>
             <span className="handoff-key__cut" />
             <span className="handoff-key__lane handoff-key__lane--you">
-              <i />
-              <i />
+              {YOUR_WORK.map((item, index) => (
+                <i key={item.title}>
+                  <span className="tc">{String(index + 4).padStart(2, "0")}</span>
+                </i>
+              ))}
               <span className="trk tc">คุณ</span>
             </span>
           </div>
@@ -188,7 +196,7 @@ export default function ScopePage() {
       {/* ── FAQ ── */}
       <section className="sect scope-faq" aria-labelledby="scope-faq-title">
         <div className="wrap wrap--narrow">
-          <SectionHeader id="scope-faq-title" track="T1" timecode="00:01:10:00" title="คำถามที่พบบ่อยเรื่องขอบเขต (FAQ)" size="h-3" />
+          <SectionHeader id="scope-faq-title" track="T1" timecode="00:01:10:00" title="คำถามที่พบบ่อยเรื่องขอบเขต (FAQ)" size="h-2" />
           <FaqList items={SCOPE_FAQ} compact />
         </div>
       </section>
@@ -196,7 +204,7 @@ export default function ScopePage() {
       {/* ── Guides, one per job ── */}
       <section className="sect scope-guides" aria-labelledby="scope-guides-title">
         <div className="wrap">
-          <SectionHeader id="scope-guides-title" track="R2" timecode="00:01:24:00" title="อ่านวิธีทำทีละงาน" size="h-3" />
+          <SectionHeader id="scope-guides-title" track="R2" timecode="00:01:24:00" title="อ่านวิธีทำทีละงาน" size="h-2" />
           <ul className="link-grid" data-reveal="stagger">
             {GUIDE_LINKS.map((item, index) => (
               <li key={item.href}>

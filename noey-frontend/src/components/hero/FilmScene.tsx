@@ -35,10 +35,10 @@ function readPalette(): Palette {
 }
 
 const FRAMES: ReadonlyArray<{ x: number; y: number; z: number; r: number; w: number; tall: boolean; speed: number }> = [
-  { x: -4.6, y: 1.4, z: -3.2, r: -0.16, w: 1.9, tall: false, speed: 0.6 },
+  { x: -6.4, y: 1.2, z: -3.2, r: -0.16, w: 1.9, tall: false, speed: 0.6 },
   { x: -2.7, y: -1.7, z: -5.5, r: 0.12, w: 1.4, tall: true, speed: 0.8 },
   { x: 4.4, y: 1.9, z: -4.4, r: 0.2, w: 1.7, tall: true, speed: 0.5 },
-  { x: 3.1, y: -1.5, z: -2.6, r: -0.1, w: 2.1, tall: false, speed: 0.7 },
+  { x: 5.4, y: -2.5, z: -2.6, r: -0.1, w: 2.1, tall: false, speed: 0.7 },
   { x: 0.4, y: 2.6, z: -7.5, r: 0.06, w: 2.4, tall: false, speed: 0.4 },
   { x: -6.2, y: -0.4, z: -8.2, r: 0.24, w: 1.8, tall: true, speed: 0.55 },
   { x: 6.6, y: -0.2, z: -9, r: -0.22, w: 2.2, tall: false, speed: 0.45 },
