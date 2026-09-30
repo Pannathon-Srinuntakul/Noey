@@ -35,10 +35,21 @@ import { PREPAINT_SCRIPT } from "./prepaint";
 
 const TURNSTILE_ORIGIN = "https://challenges.cloudflare.com";
 
+/**
+ * Cloudflare Web Analytics (cookie-free page counts, no consent banner needed).
+ * Cloudflare injects the beacon itself on the proxied www host; the script
+ * loads from static.cloudflareinsights.com and reports to cloudflareinsights.com.
+ * Allowed on the STATIC (public) policy only: the signed-in /account and
+ * /checkout pages keep it blocked, and the Cloudflare rule counts www only.
+ */
+const ANALYTICS_SCRIPT_ORIGIN = "https://static.cloudflareinsights.com";
+const ANALYTICS_REPORT_ORIGIN = "https://cloudflareinsights.com";
+
 /** `'sha256-…'` source for the constant pre-paint script in app/layout.tsx. */
 export const PREPAINT_SCRIPT_HASH = `'sha256-${createHash("sha256").update(PREPAINT_SCRIPT, "utf8").digest("base64")}'`;
 
-function policy(scriptSrc: string, sentryOrigin: string | null): string {
+function policy(scriptSrc: string, sentryOrigin: string | null, extraConnect: readonly string[] = []): string {
+  const connect = ["'self'", ...(sentryOrigin ? [sentryOrigin] : []), ...extraConnect].join(" ");
   return [
     "default-src 'self'",
     scriptSrc,
@@ -46,7 +57,7 @@ function policy(scriptSrc: string, sentryOrigin: string | null): string {
     "img-src 'self' data: blob: https:",
     "media-src 'self' blob: https:",
     "font-src 'self' data:",
-    sentryOrigin ? `connect-src 'self' ${sentryOrigin}` : "connect-src 'self'",
+    `connect-src ${connect}`,
     `frame-src ${TURNSTILE_ORIGIN}`,
     "form-action 'self' https://checkout.stripe.com https://billing.stripe.com https://accounts.google.com",
     "frame-ancestors 'none'",
@@ -56,7 +67,11 @@ function policy(scriptSrc: string, sentryOrigin: string | null): string {
 }
 
 export function staticContentSecurityPolicy(sentryOrigin: string | null): string {
-  return policy(`script-src 'self' 'unsafe-inline' ${TURNSTILE_ORIGIN}`, sentryOrigin);
+  return policy(
+    `script-src 'self' 'unsafe-inline' ${TURNSTILE_ORIGIN} ${ANALYTICS_SCRIPT_ORIGIN}`,
+    sentryOrigin,
+    [ANALYTICS_REPORT_ORIGIN],
+  );
 }
 
 export function nonceContentSecurityPolicy(nonce: string, sentryOrigin: string | null): string {
