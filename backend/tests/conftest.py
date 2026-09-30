@@ -48,6 +48,10 @@ def _no_redis_no_mail(monkeypatch):
     from packages.auth import google_oauth
 
     monkeypatch.setattr(google_oauth, "_store", google_oauth.MemoryFlowStore())
+    # Site -> editor sign-in handoff codes: in memory, never the developer's Redis.
+    from packages.auth import handoff
+
+    monkeypatch.setattr(handoff, "_store", handoff.MemoryHandoffStore())
     for var in ("GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REDIRECT_URIS"):
         monkeypatch.setenv(var, "")
     monkeypatch.setenv("SENDGRID_API_KEY", "")

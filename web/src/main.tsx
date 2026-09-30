@@ -11,6 +11,7 @@ import App from './App'
 import { WebGate } from './platform/WebGate'
 import { installLifecycleTrace } from './lib/lifecycleTrace'
 import { initMonitoring } from './lib/monitoring'
+import { captureHandoff } from './lib/handoff'
 
 /**
  * Register the media service worker before rendering.
@@ -21,6 +22,10 @@ import { initMonitoring } from './lib/monitoring'
  * 404ing.
  */
 async function boot(): Promise<void> {
+  // Arrived from the account site with `#handoff=<code>`? Take the one-time
+  // code out of the address bar before monitoring instruments history or
+  // anything renders (lib/handoff.ts). App redeems it during boot.
+  captureHandoff()
   // Before the first render: a boot line appearing in the middle of a render is
   // how we learn iOS threw the page away rather than the job failing.
   installLifecycleTrace()

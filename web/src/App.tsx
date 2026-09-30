@@ -18,6 +18,7 @@ import LoginPage from './pages/LoginPage'
 
 import { BACKEND_URL } from './lib/backendUrl'
 import { handleGoogleReturn } from './lib/googleReturn'
+import { adoptHandoffSession, handleHandoff } from './lib/handoff'
 import type { Route } from './lib/routes'
 import { BrandMark } from './components/ui/BrandMark'
 import { Button } from './components/ui/Button'
@@ -263,6 +264,24 @@ function App(): React.JSX.Element {
 
   useEffect(() => {
     const attempt = async (): Promise<void> => {
+      // Opened from the account site already signed in? The handed-off
+      // session wins over whatever this browser had stored (lib/handoff.ts).
+      // A failed handoff shows the login screen with its reason instead of
+      // quietly restoring a stored session that may be another account.
+      const handoff = await handleHandoff(BACKEND_URL)
+      if (handoff?.signedIn) {
+        const { accessToken, refreshToken, profile } = handoff.signedIn
+        await adoptHandoffSession(BACKEND_URL, handoff.signedIn, {
+          forgetWorker: forgetWorkerSession
+        })
+        await ensureStoreOwner(profile.email)
+        setSession({ baseUrl: BACKEND_URL, accessToken, refreshToken, profile })
+        return
+      }
+      if (handoff?.loginError) {
+        setLoginError(handoff.loginError)
+        return
+      }
       // Back from Google? Sign-in hands over a fresh pair; link / re-auth
       // finish against the stored session, which the path below restores.
       const google = await handleGoogleReturn(BACKEND_URL)

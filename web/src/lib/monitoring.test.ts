@@ -47,6 +47,17 @@ describe('scrubbing', () => {
     expect(JSON.stringify(event)).not.toContain(token)
   })
 
+  it('masks a site -> editor handoff code in a fragment', () => {
+    const code = 'Abc_def-0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+    const page = `https://app.noey.test/#handoff=${code}`
+    const event = scrubEvent({
+      message: `navigation to ${page}`,
+      breadcrumbs: [{ message: `navigation to ${page}`, data: { from: page, to: '/' } }]
+    })
+    expect(JSON.stringify(event)).not.toContain(code)
+    expect(scrubText(page)).toBe('https://app.noey.test/#handoff=[Filtered]')
+  })
+
   it('drops query and fragment from URLs', () => {
     expect(scrubUrl('https://s/auth/google/callback?code=1&state=2#x')).toBe(
       'https://s/auth/google/callback'

@@ -17,7 +17,9 @@
  *   - `scrubEvent` runs as beforeSend AND on every breadcrumb, and masks
  *     e-mail addresses, bearer tokens, JWTs, the query of every URL (the
  *     Google callback URL carries a one-time `code` for a moment) and the
- *     token in a `/transfer/<token>` path (the phone upload credential).
+ *     token in a `/transfer/<token>` path (the phone upload credential), and
+ *     a `handoff=<code>` fragment (the site -> editor sign-in code; main.tsx
+ *     strips it before monitoring starts, this is the second line).
  * Setup follows https://docs.sentry.io/platforms/javascript/guides/react/
  * (fetched 2026-09-30): `Sentry.init` before render, `reactErrorHandler` on
  * createRoot's error hooks.
@@ -34,6 +36,8 @@ const URL_QUERY_RE = /(https?:\/\/[^\s?#"'<>]+)\?[^\s#"'<>]*/g
 // The phone-transfer page's path IS its credential: `/transfer/<32 hex>` is a
 // live single-use upload ticket until the desktop pulls the file.
 const TRANSFER_RE = /\/transfer\/[A-Fa-f0-9]{32}\b/g
+// The one-time sign-in code the account site hands over (lib/handoff.ts).
+const HANDOFF_RE = /\bhandoff=[^\s&#"'<>]+/g
 
 /** Mask secrets and personal data inside free text. */
 export function scrubText(text: string): string {
@@ -42,6 +46,7 @@ export function scrubText(text: string): string {
     .replace(JWT_RE, '[Filtered]')
     .replace(URL_QUERY_RE, '$1?[Filtered]')
     .replace(TRANSFER_RE, '/transfer/[Filtered]')
+    .replace(HANDOFF_RE, 'handoff=[Filtered]')
     .replace(EMAIL_RE, '[email]')
 }
 

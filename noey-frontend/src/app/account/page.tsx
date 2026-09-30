@@ -3,7 +3,7 @@ import { formatBytes } from "@/lib/format";
 import { planDisplayName } from "@/lib/plans";
 import { privatePageMetadata } from "@/lib/seo";
 import { loadAccountData } from "@/lib/server/account-data";
-import { APP_URL } from "@/lib/site";
+import { EDITOR_OPEN_PATH } from "@/lib/editor-handoff";
 
 export const metadata: Metadata = privatePageMetadata("บัญชีของฉัน");
 
@@ -34,7 +34,7 @@ export default async function AccountAppPage({ searchParams }: { searchParams: P
           <div className="card-kicker">ห้องตัดต่อ</div>
           <h2>งานทั้งหมดอยู่ในเบราว์เซอร์</h2>
           <p>โปรเจกต์ การสร้างงานใหม่ ไทม์ไลน์ และการอัดเสียงพากย์ อยู่ในห้องตัดต่อบนเว็บทั้งหมด ไม่ต้องติดตั้งโปรแกรม บัญชีเดียวกันนี้เข้าใช้ได้เลย</p>
-          <a href={APP_URL} className="btn btn-primary btn-lg" style={{ alignSelf: "flex-start" }}>
+          <a href={EDITOR_OPEN_PATH} className="btn btn-primary btn-lg" style={{ alignSelf: "flex-start" }}>
             เปิดห้องตัดต่อ
           </a>
         </div>

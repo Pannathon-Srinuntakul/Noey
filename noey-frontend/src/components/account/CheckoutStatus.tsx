@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { LIVE_SUBSCRIPTION_STATUSES } from "@/lib/billing";
+import { EDITOR_OPEN_PATH } from "@/lib/editor-handoff";
 import { planDisplayName } from "@/lib/plans";
 
 type BillingSnapshot = { plan: string; status: string | null };
@@ -25,7 +26,7 @@ function isPaidAndLive(snapshot: BillingSnapshot | null): snapshot is BillingSna
  * Stripe redirects here before its webhook necessarily reached the backend,
  * so poll GET /billing/me briefly until the new plan shows up.
  */
-export function CheckoutStatus({ initial, appUrl }: { initial: BillingSnapshot | null; appUrl: string }) {
+export function CheckoutStatus({ initial }: { initial: BillingSnapshot | null }) {
   const [view, setView] = useState<View>(isPaidAndLive(initial) ? { kind: "confirmed", plan: initial.plan } : { kind: "waiting" });
   const [attempt, setAttempt] = useState(0);
   const startedAt = useRef<number>(0);
@@ -74,7 +75,7 @@ export function CheckoutStatus({ initial, appUrl }: { initial: BillingSnapshot |
         <h2>อัปเกรดเป็นแพลน {planDisplayName(view.plan)} แล้ว</h2>
         <p>โควตาใหม่พร้อมใช้ในห้องตัดต่อ ใบเสร็จจะส่งไปที่อีเมลของบัญชีนี้</p>
         <div className="button-row">
-          <a href={appUrl} className="btn btn-primary btn-lg">
+          <a href={EDITOR_OPEN_PATH} className="btn btn-primary btn-lg">
             เปิดห้องตัดต่อ
           </a>
           <Link href="/account/billing" className="btn btn-secondary btn-lg">

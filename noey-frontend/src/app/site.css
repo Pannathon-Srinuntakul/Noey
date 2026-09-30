@@ -222,6 +222,10 @@ html[data-auth="in"] .auth-out {
   display: none;
 }
 
+.auth-signout {
+  margin: 0;
+}
+
 /*
  * "คุณ<name>" is drawn from a CSS variable the pre-paint script sets from the
  * display-name cookie, so the static header needs no hydration to greet.
@@ -297,6 +301,12 @@ html[data-auth="in"] .auth-out {
 
   .auth-area .btn {
     width: 100%;
+  }
+
+  /* Sign-out: its own full-width row under the two main buttons. */
+  .auth-signout {
+    order: 1;
+    grid-column: 1 / -1;
   }
 }
 
@@ -1510,17 +1520,6 @@ html[data-auth="in"] .auth-out {
   font-size: 15px;
   color: var(--color-neutral-800);
   max-width: 40em;
-}
-
-.account-actions {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-  align-items: center;
-}
-
-.account-actions form {
-  margin: 0;
 }
 
 .tabs {

@@ -5,7 +5,7 @@ import { MSG } from "@/lib/messages";
 import { tokenPageMetadata } from "@/lib/seo";
 import { apiRequest } from "@/lib/server/api";
 import { getMe, readSessionTokens } from "@/lib/server/session";
-import { APP_URL } from "@/lib/site";
+import { EDITOR_OPEN_PATH } from "@/lib/editor-handoff";
 
 // Opened from the verification email: rendered per request and never cached,
 // noindex, disallowed in robots.txt, Referrer-Policy: no-referrer. The token
@@ -69,7 +69,7 @@ export default async function VerifyEmailPage({ searchParams }: { searchParams: 
       body = <>อีเมล {view.email ? <strong>{view.email}</strong> : null} ยืนยันแล้ว เริ่มใช้งาน AI ในห้องตัดต่อได้เลย</>;
       actions = (
         <>
-          <a href={APP_URL} className="btn btn-primary btn-lg">
+          <a href={EDITOR_OPEN_PATH} className="btn btn-primary btn-lg">
             เปิดห้องตัดต่อ
           </a>
           {accountLink}

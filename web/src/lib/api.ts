@@ -178,6 +178,18 @@ export async function logout(
   }
 }
 
+/**
+ * `POST /auth/handoff/redeem` — spend a one-time code the account site minted
+ * (lib/handoff.ts, docs/auth-handoff.md) for an ordinary token pair, the same
+ * one /auth/login returns. No credentials: the code is the credential.
+ */
+export function redeemHandoff(baseUrl: string, code: string): Promise<TokenPair> {
+  return request<TokenPair>(baseUrl, '/auth/handoff/redeem', {
+    method: 'POST',
+    body: JSON.stringify({ code, target: 'editor' })
+  })
+}
+
 export function me(baseUrl: string, accessToken: string): Promise<Me> {
   return request<Me>(baseUrl, '/auth/me', {
     headers: { Authorization: `Bearer ${accessToken}` }

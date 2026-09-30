@@ -2,7 +2,6 @@ import type { Metadata } from "next";
 import { CheckoutStatus } from "@/components/account/CheckoutStatus";
 import { privatePageMetadata } from "@/lib/seo";
 import { loadAccountData } from "@/lib/server/account-data";
-import { APP_URL } from "@/lib/site";
 
 // Stripe returns here with ?session_id=… (protected by Proxy; noindex).
 export const metadata: Metadata = privatePageMetadata("ชำระเงิน");
@@ -16,7 +15,7 @@ export default async function CheckoutSuccessPage() {
     <main id="main" className="container page">
       <p className="eyebrow">การชำระเงิน</p>
       <h1 className="page-title">ขอบคุณที่อัปเกรดแพลน</h1>
-      <CheckoutStatus initial={initial} appUrl={APP_URL} />
+      <CheckoutStatus initial={initial} />
     </main>
   );
 }

@@ -111,6 +111,12 @@ TRANSFER_UPLOAD_IP = Limit("transfer_upload:ip", 60, _15_MIN)
 #: every rule but the wizard's estimate it refuses rather than guesses when
 #: the store is down.
 PLAN_DUB_ACCOUNT = Limit("plan_dub:account", 30, _15_MIN)
+#: Site -> editor sign-in handoff (routers/auth_handoff.py). Minting happens on
+#: every "open editor" click, so the account limit is generous; redeeming is
+#: unauthenticated and the code is 256 random bits, so the per-IP limit is
+#: hygiene against a flood, not the thing that makes guessing hopeless.
+HANDOFF_MINT_ACCOUNT = Limit("handoff_mint:account", 30, _15_MIN)
+HANDOFF_REDEEM_IP = Limit("handoff_redeem:ip", 60, _15_MIN)
 
 ALL_LIMITS: tuple[Limit, ...] = (
     LOGIN_EMAIL_IP, LOGIN_EMAIL, LOGIN_IP, REGISTER_EMAIL, REGISTER_IP, REGISTER_IP_DAY, FORGOT_EMAIL, FORGOT_IP,
@@ -118,7 +124,7 @@ ALL_LIMITS: tuple[Limit, ...] = (
     CHANGE_PASSWORD_ACCOUNT, USAGE_ESTIMATE_ACCOUNT, ADMIN_LOGIN_EMAIL, ADMIN_LOGIN_IP, ADMIN_OTP_CHALLENGE, ADMIN_OTP_IP,
     ADMIN_RESEND_CHALLENGE, ADMIN_RESEND_IP, ADMIN_REFRESH_IP, GOOGLE_START_IP, GOOGLE_CALLBACK_IP,
     DELETE_ACCOUNT_ACCOUNT, TRANSFER_TICKET_ACCOUNT, TRANSFER_UPLOAD_IP,
-    PLAN_DUB_ACCOUNT,
+    PLAN_DUB_ACCOUNT, HANDOFF_MINT_ACCOUNT, HANDOFF_REDEEM_IP,
 )
 
 
