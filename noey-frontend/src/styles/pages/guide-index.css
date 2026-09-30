@@ -122,20 +122,15 @@
 .bin-thumb__wave {
   position: absolute;
   left: 14px;
-  right: 14px;
   bottom: 30px;
+  width: calc(100% - 28px);
   height: 36%;
-  display: flex;
-  align-items: flex-end;
-  gap: 2px;
 }
 
-.bin-thumb__wave i {
-  flex: 1;
-  min-width: 1px;
-  height: calc(var(--h) * 100%);
-  border-radius: 2px 2px 0 0;
-  background: color-mix(in srgb, var(--color-accent) 42%, transparent);
+.bin-thumb__wave path {
+  fill: none;
+  stroke: color-mix(in srgb, var(--color-accent) 42%, transparent);
+  stroke-width: 2;
 }
 
 /* What the playhead has passed reads as "played". */

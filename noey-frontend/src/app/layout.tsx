@@ -15,7 +15,6 @@ import { LOCALE, PAGES, SITE_NAME, SITE_URL } from "@/lib/site";
 import "./globals.css";
 import "../styles/shell.css";
 import "../styles/components.css";
-import "../styles/mockup.css";
 
 // Self-hosted by next/font (no request to Google at runtime). Noto Sans Thai
 // is a variable font: one file per subset covers every weight the design uses

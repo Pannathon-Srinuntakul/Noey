@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { NoeyMark } from "../NoeyMark";
 import { WordReveal } from "./WordReveal";
+import "../../styles/parts/story.css";
 
 /**
  * The closing scene of a page: a fade to black (the band is a night scene in

@@ -187,7 +187,7 @@ export default function AboutPage() {
                     <strong className="locked__title">{principle.title}</strong>
                     <span className="locked__text">{principle.text}</span>
                   </div>
-                  <Waveform bars={40} seed={index * 5 + 11} className="locked__wave" />
+                  <Waveform bars={40} seed={index * 5 + 11} className="locked__wave" still />
                 </div>
               </li>
             ))}

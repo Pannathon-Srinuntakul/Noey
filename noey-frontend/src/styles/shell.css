@@ -933,6 +933,22 @@ html:has(.menu[open]) {
   }
 }
 
+/* A bottom sheet slides up from below the screen edge (no fade). Besides
+   reading as a sheet, it keeps the notice out of the page's Largest
+   Contentful Paint: its text first paints as a sliver at the edge, so the
+   page's own content stays the LCP element. */
+@media (max-width: 599px) and (prefers-reduced-motion: no-preference) {
+  dialog.dialog.beta-sheet[open] {
+    animation: sheet-up var(--dur-4) var(--ease-out);
+  }
+}
+
+@keyframes sheet-up {
+  from {
+    translate: 0 100%;
+  }
+}
+
 /* ── Footer: end credits ─────────────────────────────────────────────────────
    Always a night scene (the element carries .theme-night): every page ends
    the way a film does, fading to black and rolling its credits. */

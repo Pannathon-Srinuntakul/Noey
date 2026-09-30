@@ -41,7 +41,7 @@ export function ClipCard({
     <article className={classes}>
       <div className="clip__strip" aria-hidden="true">
         {track ? <span className="trk tc">{track}</span> : null}
-        {media ?? <Waveform bars={36} seed={seed} className="clip__wave" />}
+        {media ?? <Waveform bars={36} seed={seed} className="clip__wave" still />}
         {timecode ? <span className="tc clip__tc">{timecode}</span> : null}
       </div>
       <div className="clip__body">

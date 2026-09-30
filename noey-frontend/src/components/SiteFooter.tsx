@@ -36,8 +36,11 @@ export function SiteFooter() {
                 </span>
                 <span id="footer-menu">เมนู</span>
               </p>
+              {/* Footer links are never prefetched on sight: on short pages the whole
+                  footer is on screen at load, and a dozen prefetches would compete
+                  with the page's first paint. */}
               {NAV_LINKS.map((link) => (
-                <Link key={link.href} href={link.href}>
+                <Link key={link.href} href={link.href} prefetch={false}>
                   {link.label}
                 </Link>
               ))}
@@ -50,7 +53,7 @@ export function SiteFooter() {
                 <span id="footer-guide">คู่มือ</span>
               </p>
               {GUIDE_KEYS.map((key) => (
-                <Link key={PAGES[key].path} href={PAGES[key].path}>
+                <Link key={PAGES[key].path} href={PAGES[key].path} prefetch={false}>
                   {PAGES[key].label}
                 </Link>
               ))}

@@ -2,6 +2,7 @@ import type { CSSProperties } from "react";
 import { IconUpload } from "../ds/icons";
 import { Waveform } from "../ds/Waveform";
 import { SAMPLE_FILES, SAMPLE_SUBTITLES } from "./sample";
+import "../../styles/mockup.css";
 
 /**
  * One step of the workflow, drawn in code (stands in for a MediaSlot

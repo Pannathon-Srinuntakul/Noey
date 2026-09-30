@@ -1,5 +1,6 @@
 import { BETA_PRICE_NOTE, BETA_STRIKE_LABEL } from "@/lib/beta";
 import { CLIPS_FOOTNOTE, COMPARISON_ROWS, PLAN_COPY, TIERS, displayPrice, isBetaPriced, strikePrice, type PriceTable } from "@/lib/plans";
+import "../styles/parts/plans.css";
 
 /**
  * The seven-plan comparison table. Rendered on /pricing and again on the help

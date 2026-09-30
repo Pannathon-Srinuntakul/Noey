@@ -17,6 +17,7 @@ import { MicroDemo } from "@/components/mockups/MicroDemos";
 import { StepMockup } from "@/components/mockups/StepMockup";
 import { HOME_FAQ } from "@/lib/faq";
 import { HOME_FITS, HOME_MISFITS } from "@/lib/scope";
+import "../../styles/pages/article.css";
 import "./kitchen-sink.css";
 
 /**

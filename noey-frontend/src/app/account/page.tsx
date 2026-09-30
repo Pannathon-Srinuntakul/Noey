@@ -54,7 +54,7 @@ export default async function AccountAppPage({ searchParams }: { searchParams: P
               <span className="acct-hero__glow" />
               <NoeyMark size={88} className="acct-hero__mark" />
               <span className="acct-hero__track">
-                <Waveform bars={48} seed={23} className="acct-hero__wave" />
+                <Waveform bars={48} seed={23} className="acct-hero__wave" still />
                 <span className="acct-hero__head" />
               </span>
             </div>

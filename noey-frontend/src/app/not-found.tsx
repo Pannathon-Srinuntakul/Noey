@@ -2,7 +2,6 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { waveform } from "@/components/ds/timecode";
 import { SITE_NAME } from "@/lib/site";
-import "../styles/pages/not-found.css";
 
 export const metadata: Metadata = {
   title: { absolute: `ไม่พบหน้าที่ต้องการ | ${SITE_NAME}` },
@@ -33,7 +32,22 @@ function clipsOf(lane: Lane) {
 
 const V = clipsOf(VIDEO);
 const A = clipsOf(AUDIO);
-const BARS = waveform(132, 53);
+
+/*
+ * The ruler ticks and the audio waveform are each ONE path, not one element
+ * per tick or bar: the root not-found tree travels in every page's RSC
+ * payload, so its size is paid on every page load.
+ */
+const TICKS_PATH = Array.from({ length: 56 }, (_, index) => `M${50 + index * 12} ${index % 5 === 0 ? 8 : 13}V18`).join("");
+const WAVE_PATH = (() => {
+  const mid = (AUDIO.top + AUDIO.bottom) / 2;
+  return waveform(132, 53)
+    .map((height, index) => {
+      const half = Math.max(1, Math.round(height * 13));
+      return `M${55.5 + index * 5} ${mid - half}V${mid + half}`;
+    })
+    .join("");
+})();
 
 /**
  * 404: a timeline with one clip missing — the hole cut on the logo's
@@ -43,7 +57,6 @@ const BARS = waveform(132, 53);
  * everything.
  */
 function MissingClip() {
-  const mid = (AUDIO.top + AUDIO.bottom) / 2;
   return (
     <svg className="nf__svg" viewBox="0 0 720 156" role="presentation" aria-hidden="true" focusable="false">
       <defs>
@@ -54,22 +67,16 @@ function MissingClip() {
           <stop offset="0" className="nf__depth-top" />
           <stop offset="1" className="nf__depth-bottom" />
         </linearGradient>
-        <clipPath id="nf-audio-a">
+        <clipPath id="nf-audio">
           <polygon points={A.a} />
-        </clipPath>
-        <clipPath id="nf-audio-b">
           <polygon points={A.b} />
-        </clipPath>
-        <clipPath id="nf-audio-c">
           <polygon points={A.c} />
         </clipPath>
       </defs>
 
       {/* Ruler */}
       <line x1="50" y1="18" x2="716" y2="18" className="nf__rule" />
-      {Array.from({ length: 56 }, (_, index) => (
-        <line key={index} x1={50 + index * 12} y1={index % 5 === 0 ? 8 : 13} x2={50 + index * 12} y2="18" className="nf__tick" />
-      ))}
+      <path d={TICKS_PATH} className="nf__tick" />
       {[0, 5, 10].map((second, index) => (
         <text key={second} x={54 + index * 120} y="10" className="nf__tc">
           {`00:00:${String(second).padStart(2, "0")}:00`}
@@ -106,16 +113,10 @@ function MissingClip() {
       <polygon points={V.c} className="nf__clip" />
 
       {/* Audio clips with their waveform */}
-      {(["a", "b", "c"] as const).map((key) => (
-        <g key={key} clipPath={`url(#nf-audio-${key})`}>
-          <polygon points={A[key]} className="nf__clip nf__clip--audio" />
-          {BARS.map((height, index) => {
-            const x = 54 + index * 5;
-            const h = Math.max(2, height * 26);
-            return <rect key={index} x={x} y={mid - h / 2} width="3" height={h} rx="1" className="nf__bar" />;
-          })}
-        </g>
-      ))}
+      <polygon points={A.a} className="nf__clip nf__clip--audio" />
+      <polygon points={A.b} className="nf__clip nf__clip--audio" />
+      <polygon points={A.c} className="nf__clip nf__clip--audio" />
+      <path d={WAVE_PATH} clipPath="url(#nf-audio)" className="nf__bar" />
 
       {/* The playhead: runs, reaches the hole, falls in */}
       <g className="nf__head">

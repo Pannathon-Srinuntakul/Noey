@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, type CSSProperties } from "react";
 import { formatTimecode, waveform } from "../ds/timecode";
+import { wavePath } from "../ds/Waveform";
 
 /**
  * A guide's thumbnail in the media bin, generated from the guide itself
@@ -16,7 +17,7 @@ import { formatTimecode, waveform } from "../ds/timecode";
 export function BinThumb({ name, sections, seed, length }: { name: string; sections: number; seed: number; length: number }) {
   const box = useRef<HTMLDivElement>(null);
   const readout = useRef<HTMLSpanElement>(null);
-  const bars = waveform(64, seed);
+  const bars = wavePath(waveform(64, seed), "bottom");
 
   useEffect(() => {
     const element = box.current;
@@ -60,11 +61,9 @@ export function BinThumb({ name, sections, seed, length }: { name: string; secti
           <i key={index} style={{ left: `${((index + 0.5) / sections) * 100}%` }} />
         ))}
       </span>
-      <span className="bin-thumb__wave">
-        {bars.map((height, index) => (
-          <i key={index} style={{ "--h": height.toFixed(3) } as CSSProperties} />
-        ))}
-      </span>
+      <svg className="bin-thumb__wave" viewBox="0 0 192 100" preserveAspectRatio="none" focusable="false">
+        <path d={bars} />
+      </svg>
       <span className="bin-thumb__played" />
       <span className="bin-thumb__head" />
       <span className="bin-thumb__name tc">{name}</span>

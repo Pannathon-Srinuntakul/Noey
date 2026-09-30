@@ -1,6 +1,7 @@
 import type { CSSProperties } from "react";
 import { IconArrowRight, IconMusic } from "../ds/icons";
 import { splitWords } from "./sample";
+import "../../styles/mockup.css";
 
 /**
  * Tiny looping demos for the six feature cards: each shows its own feature

@@ -18,7 +18,12 @@ export function Breadcrumb({ trail }: { trail: readonly Crumb[] }) {
                 <span aria-current="page">{crumb.name}</span>
               ) : (
                 <>
-                  <Link href={crumb.path}>{crumb.name}</Link>
+                  {/* No viewport prefetch: the trail is on screen at every load and is
+                      rarely the next click; its prefetch would only compete with
+                      the page's own first paint. */}
+                  <Link href={crumb.path} prefetch={false}>
+                    {crumb.name}
+                  </Link>
                   <svg className="crumbs__sep" viewBox="0 0 12 16" width="12" height="16" aria-hidden="true" focusable="false">
                     <path d="M2.5 13.5 5.5 9M6.5 7l3-4.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" fill="none" />
                   </svg>

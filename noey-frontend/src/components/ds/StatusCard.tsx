@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { NoeyMark } from "../NoeyMark";
+import "../../styles/parts/status.css";
 
 export type StatusTone = "success" | "danger" | "info" | "pending" | "quiet";
 

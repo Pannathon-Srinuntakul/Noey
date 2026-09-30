@@ -30,7 +30,10 @@ export function SiteHeader() {
     <header className="hdr" data-site-header="">
       <div className="hdr__bar">
         <div className="hdr__row">
-          <Link href="/" className="brand">
+          {/* No viewport prefetch: the home page is the heaviest route, and the
+              logo sits in view on every page load, where the prefetch would
+              compete with the page's own first paint on a slow connection. */}
+          <Link href="/" className="brand" prefetch={false}>
             <NoeyMark size={28} className="brand__mark" />
             <span className="brand__words">
               <span className="brand__name">Noey Studio</span>
@@ -44,7 +47,9 @@ export function SiteHeader() {
               <Link href="/login" className="btn btn-ghost btn-sm">
                 เข้าสู่ระบบ
               </Link>
-              <Link href="/signup" className="btn btn-primary btn-sm" data-magnetic="">
+              {/* Not prefetched on sight: /signup carries the editor mock-up and its
+                  stylesheets, too heavy to fetch alongside every page's first paint. */}
+              <Link href="/signup" className="btn btn-primary btn-sm" data-magnetic="" prefetch={false}>
                 เริ่มใช้ฟรี
               </Link>
             </div>

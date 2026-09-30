@@ -1,6 +1,7 @@
 import type { CSSProperties } from "react";
 import { Waveform } from "../ds/Waveform";
 import { SAMPLE_FILES, SAMPLE_LINES, SAMPLE_PROJECT, SAMPLE_SUBTITLES, splitWords } from "./sample";
+import "../../styles/mockup.css";
 
 /**
  * The editor, drawn in HTML and CSS (no screenshots, no canvas): media bin,

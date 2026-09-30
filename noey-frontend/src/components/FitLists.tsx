@@ -1,4 +1,5 @@
 import { IconCheck, IconMinus } from "./ds/icons";
+import "../styles/parts/story.css";
 
 /**
  * "Suits this work" and "cannot do yet" as two parallel tracks of equal
