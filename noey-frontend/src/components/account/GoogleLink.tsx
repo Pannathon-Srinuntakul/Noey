@@ -52,9 +52,9 @@ export function GoogleLinkPanel({
 
   if (!linked || state?.ok) {
     return (
-      <form method="post" action="/api/auth/google/start" className="stack" style={{ marginTop: 10 }}>
+      <form method="post" action="/api/auth/google/start" className="stack acct-form acct-form--tight">
         <input type="hidden" name="intent" value="link" />
-        <p className="field-hint" style={{ margin: 0 }}>
+        <p className="field-hint field-hint--flush">
           เชื่อมต่อแล้วจะเข้าสู่ระบบด้วยปุ่ม “เข้าสู่ระบบด้วย Google” ได้ โดยไม่ต้องพิมพ์รหัสผ่าน
         </p>
         <div>
@@ -67,16 +67,16 @@ export function GoogleLinkPanel({
   }
 
   return (
-    <form action={action} className="stack" style={{ marginTop: 10 }}>
-      <p style={{ margin: 0, fontSize: 14 }}>
+    <form action={action} className="stack acct-form acct-form--tight">
+      <p className="acct-form__line">
         เชื่อมต่ออยู่กับ <strong>{googleEmail || "บัญชี Google"}</strong>
       </p>
       {!hasPassword ? (
-        <p className="field-hint" style={{ margin: 0 }}>
+        <p className="field-hint field-hint--flush">
           บัญชีนี้ยังไม่มีรหัสผ่าน ตั้งรหัสผ่านก่อนจึงจะยกเลิกการเชื่อมต่อได้ ไม่อย่างนั้นจะเข้าสู่ระบบไม่ได้อีก
         </p>
       ) : null}
-      <button type="submit" className="btn btn-secondary" style={{ fontSize: 14, alignSelf: "flex-start" }} disabled={pending || !hasPassword}>
+      <button type="submit" className="btn btn-secondary btn-sm acct-form__submit" disabled={pending || !hasPassword}>
         {pending ? "กำลังยกเลิก…" : "ยกเลิกการเชื่อมต่อ"}
       </button>
       {noticeView}
@@ -93,14 +93,14 @@ export function GoogleLinkPanel({
 export function SetPasswordByEmail({ email }: { email: string }) {
   const [state, action, pending] = useActionState<ActionState | undefined, FormData>(forgotPasswordAction, undefined);
   return (
-    <form action={action} className="stack" style={{ marginTop: 14 }}>
+    <form action={action} className="stack acct-form">
       <input type="hidden" name="email" value={email} />
-      <p style={{ margin: 0, fontSize: 14 }}>
+      <p className="acct-form__line">
         บัญชีนี้เข้าสู่ระบบด้วย Google และยังไม่มีรหัสผ่าน ถ้าต้องการเข้าสู่ระบบด้วยอีเมลได้ด้วย ให้ขอลิงก์ตั้งรหัสผ่านทางอีเมล{" "}
         <strong>{email}</strong>
       </p>
       <TurnstileWidget siteKey={TURNSTILE_SITE_KEY} resetKey={state} />
-      <button type="submit" className="btn btn-primary" style={{ fontSize: 14, alignSelf: "flex-start" }} disabled={pending || !!state?.ok}>
+      <button type="submit" className="btn btn-primary btn-sm acct-form__submit" disabled={pending || !!state?.ok}>
         {pending ? "กำลังส่ง…" : "ส่งลิงก์ตั้งรหัสผ่าน"}
       </button>
       <Feedback state={state} />

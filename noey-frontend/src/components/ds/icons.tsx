@@ -160,3 +160,16 @@ export const IconExternal = (props: IconProps) => (
     <path d="M18 14v4.5a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 4 18.5v-11A1.5 1.5 0 0 1 5.5 6H10" />
   </Svg>
 );
+
+export const IconLevels = (props: IconProps) => (
+  <Svg {...props}>
+    <path d="M5 20v-5M9.5 20V9M14 20v-8M18.5 20V4" />
+  </Svg>
+);
+
+export const IconCard = (props: IconProps) => (
+  <Svg {...props}>
+    <rect x="3" y="5.5" width="18" height="13" rx="2.2" />
+    <path d="M3 10h18M7 15h4" />
+  </Svg>
+);

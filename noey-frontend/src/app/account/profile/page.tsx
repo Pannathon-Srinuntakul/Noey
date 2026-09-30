@@ -15,7 +15,7 @@ export default async function ProfilePage({ searchParams }: { searchParams: Prom
   const me = resolvePageOutcome(await getMe(), "/account/profile");
   if (!me?.ok) {
     return (
-      <div className="notice" style={{ marginTop: 32 }} role="status">
+      <div className="notice" role="status">
         <p>ยังดึงข้อมูลบัญชีไม่ได้ในตอนนี้ ลองรีเฟรชหน้านี้อีกครั้งในอีกสักครู่</p>
       </div>
     );
@@ -34,11 +34,11 @@ export default async function ProfilePage({ searchParams }: { searchParams: Prom
   const flowNotice = googleMessage(googleCode);
 
   return (
-    <section className="account-grid" aria-label="ข้อมูลส่วนตัว">
+    <section className="account-grid acct-profile" aria-label="ข้อมูลส่วนตัว">
       <div className="card account-card">
         <div className="card-kicker">ข้อมูลส่วนตัว</div>
         <ProfileForm name={sanitizeDisplayName(me.data.display_name)} />
-        <div className="card-section" style={{ marginTop: 20 }}>
+        <div className="card-section">
           <h3>อีเมลที่ใช้เข้าสู่ระบบ</h3>
           {hasPassword ? (
             <EmailForm email={me.data.email} />
@@ -53,7 +53,7 @@ export default async function ProfilePage({ searchParams }: { searchParams: Prom
         <div className="card-kicker">ความปลอดภัย</div>
         {hasPassword ? <PasswordForm /> : <SetPasswordByEmail email={me.data.email} />}
         {googleEnabled || googleLinked ? (
-          <div className="card-section" id="google" style={{ marginTop: 20 }}>
+          <div className="card-section" id="google">
             <h3>บัญชี Google</h3>
             <GoogleLinkPanel
               linked={googleLinked}
@@ -63,10 +63,10 @@ export default async function ProfilePage({ searchParams }: { searchParams: Prom
             />
           </div>
         ) : null}
-        <div className="card-section danger-zone" id="delete-account" style={{ marginTop: 16 }}>
+        <div className="card-section danger-zone" id="delete-account">
           <h3>ลบบัญชี</h3>
           <p>ลบบัญชีและโปรเจกต์ทั้งหมดบนเซิร์ฟเวอร์อย่างถาวร กู้คืนไม่ได้ ก่อนยืนยันจะแสดงรายละเอียดว่าอะไรถูกลบและอะไรเก็บไว้</p>
-          <div style={{ marginTop: 12 }}>
+          <div className="danger-zone__action">
             <DeleteAccount
               hasPassword={hasPassword}
               googleLinked={googleLinked}

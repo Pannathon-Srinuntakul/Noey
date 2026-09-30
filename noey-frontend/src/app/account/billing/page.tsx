@@ -61,7 +61,7 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
     <>
       {/* Not configured (404/503 or billing_enabled=false) is a calm notice; any other failure says so plainly. */}
       {!billingEnabled ? (
-        <div className="notice" role="status" style={{ marginTop: 32 }}>
+        <div className="notice" role="status">
           <p>
             {billing || billingMissing
               ? MSG.billingUnavailable
@@ -70,7 +70,7 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
         </div>
       ) : null}
       {planChangeDone ? (
-        <div className="notice" role="status" style={{ marginTop: 32 }}>
+        <div className="notice" role="status">
           <p>
             ยืนยันการเปลี่ยนแพลนแล้ว การอัปเกรดมีผลทันที ส่วนการลดแพลนมีผลเมื่อจบรอบบิลปัจจุบัน
             ถ้าแพลนด้านล่างยังไม่เปลี่ยน รีเฟรชหน้านี้อีกครั้งในอีกสักครู่
@@ -78,7 +78,7 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
         </div>
       ) : null}
       {fromSignup && requested ? (
-        <div className="notice" role="status" style={{ marginTop: 32 }}>
+        <div className="notice" role="status">
           <p>
             {billingEnabled
               ? `สมัครบัญชีเรียบร้อยแล้ว ตอนนี้ใช้แพลนฟรีอยู่ กด “อัปเกรดแพลน” เพื่อไปหน้าชำระเงินของแพลน ${PLAN_COPY[requested].name} ได้เลย`

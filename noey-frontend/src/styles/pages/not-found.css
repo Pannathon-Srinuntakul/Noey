@@ -1,0 +1,210 @@
+/*
+ * 404 — a timeline missing one clip. The hole is cut on the logo's diagonal
+ * through every track; the playhead runs along the ruler, reaches the hole,
+ * hesitates, and drops in. The resting state (no animation) is the playhead
+ * already lying in the hole.
+ */
+
+/* The page's own drawing replaces the status page's backdrop track. */
+.status-page.nf::before {
+  display: none;
+}
+
+.nf__inner {
+  display: grid;
+  justify-items: center;
+  gap: clamp(28px, 4vw, 44px);
+}
+
+.nf__stage {
+  width: min(100%, 760px);
+  padding: 16px 16px 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background:
+    radial-gradient(60% 80% at 60% 100%, var(--gold-softer), transparent 70%),
+    color-mix(in srgb, var(--panel) 80%, transparent);
+  box-shadow: var(--shadow-2), var(--rim);
+}
+
+.nf__svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: hidden;
+  font-family: var(--font-body);
+}
+
+.nf__rule {
+  stroke: var(--line-2);
+  stroke-width: 1;
+}
+
+.nf__tick {
+  stroke: var(--line-2);
+  stroke-width: 1;
+}
+
+.nf__tc {
+  font-size: 8.5px;
+  letter-spacing: 0.08em;
+  fill: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.nf__tc--gold {
+  fill: var(--gold-ink);
+}
+
+.nf__trk {
+  fill: var(--gold-soft);
+}
+
+.nf__trk-text {
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  fill: var(--gold-ink);
+}
+
+.nf__lane {
+  fill: var(--well);
+  stroke: var(--line);
+  stroke-width: 1;
+}
+
+.nf__clip {
+  fill: color-mix(in srgb, var(--color-accent) 58%, var(--panel));
+  stroke: color-mix(in srgb, var(--color-accent) 80%, transparent);
+  stroke-width: 1;
+}
+
+.nf__clip--audio {
+  fill: color-mix(in srgb, var(--color-accent) 16%, var(--panel));
+  stroke: color-mix(in srgb, var(--color-accent) 45%, transparent);
+}
+
+.nf__bar {
+  fill: color-mix(in srgb, var(--color-accent) 60%, transparent);
+}
+
+/* The hole: darker as it goes down, hatched, edged with a dashed cut line. */
+.nf__hole {
+  fill: url(#nf-depth);
+  stroke: color-mix(in srgb, var(--color-accent) 55%, transparent);
+  stroke-width: 1.2;
+  stroke-dasharray: 4 4;
+}
+
+.nf__hole-hatch {
+  fill: url(#nf-hatch);
+}
+
+.nf__hatch {
+  stroke: color-mix(in srgb, var(--color-text) 10%, transparent);
+  stroke-width: 1;
+}
+
+.nf__depth-top {
+  stop-color: var(--bg);
+  stop-opacity: 0.2;
+}
+
+.nf__depth-bottom {
+  stop-color: var(--color-neutral-900);
+  stop-opacity: 0.55;
+}
+
+.nf__cap {
+  fill: var(--gold);
+}
+
+.nf__line {
+  stroke: var(--gold);
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+/* Resting state: fallen into the hole. */
+.nf__head {
+  transform: translate(442px, 70px) rotate(-11.3deg);
+  filter: drop-shadow(0 0 5px var(--gold-glow));
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .nf__head {
+    animation: nf-run 3.6s 0.5s both;
+  }
+}
+
+@keyframes nf-run {
+  0% {
+    transform: translate(50px, 14px) rotate(0deg);
+    animation-timing-function: linear;
+  }
+  50% {
+    transform: translate(433px, 14px) rotate(0deg);
+    animation-timing-function: linear;
+  }
+  /* hesitates at the edge … */
+  60% {
+    transform: translate(433px, 14px) rotate(0deg);
+    animation-timing-function: ease-in;
+  }
+  66% {
+    transform: translate(435px, 20px) rotate(-4deg);
+    animation-timing-function: cubic-bezier(0.55, 0, 1, 0.45);
+  }
+  /* … and drops in */
+  100% {
+    transform: translate(442px, 70px) rotate(-11.3deg);
+  }
+}
+
+.nf__copy {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  max-width: 640px;
+  text-align: center;
+}
+
+.nf__code {
+  display: inline-grid;
+  place-items: center;
+  min-width: 56px;
+  height: 26px;
+  margin: 0;
+  padding: 0 10px;
+  border-radius: 6px;
+  background: var(--gold-soft);
+  color: var(--gold-ink);
+  font-size: var(--fs-13);
+  font-weight: 600;
+}
+
+.nf__title {
+  font-size: clamp(1.875rem, 1.35rem + 2.2vw, 3rem);
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.015em;
+}
+
+.nf__lead {
+  max-width: 36em;
+  margin: 0;
+  font-size: var(--fs-lead);
+  line-height: 1.8;
+  color: var(--ink-2);
+}
+
+.nf__links {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}

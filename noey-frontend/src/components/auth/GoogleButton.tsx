@@ -9,7 +9,7 @@ import type { ButtonHTMLAttributes } from "react";
  *
  *  - Light theme: fill #FFFFFF, 1px inside stroke #747775, text #1F1F1F.
  *    Dark theme: fill #131314, stroke #8E918F, text #E3E3E3 (follows the
- *    site theme, see .gsi-button in site.css).
+ *    site theme, see .gsi-button in globals.css).
  *  - Google Sans Medium 14/20. Thai glyphs fall back to the site's Noto Sans
  *    Thai; the guidelines allow a localized call to action.
  *  - Web padding: 12px before the logo, 10px logo-to-text, 12px after the text.

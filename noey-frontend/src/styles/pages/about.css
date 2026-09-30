@@ -82,6 +82,7 @@
   padding: 6px 0 0 32px;
 }
 
+/* Lit by default (no JS, reduced motion); dark only while the chapter waits below the fold. */
 .chapter__dot {
   position: absolute;
   left: 2px;
@@ -89,19 +90,20 @@
   width: 12px;
   height: 12px;
   rotate: 45deg;
-  border: 2px solid var(--line-3);
+  border: 2px solid var(--gold);
   border-radius: 3px;
-  background: var(--bg);
+  background: var(--gold);
+  box-shadow: 0 0 0 4px var(--gold-soft);
   transition:
     background-color var(--dur-3) ease,
     border-color var(--dur-3) ease,
     box-shadow var(--dur-3) ease;
 }
 
-.chapter[data-reveal-state="in"] .chapter__dot {
-  border-color: var(--gold);
-  background: var(--gold);
-  box-shadow: 0 0 0 4px var(--gold-soft);
+.chapter[data-reveal-state="wait"] .chapter__dot {
+  border-color: var(--line-3);
+  background: var(--bg);
+  box-shadow: none;
 }
 
 .chapter__tc {

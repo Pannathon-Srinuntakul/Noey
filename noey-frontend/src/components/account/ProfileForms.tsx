@@ -33,7 +33,7 @@ export function ProfileForm({ name }: { name: string }) {
   }, [state]);
 
   return (
-    <form action={action} className="stack" style={{ marginTop: 14 }}>
+    <form action={action} className="stack acct-form">
       <div className="field">
         <label htmlFor="a-name">ชื่อ</label>
         <input
@@ -50,7 +50,7 @@ export function ProfileForm({ name }: { name: string }) {
         />
         {errors.name ? <p className="field-error" id="a-name-error">{errors.name}</p> : null}
       </div>
-      <button type="submit" className="btn btn-primary" style={{ fontSize: 14, alignSelf: "flex-start" }} disabled={pending}>
+      <button type="submit" className="btn btn-primary btn-sm acct-form__submit" disabled={pending}>
         {pending ? "กำลังบันทึก…" : "บันทึกการแก้ไข"}
       </button>
       <Feedback state={state} />
@@ -66,7 +66,7 @@ export function EmailForm({ email }: { email: string }) {
   const [state, action, pending] = useActionState<ActionState | undefined, FormData>(changeEmailAction, undefined);
   const errors = state?.fieldErrors ?? {};
   return (
-    <form action={action} className="stack" style={{ marginTop: 16 }}>
+    <form action={action} className="stack acct-form">
       <input type="hidden" name="current_email" value={email} />
       <div className="field">
         <label htmlFor="a-email">อีเมล</label>
@@ -101,7 +101,7 @@ export function EmailForm({ email }: { email: string }) {
         />
         {errors.current_password ? <p className="field-error" id="a-email-pass-error">{errors.current_password}</p> : null}
       </div>
-      <button type="submit" className="btn btn-secondary" style={{ fontSize: 14, alignSelf: "flex-start" }} disabled={pending}>
+      <button type="submit" className="btn btn-secondary btn-sm acct-form__submit" disabled={pending}>
         {pending ? "กำลังส่ง…" : "เปลี่ยนอีเมล"}
       </button>
       <Feedback state={state} />
@@ -115,7 +115,7 @@ export function PasswordForm() {
   const errors = state?.fieldErrors ?? {};
 
   return (
-    <form ref={formRef} action={action} className="stack" style={{ marginTop: 14 }}>
+    <form ref={formRef} action={action} className="stack acct-form">
       {/* Lets password managers attach the change to the right account. */}
       <input type="text" name="username" autoComplete="username" hidden readOnly />
       <div className="field">
@@ -148,7 +148,7 @@ export function PasswordForm() {
         />
         {errors.new_password ? <p className="field-error" id="a-new-error">{errors.new_password}</p> : null}
       </div>
-      <button type="submit" className="btn btn-primary" style={{ fontSize: 14, alignSelf: "flex-start" }} disabled={pending}>
+      <button type="submit" className="btn btn-primary btn-sm acct-form__submit" disabled={pending}>
         {pending ? "กำลังเปลี่ยน…" : "เปลี่ยนรหัสผ่าน"}
       </button>
       <Feedback state={state} />

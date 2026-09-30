@@ -105,34 +105,30 @@ export function BillingPanel(props: BillingPanelProps) {
   const hasCustomer = hasLiveSubscription || !!cardLabel;
 
   return (
-    <section className="account-grid" aria-label="แพลนและการชำระเงิน">
-      <div className="card account-card">
+    <section className="account-grid acct-billing" aria-label="แพลนและการชำระเงิน">
+      <div className="card account-card acct-plan">
         <div className="card-kicker">แพลนปัจจุบัน</div>
         <div className="plan-name">{planName}</div>
-        {statusLine ? (
-          <p className="plan-status" style={statusWarn ? { color: "var(--color-danger)" } : undefined}>
-            {statusLine}
-          </p>
-        ) : null}
+        {statusLine ? <p className={statusWarn ? "plan-status plan-status--warn" : "plan-status"}>{statusLine}</p> : null}
         {planFeatures.length > 0 ? (
-          <ul className="price-card__features" style={{ marginBottom: 20 }}>
+          <ul className="plan-features">
             {planFeatures.map((feature) => (
               <li key={feature}>{feature}</li>
             ))}
           </ul>
         ) : null}
         <div className="button-row">
-          <button type="button" className="btn btn-primary" style={{ fontSize: 14 }} onClick={() => setUpgradeOpen(true)} disabled={!billingEnabled}>
+          <button type="button" className="btn btn-primary btn-sm" onClick={() => setUpgradeOpen(true)} disabled={!billingEnabled}>
             {hasLiveSubscription ? "เปลี่ยนแพลน" : "เลือกแพลน"}
           </button>
           {hasLiveSubscription && !cancelScheduled ? (
-            <button type="button" className="btn btn-ghost" style={{ fontSize: 14 }} onClick={() => setCancelOpen(true)} disabled={!billingEnabled}>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => setCancelOpen(true)} disabled={!billingEnabled}>
               ยกเลิกแพลน
             </button>
           ) : null}
           {hasLiveSubscription && cancelScheduled ? (
             <form action={resumeAction}>
-              <button type="submit" className="btn btn-ghost" style={{ fontSize: 14 }} disabled={!billingEnabled || resumePending}>
+              <button type="submit" className="btn btn-ghost btn-sm" disabled={!billingEnabled || resumePending}>
                 {resumePending ? "กำลังดำเนินการ…" : "ใช้แพลนนี้ต่อ"}
               </button>
             </form>
@@ -148,7 +144,7 @@ export function BillingPanel(props: BillingPanelProps) {
 
       <div className="card account-card">
         <div className="card-kicker">การชำระเงิน</div>
-        <dl className="kv" style={{ marginTop: 12 }}>
+        <dl className="kv">
           <div>
             <dt>วิธีชำระเงิน</dt>
             <dd>{cardLabel ?? "ยังไม่ได้ผูกบัตร"}</dd>
@@ -160,7 +156,7 @@ export function BillingPanel(props: BillingPanelProps) {
           <div>
             <dt>ใบเสร็จย้อนหลัง</dt>
             <dd>
-              <form action={portalAction} style={{ margin: 0 }}>
+              <form action={portalAction} className="inline-form">
                 <button type="submit" className="link-button" disabled={!billingEnabled || portalPending}>
                   {portalPending ? "กำลังเปิด…" : "ดูรายการ"}
                 </button>
@@ -169,16 +165,15 @@ export function BillingPanel(props: BillingPanelProps) {
           </div>
         </dl>
         {hasCustomer ? (
-          <form action={portalAction} style={{ margin: 0 }}>
-            <button type="submit" className="btn btn-secondary btn-block" style={{ fontSize: 14, marginTop: 20 }} disabled={!billingEnabled || portalPending}>
+          <form action={portalAction} className="inline-form">
+            <button type="submit" className="btn btn-secondary btn-block btn-sm acct-pay__btn" disabled={!billingEnabled || portalPending}>
               {cardLabel ? "เปลี่ยนบัตร" : "เพิ่มบัตรเครดิต"}
             </button>
           </form>
         ) : (
           <button
             type="button"
-            className="btn btn-secondary btn-block"
-            style={{ fontSize: 14, marginTop: 20 }}
+            className="btn btn-secondary btn-block btn-sm acct-pay__btn"
             disabled={!billingEnabled}
             onClick={() => setUpgradeOpen(true)}
           >
@@ -203,7 +198,7 @@ export function BillingPanel(props: BillingPanelProps) {
         }
       >
         <form action={planAction}>
-          <fieldset className="plan-options" style={{ border: 0, padding: 0, margin: 0 }}>
+          <fieldset className="plan-options">
             <legend className="sr-only">แพลน</legend>
             {options.map((option) => (
               <label key={option.tier} className="radio plan-option">
@@ -276,7 +271,7 @@ export function BillingPanel(props: BillingPanelProps) {
       >
         <form action={cancelAction}>
           {cancelState?.error ? <Message state={cancelState} /> : null}
-          <div className="dialog-actions" style={{ marginTop: 4 }}>
+          <div className="dialog-actions dialog-actions--tight">
             <button type="button" className="btn btn-secondary" onClick={() => setCancelOpen(false)}>
               ใช้ต่อ
             </button>
