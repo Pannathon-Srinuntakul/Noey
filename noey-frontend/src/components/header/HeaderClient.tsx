@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useLayoutEffect, type CSSProperties } from "react";
+import { useEffect, useLayoutEffect, type CSSProperties, type ReactNode } from "react";
 import { AUTH_HINT_EVENT, applyAuthHint } from "@/lib/client/auth-hint";
 import { THEME_STORAGE_KEY } from "@/lib/prepaint";
 import { IconMoon, IconSun } from "../ds/icons";
@@ -122,6 +122,38 @@ export function NavLinks({
         );
       })}
     </nav>
+  );
+}
+
+/**
+ * A header action that knows when it points at the page already open: on
+ * /signup the "เริ่มใช้ฟรี" button is the page itself, so it says so
+ * (aria-current) and steps back visually (globals.css).
+ */
+export function PageLink({
+  href,
+  className,
+  prefetch,
+  magnetic = false,
+  children,
+}: {
+  href: string;
+  className: string;
+  prefetch?: boolean;
+  magnetic?: boolean;
+  children: ReactNode;
+}) {
+  const pathname = usePathname();
+  return (
+    <Link
+      href={href}
+      className={className}
+      prefetch={prefetch}
+      aria-current={pathname === href ? "page" : undefined}
+      data-magnetic={magnetic ? "" : undefined}
+    >
+      {children}
+    </Link>
   );
 }
 

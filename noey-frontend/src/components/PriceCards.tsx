@@ -85,8 +85,6 @@ export function PriceCards({ table, variant }: { table: PriceTable; variant: "ho
           <PriceCard key={tier} tier={tier} table={table} size="home" />
         ))}
       </div>
-      {/* Said once for the page; each card carries only the short basis. */}
-      <p className="clip-note clip-note--grid">{keepThaiProse(CLIPS_FOOTNOTE)}</p>
       <div className="price-more">
         <div className="price-more__head">
           <h3 className="price-more__title">แพลนเพิ่มเติม</h3>
@@ -116,6 +114,7 @@ export function PriceCards({ table, variant }: { table: PriceTable; variant: "ho
             );
           })}
         </div>
+        {/* Said once, for every plan above: each card carries only the short basis. */}
         <p className="clip-note clip-note--group">{keepThaiProse(CLIPS_FOOTNOTE)}</p>
       </div>
     </>

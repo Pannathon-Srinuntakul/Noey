@@ -102,6 +102,14 @@
   rotate: -5deg;
 }
 
+/* Below 1200px the lower-right frame would sit behind the hero's own
+   content (the update stamp, the editor's label). */
+@media (max-width: 1199px) {
+  .hero-bg__frame--4 {
+    display: none;
+  }
+}
+
 .hero-bg__frame--5 {
   --blur: 6px;
   --o: 0.25;

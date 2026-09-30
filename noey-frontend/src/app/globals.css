@@ -1259,6 +1259,23 @@ dialog.dialog::backdrop {
   pointer-events: none;
 }
 
+/* A "don't show again" box in the footer: left, beside the button. */
+.dialog-actions__never {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin-right: auto;
+  font-size: var(--fs-14);
+  color: var(--ink-2);
+  cursor: pointer;
+}
+
+@media (max-width: 480px) {
+  .dialog-actions__never {
+    margin-right: 0;
+  }
+}
+
 /* A consent box in the footer sits above the buttons it unlocks. */
 .dialog-actions__consent {
   flex-basis: 100%;
@@ -1272,6 +1289,23 @@ dialog.dialog::backdrop {
 @media (max-width: 480px) {
   .dialog-actions__consent {
     order: 10;
+  }
+
+  /* With a consent box the footer would take a third of a phone: the
+     consent first, in the small size, then both buttons on one row. */
+  .dialog-actions:has(> .dialog-actions__consent) {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .dialog-actions:has(> .dialog-actions__consent) > .dialog-actions__consent {
+    grid-column: 1 / -1;
+    order: -1;
+  }
+
+  .dialog-actions__consent .agree__text {
+    font-size: var(--fs-13);
+    line-height: 1.6;
   }
 }
 
@@ -1395,4 +1429,22 @@ dialog.dialog::backdrop {
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
+}
+
+/* The header's action for the page already open (PageLink): it steps back
+   to a quiet outline instead of calling for a click that goes nowhere. */
+.hdr .btn[aria-current="page"] {
+  background: transparent;
+  color: var(--gold-ink);
+  border-color: var(--line-2);
+  box-shadow: none;
+}
+
+/* Status pages (checkout, verification, reset, deleted, 404) finish one
+   task; the header's gold call to action would pull away from it. */
+body:has(main.status-page) .hdr__tools .btn-primary {
+  background: transparent;
+  color: var(--gold-ink);
+  border-color: color-mix(in srgb, var(--gold) 45%, transparent);
+  box-shadow: none;
 }

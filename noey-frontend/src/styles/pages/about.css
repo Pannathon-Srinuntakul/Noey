@@ -378,6 +378,12 @@
   padding-top: calc(var(--section-y) * 0.4);
 }
 
+/* The story, the principles and the FAQ run on without a band between them:
+   a full section's padding on both sides read as a hole. */
+.principles {
+  padding-block: calc(var(--section-y) * 0.5);
+}
+
 .about-faq__list {
   max-width: 880px;
 }

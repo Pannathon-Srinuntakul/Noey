@@ -68,8 +68,11 @@ export async function generateMetadata(): Promise<Metadata> {
   return metadata;
 }
 
-/** Answer-first block: the prices themselves, in one quotable paragraph. */
-function answer(table: PriceTable): string {
+/**
+ * Answer-first block: the prices themselves, in three short quotable
+ * paragraphs — the free trial, the monthly plans, how paying works.
+ */
+function answer(table: PriceTable): string[] {
   const paid = PAID_TIERS.flatMap((tier) => {
     const price = displayPrice(table, tier);
     return price ? [`${PLAN_COPY[tier].name} ${price} บาท`] : [];
@@ -77,7 +80,11 @@ function answer(table: PriceTable): string {
   const list = paid.length > 1 ? `${paid.slice(0, -1).join(", ")} และ ${paid[paid.length - 1]}` : paid.join("");
   const beta = isBetaPriced(table) ? ` ราคาที่แสดงคือราคาเบต้า ลด 50% ${BETA_PRICE_AFTER}` : "";
   const clips = clipsLadderSentence(PAID_TIERS);
-  return `Noey Studio ให้เครดิตทดลองฟรีก้อนเดียวเมื่อสมัคร ตัดได้ ${clipsHeadline("free")} ไม่ต้องผูกบัตร ใช้หมดแล้วเลือกแพลนรายเดือนได้ ${paid.length} ระดับ ได้แก่ ${list} ต่อเดือน โดยได้จำนวนคลิปต่อเดือน ${clips} (${CLIPS_FOOTNOTE}) ชำระด้วยบัตรเครดิตหรือเดบิต เปลี่ยนหรือยกเลิกแพลนได้เองจากหน้าบัญชี${beta}`;
+  return [
+    `Noey Studio ให้เครดิตทดลองฟรีก้อนเดียวเมื่อสมัคร ตัดได้ ${clipsHeadline("free")} ไม่ต้องผูกบัตร`,
+    `ใช้หมดแล้วเลือกแพลนรายเดือนได้ ${paid.length} ระดับ ได้แก่ ${list} ต่อเดือน โดยได้จำนวนคลิปต่อเดือน ${clips} (${CLIPS_FOOTNOTE})`,
+    `ชำระด้วยบัตรเครดิตหรือเดบิต เปลี่ยนหรือยกเลิกแพลนได้เองจากหน้าบัญชี${beta}`,
+  ];
 }
 
 /** The rules of the quota, one per row of the example card. */
@@ -113,7 +120,11 @@ export default async function PricingPage() {
         className="phero--pricing"
         crumb={<Breadcrumb trail={TRAIL} />}
         title="เลือกตามปริมาณงาน"
-        lead={<p className="pricing-answer">{keepThaiProse(answer(table))}</p>}
+        lead={answer(table).map((text) => (
+          <p key={text.slice(0, 12)} className="pricing-answer">
+            {keepThaiProse(text)}
+          </p>
+        ))}
         meta={
           <p className="stamp">
             อัปเดตล่าสุด <time dateTime={page.updated}>{formatThaiDate(page.updated)}</time> · ราคาเป็นเงินบาทต่อเดือน

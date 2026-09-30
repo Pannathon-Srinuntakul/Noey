@@ -93,7 +93,10 @@ export default function GuideIndexPage() {
                   <article className="clip clip--link bin__clip">
                     <BinThumb
                       name={file}
-                      sections={doc.sections.length}
+                      sections={doc.sections.map(
+                        (section) => section.title.length + section.paragraphs.join("").length + (section.bullets?.join("").length ?? 0),
+                      )}
+                      paragraphs={doc.sections.flatMap((section) => [...section.paragraphs, ...(section.bullets ?? [])].map((text) => text.length))}
                       seed={index * 7 + 3}
                       length={chars / 9}
                     />

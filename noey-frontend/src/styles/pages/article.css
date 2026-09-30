@@ -62,21 +62,42 @@
   }
 }
 
+/* One reading measure for everything in the column — text, lists, the FAQ,
+   the rules between sections — so no line or hairline runs past the text.
+   Only a wide table (.article__extra, the plan limits) takes the whole
+   column. */
 .article {
+  --measure: 660px;
   min-width: 0;
-  max-width: 780px;
+}
+
+.article .prose,
+.article__section > :not(.article__extra),
+.article__foot {
+  max-width: var(--measure);
 }
 
 .article__section {
   position: relative;
   padding: clamp(28px, 3.4vw, 44px) 0;
-  border-top: 1px solid var(--line);
   scroll-margin-top: calc(var(--beta-h) + var(--header-top) + var(--header-h) + 24px);
 }
 
+.article__section::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: min(100%, var(--measure));
+  border-top: 1px solid var(--line);
+}
+
 .article__section:first-child {
-  border-top: 0;
   padding-top: 0;
+}
+
+.article__section:first-child::before {
+  display: none;
 }
 
 .article__cue {
@@ -91,7 +112,9 @@
   text-wrap: balance;
 }
 
-/* One ruled list in one frame, not a stack of separate boxes. */
+/* One ruled list in one frame, not a stack of separate boxes. (Beats
+   .prose ul's indent, which would inset the rules on the left only.) */
+.prose ul.article__bullets,
 .article__bullets {
   list-style: none;
   padding: 0;

@@ -219,6 +219,14 @@ rewordings on 2026-10-01.
 | "ถ้าเลือกพากย์ใหม่ ระบบเขียนสคริปต์ภาษาไทยให้ตามภาพที่มี แบ่งเป็นประโยคสั้น ๆ ให้อ่านทีละบรรทัด คุณอัดเสียงในเบราว์เซอร์ อัดใหม่เฉพาะประโยคที่ไม่พอใจได้ แล้วระบบวางเสียงให้ตรงกับช็อต สคริปต์แก้ข้อความได้ก่อนอัดเสมอ ถ้าคำไหนไม่ใช่คำที่คุณใช้จริงก็พิมพ์ทับได้" | "ถ้าเลือกพากย์ใหม่ ระบบเขียนสคริปต์ภาษาไทยให้ตามภาพที่ตัดไว้ แบ่งเป็นประโยคสั้น ๆ ตามช็อต ได้คลิปภาพพร้อมสคริปต์ กดคัดลอกไปอัดเสียงเองได้ทันที สคริปต์แก้ข้อความได้ก่อนอัดเสมอ" | guide |
 | "โปรเจกต์ การสร้างงานใหม่ ไทม์ไลน์ และการอัดเสียงพากย์ อยู่ในห้องตัดต่อบนเว็บทั้งหมด ไม่ต้องติดตั้งโปรแกรม บัญชีเดียวกันนี้เข้าใช้ได้เลย" | "โปรเจกต์ การสร้างงานใหม่ และไทม์ไลน์ อยู่ในห้องตัดต่อบนเว็บทั้งหมด …" | /account |
 
+## 14. /pricing: the opening answer in three paragraphs
+
+The answer under "เลือกตามปริมาณงาน" was one eight-line paragraph. It is now
+three — the free trial, the monthly plans, how paying works — with the same
+words; the only change is where the paragraphs break, so two runs of the
+old source no longer exist in one piece: "ไม่ต้องผูกบัตร ใช้หมดแล้วเลือกแพลนรายเดือนได้"
+and ") ชำระด้วยบัตรเครดิตหรือเดบิต เปลี่ยนหรือยกเลิกแพลนได้เองจากหน้าบัญชี".
+
 ## Text added (not replacing anything)
 
 Only labels, no claims:
@@ -247,6 +255,9 @@ Only labels, no claims:
   on hover or focus reuse the home page's own words — "แก้ทับได้ทุกช็อต",
   "พากย์เสียง พร้อมสคริปต์จาก AI", "ใส่เพลงประกอบ", "ซับไทยอัตโนมัติ",
   "AI ตัดคลิปให้อัตโนมัติ".
+- /about: once the contact form has sent, the form gives way to its
+  confirmation and a "ส่งอีกข้อความ" button (the empty form with a gold send
+  button invited sending the same message again).
 - /pricing: the clips slider label "ใช้ประมาณกี่คลิปต่อเดือน"; its readout is
   built from `plans.ts` only (`clipsHeadline`, `FREE_CLIPS_CAPTION`) with
   `CLIPS_FOOTNOTE` under it.

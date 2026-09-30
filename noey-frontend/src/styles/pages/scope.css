@@ -57,7 +57,10 @@
   flex: 1;
   display: grid;
   place-items: center;
+  /* Two digits and a margin: the chip never pinches its number. */
+  min-width: 28px;
   height: 100%;
+  padding: 0 4px;
   border-radius: 6px;
   font-style: normal;
 }
@@ -160,6 +163,8 @@
   position: relative;
   display: grid;
   gap: 12px;
+  /* A step is one short line: cards as wide as the page would read as bars. */
+  max-width: 880px;
   margin: 0;
   padding: 0 0 0 28px;
   list-style: none;
@@ -293,9 +298,12 @@
     overflow: hidden;
   }
 
+  /* Room inside the clip for the cards' shadows, taken back outside it. */
   .handoff__viewport {
     position: relative;
     z-index: 1;
+    padding-block: 48px;
+    margin-block: -48px;
   }
 
   .handoff__track {
@@ -330,6 +338,7 @@
   .handoff__blocks {
     display: flex;
     gap: 16px;
+    max-width: none;
     padding: 0;
     align-items: stretch;
   }

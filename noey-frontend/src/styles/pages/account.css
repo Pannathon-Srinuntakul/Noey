@@ -403,13 +403,20 @@
   }
 }
 
-/* The art only when the card itself has the room (not the viewport). */
+/* The mark and its glow only when the card itself has the room (not the
+   viewport); a narrow card keeps the waveform and its playhead as a strip
+   under the copy. */
 @container (max-width: 640px) {
   .acct-hero__main {
     grid-template-columns: minmax(0, 1fr);
   }
 
   .acct-hero__art {
+    padding: 4px 0 0;
+  }
+
+  .acct-hero__glow,
+  .acct-hero__mark {
     display: none;
   }
 }
@@ -502,15 +509,34 @@
 }
 
 /* Drawn in segments, like the level meters beside it. */
+/* One solid bar: beads a few pixels wide read as a broken meter at 10%. */
 .acct-tasks__bar span {
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: repeating-linear-gradient(90deg, var(--gold) 0 5px, transparent 5px 7px);
+  background: var(--gold);
+}
+
+/* The table lines up with the card's edges; the note sits at its foot. */
+.acct-tasks :is(th, td):first-child {
+  padding-left: 0;
+}
+
+.acct-tasks :is(th, td):last-child {
+  padding-right: 0;
 }
 
 .acct-tasks__note {
-  margin-top: 4px;
+  margin-top: auto;
+  padding-top: 4px;
+}
+
+/* A note for the whole card (not one meter's): the quiet size. */
+.account-card > .meter-note {
+  margin: 0;
+  font-size: var(--fs-13);
+  line-height: 1.6;
+  color: var(--ink-3);
 }
 
 /* ── แพลนและการชำระเงิน ─────────────────────────────────────────────────── */
@@ -563,6 +589,13 @@
   border-left: 2px solid var(--gold);
   border-bottom: 2px solid var(--gold);
   rotate: -45deg;
+}
+
+/* Both billing cards end on their actions, level with each other. */
+.acct-billing .button-row,
+.acct-billing .account-card > .inline-form:last-of-type,
+.acct-billing .account-card > .acct-pay__btn {
+  margin-top: auto;
 }
 
 .acct-pay__btn {
@@ -806,4 +839,14 @@
 
 .delete-summary .ruled-list:first-of-type li::before {
   background: var(--danger);
+}
+
+/* Settings forms: a submit stays an outline while its form still has an
+   empty required field, and turns gold once it is ready to send — the tab
+   is not a row of gold buttons. */
+form:has(:invalid) .acct-form__submit.btn-primary {
+  background: transparent;
+  color: var(--gold-ink);
+  border-color: color-mix(in srgb, var(--gold) 45%, transparent);
+  box-shadow: none;
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { CONTACT_LIMITS, HONEYPOT_FIELD, type ContactFieldErrors } from "@/lib/contact";
 import { MSG } from "@/lib/messages";
 import { SearchParam } from "./SearchParam";
@@ -87,6 +87,25 @@ export function ContactForm({ contactEmail }: { contactEmail: string }) {
 
   const fieldErrors = status.kind === "done" ? (status.errors ?? {}) : {};
   const sending = status.kind === "sending";
+  const sent = status.kind === "done" && status.outcome === "sent";
+  const confirmation = useRef<HTMLDivElement>(null);
+
+  // The form gives way to the confirmation: move focus there, not to the page top.
+  useEffect(() => {
+    if (sent) confirmation.current?.focus();
+  }, [sent]);
+
+  if (sent) {
+    // Sent: an empty form under a gold button would invite sending it again.
+    return (
+      <div ref={confirmation} className="contact-sent" tabIndex={-1}>
+        <OutcomeMessage outcome="sent" contactEmail={contactEmail} />
+        <button type="button" className="btn btn-secondary" onClick={() => setStatus({ kind: "idle" })}>
+          ส่งอีกข้อความ
+        </button>
+      </div>
+    );
+  }
 
   return (
     <form action="/api/contact" method="post" onSubmit={onSubmit} className="stack" noValidate>

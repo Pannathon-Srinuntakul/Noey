@@ -41,6 +41,28 @@
   box-shadow: 0 0 6px color-mix(in srgb, var(--color-danger) 40%, transparent);
 }
 
+/* Dark: the gold–red mix reads as peach on a dark well. Hot segments go full
+   red with a stronger glow, and the unlit red zone shows before it lights. */
+html[data-theme="dark"] .lvl i[data-hot] {
+  background: color-mix(in srgb, var(--color-danger) 26%, transparent);
+}
+
+html[data-theme="dark"] .lvl i[data-on][data-hot] {
+  background: var(--danger);
+  box-shadow: 0 0 9px color-mix(in srgb, var(--color-danger) 55%, transparent);
+}
+
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]) .lvl i[data-hot] {
+    background: color-mix(in srgb, var(--color-danger) 26%, transparent);
+  }
+
+  html:not([data-theme="light"]) .lvl i[data-on][data-hot] {
+    background: var(--danger);
+    box-shadow: 0 0 9px color-mix(in srgb, var(--color-danger) 55%, transparent);
+  }
+}
+
 .lvl[data-reveal-state="wait"] i[data-on] {
   opacity: 0.12;
 }

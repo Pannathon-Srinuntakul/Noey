@@ -269,6 +269,12 @@
   text-align: start;
 }
 
+/* A card that holds a form: its text keeps to the form's width, so the two
+   read as one column. */
+.status__body:has(.status__form) {
+  max-width: 400px;
+}
+
 @media (prefers-reduced-motion: no-preference) {
   .status .mark-draw path {
     animation: draw-stroke 900ms var(--ease-out) both;
@@ -320,6 +326,13 @@
    title. The actions stack full width. */
 @media (max-width: 560px) {
   .status__body:has(> p + p) {
+    text-align: start;
+  }
+
+  /* …and then the whole card reads from the left: a centred title over
+     left-aligned paragraphs looks like two layouts at once. */
+  .status:has(.status__body > p + p) {
+    justify-items: start;
     text-align: start;
   }
 

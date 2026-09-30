@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Fragment, useActionState, useState } from "react";
+import { useActionState, useState } from "react";
 import {
   cancelPlanAction,
   choosePlanAction,
@@ -113,21 +113,13 @@ export function BillingPanel(props: BillingPanelProps) {
         {statusLine ? <p className={statusWarn ? "plan-status plan-status--warn" : "plan-status"}>{keepThai(statusLine)}</p> : null}
         {planFeatures.length > 0 ? (
           <ul className="plan-features">
-            {planFeatures.map((feature) => (
-              <li key={feature}>
-                {/* A line joins facts with " · ": lines break between facts, not inside
-                    one, and each dot ends its line instead of starting the next. */}
-                {feature.split(" · ").map((fact, index, facts) => (
-                  <Fragment key={fact}>
-                    {index > 0 ? " " : null}
-                    <span className="fact">
-                      {keepThai(fact)}
-                      {index < facts.length - 1 ? " ·" : null}
-                    </span>
-                  </Fragment>
-                ))}
-              </li>
-            ))}
+            {/* A copy line joins facts with " · "; here each fact is its own
+                ticked row, so no line ends on a dot or strands "10 GB". */}
+            {planFeatures
+              .flatMap((feature) => feature.split(" · "))
+              .map((fact) => (
+                <li key={fact}>{keepThai(fact)}</li>
+              ))}
           </ul>
         ) : null}
         <div className="button-row">
@@ -203,11 +195,15 @@ export function BillingPanel(props: BillingPanelProps) {
         onClose={() => setUpgradeOpen(false)}
         title={hasLiveSubscription ? "เปลี่ยนแพลน" : "เลือกแพลน"}
         description={
-          <p style={{ margin: 0 }}>
-            {hasLiveSubscription
-              ? "เลือกแพลนที่ต้องการ อัปเกรดแล้วโควตาใหม่มีผลทันที ส่วนการลดแพลนมีผลในรอบบิลถัดไป"
-              : "เลือกแพลนที่ต้องการ โควตาใหม่มีผลทันทีหลังชำระเงิน"}
-          </p>
+          <>
+            <p style={{ margin: 0 }}>
+              {hasLiveSubscription
+                ? "เลือกแพลนที่ต้องการ อัปเกรดแล้วโควตาใหม่มีผลทันที ส่วนการลดแพลนมีผลในรอบบิลถัดไป"
+                : "เลือกแพลนที่ต้องการ โควตาใหม่มีผลทันทีหลังชำระเงิน"}
+            </p>
+            {/* Up here, not under the list: below it the note scrolled out of view. */}
+            {betaNote ? <p className="beta-note beta-note--compact">{betaNote}</p> : null}
+          </>
         }
       >
         <form action={planAction}>
@@ -244,7 +240,6 @@ export function BillingPanel(props: BillingPanelProps) {
               </label>
             ))}
           </fieldset>
-          {betaNote ? <p className="beta-note beta-note--compact">{betaNote}</p> : null}
           <Message state={planState} />
           {/* The consent sits in the sticky footer, beside the button it unlocks. */}
           <div className="dialog-actions">

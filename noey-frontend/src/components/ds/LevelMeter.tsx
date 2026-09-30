@@ -23,7 +23,9 @@ export function LevelMeter({
   className?: string;
 }) {
   const pct = Math.max(0, Math.min(100, value));
-  const lit = Math.round((pct / 100) * segments);
+  // Lit in pairs: phones pair the segments into blocks (level.css), and a
+  // block is never half lit. The printed percentage stays exact.
+  const lit = segments % 2 === 0 ? Math.round((pct / 100) * (segments / 2)) * 2 : Math.round((pct / 100) * segments);
   const tone = pct >= 95 ? "full" : pct >= 80 ? "near" : "ok";
   const a11y = labelledBy
     ? { role: "progressbar" as const, "aria-labelledby": labelledBy, "aria-valuemin": 0, "aria-valuemax": 100, "aria-valuenow": Math.round(pct) }

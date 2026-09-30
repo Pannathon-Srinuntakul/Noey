@@ -76,12 +76,17 @@ const KEEP_TOGETHER = [
   "พื้นที่เก็บงาน",
   "ใช้งานหนัก",
   "ใบเสร็จ",
+  "รหัสผ่านใหม่",
+  "ลิงก์ยืนยันใหม่",
+  "บัญชีเดียวกันนี้",
+  "ใช้งานจริง",
 ];
 
 /** A number and its unit stay on one line ("10 GB", "499 บาท", "30 นาที"), and so
- * does a plan name with the value after it ("Starter 20 นาที"). */
+ * does a plan name with the value after it ("Starter 20 นาที") and an estimate
+ * with its "ราว" ("ราว 22 คลิป"). */
 const NUMBER_UNIT =
-  "(?:(?:ฟรี|Lite|Starter|Pro|Studio|Agency|Max) )?\\d[\\d,.]*\\s(?:GB|MB|นาที|วินาที|บาท|คลิป|โปรเจกต์|งาน|วัน|ชั่วโมง|เดือน|ไฟล์|ปี)";
+  "(?:(?:ฟรี|Lite|Starter|Pro|Studio|Agency|Max|ราว) )?\\d[\\d,.]*\\s(?:GB|MB|นาที|วินาที|บาท|คลิป|โปรเจกต์|งาน|วัน|ชั่วโมง|เดือน|ไฟล์|ปี)";
 
 const escape = (word: string) => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const PATTERN = new RegExp(

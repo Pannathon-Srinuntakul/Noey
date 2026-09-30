@@ -60,7 +60,6 @@ function lineStarts() {
   const range = document.createRange();
   for (const [block, nodes] of groups) {
     let text = "";
-    let lastTop = null;
     let lastBottom = null;
     const starts = [];
     for (const node of nodes) {
@@ -71,7 +70,6 @@ function lineStarts() {
         if (rect) {
           // A new line: this character sits wholly below the last one.
           if (lastBottom !== null && rect.top >= lastBottom - 1 && !/\s/.test(node.data[i])) starts.push(text.length);
-          lastTop = rect.top;
           lastBottom = rect.bottom;
         }
         text += node.data[i];

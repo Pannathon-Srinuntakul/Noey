@@ -18,7 +18,8 @@ interface Mark {
  * playhead that follows the scroll, and one marker per section heading
  * (every visible <h2> in <main>, read from the page itself). Hover a marker
  * for the section's name; click it to jump there. Phones get a thin progress
- * line only.
+ * line only. It is the page's one clock: the sections' stamps and the
+ * footer's END are rewritten from it once the page is measured.
  *
  * Purely an extra way to move around the page — the same sections are
  * reachable by scrolling, headings and the table of contents — so it is
@@ -68,8 +69,16 @@ export function ScrollTimeline() {
       const end = document.querySelector<HTMLElement>("[data-end-tc]");
       if (end) end.textContent = `END · ${formatTimecode(max / PX_PER_SECOND)}`;
       const top = offset();
+      // So do the sections' own stamps: each shows the time the ruler reads
+      // when its heading reaches the playhead (never past END).
+      for (const stamp of document.querySelectorAll<HTMLElement>("main .sec-head__tc, main .chapter__tc")) {
+        const anchor = stamp.closest(".sec-head")?.querySelector<HTMLElement>("h1, h2, h3") ?? stamp.closest<HTMLElement>(".chapter");
+        if (!anchor || anchor.offsetParent === null) continue;
+        stamp.textContent = formatTimecode(Math.min(max, Math.max(0, docTop(anchor) - top)) / PX_PER_SECOND);
+      }
+      // A status card's own heading (checkout, verification) is not a section.
       const headings = [...document.querySelectorAll<HTMLElement>("main h2")].filter(
-        (heading) => heading.offsetParent !== null && !heading.closest("dialog, details:not([open]), [hidden]"),
+        (heading) => heading.offsetParent !== null && !heading.closest("dialog, details:not([open]), [hidden], .status"),
       );
       marks = headings.map((element) => {
         const at = Math.min(1, Math.max(0, (docTop(element) - top) / max));

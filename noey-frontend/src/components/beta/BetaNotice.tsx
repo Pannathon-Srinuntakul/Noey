@@ -151,11 +151,13 @@ export function BetaNotice({ betaPriced }: { betaPriced: boolean }) {
         {"\u00a0· "}
         <Link href="/terms">เงื่อนไขการใช้งาน</Link>
       </p>
-      <label className="agree agree--flush">
-        <input type="checkbox" className="agree__box" checked={never} onChange={(event) => setNever(event.target.checked)} />
-        <span className="agree__text">{BETA_NOTICE_NEVER}</span>
-      </label>
       <div className="dialog-actions">
+        {/* A plain checkbox beside the answer it qualifies, not a boxed field
+            that reads like an input to fill. */}
+        <label className="dialog-actions__never">
+          <input type="checkbox" className="agree__box" checked={never} onChange={(event) => setNever(event.target.checked)} />
+          <span>{BETA_NOTICE_NEVER}</span>
+        </label>
         {/* Focus lands on the answer, not on the terms link in the fine print. */}
         <button type="button" className="btn btn-primary" onClick={close} autoFocus>
           {BETA_NOTICE_DISMISS}

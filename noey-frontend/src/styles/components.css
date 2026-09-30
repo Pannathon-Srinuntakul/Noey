@@ -956,7 +956,11 @@
   .link-grid:has(> li:nth-child(4):last-child) {
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
+}
 
+/* Five as two over three from 900px: a fifth card run full width would
+   stretch its waveform across the page. */
+@media (min-width: 900px) {
   .link-grid:has(> li:nth-child(5):last-child) {
     grid-template-columns: repeat(6, minmax(0, 1fr));
   }
@@ -1097,7 +1101,8 @@
 .nf__tc {
   font-size: 9.5px;
   letter-spacing: 0.08em;
-  fill: var(--ink-3);
+  /* ink-2: at 9.5px the lighter ink fell under 3:1. */
+  fill: var(--ink-2);
   font-variant-numeric: tabular-nums;
 }
 
@@ -1117,6 +1122,14 @@
   position: absolute;
   right: 14px;
   bottom: 8px;
+}
+
+/* Phones: the drawing is too short for that corner to stay clear of the
+   audio lane, so the label gets its own row under it. */
+@media (max-width: 560px) {
+  .nf__stage {
+    padding-bottom: 36px;
+  }
 }
 
 .nf__trk {
@@ -1154,8 +1167,10 @@
 }
 
 /* The hole: the editor's empty well, hatched, edged with a dashed cut line. */
+/* A little darker than the lanes' well, so it reads as a hole in the light
+   theme too. */
 .nf__hole {
-  fill: var(--well);
+  fill: color-mix(in srgb, var(--color-text) 8%, var(--well));
   stroke: color-mix(in srgb, var(--color-accent) 55%, transparent);
   stroke-width: 1.2;
   stroke-dasharray: 4 4;
@@ -1166,7 +1181,7 @@
 }
 
 .nf__hatch {
-  stroke: color-mix(in srgb, var(--color-text) 10%, transparent);
+  stroke: color-mix(in srgb, var(--color-text) 16%, transparent);
   stroke-width: 1;
 }
 
@@ -1324,4 +1339,17 @@
   .computer-only--top {
     margin: 0 0 18px;
   }
+}
+
+/* The contact form once sent: the confirmation (styled where the form
+   lives) and a way to write again. */
+.contact-sent {
+  display: grid;
+  justify-items: start;
+  gap: 16px;
+  outline: none;
+}
+
+.contact-sent .form-success {
+  margin: 0;
 }

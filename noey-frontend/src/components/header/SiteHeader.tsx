@@ -5,7 +5,7 @@ import { SignOutButton } from "../account/SignOutButton";
 import { IconChevronDown, IconUser } from "../ds/icons";
 import { NoeyMark } from "../NoeyMark";
 import { ScrollTimeline } from "../shell/ScrollTimeline";
-import { AuthHintSync, HeaderDisclosures, NavLinks, ThemeToggle } from "./HeaderClient";
+import { AuthHintSync, HeaderDisclosures, NavLinks, PageLink, ThemeToggle } from "./HeaderClient";
 
 /**
  * The floating toolbar: logo, the five sections, theme, and the account
@@ -44,14 +44,14 @@ export function SiteHeader() {
           <div className="hdr__tools">
             <ThemeToggle />
             <div className="auth-area auth-out">
-              <Link href="/login" className="btn btn-ghost btn-sm">
+              <PageLink href="/login" className="btn btn-ghost btn-sm">
                 เข้าสู่ระบบ
-              </Link>
+              </PageLink>
               {/* Not prefetched on sight: /signup carries the editor mock-up and its
                   stylesheets, too heavy to fetch alongside every page's first paint. */}
-              <Link href="/signup" className="btn btn-primary btn-sm" data-magnetic="" prefetch={false}>
+              <PageLink href="/signup" className="btn btn-primary btn-sm" magnetic prefetch={false}>
                 เริ่มใช้ฟรี
-              </Link>
+              </PageLink>
             </div>
             <div className="auth-area auth-in">
               <details className="acct" data-header-disclosure="">
@@ -92,12 +92,12 @@ export function SiteHeader() {
                 <NavLinks links={NAV_LINKS} className="menu__nav" label="เมนูหลัก (จอเล็ก)" numbered />
                 <div className="menu__foot">
                   <div className="auth-area auth-out">
-                    <Link href="/login" className="btn btn-secondary btn-lg">
+                    <PageLink href="/login" className="btn btn-secondary btn-lg">
                       เข้าสู่ระบบ
-                    </Link>
-                    <Link href="/signup" className="btn btn-primary btn-lg">
+                    </PageLink>
+                    <PageLink href="/signup" className="btn btn-primary btn-lg">
                       เริ่มใช้ฟรี
-                    </Link>
+                    </PageLink>
                   </div>
                   <div className="auth-area auth-in">
                     <span className="auth-name" />

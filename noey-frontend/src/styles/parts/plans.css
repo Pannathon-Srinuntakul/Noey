@@ -477,10 +477,12 @@
   }
 }
 
+/* 0 unless the table scrolls: a scroll timeline is only active on a box that
+   can scroll, so a table that fits never fades at its edge. */
 @property --cmp-fade {
   syntax: "<length>";
   inherits: false;
-  initial-value: 56px;
+  initial-value: 0px;
 }
 
 @keyframes cmp-fade {
@@ -500,6 +502,8 @@
   line-height: 1.2;
 }
 .cmp__yes {
+  /* Inline, so the cell's centring reaches it (svg is display: block site-wide). */
+  display: inline-block;
   color: var(--gold-ink);
   vertical-align: middle;
 }

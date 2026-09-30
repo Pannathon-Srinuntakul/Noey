@@ -14,7 +14,13 @@
 }
 
 .pricing-answer {
+  max-width: 62ch;
+  margin: 0;
   color: var(--ink);
+}
+
+.pricing-answer + .pricing-answer {
+  margin-top: 0.7em;
 }
 
 .pricing-muted {
@@ -306,7 +312,7 @@
 
 /* Below the grid width the rail runs to the screen's edges, so a card is cut
    by the screen, not by the page margin, and the first card lines up. */
-@media (max-width: 1099px) {
+@media (max-width: 999px) {
   .plan-rail__track {
     margin-inline: calc(var(--gutter) * -1);
     padding-inline: var(--gutter);
@@ -314,10 +320,10 @@
   }
 }
 
-/* Wide screens: every plan in view at once — the free trial as one row on
-   top, the six monthly plans in two rows of three. The picker lights the
-   plan that fits instead of scrolling to it. */
-@media (min-width: 1100px) {
+/* Wide screens (a 1024px laptop included): every plan in view at once — the
+   free trial as one row on top, the six monthly plans in two rows of three.
+   The picker lights the plan that fits instead of scrolling to it. */
+@media (min-width: 1000px) {
   .plan-rail__track {
     grid-auto-flow: row;
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -339,7 +345,7 @@
 
   .plan--full[data-tier="free"] {
     display: grid;
-    grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.1fr) minmax(0, 1.4fr) auto;
+    grid-template-columns: minmax(0, 0.7fr) minmax(0, 1fr) minmax(0, 1.7fr) auto;
     gap: 8px 32px;
     align-items: start;
   }
@@ -381,11 +387,18 @@
     margin: 0;
   }
 
+  /* Two feature columns only where each gets a readable width. */
+  @media (max-width: 1279px) {
+    .plan--full[data-tier="free"] > .plan__features {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+
   .plan--full[data-tier="free"] > .plan__foot {
     grid-column: 4;
     grid-row: 1 / 4;
     align-self: center;
-    min-width: 200px;
+    min-width: 180px;
     margin: 0;
     padding: 0;
   }

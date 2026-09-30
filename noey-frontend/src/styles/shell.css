@@ -57,6 +57,12 @@
   background: radial-gradient(120% 90% at 50% 40%, transparent 58%, var(--vignette) 100%);
 }
 
+/* Reading pages (guides, help, legal): long lines run near the edges of the
+   screen, where the vignette would dim them. */
+body:has(main.article-page) .vignette {
+  opacity: 0.3;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .grain {
     display: none;
@@ -474,6 +480,8 @@ html[data-auth-name] .acct__fallback {
 /* ── Scroll timeline (the ruler under the header bar) ───────────────────── */
 
 .stl {
+  /* Room kept on the right for the timecode: no marker lands under it. */
+  --stl-tc: 84px;
   position: relative;
   height: 18px;
   margin: 0 12px 0;
@@ -483,7 +491,7 @@ html[data-auth-name] .acct__fallback {
 
 .stl__ticks {
   position: absolute;
-  inset: 0 64px 0 0;
+  inset: 0 var(--stl-tc) 0 0;
   background:
     repeating-linear-gradient(90deg, var(--line-2) 0 1px, transparent 1px 10%) 0 100% / 100% 7px no-repeat,
     repeating-linear-gradient(90deg, var(--line) 0 1px, transparent 1px 2%) 0 100% / 100% 4px no-repeat;
@@ -494,14 +502,14 @@ html[data-auth-name] .acct__fallback {
   left: 0;
   bottom: 0;
   height: 2px;
-  width: calc(var(--p) * (100% - 64px));
+  width: calc(var(--p) * (100% - var(--stl-tc)));
   background: linear-gradient(90deg, transparent, var(--gold));
   opacity: 0.8;
 }
 
 .stl__marks {
   position: absolute;
-  inset: 0 64px 0 0;
+  inset: 0 var(--stl-tc) 0 0;
 }
 
 .stl__mark {
@@ -570,7 +578,7 @@ html[data-auth-name] .acct__fallback {
   position: absolute;
   top: -3px;
   bottom: -2px;
-  left: calc(var(--p) * (100% - 64px));
+  left: calc(var(--p) * (100% - var(--stl-tc)));
   width: 2px;
   translate: -1px 0;
   background: var(--gold);

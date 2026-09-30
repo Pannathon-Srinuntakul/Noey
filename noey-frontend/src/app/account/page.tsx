@@ -10,6 +10,7 @@ import { privatePageMetadata } from "@/lib/seo";
 import { loadAccountData } from "@/lib/server/account-data";
 import { EDITOR_OPEN_PATH } from "@/lib/editor-handoff";
 import { keepThaiProse } from "@/components/ds/ThaiProse";
+import { limitTone } from "@/lib/usage-limits";
 
 export const metadata: Metadata = privatePageMetadata("บัญชีของฉัน");
 
@@ -28,6 +29,8 @@ export default async function AccountAppPage({ searchParams }: { searchParams: P
   if (usage?.unlimited) quota = "ไม่จำกัด";
   else if (typeof usage?.usage_pct === "number") quota = `ใช้ไป ${Math.round(usage.usage_pct)}%`;
   const quotaPct = !usage?.unlimited && typeof usage?.usage_pct === "number" ? usage.usage_pct : null;
+  // The same warning tones as the quota tab (80% near, 95% full).
+  const quotaTone = quotaPct === null ? "ok" : limitTone(quotaPct);
   const storagePct = storage && storage.quota_bytes > 0 ? Math.min(100, (storage.used_bytes / storage.quota_bytes) * 100) : null;
 
   return (
@@ -85,7 +88,7 @@ export default async function AccountAppPage({ searchParams }: { searchParams: P
             </div>
             <div>
               <dt>โควตารอบนี้</dt>
-              <dd className="num">
+              <dd className={quotaTone === "ok" ? "num" : `num num--${quotaTone}`}>
                 <Link href="/account/quota" className="acct-summary__link">
                   {quota}
                   <IconChevronRight size={15} />
@@ -97,7 +100,11 @@ export default async function AccountAppPage({ searchParams }: { searchParams: P
               <div>
                 <dt>พื้นที่เก็บงาน</dt>
                 <dd className="num">
-                  {formatBytes(storage.used_bytes)} / {storage.quota_bytes > 0 ? formatBytes(storage.quota_bytes) : "ไม่จำกัด"}
+                  {/* Storage is detailed on the quota tab too. */}
+                  <Link href="/account/quota" className="acct-summary__link">
+                    {formatBytes(storage.used_bytes)} / {storage.quota_bytes > 0 ? formatBytes(storage.quota_bytes) : "ไม่จำกัด"}
+                    <IconChevronRight size={15} />
+                  </Link>
                 </dd>
                 {storagePct !== null ? <LevelMeter value={storagePct} segments={20} className="acct-summary__meter" /> : null}
               </div>
