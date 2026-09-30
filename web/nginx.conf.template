@@ -31,6 +31,10 @@
 #                        directive (browsers ignore it there), and it is the
 #                        one that stops the editor being framed by another
 #                        site for clickjacking.
+#   X-Robots-Tag       — the editor is a signed-in app, not a page to find in
+#                        search: people arrive through the marketing site.
+#                        public/robots.txt and the meta tag in index.html say
+#                        the same for crawlers that read only one of them.
 
 server {
     listen ${PORT};
@@ -50,6 +54,7 @@ server {
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
     add_header Permissions-Policy "camera=(), geolocation=()" always;
     add_header Content-Security-Policy "frame-ancestors 'none'" always;
+    add_header X-Robots-Tag "noindex, nofollow" always;
 
     # The service worker must be served from the ROOT path, uncached.
     #
@@ -66,6 +71,7 @@ server {
         add_header Referrer-Policy "strict-origin-when-cross-origin" always;
         add_header Permissions-Policy "camera=(), geolocation=()" always;
         add_header Content-Security-Policy "frame-ancestors 'none'" always;
+        add_header X-Robots-Tag "noindex, nofollow" always;
         try_files $uri =404;
     }
 
@@ -77,6 +83,7 @@ server {
         add_header Referrer-Policy "strict-origin-when-cross-origin" always;
         add_header Permissions-Policy "camera=(), geolocation=()" always;
         add_header Content-Security-Policy "frame-ancestors 'none'" always;
+        add_header X-Robots-Tag "noindex, nofollow" always;
     }
 
     # Hashed filenames — safe to keep for a year.
@@ -86,6 +93,7 @@ server {
         add_header Referrer-Policy "strict-origin-when-cross-origin" always;
         add_header Permissions-Policy "camera=(), geolocation=()" always;
         add_header Content-Security-Policy "frame-ancestors 'none'" always;
+        add_header X-Robots-Tag "noindex, nofollow" always;
     }
 
     # /media/ belongs to the service worker alone. Before the worker controls
