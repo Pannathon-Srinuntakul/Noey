@@ -292,23 +292,27 @@
 }
 
 /* The "อัปเดตล่าสุด" line, as a clip's metadata. */
+/* Inline flow (not flex) so a long line wraps as text on phones instead of
+ * stacking each piece into its own column. */
 .stamp {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 12px 4px 8px;
+  display: inline-block;
+  max-width: 100%;
+  padding: 4px 12px 4px 10px;
   border: 1px solid var(--line);
-  border-radius: 999px;
+  border-radius: 16px;
   background: color-mix(in srgb, var(--panel) 70%, transparent);
   font-size: var(--fs-13);
   color: var(--ink-3);
-  line-height: 1.5;
+  line-height: 1.6;
 }
 
 .stamp::before {
   content: "";
+  display: inline-block;
   width: 7px;
   height: 7px;
+  margin-inline-end: 9px;
+  vertical-align: 0.08em;
   border-radius: 50%;
   background: var(--gold);
   box-shadow: 0 0 0 3px var(--gold-soft);
@@ -616,11 +620,11 @@
 .lane__head {
   display: flex;
   flex-direction: column;
-  justify-content: center;
+  justify-content: flex-start;
   gap: 8px;
   padding: 16px 18px;
   border-radius: 12px;
-  background: var(--panel-2);
+  background: color-mix(in srgb, var(--panel-2) 70%, transparent);
   border: 1px solid var(--line);
 }
 
@@ -641,7 +645,7 @@
 
 .lane__clips {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
   gap: 10px;
   margin: 0;
   padding: 0;
@@ -1786,4 +1790,222 @@ body:has(main .cta-band--end) .ftr::before {
 
 .section-more {
   margin: 28px 0 0;
+}
+
+/* ── Level meter (quota bars as audio levels) ───────────────────────────── */
+
+.lvl {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
+  grid-auto-flow: column;
+  gap: 3px;
+  height: 14px;
+  padding: 3px;
+  border-radius: 6px;
+  background: var(--well);
+  border: 1px solid var(--line);
+}
+
+.lvl i {
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--color-text) 8%, transparent);
+}
+
+.lvl i[data-on] {
+  background: var(--gold);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--color-accent) 40%, transparent);
+}
+
+.lvl--near i[data-on][data-hot] {
+  background: var(--color-accent-600);
+}
+
+.lvl--full i[data-on][data-hot] {
+  background: var(--danger);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--color-danger) 40%, transparent);
+}
+
+.lvl[data-reveal-state="wait"] i[data-on] {
+  opacity: 0.12;
+}
+
+.lvl:is([data-reveal-state="now"], [data-reveal-state="in"]) i[data-on] {
+  animation: lvl-on 260ms var(--ease-out) both;
+  animation-delay: calc(var(--i) * 30ms + 120ms);
+}
+
+@keyframes lvl-on {
+  from {
+    opacity: 0.12;
+    transform: scaleY(0.4);
+  }
+}
+
+.meter-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 8px;
+  font-size: var(--fs-14);
+}
+
+.meter-row .num {
+  font-weight: 600;
+  color: var(--gold-ink);
+}
+
+.meter-note {
+  margin: 8px 0 20px;
+  font-size: var(--fs-13);
+  line-height: 1.6;
+  color: var(--ink-3);
+}
+
+.meter-note:last-child {
+  margin-bottom: 0;
+}
+
+/* ── Comparison table (sticky header + first column, row/column hover) ──── */
+
+.cmp__scroll {
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--panel);
+}
+
+.cmp__table {
+  font-size: var(--fs-14);
+}
+
+.cmp__table th,
+.cmp__table td {
+  padding: 13px 14px;
+  border-bottom: 1px solid var(--line);
+  transition: background-color var(--dur-1) ease;
+}
+
+.cmp__table thead th {
+  position: sticky;
+  top: calc(var(--beta-h) + var(--header-top) + var(--header-h) + 22px);
+  z-index: 2;
+  background: color-mix(in srgb, var(--panel) 94%, transparent);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  font-size: var(--fs-15);
+  font-weight: 600;
+  color: var(--ink);
+  border-bottom: 1px solid var(--line-2);
+}
+
+.cmp__table thead th:first-child {
+  border-top-left-radius: var(--r-lg);
+}
+
+.cmp__table thead th:last-child {
+  border-top-right-radius: var(--r-lg);
+}
+
+.cmp__plan--recommended {
+  color: var(--gold-ink) !important;
+  box-shadow: inset 0 -2px 0 var(--gold);
+}
+
+.cmp__table tbody th[scope="row"] {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  min-width: 190px;
+  max-width: 260px;
+  background: var(--panel);
+  font-weight: 400;
+  line-height: 1.55;
+  border-right: 1px solid var(--line);
+}
+
+.cmp__corner {
+  left: 0;
+  z-index: 3 !important;
+  text-align: left;
+  border-right: 1px solid var(--line);
+}
+
+.cmp__price td {
+  font-size: var(--fs-16);
+  font-weight: 600;
+}
+
+.cmp__none {
+  color: var(--ink-3);
+}
+
+.cmp__table tbody tr:last-child > * {
+  border-bottom: 0;
+}
+
+/* Row under the pointer. */
+.cmp__table tbody tr:hover > * {
+  background-color: var(--gold-softer);
+}
+
+.cmp__table tbody tr:hover > th[scope="row"] {
+  background-color: color-mix(in srgb, var(--color-accent) 9%, var(--panel));
+}
+
+/* Column under the pointer (one rule per plan column). */
+.cmp__table:has(td:nth-child(2):hover) :is(td, th):nth-child(2),
+.cmp__table:has(td:nth-child(3):hover) :is(td, th):nth-child(3),
+.cmp__table:has(td:nth-child(4):hover) :is(td, th):nth-child(4),
+.cmp__table:has(td:nth-child(5):hover) :is(td, th):nth-child(5),
+.cmp__table:has(td:nth-child(6):hover) :is(td, th):nth-child(6),
+.cmp__table:has(td:nth-child(7):hover) :is(td, th):nth-child(7),
+.cmp__table:has(td:nth-child(8):hover) :is(td, th):nth-child(8) {
+  background-color: var(--gold-softer);
+}
+
+.cmp__table:has(td:nth-child(2):hover) thead th:nth-child(2),
+.cmp__table:has(td:nth-child(3):hover) thead th:nth-child(3),
+.cmp__table:has(td:nth-child(4):hover) thead th:nth-child(4),
+.cmp__table:has(td:nth-child(5):hover) thead th:nth-child(5),
+.cmp__table:has(td:nth-child(6):hover) thead th:nth-child(6),
+.cmp__table:has(td:nth-child(7):hover) thead th:nth-child(7),
+.cmp__table:has(td:nth-child(8):hover) thead th:nth-child(8) {
+  color: var(--gold-ink);
+  box-shadow: inset 0 -2px 0 var(--gold);
+}
+
+.table-note {
+  margin: 12px 0 0;
+  font-size: var(--fs-13);
+  line-height: 1.6;
+  color: var(--ink-3);
+}
+
+/* Narrow screens: the table scrolls inside its own box, header and first column held. */
+@media (max-width: 1099px) {
+  .cmp__scroll {
+    overflow: auto;
+    max-height: min(78vh, 720px);
+    overscroll-behavior-x: contain;
+  }
+
+  .cmp__table {
+    min-width: 820px;
+  }
+
+  .cmp__table thead th {
+    top: 0;
+  }
+
+  .cmp__table tbody th[scope="row"] {
+    min-width: 150px;
+    font-size: var(--fs-13);
+  }
+}
+
+.cmp__price .price-strike {
+  display: block;
+  font-size: 0.78em;
+  font-weight: 400;
+  line-height: 1.2;
 }

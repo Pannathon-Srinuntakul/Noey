@@ -1,0 +1,359 @@
+/*
+ * /pricing. Signature: the plan rail with the clips-per-month picker, prices
+ * that count up as they arrive, level-meter quota bars, and a comparison
+ * table that holds its header and first column.
+ */
+
+.pricing-page .phero__lead {
+  display: grid;
+  gap: 14px;
+}
+
+.pricing-page .phero__lead p {
+  margin: 0;
+}
+
+.pricing-answer {
+  color: var(--ink);
+}
+
+.pricing-muted {
+  font-size: var(--fs-16);
+  color: var(--ink-3);
+}
+
+/* ── Plans: picker + rail ───────────────────────────────────────────────── */
+
+.pricing-plans {
+  padding-bottom: clamp(56px, 7vw, 104px);
+}
+
+.plan-rail {
+  display: grid;
+  gap: 18px;
+}
+
+.plan-rail__bar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 18px 28px;
+  align-items: end;
+  padding: clamp(18px, 2.4vw, 26px);
+  border: 1px solid var(--line);
+  border-radius: var(--r-xl);
+  background:
+    radial-gradient(60% 120% at 0% 0%, var(--gold-softer), transparent 70%),
+    var(--panel);
+  box-shadow: var(--rim);
+}
+
+.plan-rail__nav {
+  display: flex;
+  gap: 8px;
+}
+
+.picker {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.picker__label {
+  font-size: var(--fs-16);
+  font-weight: 600;
+}
+
+.picker__row {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+
+.picker__range {
+  --fill: 50%;
+  flex: 1 1 280px;
+  appearance: none;
+  height: 34px;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.picker__range::-webkit-slider-runnable-track {
+  height: 8px;
+  border-radius: 8px;
+  background: linear-gradient(90deg, var(--gold) 0 var(--fill), var(--line-2) var(--fill) 100%);
+}
+
+.picker__range::-moz-range-track {
+  height: 8px;
+  border-radius: 8px;
+  background: linear-gradient(90deg, var(--gold) 0 var(--fill), var(--line-2) var(--fill) 100%);
+}
+
+.picker__range::-webkit-slider-thumb {
+  appearance: none;
+  width: 16px;
+  height: 30px;
+  margin-top: -11px;
+  border-radius: 4px;
+  background: var(--gold);
+  border: 2px solid var(--bg);
+  box-shadow: 0 0 0 1px var(--gold), 0 6px 16px -4px var(--gold-glow);
+  clip-path: polygon(0 0, 100% 0, 100% 72%, 50% 100%, 0 72%);
+}
+
+.picker__range::-moz-range-thumb {
+  width: 16px;
+  height: 30px;
+  border-radius: 4px;
+  background: var(--gold);
+  border: 2px solid var(--bg);
+}
+
+.picker__range:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 4px;
+  border-radius: 8px;
+}
+
+.picker__out {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 14px;
+  border-radius: 12px;
+  background: var(--well);
+  border: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+.picker__num {
+  font-size: var(--fs-20);
+  font-weight: 600;
+  color: var(--gold-ink);
+}
+
+.picker__unit {
+  font-size: var(--fs-13);
+  color: var(--ink-3);
+}
+
+.picker__arrow {
+  color: var(--ink-3);
+}
+
+.picker__plan {
+  font-size: var(--fs-17);
+  font-weight: 600;
+}
+
+.picker__ticks {
+  position: relative;
+  height: 20px;
+  margin-right: 8px;
+}
+
+.picker__tick {
+  position: absolute;
+  top: 0;
+  translate: -50% 0;
+  font-size: 11.5px;
+  color: var(--ink-3);
+  white-space: nowrap;
+  transition: color var(--dur-2) ease;
+}
+
+.picker__tick::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: -7px;
+  width: 1px;
+  height: 5px;
+  background: var(--line-3);
+}
+
+.picker__tick--on {
+  color: var(--gold-ink);
+  font-weight: 600;
+}
+
+.picker__note {
+  margin: 0;
+  font-size: var(--fs-13);
+  line-height: 1.6;
+  color: var(--ink-3);
+}
+
+@media (max-width: 720px) {
+  .plan-rail__bar {
+    grid-template-columns: 1fr;
+  }
+
+  .plan-rail__nav {
+    display: none;
+  }
+
+  .picker__tick:nth-child(1),
+  .picker__tick:nth-child(3) {
+    display: none;
+  }
+}
+
+/* The rail: one row of cards that scrolls sideways and snaps card by card. */
+.plan-rail__track {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(270px, 300px);
+  gap: 14px;
+  margin: 0;
+  padding: 12px 4px 22px;
+  list-style: none;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  scroll-padding-inline: 4px;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-2) transparent;
+  -webkit-mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 40px), transparent);
+  mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 40px), transparent);
+}
+
+.plan-rail__slot {
+  scroll-snap-align: start;
+  display: flex;
+}
+
+.plan-rail__slot > .plan {
+  width: 100%;
+}
+
+.plan--extra {
+  background:
+    repeating-linear-gradient(135deg, color-mix(in srgb, var(--color-text) 2.5%, transparent) 0 1px, transparent 1px 10px),
+    var(--panel);
+}
+
+.price-extra {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 14px;
+  margin-top: 14px;
+}
+
+.price-extra__title {
+  margin: 0;
+  font-size: var(--fs-16);
+  font-weight: 600;
+}
+
+.price-extra__note {
+  margin: 0;
+  font-size: var(--fs-14);
+  color: var(--ink-3);
+}
+
+/* ── How the quota works ────────────────────────────────────────────────── */
+
+.quota {
+  border-top: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel) 40%, transparent);
+}
+
+.quota__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: clamp(28px, 5vw, 80px);
+  align-items: start;
+}
+
+.quota__grid .sec-head {
+  position: sticky;
+  top: calc(var(--beta-h) + var(--header-top) + var(--header-h) + 48px);
+}
+
+@media (max-width: 960px) {
+  .quota__grid {
+    grid-template-columns: 1fr;
+  }
+
+  .quota__grid .sec-head {
+    position: static;
+  }
+}
+
+.quota-card {
+  position: relative;
+  display: grid;
+  gap: 22px;
+  padding: clamp(22px, 3vw, 34px);
+  border: 1px solid var(--line);
+  border-radius: var(--r-xl);
+  background: var(--panel);
+  box-shadow: var(--shadow-2), var(--rim);
+}
+
+.quota-card__tag {
+  justify-self: start;
+}
+
+.quota-card__meters {
+  padding: 18px;
+  border-radius: var(--r-lg);
+  background: var(--well);
+  border: 1px solid var(--line);
+}
+
+.quota-card__meters .lvl {
+  background: var(--bg);
+}
+
+.quota-card__second {
+  margin-top: 18px;
+}
+
+.rule-list {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rule-list li {
+  display: grid;
+  grid-template-columns: 148px minmax(0, 1fr);
+  gap: 16px;
+  padding: 12px 4px;
+  border-bottom: 1px solid var(--line);
+  font-size: var(--fs-15);
+  line-height: 1.7;
+  color: var(--ink-2);
+}
+
+.rule-list li:last-child {
+  border-bottom: 0;
+}
+
+.rule-list__key {
+  font-size: var(--fs-14);
+  font-weight: 600;
+  color: var(--gold-ink);
+}
+
+@media (max-width: 560px) {
+  .rule-list li {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+}
+
+/* ── Compare + FAQ ──────────────────────────────────────────────────────── */
+
+.compare,
+.pricing-faq {
+  border-top: 1px solid var(--line);
+}

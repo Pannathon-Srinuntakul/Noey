@@ -1,0 +1,175 @@
+/*
+ * Articles: the six guides and the two legal documents share one layout —
+ * the timeline table of contents beside a reading column tuned for Thai
+ * (17px, 1.9 line height, ≤ 68ch), with callouts, term lists and tables
+ * drawn into the same system.
+ */
+
+.article-page .phero__copy h1 {
+  max-width: 20em;
+}
+
+/* The answer-first paragraph, set as the article's callout. */
+.answer {
+  position: relative;
+  margin: 0;
+  padding: 18px 22px 18px 24px;
+  border-radius: var(--r-lg);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 35%, transparent);
+  background: linear-gradient(135deg, var(--gold-soft), transparent 75%), color-mix(in srgb, var(--panel) 80%, transparent);
+  color: var(--ink);
+  font-size: var(--fs-lead);
+  line-height: 1.85;
+}
+
+.answer::before {
+  content: "";
+  position: absolute;
+  left: -1px;
+  top: 16px;
+  bottom: 16px;
+  width: 3px;
+  border-radius: 3px;
+  background: var(--gold);
+}
+
+.article-layout {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  gap: clamp(32px, 5vw, 80px);
+  align-items: start;
+  padding-bottom: var(--section-y);
+}
+
+.article-layout__toc {
+  position: sticky;
+  top: calc(var(--beta-h) + var(--header-top) + var(--header-h) + 36px);
+  max-height: calc(100vh - var(--beta-h) - var(--header-top) - var(--header-h) - 60px);
+  overflow-y: auto;
+  scrollbar-width: thin;
+  padding: 4px 4px 12px 0;
+}
+
+@media (max-width: 1023px) {
+  .article-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .article-layout__toc {
+    position: static;
+    max-height: none;
+    overflow: visible;
+  }
+}
+
+.article {
+  min-width: 0;
+  max-width: 780px;
+}
+
+.article__section {
+  position: relative;
+  padding: clamp(28px, 3.4vw, 44px) 0;
+  border-top: 1px solid var(--line);
+  scroll-margin-top: calc(var(--beta-h) + var(--header-top) + var(--header-h) + 24px);
+}
+
+.article__section:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.article__cue {
+  margin-bottom: 12px;
+}
+
+.article__h2 {
+  font-size: clamp(1.375rem, 1.1rem + 1.1vw, 1.875rem);
+  font-weight: 600;
+  line-height: 1.4;
+  margin-bottom: 18px;
+  text-wrap: balance;
+}
+
+.article__bullets {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.article__bullets li {
+  position: relative;
+  margin: 0;
+  padding: 14px 16px 14px 44px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  line-height: 1.8;
+}
+
+.article__bullets li::before {
+  content: "";
+  position: absolute;
+  left: 18px;
+  top: 1.35em;
+  width: 9px;
+  height: 9px;
+  rotate: 45deg;
+  border-radius: 2px;
+  background: var(--gold);
+}
+
+.article__bullets strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.article__extra {
+  margin-top: 22px;
+}
+
+.article__related {
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+}
+
+.article__foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding-top: 28px;
+  border-top: 1px solid var(--line);
+}
+
+/* ── Legal: the quietest page on the site ───────────────────────────────── */
+
+.legal__h2 {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  font-size: clamp(1.1875rem, 1.05rem + 0.6vw, 1.5rem);
+}
+
+.legal__n {
+  flex: none;
+  min-width: 2em;
+  font-size: var(--fs-15);
+  font-weight: 600;
+  color: var(--gold-ink);
+  letter-spacing: 0.04em;
+}
+
+/* Paragraphs hang under the heading text, clear of the section number. */
+@media (min-width: 640px) {
+  .legal__section .prose {
+    padding-inline-start: calc(var(--fs-15) * 2 + 14px);
+  }
+}
+
+.legal-page .wr .wr__w {
+  animation: none !important;
+}
+
+.legal-page .phero__beam {
+  opacity: 0.5;
+}

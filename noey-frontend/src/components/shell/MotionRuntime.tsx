@@ -73,7 +73,8 @@ export function MotionRuntime() {
 
     if (!still) {
       // Reveals: only what is still below the fold waits; the rest is "now".
-      const waiting = [...document.querySelectorAll<HTMLElement>("[data-reveal]:not([data-reveal-state])")];
+      // Elements left waiting by an earlier run (a re-run effect) are taken up again.
+      const waiting = [...document.querySelectorAll<HTMLElement>('[data-reveal]:not([data-reveal-state="in"]):not([data-reveal-state="now"])')];
       const fold = window.innerHeight * 0.92;
       const io = new IntersectionObserver(
         (entries) => {
@@ -115,6 +116,7 @@ export function MotionRuntime() {
           frame = 0;
           if (!pin.matches) return;
           const vh = window.innerHeight;
+          const center = window.innerWidth / 2;
           for (const scene of active) {
             const rect = scene.getBoundingClientRect();
             const length = Math.max(1, rect.height - vh);
@@ -122,6 +124,13 @@ export function MotionRuntime() {
             scene.style.setProperty("--p", progress.toFixed(4));
             const beats = Number(scene.getAttribute("data-scene")) || 0;
             if (beats > 0) scene.setAttribute("data-beat", String(Math.min(beats - 1, Math.floor(progress * beats))));
+            // A track read past a fixed playhead: mark what is under it.
+            if (scene.hasAttribute("data-scene-items")) {
+              for (const item of scene.querySelectorAll<HTMLElement>("[data-scene-item]")) {
+                const box = item.getBoundingClientRect();
+                item.toggleAttribute("data-live", box.left <= center && box.right >= center);
+              }
+            }
           }
         };
         const onScroll = () => {

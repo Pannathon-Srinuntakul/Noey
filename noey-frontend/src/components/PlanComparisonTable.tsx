@@ -5,52 +5,60 @@ import { CLIPS_FOOTNOTE, COMPARISON_ROWS, PLAN_COPY, TIERS, displayPrice, isBeta
  * The seven-plan comparison table. Rendered on /pricing and again on the help
  * page, from the SAME `PriceTable` and `COMPARISON_ROWS`, so the two pages
  * cannot drift apart. `labelledBy` is the id of the <h2> that introduces it.
+ *
+ * The header row and the first column stay in place while the rest scrolls
+ * (the page on wide screens, the table's own box on narrow ones), and the
+ * row and column under the pointer light up like a selection in the editor.
  */
 export function PlanComparisonTable({ table, labelledBy }: { table: PriceTable; labelledBy: string }) {
   return (
-    <div className="table-scroll" role="region" aria-labelledby={labelledBy} tabIndex={0}>
-      <table className="table">
-        <caption className="sr-only">เทียบราคาและความสามารถของแพลนฟรี Lite Starter Pro Studio Agency และ Max</caption>
-        <thead>
-          <tr>
-            <th scope="col">ความสามารถ</th>
-            {TIERS.map((tier) => (
-              <th key={tier} scope="col" className="c">
-                {PLAN_COPY[tier].name}
+    <div className="cmp">
+      <div className="cmp__scroll" role="region" aria-labelledby={labelledBy} tabIndex={0}>
+        <table className="table cmp__table">
+          <caption className="sr-only">เทียบราคาและความสามารถของแพลนฟรี Lite Starter Pro Studio Agency และ Max</caption>
+          <thead>
+            <tr>
+              <th scope="col" className="cmp__corner">
+                ความสามารถ
               </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <th scope="row">ราคา (บาท / เดือน)</th>
-            {TIERS.map((tier) => {
-              const full = strikePrice(table, tier);
-              return (
-                <td key={tier} className="c num">
-                  {full ? (
-                    <s className="price-strike">
-                      <span className="sr-only">{BETA_STRIKE_LABEL} </span>
-                      {full}
-                    </s>
-                  ) : null}
-                  {displayPrice(table, tier) ?? "—"}
-                </td>
-              );
-            })}
-          </tr>
-          {COMPARISON_ROWS.map((row) => (
-            <tr key={row.label}>
-              <th scope="row">{row.label}</th>
-              {row.values.map((value, index) => (
-                <td key={TIERS[index]} className={row.numeric ? "c num" : "c"}>
-                  {value}
-                </td>
+              {TIERS.map((tier) => (
+                <th key={tier} scope="col" className={PLAN_COPY[tier].recommended ? "c cmp__plan cmp__plan--recommended" : "c cmp__plan"}>
+                  {PLAN_COPY[tier].name}
+                </th>
               ))}
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            <tr className="cmp__price">
+              <th scope="row">ราคา (บาท / เดือน)</th>
+              {TIERS.map((tier) => {
+                const full = strikePrice(table, tier);
+                return (
+                  <td key={tier} className="c num">
+                    {full ? (
+                      <s className="price-strike">
+                        <span className="sr-only">{BETA_STRIKE_LABEL} </span>
+                        {full}
+                      </s>
+                    ) : null}
+                    {displayPrice(table, tier) ?? "—"}
+                  </td>
+                );
+              })}
+            </tr>
+            {COMPARISON_ROWS.map((row) => (
+              <tr key={row.label}>
+                <th scope="row">{row.label}</th>
+                {row.values.map((value, index) => (
+                  <td key={TIERS[index]} className={[row.numeric ? "c num" : "c", value === "—" ? "cmp__none" : null].filter(Boolean).join(" ")}>
+                    {value}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
       {/* The clip counts in the table are estimates; say on what. */}
       <p className="table-note">{CLIPS_FOOTNOTE}</p>
       {isBetaPriced(table) ? <p className="table-note">{BETA_PRICE_NOTE}</p> : null}

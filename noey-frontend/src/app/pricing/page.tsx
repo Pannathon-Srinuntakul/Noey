@@ -6,6 +6,10 @@ import { FaqList } from "@/components/FaqList";
 import { JsonLd } from "@/components/JsonLd";
 import { PlanComparisonTable } from "@/components/PlanComparisonTable";
 import { PriceCards } from "@/components/PriceCards";
+import { LevelMeter } from "@/components/ds/LevelMeter";
+import { PageHero } from "@/components/ds/PageHero";
+import { SectionHeader } from "@/components/ds/SectionHeader";
+import { PlanRail } from "@/components/pricing/PlanRail";
 import { pricingFaq } from "@/lib/faq";
 import { formatThaiDate } from "@/lib/format";
 import {
@@ -18,7 +22,9 @@ import {
 } from "@/lib/jsonld";
 import { BETA_PRICE_AFTER, BETA_PRICE_LINE } from "@/lib/beta";
 import {
+  APPROX_CUTS_PER_MONTH,
   CLIPS_FOOTNOTE,
+  FREE_CLIPS_CAPTION,
   PAID_TIERS,
   PLAN_COPY,
   clipsHeadline,
@@ -33,6 +39,7 @@ import {
 import { pageMetadata } from "@/lib/seo";
 import { getPriceTable } from "@/lib/server/prices";
 import { PAGES } from "@/lib/site";
+import "../../styles/pages/pricing.css";
 
 // ISR: prices follow GET /billing/plans, refreshed at most every 10 minutes.
 export const revalidate = 600;
@@ -69,6 +76,21 @@ function answer(table: PriceTable): string {
   return `Noey Studio ให้เครดิตทดลองฟรีก้อนเดียวเมื่อสมัคร ตัดได้ ${clipsHeadline("free")} ไม่ต้องผูกบัตร ใช้หมดแล้วเลือกแพลนรายเดือนได้ ${paid.length} ระดับ ได้แก่ ${list} ต่อเดือน โดยได้จำนวนคลิปต่อเดือน ${clips} (${CLIPS_FOOTNOTE}) ชำระด้วยบัตรเครดิตหรือเดบิต เปลี่ยนหรือยกเลิกแพลนได้เองจากหน้าบัญชี${beta}`;
 }
 
+/** The rules of the quota, one per row of the example card. */
+const QUOTA_RULES: ReadonlyArray<{ key: string; text: string }> = [
+  { key: "Weekly limit", text: "ทุกแพลนรายเดือน นับ 7 วันจากงานแรกของรอบ ใช้ได้เมื่อไหร่ก็ได้ในสัปดาห์" },
+  { key: "5-hour limit", text: "Pro ขึ้นไป อีกชั้นหนึ่งกันการใช้งานหนักต่อเนื่อง รีเซ็ต 5 ชั่วโมงหลังงานแรกของรอบ" },
+  { key: "Trial credit", text: `แพลนฟรี ได้เครดิตทดลองก้อนเดียวตอนสมัคร ตัดได้ ${clipsHeadline("free")} ไม่รีเซ็ตรายเดือน` },
+  { key: "บอกก่อนเริ่ม", text: "ระบบบอกก่อนเริ่มทุกครั้งว่างานนี้ใช้โควตาเท่าไหร่ จึงไม่มีการหักเกินโดยไม่รู้ตัว" },
+  { key: "ไม่กินโควตา", text: "การแก้ไทม์ไลน์ การสลับช็อต และการเรนเดอร์ซ้ำ ทำได้ไม่จำกัด" },
+  { key: "งานหนัก", text: "ฟุตเทจยาวและโหมดพากย์ใหม่ใช้ปริมาณมากกว่างานปกติ เพราะต้องถอดเสียงและวางแผนมากขึ้น" },
+  { key: "ฟุตเทจต่อโปรเจกต์", text: `เพดานเดียวต่อแพลน ใช้กับทุกโหมดเท่ากัน — ${footageLadderSentence()}` },
+  {
+    key: "ความละเอียด",
+    text: "แพลนฟรี Lite และ Starter วิเคราะห์ที่ระดับปกติ ซึ่งให้ผลดีอยู่แล้ว ตั้งแต่ Pro ขึ้นไปเลือกระดับละเอียดได้ ซึ่งตัดถี่ขึ้นและจุดตัดแม่นขึ้น แลกกับการใช้โควตามากกว่า",
+  },
+];
+
 export default async function PricingPage() {
   const table = await getPriceTable();
   const page = PAGES.pricing;
@@ -79,110 +101,90 @@ export default async function PricingPage() {
     softwareApplicationNode(table),
     faqPageNode(pricingFaq(isBetaPriced(table)), page.path),
   );
+  const railPlans = PAID_TIERS.map((tier) => ({ tier, name: PLAN_COPY[tier].name, cuts: APPROX_CUTS_PER_MONTH[tier] }));
 
   return (
-    <main id="main" className="container page">
-      <div className="pricing-head">
-        <Breadcrumb trail={TRAIL} />
-        <h1 className="page-title">เลือกตามปริมาณงาน</h1>
-        <p className="pricing-lead" style={{ marginBottom: 12 }}>
-          {answer(table)}
-        </p>
-        <p className="pricing-lead" style={{ marginBottom: 12 }}>
-          เครื่องมือเหมือนกันทุกแพลน สิ่งที่ต่างคือจำนวนคลิปที่ AI ตัดให้ต่อเดือน ความยาวฟุตเทจที่รับต่อโปรเจกต์ ความละเอียดการวิเคราะห์ และพื้นที่เก็บโปรเจกต์บนบัญชี
-          งานที่กินกำลังมากที่สุดคือการถอดเสียงกับการวางแผนตัด จึงเป็นตัวกำหนดราคา ส่วนการแก้ในไทม์ไลน์และการเรนเดอร์ซ้ำ ไม่จำกัดทุกแพลน
-        </p>
-        <p className="pricing-lead pricing-lead--muted">
-          ทุกแพลนได้ร่างแรกจากการคัดช็อตเหมือนกัน แล้วยังต้องเกลาต่อเองในไทม์ไลน์ ระบบเหมาะกับคลิปสั้นที่โครงไม่ซับซ้อน
-          ไม่ใช่งานโปรดักชันที่ต้องแทรกภาพหรือตัดซ้อนหลายชั้น
-        </p>
-        <p className="updated">
-          อัปเดตล่าสุด <time dateTime={page.updated}>{formatThaiDate(page.updated)}</time> · ราคาเป็นเงินบาทต่อเดือน
-        </p>
-      </div>
-
-      <CheckoutCanceledNotice />
-      <BetaPriceNote table={table} />
-      <PriceCards table={table} variant="full" />
-
-      <section className="quota-explain" aria-labelledby="quota-title">
-        <div>
-          <h2 id="quota-title" className="subsection-title">
-            โควตาคิดยังไง
-          </h2>
-          <p>
-            เรานับเป็นจำนวนคลิปที่ AI ตัดให้ต่อเดือน เพราะงานหนักของแต่ละคลิปคือการถอดเสียงและการวางแผนตัด ซึ่งใช้กำลังใกล้เคียงกันไม่ว่าฟุตเทจจะยาวแค่ไหน
-            ตัวเลขบนการ์ดคิดจากคลิปดิบ 5 นาที คลิปที่ยาวกว่าหรือระดับละเอียดใช้โควตามากกว่า และ หน้าตั้งค่าแสดงเป็นเปอร์เซ็นต์ของรอบที่เหลือ
+    <main id="main" className="pricing-page">
+      <PageHero
+        crumb={<Breadcrumb trail={TRAIL} />}
+        title="เลือกตามปริมาณงาน"
+        lead={
+          <>
+            <p className="pricing-answer">{answer(table)}</p>
+            <p>
+              เครื่องมือเหมือนกันทุกแพลน สิ่งที่ต่างคือจำนวนคลิปที่ AI ตัดให้ต่อเดือน ความยาวฟุตเทจที่รับต่อโปรเจกต์ ความละเอียดการวิเคราะห์ และพื้นที่เก็บโปรเจกต์บนบัญชี
+              งานที่กินกำลังมากที่สุดคือการถอดเสียงกับการวางแผนตัด จึงเป็นตัวกำหนดราคา ส่วนการแก้ในไทม์ไลน์และการเรนเดอร์ซ้ำ ไม่จำกัดทุกแพลน
+            </p>
+            <p className="pricing-muted">
+              ทุกแพลนได้ร่างแรกจากการคัดช็อตเหมือนกัน แล้วยังต้องเกลาต่อเองในไทม์ไลน์ ระบบเหมาะกับคลิปสั้นที่โครงไม่ซับซ้อน
+              ไม่ใช่งานโปรดักชันที่ต้องแทรกภาพหรือตัดซ้อนหลายชั้น
+            </p>
+          </>
+        }
+        meta={
+          <p className="stamp">
+            อัปเดตล่าสุด <time dateTime={page.updated}>{formatThaiDate(page.updated)}</time> · ราคาเป็นเงินบาทต่อเดือน
           </p>
-        </div>
-        <div className="card" style={{ padding: 28 }}>
-          {/* Illustration of the settings screen, not anyone's real usage — labelled as such. */}
-          <span className="tag tag-neutral example-tag">ตัวอย่างการแสดงผล</span>
-          <div className="meter-row" style={{ marginTop: 4 }}>
-            <span>5-hour limit</span>
-            <span className="num">ใช้ไป 38%</span>
-          </div>
-          <div className="meter" aria-hidden="true">
-            <div className="meter__fill" style={{ width: "38%" }} />
-          </div>
-          <div className="meter-row" style={{ marginTop: 14 }}>
-            <span>Weekly limit</span>
-            <span className="num">ใช้ไป 21%</span>
-          </div>
-          <div className="meter" aria-hidden="true">
-            <div className="meter__fill" style={{ width: "21%" }} />
-          </div>
-          <ul className="rule-list">
-            <li>
-              <span className="num">Weekly limit</span>
-              <span>ทุกแพลนรายเดือน นับ 7 วันจากงานแรกของรอบ ใช้ได้เมื่อไหร่ก็ได้ในสัปดาห์</span>
-            </li>
-            <li>
-              <span className="num">5-hour limit</span>
-              <span>Pro ขึ้นไป อีกชั้นหนึ่งกันการใช้งานหนักต่อเนื่อง รีเซ็ต 5 ชั่วโมงหลังงานแรกของรอบ</span>
-            </li>
-            <li>
-              <span className="num">Trial credit</span>
-              <span>แพลนฟรี ได้เครดิตทดลองก้อนเดียวตอนสมัคร ตัดได้ {clipsHeadline("free")} ไม่รีเซ็ตรายเดือน</span>
-            </li>
-            <li>
-              <span className="num">บอกก่อนเริ่ม</span>
-              <span>ระบบบอกก่อนเริ่มทุกครั้งว่างานนี้ใช้โควตาเท่าไหร่ จึงไม่มีการหักเกินโดยไม่รู้ตัว</span>
-            </li>
-            <li>
-              <span className="num">ไม่กินโควตา</span>
-              <span>การแก้ไทม์ไลน์ การสลับช็อต และการเรนเดอร์ซ้ำ ทำได้ไม่จำกัด</span>
-            </li>
-            <li>
-              <span className="num">งานหนัก</span>
-              <span>ฟุตเทจยาวและโหมดพากย์ใหม่ใช้ปริมาณมากกว่างานปกติ เพราะต้องถอดเสียงและวางแผนมากขึ้น</span>
-            </li>
-            <li>
-              <span className="num">ฟุตเทจต่อโปรเจกต์</span>
-              <span>เพดานเดียวต่อแพลน ใช้กับทุกโหมดเท่ากัน — {footageLadderSentence()}</span>
-            </li>
-            <li>
-              <span className="num">ความละเอียด</span>
-              <span>
-                แพลนฟรี Lite และ Starter วิเคราะห์ที่ระดับปกติ ซึ่งให้ผลดีอยู่แล้ว ตั้งแต่ Pro ขึ้นไปเลือกระดับละเอียดได้ ซึ่งตัดถี่ขึ้นและจุดตัดแม่นขึ้น แลกกับการใช้โควตามากกว่า
-              </span>
-            </li>
-          </ul>
+        }
+      />
+
+      <section className="pricing-plans" aria-label="แพลนทั้งหมด">
+        <div className="wrap">
+          <CheckoutCanceledNotice />
+          <BetaPriceNote table={table} />
+          <PlanRail plans={railPlans} initial={APPROX_CUTS_PER_MONTH.pro} footnote={CLIPS_FOOTNOTE} freeNote={`${PLAN_COPY.free.name}: ${FREE_CLIPS_CAPTION}`}>
+            <PriceCards table={table} variant="full" />
+          </PlanRail>
         </div>
       </section>
 
-      <section aria-labelledby="compare-title">
-        <h2 id="compare-title" className="subsection-title compare-title">
-          ตารางเทียบแพลน
-        </h2>
-        <PlanComparisonTable table={table} labelledBy="compare-title" />
+      <section className="sect quota" aria-labelledby="quota-title">
+        <div className="wrap quota__grid">
+          <SectionHeader id="quota-title" track="A1" timecode="00:00:48:00" title="โควตาคิดยังไง" size="h-2">
+            <p>
+              เรานับเป็นจำนวนคลิปที่ AI ตัดให้ต่อเดือน เพราะงานหนักของแต่ละคลิปคือการถอดเสียงและการวางแผนตัด ซึ่งใช้กำลังใกล้เคียงกันไม่ว่าฟุตเทจจะยาวแค่ไหน
+              ตัวเลขบนการ์ดคิดจากคลิปดิบ 5 นาที คลิปที่ยาวกว่าหรือระดับละเอียดใช้โควตามากกว่า และ หน้าตั้งค่าแสดงเป็นเปอร์เซ็นต์ของรอบที่เหลือ
+            </p>
+          </SectionHeader>
+          <div className="quota-card">
+            {/* Illustration of the settings screen, not anyone's real usage — labelled as such. */}
+            <span className="mock-tag quota-card__tag">ตัวอย่างการแสดงผล</span>
+            <div className="quota-card__meters">
+              <div className="meter-row">
+                <span>5-hour limit</span>
+                <span className="num">ใช้ไป 38%</span>
+              </div>
+              <LevelMeter value={38} />
+              <div className="meter-row quota-card__second">
+                <span>Weekly limit</span>
+                <span className="num">ใช้ไป 21%</span>
+              </div>
+              <LevelMeter value={21} />
+            </div>
+            <ul className="rule-list">
+              {QUOTA_RULES.map((rule) => (
+                <li key={rule.key}>
+                  <span className="num rule-list__key">{rule.key}</span>
+                  <span>{rule.text}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
       </section>
 
-      <section style={{ marginTop: 56, maxWidth: 760 }} aria-labelledby="pricing-faq-title">
-        <h2 id="pricing-faq-title" className="subsection-title" style={{ marginBottom: 18 }}>
-          คำถามเรื่องราคา (FAQ)
-        </h2>
-        <FaqList items={pricingFaq(isBetaPriced(table))} compact />
+      <section className="sect compare" aria-labelledby="compare-title">
+        <div className="wrap">
+          <SectionHeader id="compare-title" track="V7" timecode="00:01:12:00" title="ตารางเทียบแพลน" size="h-2" />
+          <PlanComparisonTable table={table} labelledBy="compare-title" />
+        </div>
+      </section>
+
+      <section className="sect pricing-faq" aria-labelledby="pricing-faq-title">
+        <div className="wrap wrap--narrow">
+          <SectionHeader id="pricing-faq-title" track="T1" timecode="00:01:40:00" title="คำถามเรื่องราคา (FAQ)" size="h-2" />
+          <FaqList items={pricingFaq(isBetaPriced(table))} compact />
+        </div>
       </section>
 
       <JsonLd data={jsonLd} />

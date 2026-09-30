@@ -1,0 +1,210 @@
+/*
+ * /guide — the media bin. Each guide is a clip in the bin: a thumbnail drawn
+ * from the guide itself (a cue per section, a waveform, its file name and
+ * length), then its question, its opening answer and its section list.
+ * Hovering the thumbnail scrubs it (BinThumb sets --x).
+ */
+
+.bin {
+  padding-bottom: 0;
+}
+
+.bin__bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.bin__count {
+  color: var(--ink-3);
+}
+
+.bin__rule {
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, var(--line-2), transparent);
+}
+
+.bin__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: clamp(14px, 1.6vw, 22px);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+@media (max-width: 860px) {
+  .bin__grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.bin__item {
+  display: flex;
+  min-width: 0;
+}
+
+.bin__clip {
+  flex: 1;
+  min-width: 0;
+}
+
+.bin__body {
+  gap: 12px;
+}
+
+.bin__title {
+  font-size: clamp(1.1875rem, 1.05rem + 0.5vw, 1.4375rem);
+  line-height: 1.45;
+  text-wrap: pretty;
+}
+
+.bin__answer {
+  line-height: 1.8;
+}
+
+.clip__body .bin__meta {
+  margin-top: auto;
+  padding-top: 12px;
+  border-top: 1px dashed var(--line-2);
+  font-size: var(--fs-13);
+  line-height: 1.75;
+  color: var(--ink-3);
+}
+
+/* ── The thumbnail ──────────────────────────────────────────────────────── */
+
+.bin-thumb {
+  --x: 0%;
+  position: relative;
+  aspect-ratio: 16 / 5;
+  overflow: hidden;
+  border-bottom: 1px solid var(--line);
+  border-radius: 11px 11px 0 0;
+  background:
+    linear-gradient(180deg, transparent 55%, color-mix(in srgb, var(--color-neutral-900) 10%, transparent)),
+    var(--well);
+}
+
+.bin-thumb__glow {
+  position: absolute;
+  top: -50%;
+  left: var(--gx, 40%);
+  width: 70%;
+  height: 130%;
+  background: radial-gradient(closest-side, var(--gold-soft), transparent);
+  pointer-events: none;
+}
+
+.bin-thumb__marks i {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: repeating-linear-gradient(180deg, var(--line-2) 0 3px, transparent 3px 7px);
+}
+
+/* A section cue: a small gold flag at the top of each dashed line. */
+.bin-thumb__marks i::before {
+  content: "";
+  position: absolute;
+  top: 8px;
+  left: -3px;
+  width: 7px;
+  height: 7px;
+  rotate: 45deg;
+  border-radius: 1.5px;
+  background: color-mix(in srgb, var(--color-accent) 70%, transparent);
+}
+
+.bin-thumb__wave {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: 30px;
+  height: 36%;
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.bin-thumb__wave i {
+  flex: 1;
+  min-width: 1px;
+  height: calc(var(--h) * 100%);
+  border-radius: 2px 2px 0 0;
+  background: color-mix(in srgb, var(--color-accent) 42%, transparent);
+}
+
+/* What the playhead has passed reads as "played". */
+.bin-thumb__played {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--x);
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  pointer-events: none;
+}
+
+.bin-thumb__head {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--x);
+  width: 2px;
+  margin-left: -1px;
+  background: var(--gold);
+  opacity: 0;
+  transition: opacity var(--dur-2) ease;
+  pointer-events: none;
+}
+
+.bin-thumb__head::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -5px;
+  border: 6px solid transparent;
+  border-top: 8px solid var(--gold);
+  border-bottom: 0;
+}
+
+.bin-thumb[data-scrub] .bin-thumb__head {
+  opacity: 1;
+}
+
+.bin-thumb__name,
+.bin-thumb__tc {
+  position: absolute;
+  bottom: 9px;
+  padding: 4px 7px;
+  border-radius: 5px;
+  background: var(--glass-strong);
+  color: var(--ink-2);
+  pointer-events: none;
+}
+
+.bin-thumb__name {
+  left: 10px;
+  max-width: calc(100% - 130px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bin-thumb__tc {
+  right: 10px;
+  color: var(--gold-ink);
+}
+
+/* The rest of the bin: the pages outside the guide. */
+.guide-more {
+  padding-top: calc(var(--section-y) * 0.75);
+}
+
+.guide-more__foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: clamp(28px, 3vw, 40px);
+}
