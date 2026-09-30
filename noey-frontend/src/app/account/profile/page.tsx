@@ -8,6 +8,7 @@ import { privatePageMetadata } from "@/lib/seo";
 import { googleSignInEnabled } from "@/lib/server/google";
 import { getMe, resolvePageOutcome } from "@/lib/server/session";
 import { sanitizeDisplayName } from "@/lib/session";
+import { keepThai } from "@/components/ds/ThaiText";
 
 export const metadata: Metadata = privatePageMetadata("ข้อมูลส่วนตัว");
 
@@ -63,18 +64,21 @@ export default async function ProfilePage({ searchParams }: { searchParams: Prom
             />
           </div>
         ) : null}
-        <div className="card-section danger-zone" id="delete-account">
+      </div>
+      {/* The one block drawn in the danger colour, on its own at the end of the tab. */}
+      <div className="card account-card danger-zone acct-danger" id="delete-account">
+        <div className="acct-danger__copy">
           <h3>ลบบัญชี</h3>
-          <p>ลบบัญชีและโปรเจกต์ทั้งหมดบนเซิร์ฟเวอร์อย่างถาวร กู้คืนไม่ได้ ก่อนยืนยันจะแสดงรายละเอียดว่าอะไรถูกลบและอะไรเก็บไว้</p>
-          <div className="danger-zone__action">
-            <DeleteAccount
-              hasPassword={hasPassword}
-              googleLinked={googleLinked}
-              googleVerified={googleVerified}
-              openOnLoad={deleteStep !== null}
-              notice={deleteStep === "retry" ? flowNotice : null}
-            />
-          </div>
+          <p>{keepThai("ลบบัญชีและโปรเจกต์ทั้งหมดบนเซิร์ฟเวอร์อย่างถาวร กู้คืนไม่ได้ ก่อนยืนยันจะแสดงรายละเอียดว่าอะไรถูกลบและอะไรเก็บไว้")}</p>
+        </div>
+        <div className="danger-zone__action">
+          <DeleteAccount
+            hasPassword={hasPassword}
+            googleLinked={googleLinked}
+            googleVerified={googleVerified}
+            openOnLoad={deleteStep !== null}
+            notice={deleteStep === "retry" ? flowNotice : null}
+          />
         </div>
       </div>
     </section>

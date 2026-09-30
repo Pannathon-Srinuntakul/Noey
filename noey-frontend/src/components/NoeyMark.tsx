@@ -1,6 +1,8 @@
 /**
  * The Noey "splice" mark (design logo/README.md). Inline SVG in currentColor.
- * Below ~28px the README's small version (stroke 15) keeps the strokes legible.
+ * Below 24px the README's small version (stroke 15) keeps the strokes legible;
+ * from 24px up the regular stroke keeps the splice gap visible (with stroke 15
+ * the two diagonals would all but touch at header size).
  * Never close the gap in the middle — it is the splice, not a mistake.
  *
  * `draw` gives every stroke a unit path length so CSS can draw the mark in
@@ -21,7 +23,7 @@ export function NoeyMark({
   /** Override for very large decorative uses (the footer watermark). */
   strokeWidth?: number;
 }) {
-  const stroke = strokeWidth ?? (typeof size === "number" && size <= 28 ? 15 : 13);
+  const stroke = strokeWidth ?? (typeof size === "number" && size < 24 ? 15 : 13);
   const pathLength = draw ? 1 : undefined;
   const classes = [draw ? "mark-draw" : null, className].filter(Boolean).join(" ") || undefined;
   return (

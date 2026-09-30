@@ -142,7 +142,8 @@ export function EditorMockup({
           <div className="ed__track ed__track--a">
             <span className="trk tc">A1</span>
             <div className="ed__lane">
-              <Waveform bars={84} seed={11} className="ed__wave" cut={[[14, 24], [44, 56]]} />
+              {/* The struck take and the silence sit exactly at the joins between V1's clips. */}
+              <Waveform bars={84} seed={11} className="ed__wave" cut={[[22, 29], [40, 47]]} />
               <span className="ed__slash ed__slash--1" />
               <span className="ed__slash ed__slash--2" />
             </div>

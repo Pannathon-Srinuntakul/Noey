@@ -101,7 +101,7 @@ export function EmailForm({ email }: { email: string }) {
         />
         {errors.current_password ? <p className="field-error" id="a-email-pass-error">{errors.current_password}</p> : null}
       </div>
-      <button type="submit" className="btn btn-secondary btn-sm acct-form__submit" disabled={pending}>
+      <button type="submit" className="btn btn-primary btn-sm acct-form__submit" disabled={pending}>
         {pending ? "กำลังส่ง…" : "เปลี่ยนอีเมล"}
       </button>
       <Feedback state={state} />

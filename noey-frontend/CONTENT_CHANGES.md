@@ -107,6 +107,16 @@ Old: the toggle's visible glyph was the character "☾" (and a sun character in
 dark mode). New: drawn icons. The button's accessible names ("สลับเป็นโหมดมืด",
 "สลับเป็นโหมดสว่าง") are unchanged.
 
+## 7. Article stamp: the separator binds to the date
+
+Old: `อัปเดตล่าสุด <date> · เขียนโดย <author>` as one run of text.
+
+New: the same words, but the " · " is joined to the date with a no-break
+space and "เขียนโดย <author>" is kept on one line, so a narrow screen breaks
+after the dot instead of stranding "Noey Studio" or starting a line with "·".
+The source no longer holds the literal "· เขียนโดย" in one piece; what a
+reader sees is unchanged.
+
 ## Text added (not replacing anything)
 
 Only labels, no claims:

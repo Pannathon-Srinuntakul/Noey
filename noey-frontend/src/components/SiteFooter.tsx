@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { GUIDE_KEYS, NAV_LINKS, PAGES } from "@/lib/site";
 import { NoeyMark } from "./NoeyMark";
+import { keepThai } from "./ds/ThaiText";
 
 const ACCOUNT_LINKS = [
   { href: PAGES.login.path, label: PAGES.login.label },
@@ -26,7 +27,7 @@ export function SiteFooter() {
               <NoeyMark size={30} />
               Noey Studio
             </p>
-            <p className="ftr__about">ห้องตัดต่อวิดีโอด้วย AI ที่ทำงานในเบราว์เซอร์ สำหรับครีเอเตอร์และร้านค้าที่ถ่ายคลิปเอง</p>
+            <p className="ftr__about">{keepThai("ห้องตัดต่อวิดีโอด้วย AI ที่ทำงานในเบราว์เซอร์ สำหรับครีเอเตอร์และร้านค้าที่ถ่ายคลิปเอง")}</p>
           </div>
           <div className="ftr__cols">
             <nav className="ftr__col" aria-labelledby="footer-menu">
@@ -75,8 +76,9 @@ export function SiteFooter() {
         </div>
         <div className="ftr__legal">
           <div>© {year} Noey Studio</div>
-          <span className="tc" aria-hidden="true">
-            END · 00:00:00:00
+          {/* The page's running length is written in by ScrollTimeline once it is measured. */}
+          <span className="tc" aria-hidden="true" data-end-tc="">
+            END
           </span>
         </div>
       </div>

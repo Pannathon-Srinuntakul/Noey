@@ -13,6 +13,7 @@ import { breadcrumbNode, itemListNode, jsonLdGraph, webPageNode } from "@/lib/js
 import { pageMetadata } from "@/lib/seo";
 import { PAGES } from "@/lib/site";
 import "../../styles/pages/guide-index.css";
+import { keepThai } from "@/components/ds/ThaiText";
 
 export const metadata: Metadata = pageMetadata("guide");
 
@@ -58,9 +59,9 @@ export default function GuideIndexPage() {
         title="คู่มือใช้งานและคำตอบที่ถามบ่อย"
         lead={
           <p>
-            หน้านี้รวมคำตอบของคำถามที่คนถามบ่อยที่สุดก่อนเริ่มตัดคลิปสั้นด้วย AI ทั้งวิธีตัดคลิป TikTok การใส่ซับไทยอัตโนมัติ
-            การตัดคลิปรีวิวสินค้า การตัดคลิปยาวเป็นคลิปสั้นหลายตัว เกณฑ์เลือกเครื่องมือ และหน้าช่วยเหลือที่รวมโหมด ไฟล์ที่รองรับ
-            ขีดจำกัดของแต่ละแพลน และวิธีแก้ปัญหาไว้ที่เดียว
+            {keepThai(
+              "หน้านี้รวมคำตอบของคำถามที่คนถามบ่อยที่สุดก่อนเริ่มตัดคลิปสั้นด้วย AI ทั้งวิธีตัดคลิป TikTok การใส่ซับไทยอัตโนมัติ การตัดคลิปรีวิวสินค้า การตัดคลิปยาวเป็นคลิปสั้นหลายตัว เกณฑ์เลือกเครื่องมือ และหน้าช่วยเหลือที่รวมโหมด ไฟล์ที่รองรับ ขีดจำกัดของแต่ละแพลน และวิธีแก้ปัญหาไว้ที่เดียว",
+            )}
           </p>
         }
         meta={
@@ -91,7 +92,7 @@ export default function GuideIndexPage() {
                 <li key={key} className="bin__item">
                   <article className="clip clip--link bin__clip">
                     <BinThumb
-                      name={`${file}.mov`}
+                      name={file}
                       sections={doc.sections.length}
                       seed={index * 7 + 3}
                       length={chars / 9}
@@ -99,12 +100,12 @@ export default function GuideIndexPage() {
                     <div className="clip__body bin__body">
                       <h2 id={`${key}-heading`} className="clip__title bin__title">
                         <Link href={entry.path} className="clip__link">
-                          {doc.h1}
+                          {keepThai(doc.h1)}
                         </Link>
                       </h2>
-                      <p className="bin__answer">{doc.answer}</p>
+                      <p className="bin__answer">{keepThai(doc.answer)}</p>
                       <p className="bin__meta">
-                        หัวข้อในหน้านี้: {doc.sections.map((section) => section.title).join(" · ")}
+                        หัวข้อในหน้านี้: {keepThai(doc.sections.map((section) => section.title).join(" · "))}
                       </p>
                     </div>
                   </article>
@@ -117,12 +118,12 @@ export default function GuideIndexPage() {
 
       <section className="sect guide-more" aria-labelledby="scope-links-heading">
         <div className="wrap">
-          <SectionHeader id="scope-links-heading" track="R2" timecode="00:01:30:00" title="อ่านต่อนอกคู่มือ" size="h-3" />
+          <SectionHeader id="scope-links-heading" title="อ่านต่อนอกคู่มือ" size="h-2" />
           <ul className="link-grid" data-reveal="stagger">
             {MORE.map((item, index) => (
               <li key={item.href}>
-                <ClipCard title={item.label} titleAs="h3" href={item.href} seed={index + 31} track={`X${index + 1}`}>
-                  <p>{item.note}</p>
+                <ClipCard title={item.label} titleAs="h3" href={item.href} seed={index + 31}>
+                  <p>{keepThai(item.note)}</p>
                 </ClipCard>
               </li>
             ))}

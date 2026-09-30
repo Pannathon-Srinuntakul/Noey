@@ -1,4 +1,5 @@
 import type { FaqItem } from "@/lib/faq";
+import { keepThai } from "./ds/ThaiText";
 
 /**
  * Native <details> FAQ — server-rendered, works without JavaScript, and the
@@ -17,11 +18,11 @@ export function FaqList({ items, compact = false }: { items: readonly FaqItem[];
             <span className="faq__cue tc" aria-hidden="true">
               Q{String(index + 1).padStart(2, "0")}
             </span>
-            <h3 className="faq__q">{item.question}</h3>
+            <h3 className="faq__q">{keepThai(item.question)}</h3>
             <span className="faq__plus" aria-hidden="true" />
           </summary>
           <div className="faq__a">
-            <p>{item.answer}</p>
+            <p>{keepThai(item.answer)}</p>
           </div>
         </details>
       ))}

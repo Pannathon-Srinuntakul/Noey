@@ -27,11 +27,18 @@
   }
 }
 
+/* The form column lines up with the page's content edge (the logo), not the middle of its half. */
 .auth__main {
   display: grid;
   gap: clamp(40px, 5vw, 56px);
-  justify-items: center;
+  justify-items: start;
   padding-top: clamp(8px, 2vw, 24px);
+}
+
+@media (max-width: 1023px) {
+  .auth__main {
+    justify-items: center;
+  }
 }
 
 .auth__form,
@@ -127,6 +134,14 @@
     linear-gradient(180deg, transparent 60%, color-mix(in srgb, var(--color-neutral-900) 8%, transparent)),
     var(--well);
   box-shadow: var(--rim);
+}
+
+/* Narrow desktops: the editor fills the viewer instead of floating in it. */
+@media (max-width: 1279px) {
+  .auth__viewer {
+    min-height: 0;
+    padding: 28px 16px 20px;
+  }
 }
 
 .auth__glow {

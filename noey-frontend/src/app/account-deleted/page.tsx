@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { StatusCard } from "@/components/ds/StatusCard";
 import { SITE_NAME } from "@/lib/site";
+import { keepThai } from "@/components/ds/ThaiText";
 
 // Where a self-service account deletion lands. Static and never indexed;
 // it shows nothing about the account (the session is already gone).
@@ -27,11 +28,14 @@ export default function AccountDeletedPage() {
           }
         >
           <p>
-            บัญชีและโปรเจกต์บนเซิร์ฟเวอร์ถูกลบแล้ว และออกจากระบบทุกอุปกรณ์แล้ว
-            ข้อมูลการชำระเงินที่กฎหมายบัญชีและภาษีกำหนดให้เก็บ จะเก็บไว้โดยไม่ผูกกับชื่อหรืออีเมลของคุณ
+            {keepThai(
+              "บัญชีและโปรเจกต์บนเซิร์ฟเวอร์ถูกลบแล้ว และออกจากระบบทุกอุปกรณ์แล้ว ข้อมูลการชำระเงินที่กฎหมายบัญชีและภาษีกำหนดให้เก็บ จะเก็บไว้โดยไม่ผูกกับชื่อหรืออีเมลของคุณ",
+            )}
           </p>
           <p>
-            ไฟล์ที่อยู่ในเครื่องของคุณเอง เช่น โปรเจกต์ในเบราว์เซอร์ของห้องตัดต่อหรือในแอปบนคอมพิวเตอร์ ยังอยู่ในเครื่องนั้น ลบเองได้ตามต้องการ
+            {keepThai(
+              "ไฟล์ที่อยู่ในเครื่องของคุณเอง เช่น โปรเจกต์ในเบราว์เซอร์ของห้องตัดต่อหรือในแอปบนคอมพิวเตอร์ ยังอยู่ในเครื่องนั้น ลบเองได้ตามต้องการ",
+            )}
           </p>
         </StatusCard>
       </div>

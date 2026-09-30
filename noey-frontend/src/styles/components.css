@@ -784,6 +784,12 @@
   margin-block: auto;
 }
 
+@media (max-width: 599px) {
+  .status-page::before {
+    display: none;
+  }
+}
+
 .status-page::before {
   content: "";
   position: absolute;
@@ -916,14 +922,36 @@
   border-radius: 0;
 }
 
-/* Grid of links with a note each ("อ่านต่อ", related pages). */
+/* Grid of links with a note each ("อ่านต่อ", related pages): 2 × 2, a row of
+   four when there is room, never three and an orphan; cards in a row share
+   one height. */
 .link-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
   margin: 0;
   padding: 0;
   list-style: none;
+}
+
+.link-grid > li {
+  display: flex;
+}
+
+.link-grid > li > .clip {
+  flex: 1;
+}
+
+@media (min-width: 1100px) {
+  .link-grid:has(> li:nth-child(4):last-child) {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 560px) {
+  .link-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .link-grid .clip__body {
@@ -948,7 +976,7 @@
 .price-strike {
   color: var(--ink-3);
   text-decoration-thickness: 1.5px;
-  text-decoration-color: color-mix(in srgb, var(--color-danger) 70%, transparent);
+  text-decoration-color: var(--line-3);
   font-size: 0.55em;
   font-weight: 400;
 }
@@ -1015,8 +1043,10 @@
   box-shadow: 0 0 6px color-mix(in srgb, var(--color-accent) 40%, transparent);
 }
 
+/* The hot zone warms from gold toward the danger colour as a window fills. */
 .lvl--near i[data-on][data-hot] {
-  background: var(--color-accent-600);
+  background: color-mix(in srgb, var(--color-danger) 45%, var(--color-accent));
+  box-shadow: 0 0 6px color-mix(in srgb, var(--color-danger) 30%, transparent);
 }
 
 .lvl--full i[data-on][data-hot] {
@@ -1037,6 +1067,13 @@
   from {
     opacity: 0.12;
     transform: scaleY(0.4);
+  }
+}
+
+/* Phones: half the segments, each twice as wide, so the meter reads as a meter. */
+@media (max-width: 480px) {
+  .lvl i:nth-child(even) {
+    display: none;
   }
 }
 
@@ -1118,7 +1155,7 @@
 }
 
 .nf__tc {
-  font-size: 8.5px;
+  font-size: 9.5px;
   letter-spacing: 0.08em;
   fill: var(--ink-3);
   font-variant-numeric: tabular-nums;
@@ -1162,9 +1199,9 @@
   stroke-width: 3;
 }
 
-/* The hole: darker as it goes down, hatched, edged with a dashed cut line. */
+/* The hole: the editor's empty well, hatched, edged with a dashed cut line. */
 .nf__hole {
-  fill: url(#nf-depth);
+  fill: var(--well);
   stroke: color-mix(in srgb, var(--color-accent) 55%, transparent);
   stroke-width: 1.2;
   stroke-dasharray: 4 4;
@@ -1179,15 +1216,6 @@
   stroke-width: 1;
 }
 
-.nf__depth-top {
-  stop-color: var(--bg);
-  stop-opacity: 0.2;
-}
-
-.nf__depth-bottom {
-  stop-color: var(--color-neutral-900);
-  stop-opacity: 0.55;
-}
 
 .nf__cap {
   fill: var(--gold);
@@ -1201,7 +1229,7 @@
 
 /* Resting state: fallen into the hole. */
 .nf__head {
-  transform: translate(442px, 70px) rotate(-11.3deg);
+  transform: translate(446px, 100px) rotate(-11.3deg);
   filter: drop-shadow(0 0 5px var(--gold-glow));
 }
 
@@ -1231,7 +1259,7 @@
   }
   /* … and drops in */
   100% {
-    transform: translate(442px, 70px) rotate(-11.3deg);
+    transform: translate(446px, 100px) rotate(-11.3deg);
   }
 }
 
@@ -1280,4 +1308,28 @@
   margin: 12px 0 0;
   padding: 0;
   list-style: none;
+}
+
+/* Phones: zoom into the middle of the timeline so the hole and the fall read
+   at a legible size, and give the three ways out an even layout. */
+@media (max-width: 560px) {
+  .nf__svg {
+    width: 175%;
+    max-width: none;
+    margin-left: -55%;
+  }
+
+  .nf__links {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    width: 100%;
+  }
+
+  .nf__links li:first-child {
+    grid-column: 1 / -1;
+  }
+
+  .nf__links .btn {
+    width: 100%;
+  }
 }

@@ -5,6 +5,7 @@ import { deleteAccountAction, type DeleteAccountState } from "@/app/actions/acco
 import { formatBahtFromSatang } from "@/lib/google-auth";
 import { GoogleButton } from "../auth/GoogleButton";
 import { Dialog } from "../ui/Dialog";
+import { keepThai } from "../ds/ThaiText";
 
 /** What goes and what stays — kept in step with backend packages/auth/account_deletion.py. */
 function WhatHappens() {
@@ -12,7 +13,7 @@ function WhatHappens() {
     <div className="delete-summary">
       <h3>สิ่งที่จะถูกลบทันทีและกู้คืนไม่ได้</h3>
       <ul className="ruled-list">
-        <li>โปรเจกต์ทั้งหมดบนเซิร์ฟเวอร์ ทั้งไฟล์วิดีโอที่อัปโหลด ไฟล์ที่ตัดเสร็จแล้ว สคริปต์ และสไตล์ที่บันทึกไว้</li>
+        <li>{keepThai("โปรเจกต์ทั้งหมดบนเซิร์ฟเวอร์ ทั้งไฟล์วิดีโอที่อัปโหลด ไฟล์ที่ตัดเสร็จแล้ว สคริปต์ และสไตล์ที่บันทึกไว้")}</li>
         <li>ชื่อ อีเมล รหัสผ่าน และการเชื่อมต่อบัญชี Google (ถ้ามี) — อีเมลนี้จะใช้สมัครใหม่ได้</li>
         <li>แพลนรายเดือนที่ยังใช้อยู่จะถูกยกเลิกทันที ไม่มีการคืนเงินตามสัดส่วนของรอบบิลที่เหลือ</li>
         <li>ยอดเงินคงเหลือในกระเป๋า (ถ้ามี) จะหายไปทั้งหมด</li>
@@ -26,7 +27,7 @@ function WhatHappens() {
         <li>บันทึกความปลอดภัยของระบบ และสำเนาสำรองข้อมูลที่จะหมดอายุไปเองตามรอบ</li>
       </ul>
       <p className="fine">
-        ไฟล์ที่อยู่ในเครื่องของคุณเอง (ในเบราว์เซอร์ของห้องตัดต่อ หรือในแอปบนคอมพิวเตอร์) ระบบลบให้ไม่ได้ ลบเองได้จากเครื่องนั้น
+        {keepThai("ไฟล์ที่อยู่ในเครื่องของคุณเอง (ในเบราว์เซอร์ของห้องตัดต่อ หรือในแอปบนคอมพิวเตอร์) ระบบลบให้ไม่ได้ ลบเองได้จากเครื่องนั้น")}
       </p>
     </div>
   );

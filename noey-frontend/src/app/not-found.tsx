@@ -63,10 +63,6 @@ function MissingClip() {
         <pattern id="nf-hatch" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
           <line x1="0" y1="0" x2="0" y2="7" className="nf__hatch" />
         </pattern>
-        <linearGradient id="nf-depth" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" className="nf__depth-top" />
-          <stop offset="1" className="nf__depth-bottom" />
-        </linearGradient>
         <clipPath id="nf-audio">
           <polygon points={A.a} />
           <polygon points={A.b} />
@@ -77,9 +73,10 @@ function MissingClip() {
       {/* Ruler */}
       <line x1="50" y1="18" x2="716" y2="18" className="nf__rule" />
       <path d={TICKS_PATH} className="nf__tick" />
-      {[0, 5, 10].map((second, index) => (
-        <text key={second} x={54 + index * 120} y="10" className="nf__tc">
-          {`00:00:${String(second).padStart(2, "0")}:00`}
+      {/* 91 units a second: the hole's centre sits at 00:00:04:04, the readout on the right. */}
+      {[0, 2, 4].map((second) => (
+        <text key={second} x={54 + second * 91} y="10" className="nf__tc">
+          {`00:00:0${second}:00`}
         </text>
       ))}
       <text x="712" y="10" textAnchor="end" className="nf__tc nf__tc--gold">

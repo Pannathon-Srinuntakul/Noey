@@ -12,7 +12,9 @@
   padding-bottom: calc(var(--section-y) * 0.4);
 }
 
-@media (max-width: 1023px) {
+/* Below ~1100px the story would be squeezed to ~28 characters a line beside
+   the form: the form follows the story instead. */
+@media (max-width: 1099px) {
   .about-layout {
     grid-template-columns: 1fr;
   }
@@ -46,13 +48,13 @@
   scale: 1 0;
 }
 
+/* Tied to the scroll position, not to time: a reading-progress indicator,
+   so it runs under reduced motion too. */
 @supports (animation-timeline: --story) {
-  @media (prefers-reduced-motion: no-preference) {
-    .chapters::after {
-      animation: story-read linear both;
-      animation-timeline: --story;
-      animation-range: entry 40% exit 60%;
-    }
+  .chapters::after {
+    animation: story-read linear both;
+    animation-timeline: --story;
+    animation-range: entry 40% exit 60%;
   }
 }
 
@@ -164,7 +166,7 @@
 
 /* ── Contact, held beside the story ─────────────────────────────────────── */
 
-@media (min-width: 1024px) and (min-height: 760px) {
+@media (min-width: 1100px) and (min-height: 760px) {
   .about-contact {
     position: sticky;
     top: calc(var(--beta-h) + var(--header-top) + var(--header-h) + 28px);
@@ -369,4 +371,31 @@
 
 .about-faq__list {
   max-width: 880px;
+}
+
+/* Sent: the message reads as a confirmation on the panel, and the strip's
+   light turns from recording to done. */
+#contact .form-success {
+  padding: 14px 16px;
+  border: 1px solid color-mix(in srgb, var(--color-success) 45%, transparent);
+  border-radius: var(--r-md);
+  background: var(--success-soft);
+  color: var(--ink);
+  font-size: var(--fs-15);
+  line-height: 1.7;
+}
+
+#contact .form-error {
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--color-danger) 40%, transparent);
+  border-radius: var(--r-md);
+  background: var(--danger-soft);
+  font-size: var(--fs-14);
+  line-height: 1.7;
+}
+
+.contact-card:has(.form-success) .contact-card__rec {
+  background: var(--success);
+  box-shadow: 0 0 0 3px var(--success-soft);
+  animation: none;
 }

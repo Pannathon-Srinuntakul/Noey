@@ -93,11 +93,11 @@
   display: block;
 }
 
-/* "Render complete": the bar fills, then the tick lands at its end. */
+/* "Render complete": the bar fills, then the tick lands on its end. */
 .status__tick {
   position: absolute;
   top: 50%;
-  left: calc(100% + 10px);
+  left: calc(100% - 8px);
   translate: 0 -50%;
   color: var(--tone);
   stroke: currentColor;
@@ -135,32 +135,32 @@
 }
 
 
+/* Failed: the bar is cut on the logo's diagonal and the far piece has dropped. */
+.status--danger .status__bar {
+  overflow: visible;
+  background: none;
+}
+
 .status--danger .status__fill {
-  right: 48%;
+  right: 54%;
+  border-radius: 6px 0 0 6px;
+  clip-path: polygon(0 0, 100% 0, calc(100% - 5px) 100%, 0 100%);
 }
 
 .status--danger .status__gap {
   display: block;
   position: absolute;
-  top: -4px;
-  bottom: -4px;
-  left: 52%;
-  width: 3px;
+  top: 0;
+  bottom: 0;
+  left: calc(46% + 6px);
+  right: 0;
+  border-radius: 0 6px 6px 0;
   background: var(--tone);
-  rotate: 22deg;
-}
-
-.status--danger .status__gap::after {
-  content: "";
-  position: absolute;
-  left: 6px;
-  top: 4px;
-  width: 60px;
-  height: 6px;
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--color-danger) 35%, transparent);
-  rotate: -22deg;
-  transform-origin: left;
+  opacity: 0.55;
+  clip-path: polygon(5px 0, 100% 0, 100% 100%, 0 100%);
+  translate: 3px 5px;
+  rotate: 5deg;
+  transform-origin: left top;
 }
 
 .status--pending .status__fill {
@@ -179,9 +179,27 @@
   }
 }
 
+/* Information / waiting on you: the bar is empty and the playhead is parked at its start. */
+.status--info .status__bar {
+  overflow: visible;
+}
+
 .status--info .status__fill {
-  right: 30%;
-  opacity: 0.8;
+  right: auto;
+  top: -4px;
+  bottom: -4px;
+  width: 2px;
+  border-radius: 1px;
+}
+
+.status--info .status__fill::before {
+  content: "";
+  position: absolute;
+  top: -5px;
+  left: -4px;
+  border: 5px solid transparent;
+  border-top: 6px solid var(--tone);
+  border-bottom: 0;
 }
 
 .status__eyebrow {
@@ -284,5 +302,23 @@
 @keyframes draw-stroke {
   from {
     stroke-dashoffset: 1;
+  }
+}
+
+/* Phones: longer copy reads left to right, and the actions stack full width. */
+@media (max-width: 560px) {
+  .status__body {
+    text-align: start;
+  }
+
+  .status__actions {
+    flex-direction: column;
+    align-items: stretch;
+    width: 100%;
+  }
+
+  .status__actions .btn,
+  .status__actions form {
+    width: 100%;
   }
 }

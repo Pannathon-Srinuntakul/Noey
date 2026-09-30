@@ -6,6 +6,8 @@ import { IconChevronDown } from "./icons";
 export interface TocItem {
   id: string;
   label: string;
+  /** The marker's label; defaults to the item's number. Parts that are not numbered sections (FAQ, related pages) carry their own. */
+  cue?: string;
 }
 
 /**
@@ -69,7 +71,7 @@ export function TimelineToc({ items, label, className }: { items: readonly TocIt
         <li key={item.id}>
           <a href={`#${item.id}`} data-toc-link={index} className="toc__link">
             <span className="toc__n tc" aria-hidden="true">
-              {String(index + 1).padStart(2, "0")}
+              {item.cue ?? String(index + 1).padStart(2, "0")}
             </span>
             <span className="toc__text">{item.label}</span>
           </a>

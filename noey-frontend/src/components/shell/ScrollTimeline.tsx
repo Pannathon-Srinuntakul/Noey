@@ -64,6 +64,9 @@ export function ScrollTimeline() {
     const build = () => {
       marksLayer.replaceChildren();
       const max = scrollable();
+      // The footer's end credit shows the page's full length on the same clock.
+      const end = document.querySelector<HTMLElement>("[data-end-tc]");
+      if (end) end.textContent = `END · ${formatTimecode(max / PX_PER_SECOND)}`;
       const top = offset();
       const headings = [...document.querySelectorAll<HTMLElement>("main h2")].filter(
         (heading) => heading.offsetParent !== null && !heading.closest("dialog, details:not([open]), [hidden]"),

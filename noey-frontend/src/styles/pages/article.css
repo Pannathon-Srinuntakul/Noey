@@ -129,8 +129,15 @@
   margin-top: 22px;
 }
 
-.article__related {
-  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+/* Inside the reading column there is only room for two across. */
+.article .article__related:has(> li:nth-child(4):last-child) {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+@media (max-width: 560px) {
+  .article .article__related:has(> li:nth-child(4):last-child) {
+    grid-template-columns: 1fr;
+  }
 }
 
 .article__foot {
@@ -139,6 +146,25 @@
   gap: 12px;
   padding-top: 28px;
   border-top: 1px solid var(--line);
+}
+
+/* Phones: full-width actions, the main one first. */
+@media (max-width: 560px) {
+  .article__foot {
+    flex-direction: column-reverse;
+  }
+
+  .article__foot .btn {
+    width: 100%;
+  }
+
+  .article__bullets li {
+    padding-left: 38px;
+  }
+
+  .article__bullets li::before {
+    left: 14px;
+  }
 }
 
 /* ── Legal: the quietest page on the site ───────────────────────────────── */
@@ -267,6 +293,12 @@
   list-style: none;
   display: grid;
   gap: 2px;
+}
+
+/* A long document (the legal pages) gets tighter rows so the whole timeline fits. */
+.toc__list:has(> li:nth-child(13)) .toc__link {
+  padding-block: 4px;
+  font-size: var(--fs-13);
 }
 
 .toc__link {

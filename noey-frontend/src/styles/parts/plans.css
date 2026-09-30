@@ -275,7 +275,11 @@
 
 /* ── Comparison table (sticky header + first column, row/column hover) ──── */
 
+/* position: relative keeps absolutely positioned descendants (the price
+   strike's screen-reader label) inside the scroller instead of widening the
+   page on phones. */
 .cmp__scroll {
+  position: relative;
   border: 1px solid var(--line);
   border-radius: var(--r-lg);
   background: var(--panel);
@@ -350,6 +354,20 @@
   border-bottom: 0;
 }
 
+/* The sticky cells paint over the frame's rounded corners unless they round too. */
+.cmp__table tbody tr:last-child > th[scope="row"] {
+  border-bottom-left-radius: var(--r-lg);
+}
+
+.cmp__table tbody tr:last-child > td:last-child {
+  border-bottom-right-radius: var(--r-lg);
+}
+
+/* Plan columns never shrink to a word per line. */
+.cmp__table td {
+  min-width: 88px;
+}
+
 /* Row under the pointer. */
 .cmp__table tbody tr:hover > * {
   background-color: var(--gold-softer);
@@ -389,14 +407,16 @@
 }
 
 @media (max-width: 1099px) {
+  /* A spreadsheet-style box: the header row and the label column stay put
+     while the plans scroll, and the right edge fades while there are more. */
   .cmp__scroll {
     overflow: auto;
-    max-height: min(78vh, 720px);
+    max-height: min(84vh, 760px);
     overscroll-behavior-x: contain;
   }
 
   .cmp__table {
-    min-width: 820px;
+    min-width: 760px;
   }
 
   .cmp__table thead th {
@@ -404,8 +424,34 @@
   }
 
   .cmp__table tbody th[scope="row"] {
-    min-width: 150px;
+    min-width: 118px;
+    max-width: 150px;
     font-size: var(--fs-13);
+  }
+
+  @supports (animation-timeline: scroll()) {
+    .cmp__scroll {
+      -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - var(--cmp-fade)), transparent);
+      mask-image: linear-gradient(90deg, #000 calc(100% - var(--cmp-fade)), transparent);
+      animation: cmp-fade linear both;
+      animation-timeline: scroll(self inline);
+    }
+  }
+}
+
+@property --cmp-fade {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 56px;
+}
+
+@keyframes cmp-fade {
+  0%,
+  92% {
+    --cmp-fade: 56px;
+  }
+  100% {
+    --cmp-fade: 0px;
   }
 }
 

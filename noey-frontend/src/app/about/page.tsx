@@ -7,6 +7,7 @@ import { JsonLd } from "@/components/JsonLd";
 import { IconLock } from "@/components/ds/icons";
 import { PageHero } from "@/components/ds/PageHero";
 import { SectionHeader } from "@/components/ds/SectionHeader";
+import { keepThai } from "@/components/ds/ThaiText";
 import { formatTimecode } from "@/components/ds/timecode";
 import { Waveform } from "@/components/ds/Waveform";
 import { ContactForm } from "@/components/forms/ContactForm";
@@ -34,55 +35,49 @@ const CHAPTERS: readonly { start: number; paragraphs: readonly ReactNode[] }[] =
   {
     start: 0,
     paragraphs: [
-      <>
-        Noey Studio เริ่มจากงานประจำวันของครีเอเตอร์คนหนึ่งที่ลงคลิปรีวิวสินค้าทุกวัน ถ่ายไม่ใช่ปัญหา
-        แต่การนั่งตัดคลิปวันละหลายชั่วโมงคือสิ่งที่ทำให้จำนวนคลิปต่อสัปดาห์ไปต่อไม่ได้
-      </>,
-      <>
-        เราจึงเขียนระบบที่ทำงานซ้ำ ๆ ตรงนั้นแทน เริ่มจากการถอดเสียงและเลือกช่วงที่พูดได้ดี แล้วค่อยขยายเป็นการพากย์ ซับ
-        และการจัดไทม์ไลน์ จนกลายเป็นห้องตัดต่อที่เปิดในเบราว์เซอร์ได้ทั้งชุด
-      </>,
+      keepThai(
+        "Noey Studio เริ่มจากงานประจำวันของครีเอเตอร์คนหนึ่งที่ลงคลิปรีวิวสินค้าทุกวัน ถ่ายไม่ใช่ปัญหา แต่การนั่งตัดคลิปวันละหลายชั่วโมงคือสิ่งที่ทำให้จำนวนคลิปต่อสัปดาห์ไปต่อไม่ได้",
+      ),
+      keepThai(
+        "เราจึงเขียนระบบที่ทำงานซ้ำ ๆ ตรงนั้นแทน เริ่มจากการถอดเสียงและเลือกช่วงที่พูดได้ดี แล้วค่อยขยายเป็นการพากย์ ซับ และการจัดไทม์ไลน์ จนกลายเป็นห้องตัดต่อที่เปิดในเบราว์เซอร์ได้ทั้งชุด",
+      ),
     ],
   },
   {
     start: 38.4,
     paragraphs: [
-      <>หลักที่เรายึดคือ AI ควรทำร่างแรกให้เร็ว แต่คนต้องแก้ทับได้ทุกจุด ไม่ใช่กดปุ่มเดียวแล้วรับผลที่แก้อะไรไม่ได้</>,
+      keepThai("หลักที่เรายึดคือ AI ควรทำร่างแรกให้เร็ว แต่คนต้องแก้ทับได้ทุกจุด ไม่ใช่กดปุ่มเดียวแล้วรับผลที่แก้อะไรไม่ได้"),
       <>
-        หลักเดียวกันนี้ใช้กับสิ่งที่เขียนบนเว็บด้วย เราเขียนเฉพาะสิ่งที่ระบบทำได้จริงในวันนี้ และบอกข้อจำกัดไว้ตรง ๆ
-        ตัวเลขที่ยังไม่ได้วัดด้วยวิธีที่บอกได้ว่าวัดอย่างไร เราจะไม่ประกาศ อ่านขอบเขตทั้งหมดได้ใน{" "}
-        <Link href={PAGES.scope.path}>หน้าทำอะไรได้บ้าง</Link> และวิธีใช้งานทีละงานใน{" "}
-        <Link href={PAGES.guide.path}>คู่มือใช้งาน</Link>
+        {keepThai(
+          "หลักเดียวกันนี้ใช้กับสิ่งที่เขียนบนเว็บด้วย เราเขียนเฉพาะสิ่งที่ระบบทำได้จริงในวันนี้ และบอกข้อจำกัดไว้ตรง ๆ ตัวเลขที่ยังไม่ได้วัดด้วยวิธีที่บอกได้ว่าวัดอย่างไร เราจะไม่ประกาศ อ่านขอบเขตทั้งหมดได้ใน",
+        )}{" "}
+        <Link href={PAGES.scope.path}>หน้าทำอะไรได้บ้าง</Link> และวิธีใช้งานทีละงานใน <Link href={PAGES.guide.path}>คู่มือใช้งาน</Link>
       </>,
     ],
   },
   {
     start: 71.12,
     paragraphs: [
-      <>
-        เครื่องมือนี้ถูกใช้กับงานจริงทุกวันก่อนจะเปิดให้คนอื่นใช้ สิ่งที่อยู่ในระบบวันนี้จึงมาจากปัญหาที่เจอเองซ้ำ ๆ เช่น
-        การไล่ฟุตเทจหลายไฟล์เพื่อหาเทกที่ใช้ได้ การพิมพ์ซับทีละบรรทัด และการอัดเสียงพากย์ใหม่เฉพาะประโยคที่พูดพลาด
-        ฟีเจอร์ที่ไม่ได้แก้ปัญหาซ้ำแบบนั้น เราเลือกที่จะยังไม่ทำ
-      </>,
-      <>
-        วันนี้ระบบใช้งานได้จริงกับคลิปสั้นภาษาไทยสามแบบ คือคลิปพูดหน้ากล้องที่อยากตัดช่วงเงียบออก คลิปขายของที่ถ่ายไว้หลายมุม
-        และคลิปยาวที่อยากแยกเป็นคลิปสั้นหลายตัว ทั้งสามแบบจบในเบราว์เซอร์เดียวโดยไม่ต้องสลับไปโปรแกรมอื่นกลางทาง
-      </>,
+      keepThai(
+        "เครื่องมือนี้ถูกใช้กับงานจริงทุกวันก่อนจะเปิดให้คนอื่นใช้ สิ่งที่อยู่ในระบบวันนี้จึงมาจากปัญหาที่เจอเองซ้ำ ๆ เช่น การไล่ฟุตเทจหลายไฟล์เพื่อหาเทกที่ใช้ได้ การพิมพ์ซับทีละบรรทัด และการอัดเสียงพากย์ใหม่เฉพาะประโยคที่พูดพลาด ฟีเจอร์ที่ไม่ได้แก้ปัญหาซ้ำแบบนั้น เราเลือกที่จะยังไม่ทำ",
+      ),
+      keepThai(
+        "วันนี้ระบบใช้งานได้จริงกับคลิปสั้นภาษาไทยสามแบบ คือคลิปพูดหน้ากล้องที่อยากตัดช่วงเงียบออก คลิปขายของที่ถ่ายไว้หลายมุม และคลิปยาวที่อยากแยกเป็นคลิปสั้นหลายตัว ทั้งสามแบบจบในเบราว์เซอร์เดียวโดยไม่ต้องสลับไปโปรแกรมอื่นกลางทาง",
+      ),
     ],
   },
   {
     start: 112.2,
     paragraphs: [
       <>
-        ระบบทำงานในเบราว์เซอร์บนคอมพิวเตอร์ ใช้ Chrome หรือ Edge เวอร์ชันใหม่ รับไฟล์ MP4 และ MOV แล้วส่งออกเป็นวิดีโอ
-        แนวตั้ง 1080×1920 มีทั้งแพลนฟรีที่ไม่ต้องผูกบัตร และแพลนรายเดือนสำหรับคนที่ลงคลิปถี่ขึ้น รายละเอียดทั้งหมดอยู่ใน{" "}
+        {keepThai(
+          "ระบบทำงานในเบราว์เซอร์บนคอมพิวเตอร์ ใช้ Chrome หรือ Edge เวอร์ชันใหม่ รับไฟล์ MP4 และ MOV แล้วส่งออกเป็นวิดีโอ แนวตั้ง 1080×1920 มีทั้งแพลนฟรีที่ไม่ต้องผูกบัตร และแพลนรายเดือนสำหรับคนที่ลงคลิปถี่ขึ้น รายละเอียดทั้งหมดอยู่ใน",
+        )}{" "}
         <Link href={PAGES.pricing.path}>หน้าราคา</Link> และ <Link href={PAGES.guideHelp.path}>หน้าช่วยเหลือ</Link>
       </>,
-      <>
-        ถ้าติดปัญหาหรืออยากให้ระบบทำอะไรเพิ่ม ส่งข้อความหาเราได้จากแบบฟอร์มข้าง ๆ บอกชื่อโปรเจกต์ โหมดที่ใช้ และสิ่งที่เกิดขึ้น
-        จะช่วยให้ตรวจสอบได้เร็วขึ้นมาก คำถามที่ถูกถามซ้ำหลายครั้งมักจบลงในหน้าคู่มือหรือหน้าช่วยเหลือ
-        เพื่อให้คนถัดไปหาคำตอบได้เองโดยไม่ต้องรอ
-      </>,
+      keepThai(
+        "ถ้าติดปัญหาหรืออยากให้ระบบทำอะไรเพิ่ม ส่งข้อความหาเราได้จากแบบฟอร์มข้าง ๆ บอกชื่อโปรเจกต์ โหมดที่ใช้ และสิ่งที่เกิดขึ้น จะช่วยให้ตรวจสอบได้เร็วขึ้นมาก คำถามที่ถูกถามซ้ำหลายครั้งมักจบลงในหน้าคู่มือหรือหน้าช่วยเหลือ เพื่อให้คนถัดไปหาคำตอบได้เองโดยไม่ต้องรอ",
+      ),
     ],
   },
 ];
@@ -119,7 +114,13 @@ const PRINCIPLES = [
 export default function AboutPage() {
   const page = PAGES.about;
   const jsonLd = jsonLdGraph(
-    webPageNode({ path: page.path, name: page.title, description: page.description, dateModified: page.updated, type: "AboutPage" }),
+    webPageNode({
+      path: page.path,
+      name: page.title,
+      description: page.description,
+      dateModified: page.updated,
+      type: "AboutPage",
+    }),
     breadcrumbNode(TRAIL),
     organizationNode({ email: CONTACT_EMAIL }),
     faqPageNode(ABOUT_FAQ, page.path),
@@ -174,7 +175,7 @@ export default function AboutPage() {
 
       <section className="sect principles" aria-labelledby="about-principles-title">
         <div className="wrap">
-          <SectionHeader id="about-principles-title" track="L" timecode="00:02:40:00" title="หลักที่เรายึดตอนทำระบบ" />
+          <SectionHeader id="about-principles-title" track="L" timecode="00:02:40:00" title="หลักที่เรายึดตอนทำระบบ" size="h-3" />
           <ul className="locked" data-reveal="stagger">
             {PRINCIPLES.map((principle, index) => (
               <li key={principle.title} className="locked__track">
@@ -184,8 +185,8 @@ export default function AboutPage() {
                 </div>
                 <div className="locked__clip">
                   <div className="locked__copy">
-                    <strong className="locked__title">{principle.title}</strong>
-                    <span className="locked__text">{principle.text}</span>
+                    <strong className="locked__title">{keepThai(principle.title)}</strong>
+                    <span className="locked__text">{keepThai(principle.text)}</span>
                   </div>
                   <Waveform bars={40} seed={index * 5 + 11} className="locked__wave" still />
                 </div>
@@ -197,7 +198,7 @@ export default function AboutPage() {
 
       <section className="sect about-faq" aria-labelledby="about-faq-title">
         <div className="wrap">
-          <SectionHeader id="about-faq-title" track="Q" timecode="00:03:12:00" title="คำถามที่พบบ่อยเกี่ยวกับเรา (FAQ)" />
+          <SectionHeader id="about-faq-title" track="Q" timecode="00:03:12:00" title="คำถามที่พบบ่อยเกี่ยวกับเรา (FAQ)" size="h-3" />
           <div className="about-faq__list">
             <FaqList items={ABOUT_FAQ} compact />
           </div>

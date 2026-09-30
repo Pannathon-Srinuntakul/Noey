@@ -13,6 +13,7 @@ import { articleNode, breadcrumbNode, faqPageNode, jsonLdGraph, webPageNode } fr
 import { CONTENT_AUTHOR } from "@/lib/seo";
 import { PAGES, publishedDate } from "@/lib/site";
 import "../../styles/pages/article.css";
+import { keepThai } from "@/components/ds/ThaiText";
 
 /**
  * A bullet like "ตัดช่วงเงียบ — …" or "ทำให้: …" reads as a term and its
@@ -22,12 +23,12 @@ function Bullet({ text }: { text: string }) {
   const dash = text.indexOf(" — ");
   const colon = text.indexOf(": ");
   const at = dash > 0 ? dash : colon > 0 && colon < 24 ? colon : -1;
-  if (at < 0) return <>{text}</>;
+  if (at < 0) return <>{keepThai(text)}</>;
   const cut = dash > 0 ? at : at + 1;
   return (
     <>
-      <strong>{text.slice(0, cut)}</strong>
-      {text.slice(cut)}
+      <strong>{keepThai(text.slice(0, cut))}</strong>
+      {keepThai(text.slice(cut))}
     </>
   );
 }
@@ -72,8 +73,8 @@ export function GuideArticle({ doc, extras }: { doc: GuideDoc; extras?: Record<s
 
   const toc = [
     ...doc.sections.map((section) => ({ id: section.id, label: section.title })),
-    { id: "faq", label: "คำถามที่พบบ่อย (FAQ)" },
-    { id: "related", label: "อ่านต่อ" },
+    { id: "faq", label: "คำถามที่พบบ่อย (FAQ)", cue: "FAQ" },
+    { id: "related", label: "อ่านต่อ", cue: "→" },
   ];
 
   return (
@@ -84,11 +85,13 @@ export function GuideArticle({ doc, extras }: { doc: GuideDoc; extras?: Record<s
         size="h-1"
         lead={
           // Answer-first: 40–60 words that stand on their own.
-          <p className="answer">{doc.answer}</p>
+          <p className="answer">{keepThai(doc.answer)}</p>
         }
         meta={
           <p className="stamp">
-            อัปเดตล่าสุด <time dateTime={page.updated}>{formatThaiDate(page.updated)}</time> · เขียนโดย {CONTENT_AUTHOR}
+            อัปเดตล่าสุด <time dateTime={page.updated}>{formatThaiDate(page.updated)}</time>
+            {"\u00a0· "}
+            <span className="kt">เขียนโดย {CONTENT_AUTHOR}</span>
           </p>
         }
       />
@@ -109,7 +112,7 @@ export function GuideArticle({ doc, extras }: { doc: GuideDoc; extras?: Record<s
               </h2>
               <div className="prose">
                 {section.paragraphs.map((paragraph) => (
-                  <p key={paragraph}>{paragraph}</p>
+                  <p key={paragraph}>{keepThai(paragraph)}</p>
                 ))}
                 {section.bullets ? (
                   <ul className="article__bullets">
@@ -137,7 +140,7 @@ export function GuideArticle({ doc, extras }: { doc: GuideDoc; extras?: Record<s
 
           <section id="related" className="article__section" aria-labelledby={`${doc.key}-related`}>
             <div className="article__cue" aria-hidden="true">
-              <span className="trk tc">R</span>
+              <span className="trk tc">→</span>
             </div>
             <h2 id={`${doc.key}-related`} className="article__h2">
               อ่านต่อ
@@ -145,8 +148,8 @@ export function GuideArticle({ doc, extras }: { doc: GuideDoc; extras?: Record<s
             <ul className="link-grid article__related">
               {doc.related.map((item, index) => (
                 <li key={item.path}>
-                  <ClipCard title={item.label} titleAs="h3" href={item.path} seed={index + 5} track={`R${index + 1}`}>
-                    <p>{item.note}</p>
+                  <ClipCard title={item.label} titleAs="h3" href={item.path} seed={index + 5}>
+                    <p>{keepThai(item.note)}</p>
                   </ClipCard>
                 </li>
               ))}

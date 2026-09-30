@@ -51,15 +51,19 @@ export default async function VerifyEmailPage({ searchParams }: { searchParams: 
     if (me.kind === "ok" && me.result.ok && me.result.data.email_verified === true) view = { kind: "already" };
   }
 
-  const accountLink = signedIn ? (
-    <Link href="/account" className="btn btn-secondary btn-lg">
-      บัญชีของฉัน
-    </Link>
-  ) : (
-    <Link href="/login?next=%2Faccount" className="btn btn-secondary btn-lg">
-      เข้าสู่ระบบ
-    </Link>
-  );
+  // The way back to the account: the main action when it is the only one,
+  // secondary beside "เปิดห้องตัดต่อ".
+  const accountLinkAs = (tone: "primary" | "secondary") =>
+    signedIn ? (
+      <Link href="/account" className={`btn btn-${tone} btn-lg`}>
+        บัญชีของฉัน
+      </Link>
+    ) : (
+      <Link href="/login?next=%2Faccount" className={`btn btn-${tone} btn-lg`}>
+        เข้าสู่ระบบ
+      </Link>
+    );
+  const accountLink = accountLinkAs("primary");
 
   let title: string;
   let body: React.ReactNode;
@@ -73,7 +77,7 @@ export default async function VerifyEmailPage({ searchParams }: { searchParams: 
           <a href={EDITOR_OPEN_PATH} className="btn btn-primary btn-lg">
             เปิดห้องตัดต่อ
           </a>
-          {accountLink}
+          {accountLinkAs("secondary")}
         </>
       );
       break;

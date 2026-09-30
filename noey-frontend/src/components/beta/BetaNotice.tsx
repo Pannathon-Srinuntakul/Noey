@@ -147,7 +147,9 @@ export function BetaNotice({ betaPriced }: { betaPriced: boolean }) {
         ))}
       </ol>
       <p className="beta-fineprint">
-        {copy.disclaimer} · <Link href="/terms">เงื่อนไขการใช้งาน</Link>
+        {copy.disclaimer}
+        {"\u00a0· "}
+        <Link href="/terms">เงื่อนไขการใช้งาน</Link>
       </p>
       <label className="agree agree--flush">
         <input type="checkbox" className="agree__box" checked={never} onChange={(event) => setNever(event.target.checked)} />

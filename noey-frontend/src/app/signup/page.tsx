@@ -10,6 +10,7 @@ import { jsonLdGraph, webPageNode } from "@/lib/jsonld";
 import { pageMetadata } from "@/lib/seo";
 import { PAGES } from "@/lib/site";
 import "../../styles/pages/auth.css";
+import { keepThai } from "@/components/ds/ThaiText";
 
 export const metadata: Metadata = pageMetadata("signup");
 // Static, refreshed every 5 minutes: only whether the Google button shows can change.
@@ -41,21 +42,25 @@ export default async function SignupPage() {
               {PLAN_COPY.free.features.map((feature) => (
                 <li key={feature}>
                   <IconCheck size={16} className="auth-free__tick" />
-                  <span>{feature}</span>
+                  <span>{keepThai(feature)}</span>
                 </li>
               ))}
               <li>
                 <IconCheck size={16} className="auth-free__tick" />
-                <span>ใช้บนคอมพิวเตอร์ผ่าน Chrome หรือ Edge เวอร์ชันใหม่ ไม่ต้องติดตั้งโปรแกรม</span>
+                <span>{keepThai("ใช้บนคอมพิวเตอร์ผ่าน Chrome หรือ Edge เวอร์ชันใหม่ ไม่ต้องติดตั้งโปรแกรม")}</span>
               </li>
               <li>
                 <IconCheck size={16} className="auth-free__tick" />
-                <span>ได้ไฟล์วิดีโอแนวตั้ง 1080×1920 พร้อมลง TikTok, Reels หรือ Shorts</span>
+                <span>{keepThai("ได้ไฟล์วิดีโอแนวตั้ง 1080×1920 พร้อมลง TikTok, Reels หรือ Shorts")}</span>
               </li>
             </ul>
             <p className="fine auth-free__read">
-              อ่านก่อนสมัคร: <Link href={PAGES.scope.path}>ระบบทำอะไรได้บ้าง</Link> ·{" "}
-              <Link href={PAGES.guideHelp.path}>โหมด ไฟล์ และโควตา</Link> · <Link href={PAGES.pricing.path}>ราคาแพลนอื่น</Link>
+              {/* A no-break space keeps each "·" at the end of its line, never at the start of the next. */}
+              อ่านก่อนสมัคร: <Link href={PAGES.scope.path}>ระบบทำอะไรได้บ้าง</Link>
+              {"\u00a0· "}
+              <Link href={PAGES.guideHelp.path}>โหมด ไฟล์ และโควตา</Link>
+              {"\u00a0· "}
+              <Link href={PAGES.pricing.path}>ราคาแพลนอื่น</Link>
             </p>
           </section>
         </div>

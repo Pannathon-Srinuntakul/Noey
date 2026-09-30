@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useActionState, useState } from "react";
+import { Fragment, useActionState, useState } from "react";
 import {
   cancelPlanAction,
   choosePlanAction,
@@ -11,6 +11,7 @@ import {
 import type { ActionState } from "@/lib/messages";
 import type { PaidTier } from "@/lib/plans";
 import { Dialog } from "../ui/Dialog";
+import { keepThai } from "../ds/ThaiText";
 
 export interface UpgradeOption {
   tier: PaidTier;
@@ -109,26 +110,34 @@ export function BillingPanel(props: BillingPanelProps) {
       <div className="card account-card acct-plan">
         <div className="card-kicker">แพลนปัจจุบัน</div>
         <div className="plan-name">{planName}</div>
-        {statusLine ? <p className={statusWarn ? "plan-status plan-status--warn" : "plan-status"}>{statusLine}</p> : null}
+        {statusLine ? <p className={statusWarn ? "plan-status plan-status--warn" : "plan-status"}>{keepThai(statusLine)}</p> : null}
         {planFeatures.length > 0 ? (
           <ul className="plan-features">
             {planFeatures.map((feature) => (
-              <li key={feature}>{feature}</li>
+              <li key={feature}>
+                {/* A line joins facts with " · ": lines break between facts, not inside one. */}
+                {feature.split(" · ").map((fact, index) => (
+                  <Fragment key={fact}>
+                    {index > 0 ? " · " : null}
+                    <span className="fact">{keepThai(fact)}</span>
+                  </Fragment>
+                ))}
+              </li>
             ))}
           </ul>
         ) : null}
         <div className="button-row">
-          <button type="button" className="btn btn-primary btn-sm" onClick={() => setUpgradeOpen(true)} disabled={!billingEnabled}>
+          <button type="button" className="btn btn-primary" onClick={() => setUpgradeOpen(true)} disabled={!billingEnabled}>
             {hasLiveSubscription ? "เปลี่ยนแพลน" : "เลือกแพลน"}
           </button>
           {hasLiveSubscription && !cancelScheduled ? (
-            <button type="button" className="btn btn-ghost btn-sm" onClick={() => setCancelOpen(true)} disabled={!billingEnabled}>
+            <button type="button" className="btn btn-secondary" onClick={() => setCancelOpen(true)} disabled={!billingEnabled}>
               ยกเลิกแพลน
             </button>
           ) : null}
           {hasLiveSubscription && cancelScheduled ? (
             <form action={resumeAction}>
-              <button type="submit" className="btn btn-ghost btn-sm" disabled={!billingEnabled || resumePending}>
+              <button type="submit" className="btn btn-secondary" disabled={!billingEnabled || resumePending}>
                 {resumePending ? "กำลังดำเนินการ…" : "ใช้แพลนนี้ต่อ"}
               </button>
             </form>
@@ -166,14 +175,14 @@ export function BillingPanel(props: BillingPanelProps) {
         </dl>
         {hasCustomer ? (
           <form action={portalAction} className="inline-form">
-            <button type="submit" className="btn btn-secondary btn-block btn-sm acct-pay__btn" disabled={!billingEnabled || portalPending}>
+            <button type="submit" className="btn btn-secondary acct-pay__btn" disabled={!billingEnabled || portalPending}>
               {cardLabel ? "เปลี่ยนบัตร" : "เพิ่มบัตรเครดิต"}
             </button>
           </form>
         ) : (
           <button
             type="button"
-            className="btn btn-secondary btn-block btn-sm acct-pay__btn"
+            className="btn btn-secondary acct-pay__btn"
             disabled={!billingEnabled}
             onClick={() => setUpgradeOpen(true)}
           >
@@ -201,7 +210,7 @@ export function BillingPanel(props: BillingPanelProps) {
           <fieldset className="plan-options">
             <legend className="sr-only">แพลน</legend>
             {options.map((option) => (
-              <label key={option.tier} className="radio plan-option">
+              <label key={option.tier} className={option.current ? "radio plan-option plan-option--current" : "radio plan-option"}>
                 <input
                   type="radio"
                   name="plan"
@@ -219,13 +228,13 @@ export function BillingPanel(props: BillingPanelProps) {
                     ) : (
                       <>
                         {option.fullPrice ? <s className="price-strike">{option.fullPrice}</s> : null}
-                        {`${option.price} บาท/เดือน`}
+                        <span className="kt">{`${option.price} บาท/เดือน`}</span>
                       </>
                     )}
-                    {option.current ? " · แพลนปัจจุบัน" : ""}
+                    {option.current ? keepThai(" · แพลนปัจจุบัน") : null}
                     {option.recommended ? <span className="tag tag-outline plan-option__tag">แนะนำ</span> : null}
                   </span>
-                  <span className="plan-option__meta">{option.summary}</span>
+                  <span className="plan-option__meta">{keepThai(option.summary)}</span>
                 </span>
               </label>
             ))}

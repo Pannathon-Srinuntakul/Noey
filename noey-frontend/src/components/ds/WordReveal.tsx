@@ -1,4 +1,5 @@
 import { Fragment, type CSSProperties, type ReactNode } from "react";
+import { keepSegments } from "./ThaiText";
 
 type HeadingTag = "h1" | "h2" | "h3" | "p" | "span" | "div";
 
@@ -50,13 +51,22 @@ export function WordReveal({
             </>
           ) : null}
           <span className={soft?.includes(lineIndex) ? "wr__line h-soft" : "wr__line"} aria-hidden="true">
-            {[...segmenter.segment(line)].map((part, partIndex) =>
+            {/* Loanwords the segmenter would cut (โปร|เจ|กต์) stay one word. */}
+            {keepSegments(line).flatMap((run, runIndex) =>
+              run.keep
+                ? [{ segment: run.text, isWordLike: true, key: `${runIndex}` }]
+                : [...segmenter.segment(run.text)].map((part, partIndex) => ({
+                    segment: part.segment,
+                    isWordLike: !!part.isWordLike,
+                    key: `${runIndex}-${partIndex}`,
+                  })),
+            ).map((part) =>
               part.isWordLike ? (
-                <span key={partIndex} className="wr__w" style={{ "--i": index++ } as CSSProperties}>
+                <span key={part.key} className="wr__w" style={{ "--i": index++ } as CSSProperties}>
                   {part.segment}
                 </span>
               ) : (
-                <Fragment key={partIndex}>{part.segment}</Fragment>
+                <Fragment key={part.key}>{part.segment}</Fragment>
               ),
             )}
           </span>

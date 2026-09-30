@@ -681,6 +681,17 @@ html[data-theme="dark"] .btn-primary:hover,
   translate: 0 1px;
 }
 
+/* A locked primary action stays legible: an empty gold outline, not a faded fill. */
+.btn-primary:disabled,
+.btn-primary[aria-disabled="true"] {
+  opacity: 1;
+  --btn-bg: transparent;
+  --btn-ink: var(--ink-3);
+  --btn-line: color-mix(in srgb, var(--color-accent) 55%, transparent);
+  border-style: dashed;
+  box-shadow: none;
+}
+
 .btn-secondary {
   --btn-bg: color-mix(in srgb, var(--panel) 70%, transparent);
   --btn-line: var(--line-2);
@@ -983,6 +994,26 @@ textarea.input {
   min-height: 65px;
 }
 
+/* Thai line breaking: keepThai() wraps loanwords and number–unit pairs the
+   browser would otherwise split (see components/ds/ThaiText.tsx). A link inside
+   a sentence is one unit: it moves to the next line whole rather than breaking
+   inside its own words ("ราคาแพ / ลนอื่น"), and only wraps inside itself when it
+   is wider than the line. keep-all does not do this: Chrome ignores it for Thai. */
+.kt {
+  white-space: nowrap;
+}
+
+p a:not(.btn),
+.agree__text a {
+  display: inline-block;
+}
+
+/* Small text reads in the regular weight: 300 at 13px and below thins out,
+   most of all in the light theme. */
+:where(.fine, .legal-line, .field-hint, .meter-note, .stamp, .table-note, .clip-note, .bin__meta, .contact-note, .notice, .kv dt) {
+  font-weight: 400;
+}
+
 /* Small print under a form or a control. */
 .fine {
   margin: 16px 0 0;
@@ -1124,11 +1155,11 @@ dialog.dialog::backdrop {
   padding: clamp(22px, 4vw, 34px);
 }
 
-/* A gold hairline along the dialog's top edge, cut once like the logo. */
+/* A gold hairline above the title, cut once like the logo. */
 .dialog-inner::before {
   content: "";
   position: absolute;
-  top: 0;
+  top: calc(clamp(22px, 4vw, 34px) - 12px);
   left: clamp(22px, 4vw, 34px);
   width: 72px;
   height: 2px;
@@ -1140,6 +1171,31 @@ dialog.dialog::backdrop {
   font-weight: 600;
   line-height: 1.4;
   margin-bottom: 10px;
+  padding-right: 44px;
+}
+
+.dialog-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--ink-2);
+  cursor: pointer;
+  transition:
+    border-color var(--dur-2) ease,
+    color var(--dur-2) ease;
+}
+
+.dialog-close:hover {
+  border-color: var(--gold);
+  color: var(--ink);
 }
 
 .dialog-body {
@@ -1148,12 +1204,35 @@ dialog.dialog::backdrop {
   color: var(--ink-2);
 }
 
+/* Phones: the dialog's actions stack full width, the main action on top. */
+@media (max-width: 480px) {
+  .dialog-actions {
+    flex-direction: column-reverse;
+    align-items: stretch;
+  }
+
+  .dialog-actions > .btn,
+  .dialog-actions > form,
+  .dialog-actions > form .btn,
+  .dialog-actions > .gsi-button {
+    width: 100%;
+  }
+}
+
+/* The actions stay in view at the dialog's foot when its content scrolls. */
 .dialog-actions {
+  --dialog-pad: clamp(22px, 4vw, 34px);
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
   display: flex;
   justify-content: flex-end;
   flex-wrap: wrap;
   gap: 10px;
-  margin-top: 24px;
+  margin: 24px calc(var(--dialog-pad) * -1) calc(var(--dialog-pad) * -1);
+  padding: 14px var(--dialog-pad) clamp(18px, 3vw, 26px);
+  border-top: 1px solid var(--line);
+  background: var(--bg);
 }
 
 /* ── Notices ────────────────────────────────────────────────────────────── */
