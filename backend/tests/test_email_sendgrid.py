@@ -152,7 +152,7 @@ VENDORS = re.compile(
 def test_templates_are_branded_thai_and_vendor_free(rendered):
     assert re.search(r"[฀-๿]", rendered.subject)  # Thai copy
     assert 'lang="th"' in rendered.html
-    for colour in ("#f3f2f2", "#201f1d", "#b68235"):
+    for colour in ("#171614", "#d9a441"):  # brand dark + gold
         assert colour in rendered.html
     assert rendered.text.strip() and "<" not in rendered.text  # a real plain-text part
     assert not VENDORS.search(rendered.subject + rendered.html + rendered.text)
