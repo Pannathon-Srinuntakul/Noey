@@ -8,6 +8,10 @@ Amounts are the owner-approved ladder (2026-09-22): priced from a flat
 ฿250 per 1M usage tokens, ~2x steps, sold as usage multipliers of Lite
 (1x/2x/5x/10x/20x/35x). Change one here and re-run the seed: it creates a new Price
 and moves the lookup key to it; existing subscribers keep their old price.
+
+The 2026-10-01 volume discount changed BUDGETS only (packages/billing/limits.py),
+so the flat ฿250/1M no longer holds per plan — but none of these amounts moved
+and nothing needs re-seeding.
 """
 
 from dataclasses import dataclass

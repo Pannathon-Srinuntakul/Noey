@@ -196,6 +196,10 @@ PLAN_LIMITS = {
 }
 ```
 
+> Superseded values: see `packages/billing/limits.py` (budgets revised 2026-10-01 —
+> Free 450k `lifetime`; Lite 0.8M / Starter 2M / Pro 5.6M / Studio 12M / Agency 26M /
+> Max 48M, `monthly` only) and `docs/unit-economics.md` §4.
+
 - `weekly_limit = floor(monthly / 4.33)`; `five_hour_limit = floor(weekly × 0.40)`; `monthly_limit = monthly`. Window lengths: 5 h, 7 d, 30 d.
 - Unknown plan → free. `enterprise` or `user.is_admin` → `is_unlimited` (no windows, no concurrency cap beyond 5 for vendor safety, storage unlimited, breaker does not block).
 - `settings.plan_*_monthly_tokens`/`plan_token_limit` removed; `settings.plan_*_storage_bytes` defaults changed to 1/3/5/10/30/60/100 GB and `plan_storage_limit` reads `PLAN_LIMITS` unless an env override is set (keep env hook). Payment-failed grace / pending plan resolution happens in `effective_plan(user, account, now)`.

@@ -1,6 +1,7 @@
 # Unit economics — what a plan earns and what it costs
 
-Written 2026-09-29. The numbers here are DERIVED from the code and from the real
+Written 2026-09-29; plan budgets revised 2026-10-01 (the volume discount, §4).
+The numbers here are DERIVED from the code and from the real
 usage rows in production; nothing is assumed. Where a figure is not modelled
 anywhere in the code, this file says so rather than inventing one.
 
@@ -33,10 +34,12 @@ a Pro-heavy run and a Flash-heavy run cost the same per token charged. That is
 the point of the design, not a coincidence.
 
 List price is ฿250/1M (`SELL_SATANG_PER_1M`), ฿350/1M for the top-up balance
-(`TOPUP_SATANG_PER_1M`). **The plan ladder no longer sells at that list
-price.** The 2026-09-29 budget rise left prices alone, so every plan from
-Starter up now realises ฿218–225 per 1M (§4), and its full-burn 2027 margin is
-77–78% rather than 80%. Mix-independence is intact; the flat 80% is not.
+(`TOPUP_SATANG_PER_1M`). **The plan ladder deliberately does not sell at that
+list price.** Since the 2026-10-01 volume discount (§4) every plan from Starter
+up realises less per 1M the bigger it is — ฿199.5 (Starter) down to ฿145.6
+(Max) — and its full-burn 2027 margin after payment fees steps down from 70.5%
+(Lite) to 61.2% (Max). Mix-independence is intact; the flat 80% is not, on
+purpose.
 
 ## 2. Is the Gemini price rise already in the numbers?
 
@@ -90,17 +93,21 @@ from January.** The mix is what moves it, and only until the Flash rise lands.
 Vendor cost only — payment fees and fixed costs are §5 and §6.
 
 The plan shape, read from `packages/billing/limits.py` (`PLAN_LIMITS`,
-`plan_features.check_precision`), as of 2026-09-29:
+`plan_features.check_precision`), as of 2026-10-01:
 
-| Plan | budget | window enforced | footage cap | High precision |
-|---|---|---|---|---|
-| Free | 450,000 **one-time** | `lifetime` (never resets) | 10 min | no |
-| Lite | 800,000 / mo | `monthly` | 10 min | no |
-| Starter | 1,800,000 / mo | `monthly` | 20 min | no |
-| Pro | 4,400,000 / mo | `monthly` | 30 min | yes |
-| Studio | 9,000,000 / mo | `monthly` | 30 min | yes |
-| Agency | 18,000,000 / mo | `monthly` | 30 min | yes |
-| Max | 32,000,000 / mo | `monthly` | 30 min | yes |
+| Plan | budget | was (to 2026-09-30) | window enforced | footage cap | High precision |
+|---|---|---|---|---|---|
+| Free | 450,000 **one-time** | unchanged | `lifetime` (never resets) | 10 min | no |
+| Lite | 800,000 / mo | unchanged | `monthly` | 10 min | no |
+| Starter | 2,000,000 / mo | 1,600,000 | `monthly` | 20 min | no |
+| Pro | 5,600,000 / mo | 4,000,000 | `monthly` | 30 min | yes |
+| Studio | 12,000,000 / mo | 8,000,000 | `monthly` | 30 min | yes |
+| Agency | 26,000,000 / mo | 16,000,000 | `monthly` | 30 min | yes |
+| Max | 48,000,000 / mo | 28,000,000 | `monthly` | 30 min | yes |
+
+(An earlier revision of this file listed 1.8M / 4.4M / 9M / 18M / 32M. Those
+figures were never in `limits.py` — the code went from 1.6M / 4M / 8M / 16M /
+28M straight to the table above.)
 
 **One window rule per account.** `weekly` and `five_hour` are now enforced by
 nobody — Free spends a `lifetime` credit, every paid plan spends a month. Two
@@ -109,8 +116,8 @@ reasons, and the first is the real one:
 - **The protection they existed for lives elsewhere and works better.** They
   were vendor-quota guards. `packages/billing/vendor_limits.py` enforces the
   actual daily Gemini cap globally, and `concurrency` bounds how many jobs one
-  account has in flight. Measured: a Max account burning its entire 32M month
-  in a single day is ~600 Flash calls against a Tier-1 cap of 10,000/day. The
+  account has in flight. Measured: a Max account burning its entire 48M month
+  in a single day is ~900 Flash calls against a Tier-1 cap of 10,000/day. The
   sub-windows were never what stood between us and the vendor.
 - **They hurt.** Pro's 5-hour window was 369,514 tokens against a 777,572-token
   30-minute High clip. `runs.windows_for_run` skips a window smaller than the
@@ -135,29 +142,56 @@ budgets, so `plan_features.check_run_size` can no longer refuse anything the
 pricing page advertises. That was a live bug: a cap that said 30 minutes while
 a 20-minute clip was refused.
 
-And the money, at full burn:
+And the money, at full burn, vendor cost only (payment fees are §5):
 
 | Plan | ฿/mo | budget | ฿/1M realised | vendor cost today | from 2027 | gross today | gross 2027 |
 |---|---|---|---|---|---|---|---|
 | Free | 0 | 0.45M once | — | ฿11 once | ฿23 once | −฿11 once | −฿23 once |
-| Lite | 199 | 0.8M | 248.8 | ฿20 | ฿40 | ฿179 (90%) | ฿159 (79.9%) |
-| Starter | 399 | 1.8M | 221.7 | ฿45 | ฿90 | ฿354 (89%) | ฿309 (77.4%) |
-| Pro | 990 | 4.4M | 225.0 | ฿110 | ฿220 | ฿880 (89%) | ฿770 (77.8%) |
-| Studio | 1,990 | 9M | 221.1 | ฿225 | ฿450 | ฿1,765 (89%) | ฿1,540 (77.4%) |
-| Agency | 3,990 | 18M | 221.7 | ฿450 | ฿900 | ฿3,540 (89%) | ฿3,090 (77.4%) |
-| Max | 6,990 | 32M | 218.4 | ฿800 | ฿1,600 | ฿6,190 (89%) | ฿5,390 (77.1%) |
+| Lite | 199 | 0.8M | 248.8 | ฿20 | ฿40 | ฿179 (89.9%) | ฿159 (79.9%) |
+| Starter | 399 | 2M | 199.5 | ฿50 | ฿100 | ฿349 (87.5%) | ฿299 (74.9%) |
+| Pro | 990 | 5.6M | 176.8 | ฿140 | ฿280 | ฿850 (85.9%) | ฿710 (71.7%) |
+| Studio | 1,990 | 12M | 165.8 | ฿300 | ฿600 | ฿1,690 (84.9%) | ฿1,390 (69.8%) |
+| Agency | 3,990 | 26M | 153.5 | ฿650 | ฿1,300 | ฿3,340 (83.7%) | ฿2,690 (67.4%) |
+| Max | 6,990 | 48M | 145.6 | ฿1,200 | ฿2,400 | ฿5,790 (82.8%) | ฿4,590 (65.7%) |
 
 Vendor cost is the budget at ฿25/1M today (the ฿24.13 measured in §3, rounded
 against us) and ฿50/1M from January. Free's line is a **once-per-account**
 number, not a monthly one — that is the whole point of the `lifetime` window.
 
-**The budget rise moved the realised price, and nobody moved the plan price.**
-Budgets went up (Starter 1.6M→1.8M, Pro 4M→4.4M, Studio 8M→9M, Agency
-16M→18M, Max 28M→32M) while ฿199/฿399/฿990/… stayed put, so the ladder sells
-tokens at **฿218–225 per 1M, not the ฿250 list** — and the 2027 full-burn
-margin is 77–78% instead of 80% everywhere except Lite (79.9%) and the Free
-credit. That is a deliberate-looking discount that nothing in the code states,
-so it is written here: a price change, made by not changing a price.
+**The volume discount — owner decision, 2026-10-01.** Prices did not move;
+budgets rose, upward only and more steeply up the ladder, so a bigger plan buys
+each token (and each clip) for less. The rule: **the margin at FULL price,
+after the January-2027 vendor rise and after payment fees, never falls below
+60%** (it was 70% for every plan), and it steps down the ladder so the top plan
+sits closest to that floor. Margin is
+
+```
+(P − 0.0435·P − 10 − budget × 50 / 1,000,000) / P
+```
+
+— Stripe card 3.65% + ฿10, Stripe Billing 0.7%, ฿50 per 1M rate-card tokens at
+2027 prices (§5 has the fee breakdown):
+
+| Plan | ฿/mo full | budget | margin at full price, 2027 | ฿/mo beta | margin at beta price, 2027 peg | margin at beta price, today's vendor price |
+|---|---|---|---|---|---|---|
+| Lite | 199 | 0.8M | **70.5%** | 99 | 45.1% | 65.3% |
+| Starter | 399 | 2M | **68.1%** | 199 | 40.4% | 65.5% |
+| Pro | 990 | 5.6M | **66.4%** | 499 | 37.5% | 65.6% |
+| Studio | 1,990 | 12M | **65.0%** | 999 | 34.6% | 64.6% |
+| Agency | 3,990 | 26M | **62.8%** | 1,999 | 30.1% | 62.6% |
+| Max | 6,990 | 48M | **61.2%** | 3,499 | 26.8% | 61.1% |
+
+`tests/test_plan_features.py::test_budgets_are_the_volume_discount_the_owner_signed_off`
+recomputes every row of the first margin column, and fails on a budget that
+breaks the 60% floor or stops stepping down.
+
+**Beta-period margins are thinner — roughly 27–45% at the 2027 peg.** The beta
+ladder (half price, to 2026-12-31) buys the same budgets, so priced at the ฿50
+peg it earns 45.1% on Lite down to 26.8% on Max. In practice the beta ends the
+day before the Flash rise lands, so while it actually runs the vendor bill is
+still today's ~฿25/1M and the realised beta margin is 61–66% (last column). The
+27–45% is what the beta would earn if it ran into 2027 — the number to watch if
+the beta is ever extended past 31 December.
 
 Full burn is the WORST case for us and the best case for the user. A user who
 spends half their budget doubles our margin on that plan.
@@ -357,74 +391,110 @@ run is at full peg** — a 60-minute transcript job is already 54% STT. Both
 paths converge on 80% on 1 January 2027, when Flash reaches the peg too.
 
 (Those percentages are per token sold at the ฿250 list price, so they compare
-like with like. At the plan level every figure is 2–3 points lower from Starter
-up, because the ladder realises ฿218–225/1M — §4.)
+like with like. At the plan level every figure is lower from Starter up,
+because the ladder realises ฿145.6–199.5/1M after the 2026-10-01 volume
+discount — §4.)
 
 ### 4.4 Cuts per plan, at full burn
 
 Every figure below is one analysis pass **with the voiceover pass included**,
 which is how `limits.py` sizes the table. There is no per-week table any more:
-every paid plan enforces `monthly` alone.
+every paid plan enforces `monthly` alone. The per-cut costs are the fitted
+model exactly as `limits.cut_tokens` computes it (`65.6 / 340.1 × seconds +
+125,390 + 40,000`), so they differ from §4.2's rows by a few tokens of
+rounding.
 
-**At a 5-minute source** — the basis the pricing page states — and at the best
-precision each plan may pick:
+**At a 5-minute source** — the basis the pricing page states — rounded DOWN,
+at both precisions where the plan may pick High:
 
-| Plan | budget | Standard (185,076) | High (267,421) |
+| Plan | budget | Standard (185,070) | High (267,420) |
 |---|---|---|---|
 | Free | 0.45M once | **2 cuts, ever** | — (Pro and up) |
 | Lite | 0.8M | 4 | — |
-| Starter | 1.8M | 9 | — |
-| Pro | 4.4M | 23 | 16 |
-| Studio | 9M | 48 | 33 |
-| Agency | 18M | 97 | 67 |
-| Max | 32M | 172 | 119 |
+| Starter | 2M | 10 | — |
+| Pro | 5.6M | 30 | 20 |
+| Studio | 12M | 64 | 44 |
+| Agency | 26M | 140 | 97 |
+| Max | 48M | 259 | 179 |
 
-**At the plan's own footage cap** — the worst case the limit allows:
+**At the plan's own footage cap** — the worst case the limit allows
+(`limits.plan_cuts_at_cap` for the Standard column):
 
 | Plan | cap | Standard | High |
 |---|---|---|---|
-| Free | 10 min | **2, ever** (204,762) | — |
-| Lite | 10 min | 3 (204,762) | — |
-| Starter | 20 min | 7 (244,133) | — |
-| Pro | 30 min | 15 (283,504) | 5 (777,572) |
-| Studio | 30 min | 31 | 11 |
-| Agency | 30 min | 63 | 23 |
-| Max | 30 min | 112 | 41 |
+| Free | 10 min | **2, ever** (204,750) | — |
+| Lite | 10 min | 3 (204,750) | — |
+| Starter | 20 min | 8 (244,110) | — |
+| Pro | 30 min | 19 (283,470) | 7 (777,570) |
+| Studio | 30 min | 42 | 15 |
+| Agency | 30 min | 91 | 33 |
+| Max | 30 min | 169 | 61 |
 
 **Free's 450,000 buys exactly two cuts** — two at its full 10-minute cap
-(204,762 each), and then the account is out for good. Holding it to Standard is
-what makes that work: at High a 10-minute cut is 369,451, so the credit would
+(204,750 each), and then the account is out for good. Holding it to Standard is
+what makes that work: at High a 10-minute cut is 369,450, so the credit would
 buy one and then stall in `paused_quota` partway through a second it could
 never finish.
 
 The old worry about the 5-hour windows is **closed by deletion**: Pro's
 369,514-token window and Studio's 739,030 were both short of a 30-minute High
-clip (777,572), and neither window exists any more (§4).
+clip (777,570), and neither window exists any more (§4).
+
+#### What one clip costs, and what the user pays for it
+
+Our cost per 5-minute cut (with voiceover): **Standard ฿9.25, High ฿13.37** at
+the 2027 ฿50/1M peg; ฿4.47 / ฿6.45 at today's measured ฿24.13/1M.
+
+What the user pays per clip if they spend the whole month on 5-minute cuts
+(price ÷ quoted count):
+
+| Plan | full ฿/clip, Standard | full ฿/clip, High | beta ฿/clip, Standard | beta ฿/clip, High |
+|---|---|---|---|---|
+| Lite | 49.75 | — | 24.75 | — |
+| Starter | 39.90 | — | 19.90 | — |
+| Pro | 33.00 | 49.50 | 16.63 | 24.95 |
+| Studio | 31.09 | 45.23 | 15.61 | 22.70 |
+| Agency | 28.50 | 41.13 | 14.28 | 20.61 |
+| Max | 26.99 | 39.05 | 13.51 | 19.55 |
+
+Every step up the ladder buys a clip for less, at both ladders — that is the
+volume discount stated in the unit a customer reads.
 
 #### How this is actually sold
 
 **None of the tables above is a meter.** The meter a user sees is a percentage
 of their window and nothing else — owner decision 2026-09-22, re-confirmed
-2026-09-29. A countable unit was tried today and rejected: an ordinary cut is
-~185,000 tokens while a 30-minute High one is 777,572, so any "N clips left"
+2026-09-29. A countable unit was tried and rejected: an ordinary cut is
+~185,000 tokens while a 30-minute High one is 777,570, so any "N clips left"
 counter would drop by four on a single upload and read as broken. Percent
 cannot contradict itself — one cut takes 5% and a longer one takes 12%, and
 nobody expected those to be equal. "Clip" is also already taken in this
 codebase (`local_meta["clips"]`, `clip_secs`) for a source video file.
 
 What a percentage cannot do is sell a plan, so the **pricing page quotes an
-approximate cut count** — `ตัดได้ราว 22 คลิป/เดือน · คิดจากคลิปดิบ 5 นาที` —
-generated by `limits.plan_cuts()` from `TYPICAL_CUT_TOKENS = 200,000`:
+approximate cut count** — `ตัดได้ราว 30 คลิป/เดือน · คิดจากคลิปดิบ 5 นาที`.
+Since 2026-10-01 (owner) the count is **honest**: `limits.plan_cuts()` divides
+the budget by `TYPICAL_CUT_TOKENS = 185,070` — the fitted 5-minute Standard
+cut itself, no longer a rounded-up 200,000 — and floors it; `plan_cuts_high()`
+does the same at `TYPICAL_HIGH_CUT_TOKENS = 267,420` for Pro and up. Both are
+served on `GET /usage/me` as `features.approx_cuts` / `features.approx_cuts_high`
+(the second is additive; `null` below Pro and for unlimited accounts). A plan
+that has High quotes **both** counts, so a plan bought for its finer setting
+never reads as if High cuts cost what Standard ones do:
 
 | Plan | Free | Lite | Starter | Pro | Studio | Agency | Max |
 |---|---|---|---|---|---|---|---|
-| quoted cuts | 2 | 4 | 9 | 22 | 45 | 90 | 160 |
-| this document's Standard figure | 2 | 4 | 9 | 23 | 48 | 97 | 172 |
+| quoted, Standard | 2 (once) | 4 | 10 | 30 | 64 | 140 | 259 |
+| quoted, High | — | — | — | 20 | 44 | 97 | 179 |
+| quoted until 2026-09-30 | 2 | 4 | 9 | 22 | 45 | 90 | 160 |
 
 It is **marketing copy, never a quota**: nothing is subtracted from it, no
-meter is drawn from it, it carries "ราว", and it states its basis. It is also
-deliberately conservative — 200,000 is the 185,076 measured cut rounded up, so
-the quoted number is never optimistic against the arithmetic above.
+meter is drawn from it, it carries "ราว", and it states its basis. Rounding
+down is what keeps it from being optimistic.
+
+(As of 2026-10-01 the backend serves the new counts; the website, the web
+editor and the desktop app still print the old 9 / 22 / 45 / 90 / 160 from
+their own copies until the UI redesign picks them up.)
 
 The question the count *looks* like it answers — "how many more runs do I
 have?" — is answered inside the app by pricing each run before it starts
@@ -496,12 +566,15 @@ So a subscription costs **3.65% + 0.7% + ฿10 = 4.35% + ฿10** domestically:
 
 | Plan | ฿/mo | card 3.65% | Billing 0.7% | fixed | total fee | net | gross 2027 | gross today |
 |---|---|---|---|---|---|---|---|---|
-| Lite | 199 | ฿7.26 | ฿1.39 | ฿10 | **฿18.66** | ฿180.34 | ฿140.34 (71%) | ฿160.34 (81%) |
-| Starter | 399 | ฿14.56 | ฿2.79 | ฿10 | **฿27.36** | ฿371.64 | ฿281.64 (71%) | ฿326.64 (82%) |
-| Pro | 990 | ฿36.14 | ฿6.93 | ฿10 | **฿53.06** | ฿936.93 | ฿716.93 (72%) | ฿826.93 (84%) |
-| Studio | 1,990 | ฿72.64 | ฿13.93 | ฿10 | **฿96.56** | ฿1,893.43 | ฿1,443.43 (73%) | ฿1,668.43 (84%) |
-| Agency | 3,990 | ฿145.64 | ฿27.93 | ฿10 | **฿183.56** | ฿3,806.43 | ฿2,906.43 (73%) | ฿3,356.43 (84%) |
-| Max | 6,990 | ฿255.14 | ฿48.93 | ฿10 | **฿314.06** | ฿6,675.94 | ฿5,075.94 (73%) | ฿5,875.94 (84%) |
+| Lite | 199 | ฿7.26 | ฿1.39 | ฿10 | **฿18.66** | ฿180.34 | ฿140.34 (70.5%) | ฿160.34 (80.6%) |
+| Starter | 399 | ฿14.56 | ฿2.79 | ฿10 | **฿27.36** | ฿371.64 | ฿271.64 (68.1%) | ฿321.64 (80.6%) |
+| Pro | 990 | ฿36.14 | ฿6.93 | ฿10 | **฿53.06** | ฿936.93 | ฿656.93 (66.4%) | ฿796.93 (80.5%) |
+| Studio | 1,990 | ฿72.64 | ฿13.93 | ฿10 | **฿96.56** | ฿1,893.43 | ฿1,293.43 (65.0%) | ฿1,593.43 (80.1%) |
+| Agency | 3,990 | ฿145.64 | ฿27.93 | ฿10 | **฿183.56** | ฿3,806.43 | ฿2,506.43 (62.8%) | ฿3,156.43 (79.1%) |
+| Max | 6,990 | ฿255.14 | ฿48.93 | ฿10 | **฿314.06** | ฿6,675.94 | ฿4,275.94 (61.2%) | ฿5,475.94 (78.3%) |
+
+The "gross 2027" column is the 2026-10-01 margin table (§4) — the volume
+discount is set on exactly this number.
 
 Adding Stripe Billing takes roughly **฿1.4 off Lite and ฿49 off Max** per month
 versus the card-only figure this document carried before. The ฿10 fixed part is
@@ -516,8 +589,8 @@ gross, one dispute costs:
 |---|---|
 | Lite | **3.6** |
 | Starter | **1.8** |
-| Pro | 0.7 |
-| Studio | 0.3 |
+| Pro | 0.8 |
+| Studio | 0.4 |
 | Agency | 0.2 |
 | Max | 0.1 |
 
@@ -563,11 +636,14 @@ At 2027 prices, full burn, after the full Stripe cost (card 3.65% + Billing
 | Plan | users to break even |
 |---|---|
 | Lite | 8.5 |
-| Starter | 4.2 |
-| Pro | 1.7 |
-| Studio | 0.8 |
-| Agency | 0.4 |
-| Max | 0.2 |
+| Starter | 4.4 |
+| Pro | 1.8 |
+| Studio | 0.9 |
+| Agency | 0.5 |
+| Max | 0.3 |
+
+At the beta prices and the 2027 peg (the worst case, §4) the same ฿1,190 needs
+26.6 Lite / 14.8 Starter / 6.4 Pro / 3.4 Studio / 2.0 Agency / 1.3 Max users.
 
 Free costs **฿23 once** at 2027 prices (฿11 today) per account that burns its
 whole 450,000 credit, not ฿23 a month — that is what the `lifetime` window
@@ -585,7 +661,7 @@ keeps them.
 | Vendor price | A rise hits margin alone, never a user's limit — by design (`rate_card.py` reads no FX and no admin table). |
 | Model mix | Only until 1 Jan 2027, and only because Flash is discounted. After that, none: every resource is ฿50/1M. |
 | Mode mix | Video modes are ~90% margin today, transcript modes 84–89% (§4.3), because Scribe is already at the peg and Flash is not. From January both are 80%. |
-| Plan budgets | The biggest single move this month, and not a vendor one: the 2026-09-29 budget rise cut the realised price from ฿250/1M to ฿218–225 from Starter up (§4), i.e. 2–3 points of margin on every paid plan. |
+| Plan budgets | The biggest single lever, and not a vendor one. The 2026-10-01 volume discount (owner decision, §4) raised budgets with prices unchanged: the realised price is now ฿248.8/1M (Lite) down to ฿145.6/1M (Max), and the full-price 2027 margin after fees steps from 70.5% to 61.2% — above the 60% floor on every plan. |
 | STT model | The one lever that can go NEGATIVE: `scribe_v2_5` costs 12.5x `scribe_v2` and the rate card charges the same (§4.5). One env var. |
 | Cached input | 10% of the input rate on both sides, so it is margin-neutral by construction — but it makes a run cheaper for the user, which is what the cache is for. |
 | Prompt >200k on Pro | Gemini bills the WHOLE call at the long rate; the card does the same, so still neutral. |
@@ -615,12 +691,16 @@ keeps them.
    ground this document are all 2–4 minutes. A single 30-minute production run
    at each precision would replace the weakest assumption in §4.2 with a
    measurement.
-6. **The ladder now realises ฿218–225/1M against a ฿250 list** (§1, §4),
-   because budgets rose on 2026-09-29 and prices did not. Full-burn 2027 margin
-   is 77–78% from Starter up rather than 80%. That may be exactly what was
-   intended — but it is a price cut that no price says, and nothing in the code
-   records it as a decision.
+6. **The beta must not outlive 2026.** At beta prices the new budgets earn
+   61–66% while the vendor is still at today's price, but only 27–45% at the
+   2027 peg (§4). If the beta is extended past 31 December, re-check the table
+   before it is.
 
-**Closed since the last revision:** the 5-hour windows (Pro's 369,514 and
+**Closed since the last revision:** the "price cut no price says" (old
+question 6). The ฿218–225/1M it described came from budgets this file listed
+but the code never had — `limits.py` was still selling at ~฿247–250/1M. The
+ladder's discount is now deliberate and recorded: the 2026-10-01 volume
+discount with a 60% floor at full price, pinned by a test (§4). And the 5-hour
+windows (Pro's 369,514 and
 Studio's 739,030, both short of a 777,572-token 30-minute High clip) are gone —
 no plan enforces `five_hour` or `weekly` any more.

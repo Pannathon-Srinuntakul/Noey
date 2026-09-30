@@ -270,7 +270,7 @@ def queue_lead_sec(user: Any) -> int:
 def features_payload(user: Any) -> dict[str, Any]:
     """The plan's feature facts for ``GET /usage/me`` (clients lock controls
     and refuse over-limit uploads before sending anything)."""
-    from packages.billing.limits import QUEUE_LEAD_FIRST_SEC, plan_cuts
+    from packages.billing.limits import QUEUE_LEAD_FIRST_SEC, plan_cuts, plan_cuts_high
 
     unlimited = is_unlimited(user)
     plan = _plan(user)
@@ -283,6 +283,11 @@ def features_payload(user: Any) -> dict[str, Any]:
         # signed-in plan screen quotes the same number as the website instead
         # of keeping its own copy. Never a token count.
         "approx_cuts": None if unlimited else plan_cuts(plan),
+        # The same count at ความละเอียด "high" — None on a plan that cannot
+        # pick it (and on an unlimited account, which advertises nothing).
+        # Pro and up quote BOTH, so a plan bought for High never reads as if
+        # High cuts cost what Standard ones do (owner, 2026-10-01).
+        "approx_cuts_high": None if unlimited else plan_cuts_high(plan),
         # The single-video-request cap per ความละเอียด, so a client can refuse
         # over-long footage before uploading anything (it is not a plan number:
         # it binds unlimited accounts too).
