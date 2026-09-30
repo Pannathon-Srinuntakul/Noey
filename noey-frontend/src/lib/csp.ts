@@ -18,15 +18,19 @@ import { PREPAINT_SCRIPT } from "./prepaint";
  *    lets the nonce'd runtime load next/script (Turnstile); the host entry
  *    remains for browsers without CSP3.
  *
- * Turnstile is the only third-party script. `form-action` lists Stripe's
- * hosted pages because a no-JavaScript plan-button submit is answered with a
- * 303 redirect to Checkout / the Customer Portal — if the backend ever uses a
- * Stripe custom domain, add it here.
+ * Turnstile is the only third-party script. `form-action` lists every host a
+ * form submit here is REDIRECTED to, because browsers apply `form-action` to
+ * the redirect target of a form POST as well as to the form's own URL:
+ * Stripe's hosted pages (a no-JavaScript plan-button submit is answered with a
+ * 303 to Checkout / the Customer Portal — if the backend ever uses a Stripe
+ * custom domain, add it here) and accounts.google.com (the "sign in with
+ * Google" button POSTs to /api/auth/google/start, which answers with a 303 to
+ * Google's consent screen; without it Chrome blocks the submit outright).
  *
  * `connect-src` gains exactly one origin — the Sentry ingest host inside
  * NEXT_PUBLIC_SENTRY_DSN — and only when that DSN is set. The Google sign-in
- * flow needs nothing here: accounts.google.com is a top-level navigation (a
- * 303 from our own server), not a fetch, frame or script.
+ * flow needs nothing in `connect-src`: accounts.google.com is reached by a
+ * top-level navigation, not a fetch, frame or script.
  */
 
 const TURNSTILE_ORIGIN = "https://challenges.cloudflare.com";
@@ -44,7 +48,7 @@ function policy(scriptSrc: string, sentryOrigin: string | null): string {
     "font-src 'self' data:",
     sentryOrigin ? `connect-src 'self' ${sentryOrigin}` : "connect-src 'self'",
     `frame-src ${TURNSTILE_ORIGIN}`,
-    "form-action 'self' https://checkout.stripe.com https://billing.stripe.com",
+    "form-action 'self' https://checkout.stripe.com https://billing.stripe.com https://accounts.google.com",
     "frame-ancestors 'none'",
     "base-uri 'self'",
     "object-src 'none'",

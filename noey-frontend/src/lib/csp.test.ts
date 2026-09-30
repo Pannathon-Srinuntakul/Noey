@@ -105,3 +105,19 @@ describe("Proxy sets the nonce CSP (production)", () => {
     expect(response.headers.get("content-security-policy")).toBeNull();
   });
 });
+
+describe("form-action covers every host a form submit is redirected to", () => {
+  // Browsers apply form-action to the redirect target of a form POST too: the
+  // Google button POSTs to /api/auth/google/start, answered by a 303 to Google.
+  for (const [name, csp] of [
+    ["static", staticContentSecurityPolicy(null)],
+    ["nonce", nonceContentSecurityPolicy("abc", null)],
+  ] as const) {
+    it(`${name} policy allows Google's consent screen and Stripe`, () => {
+      const formAction = csp.split("; ").find((d) => d.startsWith("form-action "));
+      expect(formAction).toContain("https://accounts.google.com");
+      expect(formAction).toContain("https://checkout.stripe.com");
+      expect(formAction).toContain("https://billing.stripe.com");
+    });
+  }
+});
