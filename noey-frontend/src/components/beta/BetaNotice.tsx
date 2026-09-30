@@ -2,10 +2,9 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type MouseEvent } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import {
   BETA_BADGE,
-  BETA_BANNER_LINK,
   BETA_NOTICE_DISMISS,
   BETA_NOTICE_NEVER,
   BETA_NOTICE_STORAGE_KEY,
@@ -19,6 +18,9 @@ import { Dialog } from "../ui/Dialog";
 
 /** <html data-busy> — set by any surface the visitor must not be interrupted on. */
 const BUSY_ATTRIBUTE = "data-busy";
+
+/** Fired by the strip's "รายละเอียด" button (BetaBanner) to reopen the notice. */
+export const BETA_OPEN_EVENT = "noey:beta-open";
 
 /** How often the suppressed case is re-checked, and how long the first check waits. */
 const CHECK_INTERVAL_MS = 400;
@@ -45,19 +47,20 @@ function remember(forever: boolean): void {
 }
 
 /**
- * The beta disclosure: a modal on the first visit, then a slim banner pinned
- * at the top for the rest of the beta.
+ * The beta disclosure's modal: it opens on the first visit, then the pinned
+ * strip (BetaBanner, rendered on the server so it never shifts the page)
+ * stays for the rest of the beta and can reopen it.
  *
  * Mounted once in the root layout. Everything it decides comes from
  * `lib/beta.ts`, so when the beta end date passes BOTH the modal and the
- * banner stop rendering on their own — the banner disappears together with the
- * beta price, with no deploy.
+ * strip stop rendering on their own — the strip disappears together with the
+ * beta price, with no deploy (and this component takes it down on the spot
+ * for a page that was cached before the date passed).
  */
 export function BetaNotice({ betaPriced }: { betaPriced: boolean }) {
   const copy = betaNoticeCopy(betaPriced);
   // Nothing renders until mount: the decision reads localStorage, which the
-  // server cannot see, and a banner in the server HTML would flash for a
-  // visitor who dismissed it.
+  // server cannot see.
   const mounted = useSyncExternalStore(
     neverChanges,
     () => true,
@@ -95,81 +98,66 @@ export function BetaNotice({ betaPriced }: { betaPriced: boolean }) {
     return () => window.clearInterval(timer);
   }, [mounted, pathname]);
 
+  // The strip's "รายละเอียด" button lives in the server-rendered banner.
+  useEffect(() => {
+    const reopen = (event: Event) => {
+      const from = (event as CustomEvent<HTMLElement | null>).detail;
+      opener.current = from ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
+      setOpen(true);
+    };
+    window.addEventListener(BETA_OPEN_EVENT, reopen);
+    return () => window.removeEventListener(BETA_OPEN_EVENT, reopen);
+  }, []);
+
+  // A page cached before the end date still carries the strip: take it down.
+  useEffect(() => {
+    if (shouldShowBetaBanner()) return;
+    document.documentElement.removeAttribute("data-beta-banner");
+    document.querySelector("[data-beta-strip]")?.setAttribute("hidden", "");
+  }, []);
+
   const close = useCallback(() => {
     remember(never);
     setOpen(false);
     // Native <dialog> restores focus itself in current browsers; do it
-    // explicitly so the banner's own trigger always gets it back.
+    // explicitly so the strip's own trigger always gets it back.
     opener.current?.focus();
     opener.current = null;
   }, [never]);
 
-  const reopen = useCallback((event: MouseEvent<HTMLButtonElement>) => {
-    opener.current = event.currentTarget;
-    setOpen(true);
-  }, []);
-
-  const showBanner = mounted && shouldShowBetaBanner();
-
-  useEffect(() => {
-    if (!showBanner) return;
-    const root = document.documentElement;
-    root.setAttribute("data-beta-banner", "");
-    return () => root.removeAttribute("data-beta-banner");
-  }, [showBanner]);
-
   if (!mounted) return null;
 
   return (
-    <>
-      {showBanner ? (
-        <div className="beta-banner">
-          <div className="beta-banner__inner">
-            <span className="tag tag-accent beta-banner__badge">{BETA_BADGE}</span>
-            <span className="beta-banner__text">{copy.banner}</span>
-            <button type="button" className="link-button beta-banner__more" onClick={reopen}>
-              {BETA_BANNER_LINK}
-            </button>
-          </div>
-        </div>
-      ) : null}
-
-      {/* Esc and a click on the backdrop both close it; focus is trapped by
-          showModal() while it is open. */}
-      <Dialog
-        open={open}
-        onClose={close}
-        className="beta-sheet"
-        maxWidth={560}
-        title={copy.title}
-        titleExtra={<span className="tag tag-accent beta-dialog__badge">{BETA_BADGE}</span>}
-      >
-        <ol className="beta-points">
-          {copy.points.map((point) => (
-            <li key={point.title}>
-              <strong>{point.title}</strong>
-              <span>{point.body}</span>
-            </li>
-          ))}
-        </ol>
-        <p className="beta-fineprint">
-          {copy.disclaimer} · <Link href="/terms">เงื่อนไขการใช้งาน</Link>
-        </p>
-        <label className="agree agree--flush">
-          <input
-            type="checkbox"
-            className="agree__box"
-            checked={never}
-            onChange={(event) => setNever(event.target.checked)}
-          />
-          <span className="agree__text">{BETA_NOTICE_NEVER}</span>
-        </label>
-        <div className="dialog-actions">
-          <button type="button" className="btn btn-primary" onClick={close}>
-            {BETA_NOTICE_DISMISS}
-          </button>
-        </div>
-      </Dialog>
-    </>
+    // Esc and a click on the backdrop both close it; focus is trapped by
+    // showModal() while it is open.
+    <Dialog
+      open={open}
+      onClose={close}
+      className="beta-sheet"
+      maxWidth={580}
+      title={copy.title}
+      titleExtra={<span className="tag tag-accent beta-dialog__badge">{BETA_BADGE}</span>}
+    >
+      <ol className="beta-points">
+        {copy.points.map((point) => (
+          <li key={point.title}>
+            <strong>{point.title}</strong>
+            <span>{point.body}</span>
+          </li>
+        ))}
+      </ol>
+      <p className="beta-fineprint">
+        {copy.disclaimer} · <Link href="/terms">เงื่อนไขการใช้งาน</Link>
+      </p>
+      <label className="agree agree--flush">
+        <input type="checkbox" className="agree__box" checked={never} onChange={(event) => setNever(event.target.checked)} />
+        <span className="agree__text">{BETA_NOTICE_NEVER}</span>
+      </label>
+      <div className="dialog-actions">
+        <button type="button" className="btn btn-primary" onClick={close}>
+          {BETA_NOTICE_DISMISS}
+        </button>
+      </div>
+    </Dialog>
   );
 }

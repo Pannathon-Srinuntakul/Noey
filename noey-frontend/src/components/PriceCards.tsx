@@ -11,6 +11,7 @@ import {
   MAIN_TIERS,
   PAID_TIERS,
   PLAN_COPY,
+  TIERS,
   clipsHeadline,
   displayPrice,
   strikePrice,
@@ -35,74 +36,86 @@ function StrikeThrough({ table, tier }: { table: PriceTable; tier: Tier }) {
   );
 }
 
-type CardSize = "home" | "full" | "extra";
+type CardSize = "home" | "full";
+
+const EXTRA_NOTE = "Lite สำหรับเริ่มแบบประหยัด · Agency และ Max สำหรับทีมและเอเจนซีที่ผลิตคลิปทุกวัน";
+
+/** Reel number on each card: the plan's place in the ladder (decoration). */
+const REEL: Record<Tier, string> = { free: "P0", lite: "P1", starter: "P2", pro: "P3", studio: "P4", agency: "P5", max: "P6" };
 
 /**
- * The plan cards. `variant="home"` is the compact strip on the home page
- * (the four main plans as cards, then Lite / Agency / Max as a short list);
- * `variant="full"` is /pricing (feature bullets, the four main plans, then
- * Lite / Agency / Max as smaller cards in a second section).
+ * The plan cards. `variant="home"` is the home page strip (the four main
+ * plans as cards, then Lite / Agency / Max as a short list). `variant="full"`
+ * is /pricing: all seven plans, cheapest first, on one horizontal rail that
+ * snaps card by card (PlanRail adds the controls and the clips-per-month
+ * picker); Lite, Agency and Max carry the "แพลนเพิ่มเติม" tag, explained by
+ * the note under the rail.
  * Prices come from the shared PriceTable; a paid tier the backend does not
  * list shows no invented price and cannot be bought.
  */
 export function PriceCards({ table, variant }: { table: PriceTable; variant: "home" | "full" }) {
-  const full = variant === "full";
+  if (variant === "full") {
+    return (
+      <>
+        <ol className="plan-rail__track" data-rail-track="">
+          {TIERS.map((tier) => (
+            <li key={tier} className="plan-rail__slot">
+              <PriceCard tier={tier} table={table} size="full" />
+            </li>
+          ))}
+        </ol>
+        {/* Said once for the page; each card carries only the short basis. */}
+        <p className="clip-note clip-note--grid">{CLIPS_FOOTNOTE}</p>
+        <section className="price-extra" aria-labelledby="price-extra-title">
+          <h2 id="price-extra-title" className="price-extra__title">
+            แพลนเพิ่มเติม
+          </h2>
+          <p className="price-extra__note">{EXTRA_NOTE}</p>
+        </section>
+      </>
+    );
+  }
+
   return (
     <>
-      <div className={full ? "price-grid price-grid--full" : "price-grid"}>
+      <div className="price-grid" data-reveal="stagger">
         {MAIN_TIERS.map((tier) => (
-          <PriceCard key={tier} tier={tier} table={table} size={full ? "full" : "home"} />
+          <PriceCard key={tier} tier={tier} table={table} size="home" />
         ))}
       </div>
       {/* Said once for the page; each card carries only the short basis. */}
       <p className="clip-note clip-note--grid">{CLIPS_FOOTNOTE}</p>
-      {full ? (
-        <section className="price-extra" aria-labelledby="price-extra-title">
-          <div className="price-extra__head">
-            <h2 id="price-extra-title" className="price-extra__title">
-              แพลนเพิ่มเติม
-            </h2>
-            <p className="price-extra__note">Lite สำหรับเริ่มแบบประหยัด · Agency และ Max สำหรับทีมและเอเจนซีที่ผลิตคลิปทุกวัน</p>
-          </div>
-          <div className="price-grid price-grid--extra">
-            {EXTRA_TIERS.map((tier) => (
-              <PriceCard key={tier} tier={tier} table={table} size="extra" />
-            ))}
-          </div>
-        </section>
-      ) : (
-        <div className="price-more">
-          <div className="price-more__head">
-            <h3 className="price-more__title">แพลนเพิ่มเติม</h3>
-            <p className="price-more__note">Lite สำหรับเริ่มแบบประหยัด · Agency และ Max สำหรับทีมและเอเจนซีที่ผลิตคลิปทุกวัน</p>
-          </div>
-          <div className="price-more__grid">
-            {EXTRA_TIERS.map((tier) => {
-              const price = displayPrice(table, tier);
-              return (
-                <div key={tier} className="price-more__item">
-                  <div className="price-more__name">
-                    <span>{PLAN_COPY[tier].name}</span>
-                    <span className="num price-more__mult">{clipsHeadline(tier)}</span>
-                  </div>
-                  <div className="num price-more__price">
-                    {price ? (
-                      <>
-                        <StrikeThrough table={table} tier={tier} />
-                        {`${price} บาท / เดือน`}
-                      </>
-                    ) : (
-                      "—"
-                    )}
-                  </div>
-                  <p className="price-more__blurb">{PLAN_COPY[tier].homeBlurb}</p>
-                </div>
-              );
-            })}
-          </div>
-          <p className="clip-note clip-note--group">{CLIPS_FOOTNOTE}</p>
+      <div className="price-more">
+        <div className="price-more__head">
+          <h3 className="price-more__title">แพลนเพิ่มเติม</h3>
+          <p className="price-more__note">{EXTRA_NOTE}</p>
         </div>
-      )}
+        <div className="price-more__grid">
+          {EXTRA_TIERS.map((tier) => {
+            const price = displayPrice(table, tier);
+            return (
+              <div key={tier} className="price-more__item">
+                <div className="price-more__name">
+                  <span>{PLAN_COPY[tier].name}</span>
+                  <span className="num price-more__mult">{clipsHeadline(tier)}</span>
+                </div>
+                <div className="num price-more__price">
+                  {price ? (
+                    <>
+                      <StrikeThrough table={table} tier={tier} />
+                      {`${price} บาท / เดือน`}
+                    </>
+                  ) : (
+                    "—"
+                  )}
+                </div>
+                <p className="price-more__blurb">{PLAN_COPY[tier].homeBlurb}</p>
+              </div>
+            );
+          })}
+        </div>
+        <p className="clip-note clip-note--group">{CLIPS_FOOTNOTE}</p>
+      </div>
     </>
   );
 }
@@ -110,9 +123,11 @@ export function PriceCards({ table, variant }: { table: PriceTable; variant: "ho
 function PriceCard({ tier, table, size }: { tier: Tier; table: PriceTable; size: CardSize }) {
   const copy = PLAN_COPY[tier];
   const price = displayPrice(table, tier);
-  const detailed = size !== "home";
-  const classes = ["card", "price-card", `price-card--${size}`];
-  if (copy.recommended) classes.push("price-card--recommended", "elev-sm");
+  const detailed = size === "full";
+  const extra = (EXTRA_TIERS as readonly string[]).includes(tier);
+  const classes = ["plan", `plan--${size}`];
+  if (copy.recommended) classes.push("plan--recommended");
+  if (extra) classes.push("plan--extra");
   const paid = (PAID_TIERS as readonly string[]).includes(tier);
   // Only a plan whose price is actually discounted carries the badge.
   const beta = isBetaActive() && strikePrice(table, tier) !== null;
@@ -126,36 +141,40 @@ function PriceCard({ tier, table, size }: { tier: Tier; table: PriceTable; size:
   const cutsUnit = tier === "free" ? "คลิป" : "คลิป / เดือน";
 
   return (
-    <div className={classes.join(" ")}>
-      {copy.recommended ? (
-        <div className="price-card__head">
-          <div className="card-kicker">{copy.name}</div>
-          <span className="tag tag-outline">แนะนำ</span>
-        </div>
-      ) : (
-        <div className="card-kicker">{copy.name}</div>
-      )}
-      <div className="price-card__amount">
-        <StrikeThrough table={table} tier={tier} />
-        <span className="num price-card__value">{price ?? "—"}</span>
-        <span className="price-card__unit">{tier === "free" ? "บาท" : "บาท / เดือน"}</span>
+    <article className={classes.join(" ")} data-tier={tier} aria-labelledby={`plan-${size}-${tier}`}>
+      <div className="plan__head">
+        <span className="trk tc" aria-hidden="true">
+          {REEL[tier]}
+        </span>
+        <h3 className="plan__name" id={`plan-${size}-${tier}`}>
+          {copy.name}
+        </h3>
+        {copy.recommended ? <span className="tag tag-outline plan__tag">แนะนำ</span> : null}
+        {detailed && extra ? <span className="tag tag-neutral plan__tag">แพลนเพิ่มเติม</span> : null}
       </div>
-      {beta ? <p className="price-card__beta">{BETA_BADGE} · ลด 50% ถึง 31 ธ.ค. 2026 จากนั้นคิดราคาปกติ</p> : null}
-      <div className="price-card__usage">
+      <div className="plan__amount">
+        <StrikeThrough table={table} tier={tier} />
+        <span className="num plan__value" data-countup={detailed && price && price !== "0" ? price : undefined} data-reveal={detailed ? "count" : undefined}>
+          <span data-countup-value="">{price ?? "—"}</span>
+        </span>
+        <span className="plan__unit">{tier === "free" ? "บาท" : "บาท / เดือน"}</span>
+      </div>
+      {beta ? <p className="plan__beta">{BETA_BADGE} · ลด 50% ถึง 31 ธ.ค. 2026 จากนั้นคิดราคาปกติ</p> : null}
+      <div className="plan__usage">
         <span className="usage-approx">{cutsPrefix}</span>
         <span className="num usage-mult">{cuts}</span>
         <span className="usage-caption">{tier === "free" ? `${cutsUnit} · ${FREE_CLIPS_CAPTION}` : cutsUnit}</span>
       </div>
       <p className="clip-note">{CLIPS_BASIS_SHORT}</p>
-      <p className="card-body">{detailed ? copy.pricingBlurb : copy.homeBlurb}</p>
+      <p className="plan__blurb">{detailed ? copy.pricingBlurb : copy.homeBlurb}</p>
       {detailed ? (
-        <ul className="price-card__features">
+        <ul className="plan__features">
           {copy.features.map((feature) => (
             <li key={feature}>{feature}</li>
           ))}
         </ul>
       ) : null}
-      <div className="price-card__foot">
+      <div className="plan__foot">
         {paid ? (
           <PlanButton
             tier={tier as (typeof PAID_TIERS)[number]}
@@ -169,6 +188,6 @@ function PriceCard({ tier, table, size }: { tier: Tier; table: PriceTable; size:
           </Link>
         )}
       </div>
-    </div>
+    </article>
   );
 }

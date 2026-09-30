@@ -1,16 +1,25 @@
 /*
- * Noey Studio design system — ported from the design's ds-styles.css
- * ("Classical" tokens + component classes) with the prototype's <helmet>
- * overrides applied: Noto Sans Thai for headings AND body (loaded by
- * next/font as --font-noto-thai, replacing the DS's Cormorant/Lora import),
- * and the warm dark palette.
+ * Noey Studio design system — "The Cutting Room".
+ *
+ * 1. Palette: the brand tokens, unchanged in value (light, dark, and the
+ *    scoped `.theme-night` / `.theme-day` copies used by sections that stay
+ *    dark or light in either theme, such as the end-credits footer).
+ * 2. Semantic tokens derived from the palette with color-mix() only — no new
+ *    hue anywhere. Components read these, never raw hex values.
+ * 3. Type, space, radius, motion tokens.
+ * 4. Base elements and shared primitives (buttons, fields, tags, tables,
+ *    dialogs, notices) — class names kept from the previous system so forms
+ *    and actions render unchanged in the new look.
  *
  * Theme: <html data-theme="light|dark"> is set before first paint by the
- * inline script in the root layout (localStorage "noey-theme"). Without JS the
- * OS preference applies through the prefers-color-scheme block.
+ * inline script in the root layout (localStorage "noey-theme"). Without JS
+ * the OS preference applies through the prefers-color-scheme block.
  */
 
-:root {
+/* ── 1. Palette ─────────────────────────────────────────────────────────── */
+
+:root,
+.theme-day {
   --color-bg: #f3f2f2;
   --color-surface: #eae9e9;
   --color-text: #201f1d;
@@ -41,41 +50,17 @@
   --color-accent-2-100: #fff3e4;
   --color-accent-2-800: #573d14;
 
-  /* helmet additions */
   --color-on-dark: #f3f2f2;
   --color-on-dark-muted: #bdb8b0;
   --color-scrim: rgba(32, 31, 29, 0.42);
   --color-danger: #9b2c1f;
   --color-success: #3f6b35;
 
-  --font-thai: var(--font-noto-thai), "Noto Sans Thai", system-ui, sans-serif;
-  --font-heading: var(--font-thai);
-  --font-heading-weight: 600;
-  --font-body: var(--font-thai);
-
-  --space-1: 4.6px;
-  --space-2: 9.2px;
-  --space-3: 13.8px;
-  --space-4: 18.4px;
-  --space-6: 27.6px;
-  --space-8: 36.8px;
-
-  --radius-sm: 2px;
-  --radius-md: 4px;
-  --radius-lg: 7px;
-
-  --shadow-sm: 0 1px 2px color-mix(in srgb, #2d2b2b 14%, transparent);
-  --shadow-lg: 0 12px 32px color-mix(in srgb, #2d2b2b 22%, transparent);
-
-  --gutter: clamp(18px, 3vw, 28px);
-  --page-max: 1180px;
-}
-
-html {
   color-scheme: light;
 }
 
-html[data-theme="dark"] {
+html[data-theme="dark"],
+.theme-night {
   color-scheme: dark;
   --color-bg: #171614;
   --color-surface: #201f1d;
@@ -96,8 +81,8 @@ html[data-theme="dark"] {
   --color-accent-400: #d9a441;
   --color-accent-600: #c08f33;
   --color-accent-700: #dcb05a;
-  /* Tints used as chip backgrounds (.tag-accent) — the light theme's pale cream
-     read as a glowing sticker on the dark page. */
+  /* Tints used as chip backgrounds — the light theme's pale cream reads as a
+     glowing sticker on the dark page. */
   --color-accent-100: #3a2e19;
   --color-accent-200: #4a3a1e;
   --color-accent-800: #f0c274;
@@ -128,18 +113,194 @@ html[data-theme="dark"] {
     --color-accent-400: #d9a441;
     --color-accent-600: #c08f33;
     --color-accent-700: #dcb05a;
-  /* Tints used as chip backgrounds (.tag-accent) — the light theme's pale cream
-     read as a glowing sticker on the dark page. */
-  --color-accent-100: #3a2e19;
-  --color-accent-200: #4a3a1e;
-  --color-accent-800: #f0c274;
-  --color-accent-900: #f6d9a3;
+    --color-accent-100: #3a2e19;
+    --color-accent-200: #4a3a1e;
+    --color-accent-800: #f0c274;
+    --color-accent-900: #f6d9a3;
     --color-danger: #f0a095;
     --color-success: #9fd08f;
   }
 }
 
-/* ── Base ─────────────────────────────────────────────────────────────────── */
+/* ── 2. Semantic tokens (recomputed inside every scoped theme) ──────────── */
+
+:root,
+.theme-night,
+.theme-day {
+  --bg: var(--color-bg);
+  --surface: var(--color-surface);
+  /* Editor-panel layers: raised card, deep well (timeline, preview). */
+  --panel: color-mix(in srgb, var(--color-neutral-100) 70%, var(--color-bg));
+  --panel-2: var(--color-neutral-200);
+  --well: color-mix(in srgb, var(--color-neutral-200) 60%, var(--color-surface));
+  --ink: var(--color-text);
+  --ink-2: var(--color-neutral-800);
+  --ink-3: var(--color-neutral-700);
+  --line: var(--color-divider);
+  --line-2: color-mix(in srgb, var(--color-text) 24%, transparent);
+  --line-3: color-mix(in srgb, var(--color-text) 40%, transparent);
+  --gold: var(--color-accent);
+  --gold-ink: var(--color-accent-700);
+  --gold-deep: var(--color-accent-600);
+  --gold-soft: color-mix(in srgb, var(--color-accent) 13%, transparent);
+  --gold-softer: color-mix(in srgb, var(--color-accent) 7%, transparent);
+  --gold-glow: color-mix(in srgb, var(--color-accent) 34%, transparent);
+  --gold-chip: var(--color-accent-100);
+  --gold-chip-ink: var(--color-accent-800);
+  --on-gold: var(--color-text);
+  --focus: var(--color-accent-600);
+  --danger: var(--color-danger);
+  --success: var(--color-success);
+  --danger-soft: color-mix(in srgb, var(--color-danger) 11%, transparent);
+  --success-soft: color-mix(in srgb, var(--color-success) 12%, transparent);
+  --scrim: var(--color-scrim);
+  --glass: color-mix(in srgb, var(--color-bg) 74%, transparent);
+  --glass-strong: color-mix(in srgb, var(--color-bg) 90%, transparent);
+  --grain-ink: color-mix(in srgb, var(--color-text) 55%, transparent);
+  --grain-opacity: 0.05;
+  --vignette: color-mix(in srgb, var(--color-text) 7%, transparent);
+  --shadow-1: 0 1px 2px color-mix(in srgb, var(--color-neutral-900) 10%, transparent),
+    0 1px 1px color-mix(in srgb, var(--color-neutral-900) 6%, transparent);
+  --shadow-2: 0 10px 30px -12px color-mix(in srgb, var(--color-neutral-900) 26%, transparent),
+    0 2px 6px color-mix(in srgb, var(--color-neutral-900) 8%, transparent);
+  --shadow-3: 0 40px 80px -30px color-mix(in srgb, var(--color-neutral-900) 38%, transparent),
+    0 10px 24px -12px color-mix(in srgb, var(--color-neutral-900) 18%, transparent);
+  --rim: inset 0 1px 0 color-mix(in srgb, var(--color-neutral-100) 70%, transparent);
+}
+
+html[data-theme="dark"],
+.theme-night {
+  --on-gold: var(--color-bg);
+  --focus: var(--color-accent);
+  --panel: var(--color-surface);
+  --panel-2: var(--color-neutral-200);
+  --well: var(--color-neutral-900);
+  --glass: color-mix(in srgb, var(--color-bg) 66%, transparent);
+  --glass-strong: color-mix(in srgb, var(--color-bg) 88%, transparent);
+  --grain-ink: color-mix(in srgb, var(--color-text) 80%, transparent);
+  --grain-opacity: 0.055;
+  --vignette: color-mix(in srgb, var(--color-neutral-900) 55%, transparent);
+  --shadow-1: 0 1px 2px color-mix(in srgb, var(--color-neutral-900) 60%, transparent);
+  --shadow-2: 0 14px 34px -14px color-mix(in srgb, var(--color-neutral-900) 90%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--color-text) 3%, transparent);
+  --shadow-3: 0 50px 90px -30px color-mix(in srgb, var(--color-neutral-900) 95%, transparent),
+    0 0 60px -20px color-mix(in srgb, var(--color-accent) 16%, transparent);
+  --rim: inset 0 1px 0 color-mix(in srgb, var(--color-text) 6%, transparent);
+}
+
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]) {
+    --on-gold: var(--color-bg);
+    --focus: var(--color-accent);
+    --panel: var(--color-surface);
+    --panel-2: var(--color-neutral-200);
+    --well: var(--color-neutral-900);
+    --glass: color-mix(in srgb, var(--color-bg) 66%, transparent);
+    --glass-strong: color-mix(in srgb, var(--color-bg) 88%, transparent);
+    --grain-ink: color-mix(in srgb, var(--color-text) 80%, transparent);
+    --grain-opacity: 0.055;
+    --vignette: color-mix(in srgb, var(--color-neutral-900) 55%, transparent);
+    --shadow-1: 0 1px 2px color-mix(in srgb, var(--color-neutral-900) 60%, transparent);
+    --shadow-2: 0 14px 34px -14px color-mix(in srgb, var(--color-neutral-900) 90%, transparent),
+      0 0 0 1px color-mix(in srgb, var(--color-text) 3%, transparent);
+    --shadow-3: 0 50px 90px -30px color-mix(in srgb, var(--color-neutral-900) 95%, transparent),
+      0 0 60px -20px color-mix(in srgb, var(--color-accent) 16%, transparent);
+    --rim: inset 0 1px 0 color-mix(in srgb, var(--color-text) 6%, transparent);
+  }
+}
+
+/* ── 3. Type, space, radius, motion ─────────────────────────────────────── */
+
+:root {
+  --font-thai: var(--font-noto-thai), "Noto Sans Thai", system-ui, sans-serif;
+  --font-heading: var(--font-thai);
+  --font-heading-weight: 600;
+  --font-body: var(--font-thai);
+  --font-body-weight: 300;
+
+  --fs-11: 0.6875rem;
+  --fs-12: 0.75rem;
+  --fs-13: 0.8125rem;
+  --fs-14: 0.875rem;
+  --fs-15: 0.9375rem;
+  --fs-16: 1rem;
+  --fs-17: 1.0625rem;
+  --fs-18: 1.125rem;
+  --fs-20: 1.25rem;
+  --fs-lead: clamp(1.0625rem, 0.98rem + 0.36vw, 1.25rem);
+  --fs-h4: clamp(1.125rem, 1.05rem + 0.3vw, 1.25rem);
+  --fs-h3: clamp(1.25rem, 1.08rem + 0.72vw, 1.625rem);
+  --fs-h2: clamp(1.875rem, 1.28rem + 2.55vw, 3.5rem);
+  --fs-h1: clamp(2.125rem, 1.36rem + 3.3vw, 4.25rem);
+  --fs-display: clamp(2.375rem, 1.2rem + 5.1vw, 5.75rem);
+
+  --lh-display: 1.26;
+  --lh-heading: 1.34;
+  --lh-snug: 1.5;
+  --lh-body: 1.8;
+
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 24px;
+  --s-6: 32px;
+  --s-7: 48px;
+  --s-8: 64px;
+  --s-9: 96px;
+  --s-10: 128px;
+  --section-y: clamp(80px, 5vw + 56px, 168px);
+  --gutter: clamp(16px, 4vw, 40px);
+  --page-max: 1240px;
+  --wide-max: 1440px;
+  --prose-max: 68ch;
+
+  --r-xs: 3px;
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 16px;
+  --r-xl: 24px;
+
+  --dur-1: 120ms;
+  --dur-2: 200ms;
+  --dur-3: 320ms;
+  --dur-4: 520ms;
+  --dur-5: 860ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --ease-cut: cubic-bezier(0.8, 0, 0.1, 1);
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+
+  /* The splice: the angle of the cut in the logo mark (the gap between its
+     two diagonal halves runs up and to the right). */
+  --splice-angle: 50deg;
+
+  --header-top: 12px;
+  --header-h: 60px;
+  --beta-h: 0px;
+
+  /* The page's own ground, resolved here once so scoped night/day sections
+     can still fade from it. */
+  --page-bg: var(--color-bg);
+}
+
+html[data-beta-banner] {
+  --beta-h: 36px;
+}
+
+@media (max-width: 640px) {
+  :root {
+    --header-top: 8px;
+    --header-h: 56px;
+  }
+
+  /* The strip wraps to two lines rather than cutting the price terms short. */
+  html[data-beta-banner] {
+    --beta-h: 56px;
+  }
+}
+
+/* ── 4. Base ────────────────────────────────────────────────────────────── */
 
 *,
 *::before,
@@ -150,6 +311,13 @@ html[data-theme="dark"] {
 html {
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
+  scroll-padding-top: calc(var(--beta-h) + var(--header-top) + var(--header-h) + 24px);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  html:focus-within {
+    scroll-behavior: smooth;
+  }
 }
 
 html:has(dialog[open]) {
@@ -159,12 +327,16 @@ html:has(dialog[open]) {
 body {
   margin: 0;
   min-height: 100vh;
-  background: var(--color-bg);
-  color: var(--color-text);
+  background: var(--bg);
+  color: var(--ink);
   font-family: var(--font-body);
-  font-size: 16px;
-  font-weight: 300;
-  line-height: 1.8;
+  font-size: var(--fs-16);
+  font-weight: var(--font-body-weight);
+  line-height: var(--lh-body);
+  font-kerning: normal;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow-x: clip;
 }
 
 h1,
@@ -175,25 +347,37 @@ h5,
 h6 {
   font-family: var(--font-heading);
   font-weight: var(--font-heading-weight);
-  letter-spacing: -0.015em;
+  line-height: var(--lh-heading);
+  letter-spacing: -0.01em;
   margin: 0;
+  text-wrap: balance;
 }
 
 p {
-  margin: 0 0 var(--space-3);
+  margin: 0 0 var(--s-4);
+  text-wrap: pretty;
 }
 
 a {
-  color: var(--color-accent-700);
-  text-underline-offset: 3px;
+  color: var(--gold-ink);
+  text-decoration-line: underline;
+  text-decoration-thickness: 1px;
+  text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
+  text-underline-offset: 0.28em;
+  transition:
+    color var(--dur-2) ease,
+    text-decoration-color var(--dur-2) ease;
 }
 
 a:hover {
-  color: var(--color-accent-600);
+  color: var(--gold-deep);
+  text-decoration-color: currentColor;
 }
 
 img,
-video {
+video,
+svg,
+canvas {
   display: block;
   max-width: 100%;
 }
@@ -202,14 +386,19 @@ figure {
   margin: 0;
 }
 
-figcaption {
-  font-size: 11px;
-  margin-top: var(--space-1);
-  color: color-mix(in srgb, var(--color-text) 55%, transparent);
+strong,
+b {
+  font-weight: 500;
 }
 
-strong {
-  font-weight: 500;
+ul,
+ol {
+  padding-left: 1.3em;
+}
+
+button {
+  font: inherit;
+  color: inherit;
 }
 
 :focus {
@@ -217,17 +406,30 @@ strong {
 }
 
 :focus-visible {
-  outline: 2px solid var(--color-accent);
-  outline-offset: 2px;
+  outline: 2px solid var(--focus);
+  outline-offset: 3px;
+  border-radius: 4px;
 }
 
 ::selection {
-  background: color-mix(in srgb, var(--color-accent) 30%, transparent);
+  background: color-mix(in srgb, var(--color-accent) 32%, transparent);
+  color: var(--ink);
 }
 
-.num {
+.num,
+time,
+.tc {
   font-variant-numeric: tabular-nums;
   font-feature-settings: "tnum";
+}
+
+/* Timecode / technical label: digits and Latin only, so letter-spacing is safe. */
+.tc {
+  font-size: var(--fs-11);
+  font-weight: 400;
+  letter-spacing: 0.08em;
+  line-height: 1;
+  white-space: nowrap;
 }
 
 .sr-only {
@@ -243,76 +445,200 @@ strong {
 }
 
 .skip-link {
-  position: absolute;
+  position: fixed;
   left: var(--gutter);
-  top: -100px;
-  z-index: 60;
-  padding: 8px 14px;
-  background: var(--color-bg);
-  border: 1px solid var(--color-accent);
-  border-radius: var(--radius-md);
-  font-size: 14px;
+  top: -120px;
+  z-index: 200;
+  padding: 10px 16px;
+  background: var(--bg);
+  color: var(--ink);
+  border: 1px solid var(--gold);
+  border-radius: var(--r-md);
+  font-size: var(--fs-14);
+  font-weight: 500;
+  text-decoration: none;
+  box-shadow: var(--shadow-2);
 }
 
 .skip-link:focus {
   top: 10px;
 }
 
-/* ── Photo plate (image slots) ────────────────────────────────────────────── */
+/* ── Layout helpers ─────────────────────────────────────────────────────── */
 
-.plate {
-  filter: sepia(0.22) saturate(0.82) contrast(1.05);
-  box-sizing: border-box;
-  border: 6px solid var(--color-surface);
-  outline: 1px solid var(--color-divider);
+.wrap {
+  width: min(100%, var(--page-max) + var(--gutter) * 2);
+  margin-inline: auto;
+  padding-inline: var(--gutter);
 }
 
-html[data-theme="dark"] .plate {
-  background: var(--color-surface);
-  border-color: var(--color-divider);
-  filter: none;
+.wrap--wide {
+  width: min(100%, var(--wide-max) + var(--gutter) * 2);
 }
 
-html[data-theme="dark"] img,
-html[data-theme="dark"] video {
-  filter: brightness(0.94);
+.wrap--narrow {
+  width: min(100%, 880px + var(--gutter) * 2);
 }
 
-@media (prefers-color-scheme: dark) {
-  html:not([data-theme="light"]) .plate {
-    background: var(--color-surface);
-    border-color: var(--color-divider);
-    filter: none;
+.sect {
+  position: relative;
+  padding-block: var(--section-y);
+}
+
+.sect--tight {
+  padding-block: calc(var(--section-y) * 0.6);
+}
+
+/* ── Type helpers ───────────────────────────────────────────────────────── */
+
+.h-display {
+  font-size: var(--fs-display);
+  line-height: var(--lh-display);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.h-1 {
+  font-size: var(--fs-h1);
+  line-height: var(--lh-display);
+  font-weight: 600;
+  letter-spacing: -0.018em;
+}
+
+.h-2 {
+  font-size: var(--fs-h2);
+  line-height: var(--lh-heading);
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+
+.h-3 {
+  font-size: var(--fs-h3);
+  line-height: var(--lh-snug);
+  font-weight: 600;
+}
+
+.h-4 {
+  font-size: var(--fs-h4);
+  line-height: var(--lh-snug);
+  font-weight: 500;
+}
+
+/* Weight contrast: the quieter half of a heading. */
+.h-soft {
+  font-weight: 300;
+  color: var(--ink-2);
+}
+
+.lede {
+  font-size: var(--fs-lead);
+  line-height: 1.8;
+  color: var(--ink-2);
+  max-width: var(--prose-max);
+}
+
+.body-2 {
+  font-size: var(--fs-15);
+  color: var(--ink-2);
+}
+
+.meta {
+  font-size: var(--fs-13);
+  line-height: 1.6;
+  color: var(--ink-3);
+}
+
+.gold {
+  color: var(--gold-ink);
+}
+
+/* Desktop-only line break inside a heading (Thai lines break by word). */
+.br-desk {
+  display: none;
+}
+
+@media (min-width: 900px) {
+  .br-desk {
+    display: inline;
   }
-
-  html:not([data-theme="light"]) img,
-  html:not([data-theme="light"]) video {
-    filter: brightness(0.94);
-  }
 }
 
-/* ── Buttons ──────────────────────────────────────────────────────────────── */
+/* ── Buttons ────────────────────────────────────────────────────────────── */
 
 .btn {
+  --btn-bg: transparent;
+  --btn-ink: var(--ink);
+  --btn-line: var(--line-2);
+  --btn-handle: var(--gold);
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  cursor: pointer;
-  text-decoration: none;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 20px;
+  border: 1px solid var(--btn-line);
+  border-radius: var(--r-md);
+  background: var(--btn-bg);
+  color: var(--btn-ink);
   font-family: var(--font-heading);
-  font-weight: var(--font-heading-weight);
-  font-size: 14px;
+  font-size: var(--fs-15);
+  font-weight: 500;
   line-height: 1.2;
-  color: var(--color-text);
-  background: transparent;
-  border: 1px solid transparent;
-  padding: var(--space-2) calc(var(--space-3) * 1.2);
-  border-radius: var(--radius-md);
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+  isolation: isolate;
+  transition:
+    background-color var(--dur-2) ease,
+    border-color var(--dur-2) ease,
+    color var(--dur-2) ease,
+    box-shadow var(--dur-3) var(--ease-out),
+    translate var(--dur-3) var(--ease-out);
+}
+
+.btn:hover {
+  color: var(--btn-ink);
 }
 
 .btn svg {
   display: block;
+  flex: none;
+}
+
+/* The trim handles: the edges of a clip being grabbed in the timeline. */
+.btn::before,
+.btn::after {
+  content: "";
+  position: absolute;
+  top: 7px;
+  bottom: 7px;
+  width: 4px;
+  border-radius: 3px;
+  background: var(--btn-handle);
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity var(--dur-2) ease,
+    translate var(--dur-3) var(--ease-out);
+}
+
+.btn::before {
+  left: 5px;
+  translate: 6px 0;
+}
+
+.btn::after {
+  right: 5px;
+  translate: -6px 0;
+}
+
+.btn:hover::before,
+.btn:hover::after,
+.btn:focus-visible::before,
+.btn:focus-visible::after {
+  opacity: 1;
+  translate: 0 0;
 }
 
 .btn:disabled,
@@ -321,66 +647,102 @@ html[data-theme="dark"] video {
   cursor: not-allowed;
 }
 
+.btn:disabled::before,
+.btn:disabled::after,
+.btn[aria-disabled="true"]::before,
+.btn[aria-disabled="true"]::after {
+  display: none;
+}
+
 .btn-primary {
-  color: var(--color-accent);
-  border-color: var(--color-accent);
+  --btn-bg: var(--gold);
+  --btn-ink: var(--on-gold);
+  --btn-line: var(--gold);
+  --btn-handle: color-mix(in srgb, var(--on-gold) 55%, transparent);
+  font-weight: 600;
+  box-shadow:
+    var(--rim),
+    0 8px 24px -12px var(--gold-glow);
 }
 
 .btn-primary:hover {
-  color: var(--color-accent);
-  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  --btn-bg: color-mix(in srgb, var(--color-accent) 88%, var(--color-text));
+  box-shadow:
+    var(--rim),
+    0 14px 34px -12px var(--gold-glow);
+}
+
+html[data-theme="dark"] .btn-primary:hover,
+.theme-night .btn-primary:hover {
+  --btn-bg: color-mix(in srgb, var(--color-accent) 86%, var(--color-text));
 }
 
 .btn-primary:active {
-  background: color-mix(in srgb, var(--color-accent) 22%, transparent);
+  translate: 0 1px;
 }
 
 .btn-secondary {
-  border-color: var(--color-divider);
+  --btn-bg: color-mix(in srgb, var(--panel) 70%, transparent);
+  --btn-line: var(--line-2);
 }
 
 .btn-secondary:hover {
-  color: var(--color-text);
-  background: color-mix(in srgb, var(--color-text) 7%, transparent);
-}
-
-.btn-secondary:active {
-  background: color-mix(in srgb, var(--color-text) 14%, transparent);
+  --btn-line: var(--gold);
+  --btn-bg: var(--gold-softer);
 }
 
 .btn-ghost {
-  color: var(--color-accent);
-  padding-inline: var(--space-1);
+  --btn-line: transparent;
+  --btn-ink: var(--ink);
+  padding-inline: 14px;
 }
 
 .btn-ghost:hover {
-  color: var(--color-accent);
-  background: color-mix(in srgb, var(--color-accent) 10%, transparent);
+  --btn-bg: color-mix(in srgb, var(--color-text) 6%, transparent);
 }
 
-.btn-ghost:active {
-  background: color-mix(in srgb, var(--color-accent) 18%, transparent);
+.btn-ghost::before,
+.btn-ghost::after {
+  display: none;
 }
 
-.btn:disabled:hover,
-.btn[aria-disabled="true"]:hover {
-  background: transparent;
+.btn-danger {
+  --btn-ink: var(--danger);
+  --btn-line: color-mix(in srgb, var(--color-danger) 60%, transparent);
+  --btn-handle: var(--danger);
 }
 
-.btn-icon {
-  width: 36px;
-  height: 36px;
-  padding: 0;
+.btn-danger:hover {
+  --btn-bg: var(--danger-soft);
+  --btn-line: var(--danger);
+}
+
+.btn-lg {
+  min-height: 52px;
+  padding: 0 26px;
+  font-size: var(--fs-16);
+  border-radius: 12px;
+}
+
+.btn-sm {
+  min-height: 36px;
+  padding: 0 14px;
+  font-size: var(--fs-14);
 }
 
 .btn-block {
   width: 100%;
-  margin-top: var(--space-2);
 }
 
-.btn-lg {
-  font-size: 15px;
-  padding: 11px 22px;
+.btn-icon {
+  width: 40px;
+  min-height: 40px;
+  padding: 0;
+}
+
+.btn-icon::before,
+.btn-icon::after {
+  display: none;
 }
 
 /* A button that reads as an inline link (opens dialogs). */
@@ -390,98 +752,125 @@ html[data-theme="dark"] video {
   border: 0;
   padding: 0;
   font: inherit;
-  color: var(--color-accent-700);
+  color: var(--gold-ink);
   text-decoration: underline;
-  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.28em;
   cursor: pointer;
 }
 
 .link-button:hover {
-  color: var(--color-accent-600);
+  color: var(--gold-deep);
 }
 
-/* ── Forms ────────────────────────────────────────────────────────────────── */
+.link-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── Forms ──────────────────────────────────────────────────────────────── */
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  font-size: var(--fs-15);
+}
 
 .field > label {
   display: block;
-  font-size: 12px;
-  margin-bottom: 5px;
-  color: color-mix(in srgb, var(--color-text) 70%, transparent);
+  font-size: var(--fs-13);
+  font-weight: 400;
+  line-height: 1.5;
+  margin-bottom: 7px;
+  color: var(--ink-2);
 }
 
 .input {
   width: 100%;
-  min-height: 36px;
-  padding: 6px 10px;
+  min-height: 48px;
+  padding: 11px 14px;
   font: inherit;
-  font-size: 14px;
-  color: var(--color-text);
-  caret-color: var(--color-accent);
-  background: transparent;
-  border: 1px solid var(--color-divider);
-  border-radius: var(--radius-md);
+  font-size: var(--fs-16);
+  font-weight: 400;
+  line-height: 1.5;
+  color: var(--ink);
+  caret-color: var(--gold);
+  background: var(--panel);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-md);
+  box-shadow: var(--rim);
+  transition:
+    border-color var(--dur-2) ease,
+    box-shadow var(--dur-2) ease;
+}
+
+.input::placeholder {
+  color: color-mix(in srgb, var(--color-text) 42%, transparent);
 }
 
 .input:hover {
-  border-color: color-mix(in srgb, var(--color-text) 45%, transparent);
+  border-color: var(--line-3);
 }
 
 .input:focus-visible {
-  border-color: var(--color-accent);
-  outline-offset: 0;
+  outline: none;
+  border-color: var(--gold);
+  box-shadow:
+    0 0 0 3px var(--gold-soft),
+    var(--rim);
 }
 
 .input[readonly] {
-  color: var(--color-neutral-700);
+  color: var(--ink-3);
   background: color-mix(in srgb, var(--color-text) 3%, transparent);
 }
 
-.input[readonly]:hover {
-  border-color: var(--color-divider);
-}
-
 .input[aria-invalid="true"] {
-  border-color: var(--color-danger);
+  border-color: var(--danger);
 }
 
 textarea.input {
-  min-height: 90px;
+  min-height: 132px;
   resize: vertical;
-}
-
-html[data-theme="dark"] .input {
-  background: var(--color-surface);
-  color: var(--color-text);
-}
-
-@media (prefers-color-scheme: dark) {
-  html:not([data-theme="light"]) .input {
-    background: var(--color-surface);
-    color: var(--color-text);
-  }
 }
 
 .field-hint,
 .field-error {
-  margin: 6px 0 0;
-  font-size: 12px;
-  line-height: 1.5;
+  margin: 7px 0 0;
+  font-size: var(--fs-13);
+  line-height: 1.6;
 }
 
 .field-hint {
-  color: var(--color-neutral-700);
+  color: var(--ink-3);
 }
 
 .field-error {
-  color: var(--color-danger);
+  color: var(--danger);
+}
+
+.form-error,
+.form-success {
+  margin: 10px 0 0;
+  font-size: var(--fs-14);
+  line-height: 1.6;
+}
+
+.form-error {
+  color: var(--danger);
+}
+
+.form-success {
+  color: var(--success);
 }
 
 .radio {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   cursor: pointer;
-  font-size: 14px;
+  font-size: var(--fs-15);
 }
 
 .radio input {
@@ -493,25 +882,28 @@ html[data-theme="dark"] .input {
 }
 
 .radio .dot {
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
   flex: none;
   border-radius: 50%;
-  border: 1.5px solid var(--color-divider);
+  border: 1.5px solid var(--line-3);
+  transition:
+    border-color var(--dur-2) ease,
+    box-shadow var(--dur-2) ease;
 }
 
 .radio:hover .dot {
-  border-color: var(--color-accent);
+  border-color: var(--gold);
 }
 
 .radio input:checked + .dot {
-  border-color: var(--color-accent);
-  background: var(--color-accent);
-  box-shadow: inset 0 0 0 4px var(--color-bg);
+  border-color: var(--gold);
+  background: var(--gold);
+  box-shadow: inset 0 0 0 4px var(--bg);
 }
 
 .radio input:focus-visible + .dot {
-  outline: 2px solid var(--color-accent);
+  outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
 
@@ -519,119 +911,136 @@ html[data-theme="dark"] .input {
   opacity: 0.45;
 }
 
-/* ── Cards ────────────────────────────────────────────────────────────────── */
-
-.card {
+/* Explicit consent tick (terms on sign-up, recurring billing, deletion). */
+.agree {
   display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  padding: var(--space-3);
-  border-radius: var(--radius-md);
-  background: transparent;
-  border: 1px solid var(--color-divider);
+  align-items: flex-start;
+  gap: 12px;
+  margin: 0 0 20px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--panel) 60%, transparent);
+  cursor: pointer;
 }
 
-html[data-theme="dark"] .card {
-  background: var(--color-surface);
+.agree--flush {
+  margin: 20px 0 0;
 }
 
-@media (prefers-color-scheme: dark) {
-  html:not([data-theme="light"]) .card {
-    background: var(--color-surface);
-  }
+.agree__box {
+  appearance: none;
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  margin: 2px 0 0;
+  border: 1.5px solid var(--line-3);
+  border-radius: 5px;
+  background: var(--bg);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition:
+    border-color var(--dur-2) ease,
+    background-color var(--dur-2) ease;
 }
 
-.card-kicker {
-  font-family: var(--font-body);
-  font-size: 12px;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--color-accent);
+.agree__box:checked {
+  border-color: var(--gold);
+  background: var(--gold);
 }
 
-.card-title {
-  font-family: var(--font-heading);
-  font-weight: 500;
-  font-size: 16px;
-  line-height: 1.5;
+.agree__box:checked::after {
+  content: "";
+  width: 10px;
+  height: 6px;
+  border-left: 2px solid var(--on-gold);
+  border-bottom: 2px solid var(--on-gold);
+  translate: 0 -1px;
+  rotate: -45deg;
 }
 
-.card-body {
-  margin: 0;
-  font-family: var(--font-body);
-  font-size: 13px;
-  opacity: 0.8;
-  flex: 1;
+.agree__box:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
 }
 
-.elev-sm {
-  box-shadow: var(--shadow-sm);
+.agree__text {
+  font-size: var(--fs-14);
+  line-height: 1.7;
+  color: var(--ink-2);
 }
 
-/* ── Tags ─────────────────────────────────────────────────────────────────── */
+.honeypot {
+  position: absolute;
+  left: -10000px;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+}
+
+.turnstile-slot {
+  min-height: 65px;
+}
+
+/* ── Tags ───────────────────────────────────────────────────────────────── */
 
 .tag {
   display: inline-flex;
   align-items: center;
+  gap: 6px;
   font-family: var(--font-body);
-  font-size: 11px;
-  letter-spacing: 0.02em;
+  font-size: var(--fs-12);
+  font-weight: 500;
+  line-height: 1.5;
   padding: 3px 10px;
-  border-radius: calc(var(--radius-md) * 0.75);
+  border-radius: 999px;
+  white-space: nowrap;
 }
 
 .tag-accent {
-  background: var(--color-accent-100);
-  color: var(--color-accent-800);
+  background: var(--gold-chip);
+  color: var(--gold-chip-ink);
 }
 
 .tag-neutral {
-  background: var(--color-neutral-100);
-  color: var(--color-neutral-800);
+  background: color-mix(in srgb, var(--color-text) 7%, transparent);
+  color: var(--ink-2);
 }
 
 .tag-outline {
-  border: 1px solid var(--color-accent);
-  color: var(--color-accent);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 70%, transparent);
+  color: var(--gold-ink);
 }
 
-/* ── Tables ───────────────────────────────────────────────────────────────── */
+/* ── Tables ─────────────────────────────────────────────────────────────── */
 
 .table {
   width: 100%;
   border-collapse: collapse;
-  font-family: var(--font-body);
-  font-size: 14px;
+  font-size: var(--fs-14);
+  line-height: 1.6;
 }
 
 .table th {
   text-align: left;
-  font-size: 11px;
+  font-size: var(--fs-13);
   font-weight: 500;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: color-mix(in srgb, var(--color-text) 60%, transparent);
-  padding: var(--space-2);
-  border-bottom: 1px solid var(--color-divider);
+  color: var(--ink-2);
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line-2);
 }
 
 .table td,
 .table th[scope="row"] {
-  padding: var(--space-2);
-  border-bottom: 1px solid var(--color-divider);
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
 }
 
-/* Row headers keep the body-cell look (the design's first column is plain text). */
 .table th[scope="row"] {
-  font-size: 14px;
-  font-weight: 300;
-  letter-spacing: normal;
-  text-transform: none;
-  color: var(--color-text);
-}
-
-.table tbody tr:hover {
-  background: color-mix(in srgb, var(--color-text) 4%, transparent);
+  font-size: var(--fs-14);
+  font-weight: 400;
+  color: var(--ink);
 }
 
 .table .c {
@@ -642,45 +1051,80 @@ html[data-theme="dark"] .card {
   text-align: right;
 }
 
-/* ── Dialog (native <dialog>, styled like the design's .dialog) ───────────── */
+/* ── Dialog (native <dialog>) ───────────────────────────────────────────── */
 
 dialog.dialog {
-  width: calc(100% - 48px);
+  width: calc(100% - 32px);
   max-width: var(--dialog-max-width, 520px);
   max-height: calc(100dvh - 48px);
   padding: 0;
   margin: auto;
-  color: var(--color-text);
-  background: var(--color-bg);
-  border: 1px solid var(--color-divider);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-lg);
+  color: var(--ink);
+  background: var(--bg);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-3);
   overflow: auto;
 }
 
 dialog.dialog::backdrop {
-  background: rgba(32, 31, 29, 0.42);
   background: var(--color-scrim, rgba(32, 31, 29, 0.42));
+  backdrop-filter: blur(6px);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  dialog.dialog[open] {
+    animation: dialog-in var(--dur-4) var(--ease-out);
+  }
+
+  dialog.dialog[open]::backdrop {
+    animation: fade-in var(--dur-3) ease;
+  }
+}
+
+@keyframes dialog-in {
+  from {
+    opacity: 0;
+    translate: 0 14px;
+    scale: 0.98;
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
 }
 
 .dialog-inner {
+  position: relative;
   display: flex;
   flex-direction: column;
-  padding: 30px;
+  padding: clamp(22px, 4vw, 34px);
+}
+
+/* A gold hairline along the dialog's top edge, cut once like the logo. */
+.dialog-inner::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: clamp(22px, 4vw, 34px);
+  width: 72px;
+  height: 2px;
+  background: linear-gradient(115deg, var(--gold) 0 46%, transparent 46% 56%, var(--gold) 56%);
 }
 
 .dialog-title {
-  font-family: var(--font-heading);
-  font-size: 24px;
-  font-weight: 500;
-  line-height: 1.5;
-  margin-bottom: 8px;
+  font-size: clamp(1.375rem, 1.2rem + 0.6vw, 1.625rem);
+  font-weight: 600;
+  line-height: 1.4;
+  margin-bottom: 10px;
 }
 
 .dialog-body {
   margin: 0 0 20px;
-  font-size: 15px;
-  color: var(--color-neutral-800);
+  font-size: var(--fs-15);
+  color: var(--ink-2);
 }
 
 .dialog-actions {
@@ -689,4 +1133,237 @@ dialog.dialog::backdrop {
   flex-wrap: wrap;
   gap: 10px;
   margin-top: 24px;
+}
+
+/* ── Notices ────────────────────────────────────────────────────────────── */
+
+.notice {
+  position: relative;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 14px 18px 14px 20px;
+  font-size: var(--fs-15);
+  line-height: 1.7;
+  color: var(--ink-2);
+  background: var(--gold-softer);
+  overflow: hidden;
+}
+
+.notice::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: var(--gold);
+}
+
+.notice p {
+  margin: 0;
+}
+
+.notice p + p {
+  margin-top: 6px;
+}
+
+.notice--warn {
+  background: var(--danger-soft);
+}
+
+.notice--warn::before {
+  background: var(--danger);
+}
+
+/* ── Key/value rows ─────────────────────────────────────────────────────── */
+
+.kv {
+  display: flex;
+  flex-direction: column;
+  margin: 14px 0 0;
+  font-size: var(--fs-15);
+}
+
+.kv > div {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 16px;
+  border-bottom: 1px solid var(--line);
+  padding: 12px 0;
+}
+
+.kv > div:last-child {
+  border-bottom: 0;
+}
+
+.kv dt,
+.kv dd {
+  margin: 0;
+}
+
+.kv dt {
+  color: var(--ink-2);
+}
+
+.kv dd {
+  text-align: right;
+  font-weight: 400;
+}
+
+/* ── Card (base) ────────────────────────────────────────────────────────── */
+
+.card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  padding: clamp(20px, 2.4vw, 28px);
+  border-radius: var(--r-lg);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  box-shadow: var(--rim);
+}
+
+.card-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-13);
+  font-weight: 500;
+  color: var(--gold-ink);
+}
+
+.card-title {
+  font-weight: 600;
+  font-size: var(--fs-17);
+  line-height: 1.5;
+}
+
+.card-body {
+  margin: 0;
+  font-size: var(--fs-15);
+  color: var(--ink-2);
+}
+
+/* ── Sign in with Google ────────────────────────────────────────────────────
+   Custom button per https://developers.google.com/identity/branding-guidelines
+   (light: #FFFFFF / 1px #747775 / #1F1F1F, dark: #131314 / 1px #8E918F /
+   #E3E3E3; Google Sans Medium 14/20; web padding 12 · 10 · 12; pill).
+   The colours and the Google Sans face are Google's, not the site's tokens,
+   on purpose: the guidelines require them. Thai glyphs fall back to the site
+   font. */
+
+.gsi-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid #747775;
+  border-radius: 20px;
+  background: #ffffff;
+  color: #1f1f1f;
+  font-family: var(--font-google-sans), var(--font-thai);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+  letter-spacing: 0.25px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color 0.2s,
+    box-shadow 0.2s;
+}
+
+.gsi-button--block {
+  width: 100%;
+}
+
+.gsi-button__logo {
+  flex-shrink: 0;
+  display: block;
+}
+
+.gsi-button:hover:not(:disabled) {
+  background: color-mix(in srgb, #1f1f1f 8%, #ffffff);
+}
+
+.gsi-button:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.gsi-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+html[data-theme="dark"] .gsi-button {
+  background: #131314;
+  border-color: #8e918f;
+  color: #e3e3e3;
+}
+
+html[data-theme="dark"] .gsi-button:hover:not(:disabled) {
+  background: color-mix(in srgb, #e3e3e3 8%, #131314);
+}
+
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]) .gsi-button {
+    background: #131314;
+    border-color: #8e918f;
+    color: #e3e3e3;
+  }
+
+  html:not([data-theme="light"]) .gsi-button:hover:not(:disabled) {
+    background: color-mix(in srgb, #e3e3e3 8%, #131314);
+  }
+}
+
+.google-signin {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.google-signin .form-error,
+.google-signin .form-success {
+  margin: 0;
+}
+
+.google-signin__note {
+  margin: 0;
+  font-size: var(--fs-13);
+  line-height: 1.6;
+  color: var(--ink-3);
+}
+
+.or-divider {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 24px 0;
+  font-size: var(--fs-13);
+  color: var(--ink-3);
+}
+
+.or-divider::before,
+.or-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
+
+/* ── Reduced motion: everything still, instantly ─────────────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

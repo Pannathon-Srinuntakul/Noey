@@ -1,6 +1,10 @@
+import { IconCheck, IconMinus } from "./ds/icons";
+
 /**
- * Two ruled lists side by side — "suits this work" and "cannot do yet".
- * Used by the home scope teaser and /scope.
+ * "Suits this work" and "cannot do yet" as two parallel tracks of equal
+ * weight: the limits get the same size, contrast and space as the strengths,
+ * so nothing about the product is hidden in small print. Used by the home
+ * scope teaser and /scope.
  */
 export function FitLists({
   fits,
@@ -17,20 +21,40 @@ export function FitLists({
 }) {
   const Heading = headingLevel;
   return (
-    <div className="fit-lists">
-      <div className="fit-lists__col">
-        <Heading className="fit-lists__title">{fitTitle}</Heading>
-        <ul className="ruled-list">
-          {fits.map((item) => (
-            <li key={item}>{item}</li>
+    <div className="lanes" data-reveal="lanes">
+      <div className="lane lane--fit">
+        <div className="lane__head">
+          <span className="trk tc" aria-hidden="true">
+            V1
+          </span>
+          <Heading className="lane__title">{fitTitle}</Heading>
+        </div>
+        <ul className="lane__clips">
+          {fits.map((item, index) => (
+            <li key={item} className="lane__clip" style={{ ["--i" as string]: index }}>
+              <span className="lane__icon" aria-hidden="true">
+                <IconCheck size={15} />
+              </span>
+              <span>{item}</span>
+            </li>
           ))}
         </ul>
       </div>
-      <div className="fit-lists__col fit-lists__col--muted">
-        <Heading className="fit-lists__title">{misfitTitle}</Heading>
-        <ul className="ruled-list">
-          {misfits.map((item) => (
-            <li key={item}>{item}</li>
+      <div className="lane lane--misfit">
+        <div className="lane__head">
+          <span className="trk tc" aria-hidden="true">
+            V2
+          </span>
+          <Heading className="lane__title">{misfitTitle}</Heading>
+        </div>
+        <ul className="lane__clips">
+          {misfits.map((item, index) => (
+            <li key={item} className="lane__clip" style={{ ["--i" as string]: index }}>
+              <span className="lane__icon" aria-hidden="true">
+                <IconMinus size={15} />
+              </span>
+              <span>{item}</span>
+            </li>
           ))}
         </ul>
       </div>

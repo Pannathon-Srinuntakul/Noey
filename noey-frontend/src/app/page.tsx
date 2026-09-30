@@ -1,14 +1,24 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import type { CSSProperties } from "react";
 import { BetaPriceNote } from "@/components/BetaPriceNote";
 import { FaqList } from "@/components/FaqList";
 import { JsonLd } from "@/components/JsonLd";
 import { FitLists } from "@/components/FitLists";
 import { MediaSlot } from "@/components/MediaSlot";
 import { PriceCards } from "@/components/PriceCards";
+import { ClipCard } from "@/components/ds/ClipCard";
+import { CtaBand } from "@/components/ds/CtaBand";
+import { IconArrowRight } from "@/components/ds/icons";
+import { SectionHeader } from "@/components/ds/SectionHeader";
+import { WordReveal } from "@/components/ds/WordReveal";
+import { HeroBackdrop } from "@/components/hero/HeroBackdrop";
+import { FeatureVisual } from "@/components/home/FeatureVisual";
+import { EditorMockup } from "@/components/mockups/EditorMockup";
+import { MicroDemo, type MicroKind } from "@/components/mockups/MicroDemos";
 import { HOME_FAQ } from "@/lib/faq";
 import { formatThaiDate } from "@/lib/format";
-import { HOME_FITS, HOME_MISFITS } from "@/lib/scope";
+import { HOME_FITS, HOME_MISFITS, SCOPE_STEPS } from "@/lib/scope";
 import {
   SOFTWARE_ID,
   faqPageNode,
@@ -23,6 +33,7 @@ import { MEDIA } from "@/lib/media";
 import { pageMetadata } from "@/lib/seo";
 import { getPriceTable } from "@/lib/server/prices";
 import { PAGES } from "@/lib/site";
+import "../styles/pages/home.css";
 
 // Static, re-generated at most every 10 minutes so prices follow the backend.
 export const revalidate = 600;
@@ -48,13 +59,13 @@ const FEATURES = [
   },
 ];
 
-const MINI_CARDS = [
-  { title: "ซับไทยอัตโนมัติ", body: "ซับขึ้นตามเสียงพูดจริง เลือกฟอนต์ ขนาด และตำแหน่งได้" },
-  { title: "ใส่เพลงประกอบ", body: "เลือกท่อนที่จะใช้ ปรับระดับเสียง และถอดออกได้ทุกเมื่อ" },
-  { title: "ไทม์ไลน์แก้มือ", body: "ย้าย ยืดหด ลบ ทำซ้ำ พร้อมย้อนกลับได้ทุกขั้น" },
-  { title: "สลับช็อตในฉากเดิม", body: "ไม่ชอบภาพไหน เปลี่ยนเป็นเทกอื่นได้โดยจังหวะไม่เสีย" },
-  { title: "รับไฟล์จากมือถือและกล้อง", body: "ฟอร์แมตที่เบราว์เซอร์เปิดไม่ได้ ระบบแปลงให้ก่อนเริ่มงาน" },
-  { title: "ได้ไฟล์พร้อมลง", body: "วิดีโอแนวตั้ง 1080×1920 ดาวน์โหลดแล้วลง TikTok, Reels หรือ Shorts ได้เลย" },
+const MINI_CARDS: ReadonlyArray<{ title: string; body: string; demo: MicroKind; track: string }> = [
+  { title: "ซับไทยอัตโนมัติ", body: "ซับขึ้นตามเสียงพูดจริง เลือกฟอนต์ ขนาด และตำแหน่งได้", demo: "subs", track: "T1" },
+  { title: "ใส่เพลงประกอบ", body: "เลือกท่อนที่จะใช้ ปรับระดับเสียง และถอดออกได้ทุกเมื่อ", demo: "music", track: "A2" },
+  { title: "ไทม์ไลน์แก้มือ", body: "ย้าย ยืดหด ลบ ทำซ้ำ พร้อมย้อนกลับได้ทุกขั้น", demo: "trim", track: "V1" },
+  { title: "สลับช็อตในฉากเดิม", body: "ไม่ชอบภาพไหน เปลี่ยนเป็นเทกอื่นได้โดยจังหวะไม่เสีย", demo: "swap", track: "V2" },
+  { title: "รับไฟล์จากมือถือและกล้อง", body: "ฟอร์แมตที่เบราว์เซอร์เปิดไม่ได้ ระบบแปลงให้ก่อนเริ่มงาน", demo: "convert", track: "IN" },
+  { title: "ได้ไฟล์พร้อมลง", body: "วิดีโอแนวตั้ง 1080×1920 ดาวน์โหลดแล้วลง TikTok, Reels หรือ Shorts ได้เลย", demo: "frame", track: "OUT" },
 ];
 
 const STEPS = [
@@ -77,6 +88,27 @@ const STEPS = [
   },
 ];
 
+/**
+ * The four beats of the hero scene: the real pipeline, told with copy that
+ * already describes it elsewhere on the site (the first step, then the three
+ * things the system does before you open the timeline — lib/scope.ts).
+ */
+const BEATS = [{ title: STEPS[0].title, body: STEPS[0].body }, ...SCOPE_STEPS];
+
+/**
+ * Without JavaScript the hero is not pinned and its illustration shows the
+ * finished draft instead of waiting for scroll-driven beats.
+ */
+const NO_SCRIPT_HERO = `
+.hero-scene{height:auto!important}
+.hero-scene__sticky{position:relative!important;height:auto!important;min-height:0!important}
+.ed-scene .ed__w,.ed-scene .ed__subs,.ed-scene .ed__clip,.ed-scene .ed__cap,.ed-scene .ed__slash{opacity:1!important;scale:1!important;animation:none!important}
+.ed-scene .wave__bar{transform:none!important;animation:none!important}
+.ed-scene .ed__screen .scene{filter:none!important}
+.ed-scene .ed__status-text{display:none!important}.ed-scene .ed__status-text--3{display:inline!important}
+.beats li{opacity:1!important}
+`;
+
 export default async function HomePage() {
   const table = await getPriceTable();
   const home = PAGES.home;
@@ -97,191 +129,285 @@ export default async function HomePage() {
   );
 
   return (
-    <main id="main">
-      <section className="container hero" aria-labelledby="hero-title">
-        <p className="eyebrow">สำหรับครีเอเตอร์และแม่ค้าที่ถ่ายคลิปเอง</p>
-        <h1 id="hero-title" className="display-title hero__title">
-          ถ่ายเสร็จ ลากคลิปเข้าเว็บ
-          <br />
-          ให้ AI ตัดร่างแรกให้ก่อน
-        </h1>
-        <div className="hero__rule" aria-hidden="true" />
-        {/* Answer-first block: what the product is and does, in one extractable paragraph. */}
-        <p className="hero__lead">
-          Noey Studio เป็นห้องตัดต่อที่เปิดในเบราว์เซอร์ ระบบถอดเสียงในคลิปออกมาเป็นข้อความ เลือกช่วงที่พูดได้ดี ต่อกันเป็นคลิปเดียว
-          เขียนสคริปต์พากย์ให้ และใส่ซับไทยให้ จากนั้นคุณดูผล แก้ตรงไหนก็ได้ในไทม์ไลน์ แล้วดาวน์โหลดไปลง
-        </p>
-        <div className="cta-row">
-          <Link href="/signup" className="btn btn-primary btn-lg">
-            เริ่มใช้ฟรี
-          </Link>
+    <main id="main" className="home">
+      <noscript>
+        <style>{NO_SCRIPT_HERO}</style>
+      </noscript>
+
+      {/* ── 1. Hero: the copy is there at first paint; the scene below it is pinned on desktop ── */}
+      <section className="hero" aria-labelledby="hero-title">
+        <HeroBackdrop />
+        <div className="wrap hero__intro page-top">
+          <div className="hero__eyebrow">
+            <span className="trk tc" aria-hidden="true">
+              REC
+            </span>
+            <p>สำหรับครีเอเตอร์และแม่ค้าที่ถ่ายคลิปเอง</p>
+          </div>
+          <WordReveal as="h1" id="hero-title" text={"ถ่ายเสร็จ ลากคลิปเข้าเว็บ\nให้ AI ตัดร่างแรกให้ก่อน"} className="h-display hero__title" soft={[1]} />
+          <div className="hero__cols">
+            {/* Answer-first block: what the product is and does, in one extractable paragraph. */}
+            <p className="hero__lead">
+              Noey Studio เป็นห้องตัดต่อที่เปิดในเบราว์เซอร์ ระบบถอดเสียงในคลิปออกมาเป็นข้อความ เลือกช่วงที่พูดได้ดี ต่อกันเป็นคลิปเดียว
+              เขียนสคริปต์พากย์ให้ และใส่ซับไทยให้ จากนั้นคุณดูผล แก้ตรงไหนก็ได้ในไทม์ไลน์ แล้วดาวน์โหลดไปลง
+            </p>
+            <div className="hero__act">
+              <div className="cta-row">
+                <Link href="/signup" className="btn btn-primary btn-lg" data-magnetic="">
+                  เริ่มใช้ฟรี
+                  <IconArrowRight size={18} />
+                </Link>
+              </div>
+              <p className="hero__fine">สมัครแล้วได้เครดิตทดลองฟรี · ไม่ต้องผูกบัตร · ใช้บนคอมผ่าน Chrome หรือ Edge</p>
+              <p className="hero__fine hero__honest">ระบบทำร่างแรกให้ ไม่ได้ตัดจบแทนคุณ งานที่เหลือยังแก้เองในไทม์ไลน์</p>
+              <p className="stamp">
+                อัปเดตล่าสุด <time dateTime={home.updated}>{formatThaiDate(home.updated)}</time>
+              </p>
+            </div>
+          </div>
         </div>
-        <p className="fine">สมัครแล้วได้เครดิตทดลองฟรี · ไม่ต้องผูกบัตร · ใช้บนคอมผ่าน Chrome หรือ Edge</p>
-        <p className="fine hero__honest">ระบบทำร่างแรกให้ ไม่ได้ตัดจบแทนคุณ งานที่เหลือยังแก้เองในไทม์ไลน์</p>
-        <p className="updated">
-          อัปเดตล่าสุด <time dateTime={home.updated}>{formatThaiDate(home.updated)}</time>
-        </p>
+
+        <div className="hero-scene ed-scene" data-scene="4" data-scene-auto="" data-beat="0">
+          <div className="hero-scene__sticky">
+            <div className="wrap hero-scene__grid">
+              <ol className="beats">
+                {BEATS.map((beat, index) => (
+                  <li key={beat.title} className="beats__item" style={{ "--b": index } as CSSProperties}>
+                    <span className="beats__n tc" aria-hidden="true">
+                      {String(index + 1).padStart(2, "0")}
+                    </span>
+                    <span className="beats__text">
+                      <strong className="beats__title">{beat.title}</strong>
+                      <span className="beats__body">{beat.body}</span>
+                    </span>
+                  </li>
+                ))}
+              </ol>
+              <div className="hero-scene__stage" data-scene-stage="">
+                <EditorMockup />
+              </div>
+            </div>
+            <div className="hero-scene__rail" aria-hidden="true">
+              <span className="hero-scene__rail-fill" />
+            </div>
+          </div>
+        </div>
       </section>
 
+      {/* ── 2. Three points as three parallel tracks ── */}
       <section className="usp" aria-labelledby="usp-title">
         <h2 id="usp-title" className="sr-only">
           จุดเด่นของ Noey Studio
         </h2>
-        <ul className="container usp__grid">
-          <li className="usp__item">
-            <h3>ไม่ต้องติดตั้งโปรแกรม</h3>
-            <p>เปิดเบราว์เซอร์บนคอมแล้วเริ่มงานได้เลย</p>
-          </li>
-          <li className="usp__item">
-            <h3>ตัดจากสิ่งที่คุณพูดจริง</h3>
-            <p>ระบบถอดเสียงก่อน แล้วเลือกช่วงจากเนื้อหา ไม่ใช่สุ่มตัด</p>
-          </li>
-          <li className="usp__item">
-            <h3>แก้ทับได้ทุกช็อต</h3>
-            <p>ไทม์ไลน์เปิดให้แก้เองเสมอ ไม่ใช่กดปุ่มเดียวแล้วจบ</p>
-          </li>
-        </ul>
-      </section>
-
-      <section className="container section-pad problem" aria-labelledby="problem-title">
-        <h2 id="problem-title" className="section-title">
-          งานที่กินเวลาที่สุด
-          <br />
-          ไม่ใช่การถ่าย แต่เป็นการตัด
-        </h2>
-        <div className="problem__body">
-          <p>
-            ครีเอเตอร์ส่วนใหญ่ถ่ายคลิปหนึ่งตัวจบภายในไม่กี่นาที แต่ใช้เวลาอีกหลายเท่าไปกับการไล่ดูฟุตเทจ หาช่วงที่พูดรู้เรื่อง
-            ตัดช่วงที่พูดผิดออก พิมพ์ซับ แล้วจัดจังหวะใหม่อีกรอบ ยิ่งลงคลิปถี่ เวลาส่วนนี้ยิ่งกลืนทั้งวัน
-          </p>
-          <p>
-            Noey Studio ทำขั้นตอนที่ซ้ำ ๆ ตรงนั้นแทน ระบบถอดเสียงทั้งคลิปเป็นข้อความก่อน แล้วให้ AI อ่านสิ่งที่คุณพูดจริง ๆ
-            เพื่อเลือกช่วงที่ควรเก็บและลำดับที่ควรวาง สิ่งที่ได้กลับมาคือคลิปที่ตัดแล้วหนึ่งตัว ไม่ใช่รายการงานที่ต้องทำต่อ
-          </p>
-          <p>ร่างแรกไม่ต้องสมบูรณ์ก็ได้ เพราะไทม์ไลน์ยังอยู่ครบ ย้าย ยืดหด ลบ หรือสลับช็อตในฉากเดิม แล้วเรนเดอร์ใหม่ได้ไม่จำกัดครั้ง</p>
+        <div className="wrap">
+          <div className="usp__ruler" aria-hidden="true">
+            {["00:00:00:00", "00:00:04:00", "00:00:08:00", "00:00:12:00"].map((mark) => (
+              <span key={mark} className="tc">
+                {mark}
+              </span>
+            ))}
+          </div>
+          <div className="usp__stage" data-reveal="usp">
+            <ul className="usp__tracks">
+              {[
+                { track: "V1", title: "ไม่ต้องติดตั้งโปรแกรม", body: "เปิดเบราว์เซอร์บนคอมแล้วเริ่มงานได้เลย" },
+                { track: "V2", title: "ตัดจากสิ่งที่คุณพูดจริง", body: "ระบบถอดเสียงก่อน แล้วเลือกช่วงจากเนื้อหา ไม่ใช่สุ่มตัด" },
+                { track: "V3", title: "แก้ทับได้ทุกช็อต", body: "ไทม์ไลน์เปิดให้แก้เองเสมอ ไม่ใช่กดปุ่มเดียวแล้วจบ" },
+              ].map((item, index) => (
+                <li key={item.title} className="usp__track" style={{ "--t": index } as CSSProperties}>
+                  <span className="trk tc" aria-hidden="true">
+                    {item.track}
+                  </span>
+                  <div className="usp__clip">
+                    <h3>{item.title}</h3>
+                    <p>{item.body}</p>
+                  </div>
+                </li>
+              ))}
+            </ul>
+            <span className="usp__playhead" aria-hidden="true" />
+          </div>
         </div>
       </section>
 
-      <section id="features" className="section" aria-labelledby="features-title">
-        <div className="container section-pad">
-          <div className="features__intro">
-            <p className="eyebrow">ความสามารถหลัก</p>
-            <h2 id="features-title" className="section-title">
-              สามอย่างที่ทำให้งานเสร็จเร็วขึ้นจริง
-            </h2>
-            <p className="pricing-intro">
+      {/* ── 3. The problem: sticky heading, paragraphs arriving, a clock that keeps running ── */}
+      <section className="sect problem" aria-labelledby="problem-title">
+        <div className="wrap problem__grid">
+          <div className="problem__head">
+            <SectionHeader id="problem-title" track="A1" title={"งานที่กินเวลาที่สุด\nไม่ใช่การถ่าย แต่เป็นการตัด"} soft={[1]} />
+            <div className="problem__clock" data-play="" aria-hidden="true">
+              <span className="problem__clock-dot" />
+              <span className="problem__clock-tc" />
+            </div>
+          </div>
+          <div className="problem__body">
+            <p data-reveal="rise">
+              ครีเอเตอร์ส่วนใหญ่ถ่ายคลิปหนึ่งตัวจบภายในไม่กี่นาที แต่ใช้เวลาอีกหลายเท่าไปกับการไล่ดูฟุตเทจ หาช่วงที่พูดรู้เรื่อง
+              ตัดช่วงที่พูดผิดออก พิมพ์ซับ แล้วจัดจังหวะใหม่อีกรอบ ยิ่งลงคลิปถี่ เวลาส่วนนี้ยิ่งกลืนทั้งวัน
+            </p>
+            <p data-reveal="rise">
+              Noey Studio ทำขั้นตอนที่ซ้ำ ๆ ตรงนั้นแทน ระบบถอดเสียงทั้งคลิปเป็นข้อความก่อน แล้วให้ AI อ่านสิ่งที่คุณพูดจริง ๆ
+              เพื่อเลือกช่วงที่ควรเก็บและลำดับที่ควรวาง สิ่งที่ได้กลับมาคือคลิปที่ตัดแล้วหนึ่งตัว ไม่ใช่รายการงานที่ต้องทำต่อ
+            </p>
+            <p data-reveal="rise" className="problem__last">
+              ร่างแรกไม่ต้องสมบูรณ์ก็ได้ เพราะไทม์ไลน์ยังอยู่ครบ ย้าย ยืดหด ลบ หรือสลับช็อตในฉากเดิม แล้วเรนเดอร์ใหม่ได้ไม่จำกัดครั้ง
+            </p>
+          </div>
+        </div>
+      </section>
+
+      {/* ── 4. Features: a bento of the three big ones, then six clips with their own demos ── */}
+      <section id="features" className="sect features" aria-labelledby="features-title">
+        <div className="wrap">
+          <SectionHeader id="features-title" track="V2" timecode="00:00:42:10" eyebrow="ความสามารถหลัก" title="สามอย่างที่ทำให้งานเสร็จเร็วขึ้นจริง">
+            <p>
               ความสามารถหลักมีสามอย่าง คือตัดคลิปอัตโนมัติจากสิ่งที่พูดจริง เขียนสคริปต์พากย์ภาษาไทยพร้อมให้อัดเสียงในเบราว์เซอร์
               และใส่ซับไทยตามเสียงพูด ทั้งสามอย่างทำงานในเบราว์เซอร์โดยไม่ต้องติดตั้งโปรแกรม
             </p>
-          </div>
-          <div className="features__grid">
+          </SectionHeader>
+          <div className="bento" data-reveal="stagger">
             {FEATURES.map((feature, index) => (
-              <article key={feature.title} className="feature">
-                <div className="num feature__num" aria-hidden="true">
-                  {String(index + 1).padStart(2, "0")}
+              <article key={feature.title} className={`bento__card bento__card--${index + 1}`}>
+                <div className="bento__visual" data-play="">
+                  <FeatureVisual index={index} />
                 </div>
-                <h3>{feature.title}</h3>
-                <p>{feature.body}</p>
+                <div className="bento__text">
+                  <div className="num bento__num" aria-hidden="true">
+                    {String(index + 1).padStart(2, "0")}
+                  </div>
+                  <h3>{feature.title}</h3>
+                  <p>{feature.body}</p>
+                </div>
               </article>
             ))}
           </div>
-          <div className="mini-cards">
-            {MINI_CARDS.map((card) => (
-              <div key={card.title} className="card">
-                <div className="card-title">{card.title}</div>
-                <p className="card-body">{card.body}</p>
-              </div>
+          <div className="minis" data-reveal="stagger">
+            {MINI_CARDS.map((card, index) => (
+              <ClipCard
+                key={card.title}
+                title={card.title}
+                track={card.track}
+                timecode={`00:00:${String(4 + index * 5).padStart(2, "0")}`}
+                media={<MicroDemo kind={card.demo} />}
+                className="mini"
+              >
+                <p>{card.body}</p>
+              </ClipCard>
             ))}
           </div>
         </div>
       </section>
 
-      <section id="how" className="section section-muted" aria-labelledby="how-title">
-        <div className="container section-pad">
-          <div className="features__intro">
-            <p className="eyebrow">วิธีใช้งาน</p>
-            <h2 id="how-title" className="section-title">
-              สามขั้นตอน จบในหน้าเดียว
-            </h2>
-            <p className="pricing-intro">
-              ขั้นตอนใช้งานมีสามขั้น คือลากฟุตเทจเข้ามา เลือกโหมดและความยาวที่ต้องการ แล้วดูผล เกลาในไทม์ไลน์ และดาวน์โหลดไฟล์
-              วิดีโอแนวตั้ง 1080×1920 การแก้และเรนเดอร์ซ้ำทำได้ไม่จำกัดครั้งโดยไม่กินโควตา
-            </p>
-          </div>
-          <ol className="steps">
-            {STEPS.map((step, index) => (
-              <li key={step.title} className="step">
-                <div className="step__media">
-                  <MediaSlot media={step.media} sizes="(max-width: 800px) 90vw, 360px" />
+      {/* ── 5. How it works: three steps, scrubbed sideways on desktop ── */}
+      <section id="how" className="how" aria-labelledby="how-title">
+        <div className="how-scene" data-scene="3">
+          <div className="how-scene__sticky">
+            <div className="how__viewport">
+              <div className="how__track" data-scene-track="">
+                <div className="how__intro">
+                  <SectionHeader id="how-title" track="V3" timecode="00:01:08:00" eyebrow="วิธีใช้งาน" title="สามขั้นตอน จบในหน้าเดียว">
+                    <p>
+                      ขั้นตอนใช้งานมีสามขั้น คือลากฟุตเทจเข้ามา เลือกโหมดและความยาวที่ต้องการ แล้วดูผล เกลาในไทม์ไลน์ และดาวน์โหลดไฟล์
+                      วิดีโอแนวตั้ง 1080×1920 การแก้และเรนเดอร์ซ้ำทำได้ไม่จำกัดครั้งโดยไม่กินโควตา
+                    </p>
+                  </SectionHeader>
                 </div>
-                <h3>
-                  <span className="num step__n">{index + 1}. </span>
-                  {step.title}
-                </h3>
-                <p>{step.body}</p>
-              </li>
-            ))}
-          </ol>
+                <ol className="how__steps">
+                  {STEPS.map((step, index) => (
+                    <li key={step.title} className="how__step" style={{ "--s": index } as CSSProperties}>
+                      <div className="how__media">
+                        <MediaSlot media={step.media} sizes="(max-width: 800px) 90vw, 520px" />
+                      </div>
+                      <div className="how__text">
+                        <span className="how__n num" aria-hidden="true">
+                          {String(index + 1).padStart(2, "0")}
+                        </span>
+                        <div>
+                          <h3>
+                            <span className="num step__n">{index + 1}. </span>
+                            {step.title}
+                          </h3>
+                          <p>{step.body}</p>
+                        </div>
+                      </div>
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            </div>
+            <div className="how__progress" aria-hidden="true">
+              <span />
+            </div>
+          </div>
         </div>
       </section>
 
-      <section className="section" aria-labelledby="scope-title">
-        <div className="container section-pad">
-          <p className="eyebrow">ขอบเขตของระบบ</p>
-          <h2 id="scope-title" className="section-title scope-teaser__title">
-            ระบบคัดช็อตให้ ไม่ได้ตัดจบแทนคุณ
-          </h2>
-          <p className="scope-teaser__lead">
-            สิ่งที่ได้กลับมาคือร่างแรก — ช็อตที่คัดมาแล้ว เรียงลำดับไว้ พร้อมซับไทย จากนั้นยังต้องเข้าไปเกลาจังหวะและลำดับเองในไทม์ไลน์เกือบทุกครั้ง
-            ส่วนที่ประหยัดคือเวลานั่งไล่ฟุตเทจทีละช่วงและพิมพ์ซับเอง ไม่ใช่การตัดต่อทั้งกระบวนการ
-          </p>
+      {/* ── 6. Scope: what fits and what does not, side by side at equal weight ── */}
+      <section className="sect scope-teaser" aria-labelledby="scope-title">
+        <div className="wrap">
+          <SectionHeader id="scope-title" track="V4" timecode="00:01:36:12" eyebrow="ขอบเขตของระบบ" title="ระบบคัดช็อตให้ ไม่ได้ตัดจบแทนคุณ">
+            <p>
+              สิ่งที่ได้กลับมาคือร่างแรก — ช็อตที่คัดมาแล้ว เรียงลำดับไว้ พร้อมซับไทย จากนั้นยังต้องเข้าไปเกลาจังหวะและลำดับเองในไทม์ไลน์เกือบทุกครั้ง
+              ส่วนที่ประหยัดคือเวลานั่งไล่ฟุตเทจทีละช่วงและพิมพ์ซับเอง ไม่ใช่การตัดต่อทั้งกระบวนการ
+            </p>
+          </SectionHeader>
           <FitLists fits={HOME_FITS} misfits={HOME_MISFITS} fitTitle="เหมาะกับงานแบบนี้" misfitTitle="ยังทำให้ไม่ได้" headingLevel="h3" />
-          <p className="scope-teaser__more">
-            <Link href={PAGES.scope.path}>อ่านขอบเขตแบบละเอียด ทำอะไรได้ ทำอะไรไม่ได้</Link>
-          </p>
-        </div>
-      </section>
-
-      <section className="section section-muted" aria-labelledby="pricing-title">
-        <div className="container section-pad">
-          <p className="eyebrow">ราคา</p>
-          <h2 id="pricing-title" className="section-title" style={{ marginBottom: 12 }}>
-            เริ่มฟรี แล้วค่อยขยับตามปริมาณงาน
-          </h2>
-          <p className="pricing-intro" style={{ marginBottom: 40 }}>
-            ทุกแพลนได้ไทม์ไลน์ ซับไทย และการเรนเดอร์แบบไม่จำกัดครั้ง ที่ต่างกันคือจำนวนคลิปที่ AI ตัดให้ต่อเดือน ความยาวฟุตเทจต่อโปรเจกต์ และพื้นที่เก็บงาน
-          </p>
-          <BetaPriceNote table={table} />
-          <PriceCards table={table} variant="home" />
-          <p style={{ margin: "26px 0 0" }}>
-            <Link href="/pricing" style={{ fontSize: 15 }}>
-              ดูทั้ง 7 แพลน รวม Lite, Agency และ Max
+          <p className="section-more">
+            <Link href={PAGES.scope.path} className="more-link">
+              อ่านขอบเขตแบบละเอียด ทำอะไรได้ ทำอะไรไม่ได้
+              <IconArrowRight size={18} />
             </Link>
           </p>
         </div>
       </section>
 
-      <section className="section" aria-labelledby="faq-title">
-        <div className="container-narrow section-pad">
-          <h2 id="faq-title" className="section-title" style={{ marginBottom: 36 }}>
-            คำถามที่พบบ่อย (FAQ)
-          </h2>
-          <FaqList items={HOME_FAQ} />
-          <p className="scope-teaser__more">
-            <Link href={PAGES.guide.path}>อ่านคู่มือใช้งานแบบละเอียด ทั้งการตัดคลิป ซับไทย และหน้าช่วยเหลือ</Link>
+      {/* ── 7. Pricing ── */}
+      <section className="sect home-pricing" aria-labelledby="pricing-title">
+        <div className="wrap">
+          <SectionHeader id="pricing-title" track="A2" timecode="00:02:04:00" eyebrow="ราคา" title="เริ่มฟรี แล้วค่อยขยับตามปริมาณงาน">
+            <p>
+              ทุกแพลนได้ไทม์ไลน์ ซับไทย และการเรนเดอร์แบบไม่จำกัดครั้ง ที่ต่างกันคือจำนวนคลิปที่ AI ตัดให้ต่อเดือน ความยาวฟุตเทจต่อโปรเจกต์ และพื้นที่เก็บงาน
+            </p>
+          </SectionHeader>
+          <BetaPriceNote table={table} />
+          <PriceCards table={table} variant="home" />
+          <p className="section-more">
+            <Link href="/pricing" className="more-link">
+              ดูทั้ง 7 แพลน รวม Lite, Agency และ Max
+              <IconArrowRight size={18} />
+            </Link>
           </p>
         </div>
       </section>
 
-      <section className="section" aria-labelledby="cta-title">
-        <div className="container-narrow final-cta">
-          <h2 id="cta-title">ลองตัดคลิปแรกวันนี้</h2>
-          <p>สมัครแล้วได้เครดิตทดลองฟรีทันที ไม่ต้องผูกบัตร ใช้หมดแล้วค่อยเลือกแพลนรายเดือน</p>
-          <Link href="/signup" className="btn btn-primary" style={{ fontSize: 15, padding: "12px 26px" }}>
-            สมัครใช้งาน
-          </Link>
+      {/* ── 8. FAQ ── */}
+      <section className="sect home-faq" aria-labelledby="faq-title">
+        <div className="wrap home-faq__grid">
+          <SectionHeader id="faq-title" track="T1" timecode="00:02:31:08" title="คำถามที่พบบ่อย (FAQ)" />
+          <div>
+            <FaqList items={HOME_FAQ} />
+            <p className="section-more">
+              <Link href={PAGES.guide.path} className="more-link">
+                อ่านคู่มือใช้งานแบบละเอียด ทั้งการตัดคลิป ซับไทย และหน้าช่วยเหลือ
+                <IconArrowRight size={18} />
+              </Link>
+            </p>
+          </div>
         </div>
       </section>
+
+      {/* ── 9. Fade to black ── */}
+      <CtaBand
+        id="cta-title"
+        title="ลองตัดคลิปแรกวันนี้"
+        actions={
+          <Link href="/signup" className="btn btn-primary btn-lg" data-magnetic="">
+            สมัครใช้งาน
+          </Link>
+        }
+      >
+        <p>สมัครแล้วได้เครดิตทดลองฟรีทันที ไม่ต้องผูกบัตร ใช้หมดแล้วค่อยเลือกแพลนรายเดือน</p>
+      </CtaBand>
 
       <JsonLd data={jsonLd} />
     </main>
