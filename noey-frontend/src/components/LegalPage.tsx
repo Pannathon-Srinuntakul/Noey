@@ -10,7 +10,7 @@ import { PageHero } from "./ds/PageHero";
 import { TimelineToc } from "./ds/TimelineToc";
 import { JsonLd } from "./JsonLd";
 import "../styles/pages/article.css";
-import { keepThai } from "./ds/ThaiText";
+import { keepThaiProse } from "./ds/ThaiText";
 
 type LegalKey = Extract<PageKey, "terms" | "privacy">;
 
@@ -21,7 +21,7 @@ function Paragraph({ text }: { text: string }) {
     <p>
       {parts.map((part, index) => (
         <Fragment key={index}>
-          {keepThai(part)}
+          {keepThaiProse(part)}
           {index < parts.length - 1 ? <Link href={`${PAGES.about.path}#contact`}>เกี่ยวกับเรา</Link> : null}
         </Fragment>
       ))}
@@ -46,7 +46,7 @@ export function LegalPage({ pageKey, title, doc }: { pageKey: LegalKey; title: s
   ];
   const sectionId = (index: number) => `s${String(index + 1).padStart(2, "0")}`;
   const toc = [
-    ...doc.sections.map((section, index) => ({ id: sectionId(index), label: section.title })),
+    ...doc.sections.map((section, index) => ({ id: sectionId(index), label: keepThaiProse(section.title) })),
     { id: `${pageKey}-related-section`, label: "หน้าที่เกี่ยวข้อง", cue: "→" },
   ];
   const related = [
@@ -61,7 +61,7 @@ export function LegalPage({ pageKey, title, doc }: { pageKey: LegalKey; title: s
       <PageHero
         crumb={<Breadcrumb trail={trail} />}
         title={title}
-        lead={<p>{keepThai(doc.intro)}</p>}
+        lead={<p>{keepThaiProse(doc.intro)}</p>}
         meta={
           <p className="stamp">
             อัปเดตล่าสุด <time dateTime={page.updated}>{formatThaiDate(page.updated)}</time>
@@ -94,13 +94,13 @@ export function LegalPage({ pageKey, title, doc }: { pageKey: LegalKey; title: s
               {related.map((item, index) => (
                 <li key={item.href}>
                   <ClipCard title={item.label} titleAs="h3" href={item.href} seed={index + 21}>
-                    <p>{keepThai(item.note)}</p>
+                    <p>{keepThaiProse(item.note)}</p>
                   </ClipCard>
                 </li>
               ))}
             </ul>
           </section>
-          <div className="article__foot">
+          <div className="article__foot article__foot--legal">
             <Link href={other.path} className="btn btn-secondary">
               {otherLabel}
             </Link>

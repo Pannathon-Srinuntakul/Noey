@@ -409,12 +409,47 @@
   color: var(--ink-3);
 }
 
+/* In a narrow column (the help guide) the table packs tighter so it fits
+   its frame without scrolling on wide screens. */
+.cmp {
+  container-type: inline-size;
+}
+
+@container (max-width: 860px) {
+  .cmp__table th,
+  .cmp__table td {
+    padding: 12px 10px;
+  }
+
+  .cmp__table td {
+    min-width: 74px;
+  }
+
+  .cmp__table tbody th[scope="row"] {
+    min-width: 140px;
+  }
+}
+
+@container (max-width: 720px) {
+  .cmp__table th,
+  .cmp__table td {
+    padding: 11px 8px;
+  }
+
+  .cmp__table td {
+    min-width: 68px;
+  }
+
+  .cmp__table tbody th[scope="row"] {
+    min-width: 124px;
+  }
+}
+
 @media (max-width: 1099px) {
-  /* A spreadsheet-style box: the header row and the label column stay put
-     while the plans scroll, and the right edge fades while there are more. */
+  /* The plans scroll sideways under a fixed label column, and the right edge
+     fades while there are more. Every row shows: no inner vertical scroll. */
   .cmp__scroll {
-    overflow: auto;
-    max-height: min(84vh, 760px);
+    overflow-x: auto;
     overscroll-behavior-x: contain;
   }
 
@@ -463,4 +498,8 @@
   font-size: 0.78em;
   font-weight: 400;
   line-height: 1.2;
+}
+.cmp__yes {
+  color: var(--gold-ink);
+  vertical-align: middle;
 }

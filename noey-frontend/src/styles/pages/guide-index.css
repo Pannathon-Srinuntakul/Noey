@@ -58,7 +58,7 @@
 .bin__title {
   font-size: clamp(1.1875rem, 1.05rem + 0.5vw, 1.4375rem);
   line-height: 1.45;
-  text-wrap: pretty;
+  text-wrap: balance;
 }
 
 .bin__answer {
@@ -131,6 +131,17 @@
   fill: none;
   stroke: color-mix(in srgb, var(--color-accent) 42%, transparent);
   stroke-width: 2;
+}
+
+/* On the dark ground the same mix goes olive: lift it. */
+html[data-theme="dark"] .bin-thumb__wave path {
+  stroke: color-mix(in srgb, var(--color-accent) 62%, transparent);
+}
+
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]) .bin-thumb__wave path {
+    stroke: color-mix(in srgb, var(--color-accent) 62%, transparent);
+  }
 }
 
 /* What the playhead has passed reads as "played". */

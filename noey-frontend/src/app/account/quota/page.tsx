@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { ResetClock } from "@/components/account/ResetClock";
 import { LevelMeter } from "@/components/ds/LevelMeter";
-import { keepThai } from "@/components/ds/ThaiText";
+import { keepThaiProse } from "@/components/ds/ThaiText";
 import { formatBytes } from "@/lib/format";
 import { isTier, PLAN_COPY } from "@/lib/plans";
 import { privatePageMetadata } from "@/lib/seo";
@@ -107,7 +107,7 @@ export default async function QuotaPage() {
           </p>
         ) : null}
         {pendingName ? <p className="meter-note">เปลี่ยนเป็นแพลน {pendingName} เมื่อจบรอบบิลนี้</p> : null}
-        {note ? <p className="meter-note">{keepThai(note)}</p> : null}
+        {note ? <p className="meter-note">{keepThaiProse(note)}</p> : null}
       </div>
 
       <div className="card account-card">
@@ -125,7 +125,7 @@ export default async function QuotaPage() {
             <tbody>
               {tasks.map((task) => (
                 <tr key={task.task}>
-                  <td>{keepThai(TASK_LABELS[task.task] ?? task.task)}</td>
+                  <td>{keepThaiProse(TASK_LABELS[task.task] ?? task.task)}</td>
                   <td className="r num">
                     <span className="acct-tasks__share">
                       <span className="acct-tasks__bar" aria-hidden="true">
@@ -141,7 +141,7 @@ export default async function QuotaPage() {
         ) : (
           <p className="acct-quota__empty">ยังไม่มีงานที่ใช้โควตาในรอบนี้</p>
         )}
-        <p className="meter-note acct-tasks__note">{keepThai("การแก้ไทม์ไลน์ การสลับช็อต และการเรนเดอร์ซ้ำ ไม่นับโควตา")}</p>
+        <p className="meter-note acct-tasks__note">{keepThaiProse("การแก้ไทม์ไลน์ การสลับช็อต และการเรนเดอร์ซ้ำ ไม่นับโควตา")}</p>
       </div>
     </section>
   );

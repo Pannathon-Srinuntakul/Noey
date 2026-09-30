@@ -34,7 +34,7 @@ import { pageMetadata } from "@/lib/seo";
 import { getPriceTable } from "@/lib/server/prices";
 import { PAGES } from "@/lib/site";
 import "../styles/pages/home.css";
-import { keepThai } from "@/components/ds/ThaiText";
+import { keepThaiProse } from "@/components/ds/ThaiText";
 
 // Static, re-generated at most every 10 minutes so prices follow the backend.
 export const revalidate = 600;
@@ -143,13 +143,13 @@ export default async function HomePage() {
             <span className="trk tc" aria-hidden="true">
               REC
             </span>
-            <p>{keepThai("สำหรับครีเอเตอร์และแม่ค้าที่ถ่ายคลิปเอง")}</p>
+            <p>{keepThaiProse("สำหรับครีเอเตอร์และแม่ค้าที่ถ่ายคลิปเอง")}</p>
           </div>
           <WordReveal as="h1" id="hero-title" text={"ถ่ายเสร็จ ลากคลิปเข้าเว็บ\nให้ AI ตัดร่างแรกให้ก่อน"} className="h-display hero__title" soft={[1]} />
           <div className="hero__cols">
             {/* Answer-first block: what the product is and does, in one extractable paragraph. */}
             <p className="hero__lead">
-              {keepThai("Noey Studio เป็นห้องตัดต่อที่เปิดในเบราว์เซอร์ ระบบถอดเสียงในคลิปออกมาเป็นข้อความ เลือกช่วงที่พูดได้ดี ต่อกันเป็นคลิปเดียว เขียนสคริปต์พากย์ให้ และใส่ซับไทยให้ จากนั้นคุณดูผล แก้ตรงไหนก็ได้ในไทม์ไลน์ แล้วดาวน์โหลดไปลง")}
+              {keepThaiProse("Noey Studio เป็นห้องตัดต่อที่เปิดในเบราว์เซอร์ ระบบถอดเสียงในคลิปออกมาเป็นข้อความ เลือกช่วงที่พูดได้ดี ต่อกันเป็นคลิปเดียว เขียนสคริปต์พากย์ให้ และใส่ซับไทยให้ จากนั้นคุณดูผล แก้ตรงไหนก็ได้ในไทม์ไลน์ แล้วดาวน์โหลดไปลง")}
             </p>
             <div className="hero__act">
               <div className="cta-row">
@@ -158,8 +158,8 @@ export default async function HomePage() {
                   <IconArrowRight size={18} />
                 </Link>
               </div>
-              <p className="hero__fine">{keepThai("สมัครแล้วได้เครดิตทดลองฟรี · ไม่ต้องผูกบัตร · ใช้บนคอมผ่าน Chrome หรือ Edge")}</p>
-              <p className="hero__fine hero__honest">{keepThai("ระบบทำร่างแรกให้ ไม่ได้ตัดจบแทนคุณ งานที่เหลือยังแก้เองในไทม์ไลน์")}</p>
+              <p className="hero__fine">{keepThaiProse("สมัครแล้วได้เครดิตทดลองฟรี · ไม่ต้องผูกบัตร · ใช้บนคอมผ่าน Chrome หรือ Edge")}</p>
+              <p className="hero__fine hero__honest">{keepThaiProse("ระบบทำร่างแรกให้ ไม่ได้ตัดจบแทนคุณ งานที่เหลือยังแก้เองในไทม์ไลน์")}</p>
               <p className="stamp">
                 อัปเดตล่าสุด <time dateTime={home.updated}>{formatThaiDate(home.updated)}</time>
               </p>
@@ -177,8 +177,8 @@ export default async function HomePage() {
                       {String(index + 1).padStart(2, "0")}
                     </span>
                     <span className="beats__text">
-                      <strong className="beats__title">{keepThai(beat.title)}</strong>
-                      <span className="beats__body">{keepThai(beat.body)}</span>
+                      <strong className="beats__title">{keepThaiProse(beat.title)}</strong>
+                      <span className="beats__body">{keepThaiProse(beat.body)}</span>
                     </span>
                   </li>
                 ))}
@@ -219,8 +219,8 @@ export default async function HomePage() {
                     {item.track}
                   </span>
                   <div className="usp__clip">
-                    <h3>{keepThai(item.title)}</h3>
-                    <p>{keepThai(item.body)}</p>
+                    <h3>{keepThaiProse(item.title)}</h3>
+                    <p>{keepThaiProse(item.body)}</p>
                   </div>
                 </li>
               ))}
@@ -242,13 +242,13 @@ export default async function HomePage() {
           </div>
           <div className="problem__body">
             <p data-reveal="rise">
-              {keepThai("ครีเอเตอร์ส่วนใหญ่ถ่ายคลิปหนึ่งตัวจบภายในไม่กี่นาที แต่ใช้เวลาอีกหลายเท่าไปกับการไล่ดูฟุตเทจ หาช่วงที่พูดรู้เรื่อง ตัดช่วงที่พูดผิดออก พิมพ์ซับ แล้วจัดจังหวะใหม่อีกรอบ ยิ่งลงคลิปถี่ เวลาส่วนนี้ยิ่งกลืนทั้งวัน")}
+              {keepThaiProse("ครีเอเตอร์ส่วนใหญ่ถ่ายคลิปหนึ่งตัวจบภายในไม่กี่นาที แต่ใช้เวลาอีกหลายเท่าไปกับการไล่ดูฟุตเทจ หาช่วงที่พูดรู้เรื่อง ตัดช่วงที่พูดผิดออก พิมพ์ซับ แล้วจัดจังหวะใหม่อีกรอบ ยิ่งลงคลิปถี่ เวลาส่วนนี้ยิ่งกลืนทั้งวัน")}
             </p>
             <p data-reveal="rise">
-              {keepThai("Noey Studio ทำขั้นตอนที่ซ้ำ ๆ ตรงนั้นแทน ระบบถอดเสียงทั้งคลิปเป็นข้อความก่อน แล้วให้ AI อ่านสิ่งที่คุณพูดจริง ๆ เพื่อเลือกช่วงที่ควรเก็บและลำดับที่ควรวาง สิ่งที่ได้กลับมาคือคลิปที่ตัดแล้วหนึ่งตัว ไม่ใช่รายการงานที่ต้องทำต่อ")}
+              {keepThaiProse("Noey Studio ทำขั้นตอนที่ซ้ำ ๆ ตรงนั้นแทน ระบบถอดเสียงทั้งคลิปเป็นข้อความก่อน แล้วให้ AI อ่านสิ่งที่คุณพูดจริง ๆ เพื่อเลือกช่วงที่ควรเก็บและลำดับที่ควรวาง สิ่งที่ได้กลับมาคือคลิปที่ตัดแล้วหนึ่งตัว ไม่ใช่รายการงานที่ต้องทำต่อ")}
             </p>
             <p data-reveal="rise" className="problem__last">
-              {keepThai("ร่างแรกไม่ต้องสมบูรณ์ก็ได้ เพราะไทม์ไลน์ยังอยู่ครบ ย้าย ยืดหด ลบ หรือสลับช็อตในฉากเดิม แล้วเรนเดอร์ใหม่ได้ไม่จำกัดครั้ง")}
+              {keepThaiProse("ร่างแรกไม่ต้องสมบูรณ์ก็ได้ เพราะไทม์ไลน์ยังอยู่ครบ ย้าย ยืดหด ลบ หรือสลับช็อตในฉากเดิม แล้วเรนเดอร์ใหม่ได้ไม่จำกัดครั้ง")}
             </p>
           </div>
         </div>
@@ -259,7 +259,7 @@ export default async function HomePage() {
         <div className="wrap">
           <SectionHeader id="features-title" track="V2" timecode="00:00:42:10" eyebrow="ความสามารถหลัก" title="สามอย่างที่ทำให้งานเสร็จเร็วขึ้นจริง">
             <p>
-              {keepThai("ความสามารถหลักมีสามอย่าง คือตัดคลิปอัตโนมัติจากสิ่งที่พูดจริง เขียนสคริปต์พากย์ภาษาไทยพร้อมให้อัดเสียงในเบราว์เซอร์ และใส่ซับไทยตามเสียงพูด ทั้งสามอย่างทำงานในเบราว์เซอร์โดยไม่ต้องติดตั้งโปรแกรม")}
+              {keepThaiProse("ความสามารถหลักมีสามอย่าง คือตัดคลิปอัตโนมัติจากสิ่งที่พูดจริง เขียนสคริปต์พากย์ภาษาไทยพร้อมให้อัดเสียงในเบราว์เซอร์ และใส่ซับไทยตามเสียงพูด ทั้งสามอย่างทำงานในเบราว์เซอร์โดยไม่ต้องติดตั้งโปรแกรม")}
             </p>
           </SectionHeader>
           <div className="bento" data-reveal="stagger">
@@ -273,8 +273,8 @@ export default async function HomePage() {
                   <div className="num bento__num" aria-hidden="true">
                     {String(index + 1).padStart(2, "0")}
                   </div>
-                  <h3>{keepThai(feature.title)}</h3>
-                  <p>{keepThai(feature.body)}</p>
+                  <h3>{keepThaiProse(feature.title)}</h3>
+                  <p>{keepThaiProse(feature.body)}</p>
                 </div>
               </article>
             ))}
@@ -293,7 +293,7 @@ export default async function HomePage() {
                 media={<MicroDemo kind={card.demo} />}
                 className="mini"
               >
-                <p>{keepThai(card.body)}</p>
+                <p>{keepThaiProse(card.body)}</p>
               </ClipCard>
             ))}
           </div>
@@ -309,7 +309,7 @@ export default async function HomePage() {
                 <div className="how__intro">
                   <SectionHeader id="how-title" track="V3" timecode="00:01:08:00" eyebrow="วิธีใช้งาน" title="สามขั้นตอน จบในหน้าเดียว">
                     <p>
-                      {keepThai("ขั้นตอนใช้งานมีสามขั้น คือลากฟุตเทจเข้ามา เลือกโหมดและความยาวที่ต้องการ แล้วดูผล เกลาในไทม์ไลน์ และดาวน์โหลดไฟล์ วิดีโอแนวตั้ง 1080×1920 การแก้และเรนเดอร์ซ้ำทำได้ไม่จำกัดครั้งโดยไม่กินโควตา")}
+                      {keepThaiProse("ขั้นตอนใช้งานมีสามขั้น คือลากฟุตเทจเข้ามา เลือกโหมดและความยาวที่ต้องการ แล้วดูผล เกลาในไทม์ไลน์ และดาวน์โหลดไฟล์ วิดีโอแนวตั้ง 1080×1920 การแก้และเรนเดอร์ซ้ำทำได้ไม่จำกัดครั้งโดยไม่กินโควตา")}
                     </p>
                   </SectionHeader>
                 </div>
@@ -326,9 +326,9 @@ export default async function HomePage() {
                         <div>
                           <h3>
                             <span className="num step__n">{index + 1}. </span>
-                            {keepThai(step.title)}
+                            {keepThaiProse(step.title)}
                           </h3>
-                          <p>{keepThai(step.body)}</p>
+                          <p>{keepThaiProse(step.body)}</p>
                         </div>
                       </div>
                     </li>
@@ -348,7 +348,7 @@ export default async function HomePage() {
         <div className="wrap">
           <SectionHeader id="scope-title" track="V4" timecode="00:01:36:12" eyebrow="ขอบเขตของระบบ" title="ระบบคัดช็อตให้ ไม่ได้ตัดจบแทนคุณ">
             <p>
-              {keepThai("สิ่งที่ได้กลับมาคือร่างแรก — ช็อตที่คัดมาแล้ว เรียงลำดับไว้ พร้อมซับไทย จากนั้นยังต้องเข้าไปเกลาจังหวะและลำดับเองในไทม์ไลน์เกือบทุกครั้ง ส่วนที่ประหยัดคือเวลานั่งไล่ฟุตเทจทีละช่วงและพิมพ์ซับเอง ไม่ใช่การตัดต่อทั้งกระบวนการ")}
+              {keepThaiProse("สิ่งที่ได้กลับมาคือร่างแรก — ช็อตที่คัดมาแล้ว เรียงลำดับไว้ พร้อมซับไทย จากนั้นยังต้องเข้าไปเกลาจังหวะและลำดับเองในไทม์ไลน์เกือบทุกครั้ง ส่วนที่ประหยัดคือเวลานั่งไล่ฟุตเทจทีละช่วงและพิมพ์ซับเอง ไม่ใช่การตัดต่อทั้งกระบวนการ")}
             </p>
           </SectionHeader>
           <FitLists fits={HOME_FITS} misfits={HOME_MISFITS} fitTitle="เหมาะกับงานแบบนี้" misfitTitle="ยังทำให้ไม่ได้" headingLevel="h3" />
@@ -366,7 +366,7 @@ export default async function HomePage() {
         <div className="wrap">
           <SectionHeader id="pricing-title" track="A2" timecode="00:02:04:00" eyebrow="ราคา" title="เริ่มฟรี แล้วค่อยขยับตามปริมาณงาน">
             <p>
-              {keepThai("ทุกแพลนได้ไทม์ไลน์ ซับไทย และการเรนเดอร์แบบไม่จำกัดครั้ง ที่ต่างกันคือจำนวนคลิปที่ AI ตัดให้ต่อเดือน ความยาวฟุตเทจต่อโปรเจกต์ และพื้นที่เก็บงาน")}
+              {keepThaiProse("ทุกแพลนได้ไทม์ไลน์ ซับไทย และการเรนเดอร์แบบไม่จำกัดครั้ง ที่ต่างกันคือจำนวนคลิปที่ AI ตัดให้ต่อเดือน ความยาวฟุตเทจต่อโปรเจกต์ และพื้นที่เก็บงาน")}
             </p>
           </SectionHeader>
           <BetaPriceNote table={table} />
@@ -406,7 +406,7 @@ export default async function HomePage() {
           </Link>
         }
       >
-        <p>{keepThai("สมัครแล้วได้เครดิตทดลองฟรีทันที ไม่ต้องผูกบัตร ใช้หมดแล้วค่อยเลือกแพลนรายเดือน")}</p>
+        <p>{keepThaiProse("สมัครแล้วได้เครดิตทดลองฟรีทันที ไม่ต้องผูกบัตร ใช้หมดแล้วค่อยเลือกแพลนรายเดือน")}</p>
       </CtaBand>
 
       <JsonLd data={jsonLd} />

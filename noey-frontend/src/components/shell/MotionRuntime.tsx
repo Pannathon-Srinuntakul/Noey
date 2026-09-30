@@ -25,7 +25,6 @@ import { useEffect } from "react";
 /** Pinned scenes run only where the CSS pins them (see components.css). */
 export const PIN_MEDIA = "(min-width: 1024px) and (min-height: 600px)";
 const STILL = "(prefers-reduced-motion: reduce)";
-const INTERACTIVE = "a, button, summary, label, input, textarea, select, [role='button'], form, dialog, .prose, [data-no-cursor]";
 
 function countUp(element: HTMLElement) {
   const target = element.getAttribute("data-countup") ?? "";
@@ -205,26 +204,11 @@ export function MotionRuntime() {
     return () => cleanups.forEach((cleanup) => cleanup());
   }, [pathname]);
 
-  // Site-wide pointer niceties: the playhead cursor and magnetic controls.
+  // Magnetic controls: a primary button leans a little toward the pointer.
   useEffect(() => {
     const fine = window.matchMedia("(pointer: fine) and (min-width: 1024px)");
     if (!fine.matches || window.matchMedia(STILL).matches) return;
-    const root = document.documentElement;
-    const cursor = document.querySelector<HTMLElement>(".cursor");
-
-    let x = -100;
-    let y = -100;
-    let tx = -100;
-    let ty = -100;
-    let frame = 0;
     let magnet: HTMLElement | null = null;
-
-    const draw = () => {
-      x += (tx - x) * 0.32;
-      y += (ty - y) * 0.32;
-      if (cursor) cursor.style.transform = `translate3d(${x.toFixed(1)}px, ${y.toFixed(1)}px, 0)`;
-      frame = Math.abs(tx - x) + Math.abs(ty - y) > 0.3 ? window.requestAnimationFrame(draw) : 0;
-    };
 
     const release = () => {
       if (magnet) magnet.style.translate = "";
@@ -233,12 +217,7 @@ export function MotionRuntime() {
 
     const onMove = (event: PointerEvent) => {
       if (event.pointerType !== "mouse") return;
-      tx = event.clientX;
-      ty = event.clientY;
       const target = event.target instanceof Element ? event.target : null;
-      if (cursor) cursor.toggleAttribute("data-hidden", !!target?.closest(INTERACTIVE));
-      if (!frame) frame = window.requestAnimationFrame(draw);
-
       const next = target?.closest<HTMLElement>("[data-magnetic]") ?? null;
       if (next !== magnet) release();
       magnet = next;
@@ -249,19 +228,12 @@ export function MotionRuntime() {
         magnet.style.translate = `${(dx * 10).toFixed(1)}px ${(dy * 7).toFixed(1)}px`;
       }
     };
-    const onLeave = () => {
-      cursor?.setAttribute("data-hidden", "");
-      release();
-    };
 
-    if (cursor) root.setAttribute("data-cursor", "on");
     document.addEventListener("pointermove", onMove, { passive: true });
-    document.documentElement.addEventListener("pointerleave", onLeave);
+    document.documentElement.addEventListener("pointerleave", release);
     return () => {
-      root.removeAttribute("data-cursor");
       document.removeEventListener("pointermove", onMove);
-      document.documentElement.removeEventListener("pointerleave", onLeave);
-      window.cancelAnimationFrame(frame);
+      document.documentElement.removeEventListener("pointerleave", release);
       release();
     };
   }, []);

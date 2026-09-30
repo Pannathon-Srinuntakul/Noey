@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { IconChevronDown } from "./icons";
 
 export interface TocItem {
   id: string;
-  label: string;
+  /** Text, or text already wrapped for Thai line breaking on the server. */
+  label: ReactNode;
   /** The marker's label; defaults to the item's number. Parts that are not numbered sections (FAQ, related pages) carry their own. */
   cue?: string;
 }

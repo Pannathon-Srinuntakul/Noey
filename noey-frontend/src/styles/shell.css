@@ -96,16 +96,16 @@
     border-radius var(--dur-4) var(--ease-out);
 }
 
-/* Scrolled: a scrim fills the gap between the beta strip and the floating
-   bar, so page text never runs through above it. */
+/* Scrolled: a scrim runs behind the floating bar, so page text fades out
+   above it and beside it instead of running through the gap. */
 html[data-scrolled] .hdr::before {
   content: "";
   position: absolute;
   top: calc(var(--header-top) * -1);
   left: 0;
   right: 0;
-  height: calc(var(--header-top) + 36px);
-  background: linear-gradient(var(--color-bg) 45%, transparent);
+  height: calc(var(--header-top) + 76px);
+  background: linear-gradient(var(--color-bg) 35%, transparent);
   pointer-events: none;
   z-index: -1;
 }
@@ -128,6 +128,18 @@ html[data-scrolled] .hdr__bar {
 
 html[data-scrolled] .hdr__row {
   height: 54px;
+}
+
+/* Reduced motion: the bar keeps its size (a size change with its animation
+   switched off is a jump); only its background turns opaque. */
+@media (prefers-reduced-motion: reduce) {
+  html[data-scrolled] .hdr__bar {
+    width: min(100%, var(--page-max) + 24px);
+  }
+
+  html[data-scrolled] .hdr__row {
+    height: var(--header-h);
+  }
 }
 
 /* Logo lockup: the splice mark, the wordmark, and the tagline under it. */
@@ -1094,10 +1106,21 @@ html[data-theme="dark"] .ftr {
   background: linear-gradient(
     to bottom right,
     transparent calc(50% - 1.5px),
-    color-mix(in srgb, var(--color-accent) 50%, transparent) calc(50% - 0.5px),
+    color-mix(in srgb, var(--color-accent) var(--ftr-seam, 50%), transparent) calc(50% - 0.5px),
     transparent calc(50% + 1px)
   );
   pointer-events: none;
+}
+
+/* Dark on dark, the seam carries the cut: brighter there. */
+html[data-theme="dark"] .ftr {
+  --ftr-seam: 80%;
+}
+
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]) .ftr {
+    --ftr-seam: 80%;
+  }
 }
 
 body:has(main .cta-band--end) .ftr {
@@ -1236,69 +1259,6 @@ body:has(main .cta-band--end) .ftr::before {
   .ftr__cols > :last-child {
     grid-column: 1 / -1;
   }
-}
-
-/* ── Playhead cursor (desktop, fine pointer, motion allowed) ────────────── */
-
-.cursor {
-  position: fixed;
-  left: 0;
-  top: 0;
-  z-index: 150;
-  width: 2px;
-  height: 30px;
-  pointer-events: none;
-  opacity: 0;
-  translate: -1px -15px;
-  transition: opacity var(--dur-2) ease;
-  will-change: transform;
-}
-
-.cursor::before {
-  content: "";
-  position: absolute;
-  inset: 6px 0 0;
-  border-radius: 2px;
-  background: var(--gold);
-  box-shadow: 0 0 12px var(--gold-glow);
-}
-
-.cursor::after {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: 50%;
-  width: 10px;
-  height: 8px;
-  translate: -50% 0;
-  background: var(--gold);
-  clip-path: polygon(0 0, 100% 0, 100% 55%, 50% 100%, 0 55%);
-}
-
-html[data-cursor="on"] .cursor {
-  opacity: 1;
-}
-
-html[data-cursor="on"] .cursor[data-hidden] {
-  opacity: 0;
-}
-
-html[data-cursor="on"] .cursor[data-hot]::before {
-  box-shadow: 0 0 18px var(--gold);
-}
-
-/* The native cursor hides only over plain page areas; never over text
-   links, buttons or anything inside a form. */
-html[data-cursor="on"] body {
-  cursor: none;
-}
-
-html[data-cursor="on"] :is(a, button, summary, label, input, textarea, select, [role="button"], form, form *, dialog, dialog *, .prose, .prose *) {
-  cursor: auto;
-}
-
-html[data-cursor="on"] :is(a, button, summary, [role="button"]) {
-  cursor: pointer;
 }
 
 /* ── Splice page transition (View Transitions API) ──────────────────────── */

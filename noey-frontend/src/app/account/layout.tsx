@@ -6,7 +6,7 @@ import { privatePageMetadata } from "@/lib/seo";
 import { currentPathname, getMe, resolvePageOutcome } from "@/lib/server/session";
 import { sanitizeDisplayName } from "@/lib/session";
 import "../../styles/pages/account.css";
-import { keepThai } from "@/components/ds/ThaiText";
+import { keepThaiProse } from "@/components/ds/ThaiText";
 
 // Signed-in area: never indexed (also disallowed in robots.txt).
 export const metadata: Metadata = privatePageMetadata("บัญชีของฉัน");
@@ -30,7 +30,7 @@ export default async function AccountLayout({ children }: { children: React.Reac
         <div className="acct-page__head">
           <p className="acct-page__eyebrow">บัญชีของฉัน</p>
           <h1 className="acct-page__title">{name ? `สวัสดี คุณ${name}` : "สวัสดี"}</h1>
-          <p className="acct-page__lead">{keepThai("หน้านี้ใช้จัดการบัญชี แพลน และดูโควตา ส่วนการสร้างโปรเจกต์และตัดต่ออยู่ในห้องตัดต่อบนเว็บ")}</p>
+          <p className="acct-page__lead">{keepThaiProse("หน้านี้ใช้จัดการบัญชี แพลน และดูโควตา ส่วนการสร้างโปรเจกต์และตัดต่ออยู่ในห้องตัดต่อบนเว็บ")}</p>
         </div>
         {needsVerification && me?.ok ? <VerifyEmailBanner email={me.data.email} /> : null}
         <div className="acct-page__panel">

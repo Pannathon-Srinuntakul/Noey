@@ -91,21 +91,41 @@
   text-wrap: balance;
 }
 
+/* One ruled list in one frame, not a stack of separate boxes. */
 .article__bullets {
   list-style: none;
   padding: 0;
   display: grid;
-  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
 }
 
 .article__bullets li {
   position: relative;
   margin: 0;
   padding: 14px 16px 14px 44px;
-  border-radius: 12px;
-  border: 1px solid var(--line);
-  background: var(--panel);
   line-height: 1.8;
+}
+
+.article__bullets li + li {
+  border-top: 1px solid var(--line);
+}
+
+/* Not supported yet: a hollow marker. */
+.article__bullets li[data-kind="no"]::before {
+  background: none;
+  border: 1.5px solid var(--line-3);
+}
+
+@media (max-width: 640px) {
+  .article__bullets li {
+    padding: 12px 14px 12px 36px;
+  }
+
+  .article__bullets li::before {
+    left: 14px;
+  }
 }
 
 .article__bullets li::before {
@@ -156,6 +176,12 @@
 
   .article__foot .btn {
     width: 100%;
+  }
+
+  /* Legal pages: the button to the other document first, the plain way
+     home under it. */
+  .article__foot--legal {
+    flex-direction: column;
   }
 
   .article__bullets li {

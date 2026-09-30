@@ -1,7 +1,8 @@
 import { BETA_PRICE_NOTE, BETA_STRIKE_LABEL } from "@/lib/beta";
 import { CLIPS_FOOTNOTE, COMPARISON_ROWS, PLAN_COPY, TIERS, displayPrice, isBetaPriced, strikePrice, type PriceTable } from "@/lib/plans";
 import "../styles/parts/plans.css";
-import { keepThai } from "./ds/ThaiText";
+import { IconCheck } from "./ds/icons";
+import { keepThaiProse } from "./ds/ThaiText";
 
 /**
  * The seven-plan comparison table. Rendered on /pricing and again on the help
@@ -50,10 +51,18 @@ export function PlanComparisonTable({ table, labelledBy }: { table: PriceTable; 
             </tr>
             {COMPARISON_ROWS.map((row) => (
               <tr key={row.label}>
-                <th scope="row">{keepThai(row.label)}</th>
+                <th scope="row">{keepThaiProse(row.label)}</th>
                 {row.values.map((value, index) => (
                   <td key={TIERS[index]} className={[row.numeric ? "c num" : "c", value === "—" ? "cmp__none" : null].filter(Boolean).join(" ")}>
-                    {keepThai(value)}
+                    {value === "มี" ? (
+                      // A tick reads faster than fifty "มี"; the word stays for screen readers.
+                      <>
+                        <IconCheck size={16} className="cmp__yes" />
+                        <span className="sr-only">มี</span>
+                      </>
+                    ) : (
+                      keepThaiProse(value)
+                    )}
                   </td>
                 ))}
               </tr>
@@ -62,8 +71,8 @@ export function PlanComparisonTable({ table, labelledBy }: { table: PriceTable; 
         </table>
       </div>
       {/* The clip counts in the table are estimates; say on what. */}
-      <p className="table-note">{keepThai(CLIPS_FOOTNOTE)}</p>
-      {isBetaPriced(table) ? <p className="table-note">{keepThai(BETA_PRICE_NOTE)}</p> : null}
+      <p className="table-note">{keepThaiProse(CLIPS_FOOTNOTE)}</p>
+      {isBetaPriced(table) ? <p className="table-note">{keepThaiProse(BETA_PRICE_NOTE)}</p> : null}
     </div>
   );
 }

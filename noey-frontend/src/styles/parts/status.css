@@ -88,17 +88,23 @@
   display: none;
 }
 
+/* The bar and, when done, its tick: one 168px unit centred under the mark.
+   The tick takes its own room at the end, clear of the bar. */
 .status__meter {
-  position: relative;
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 168px;
 }
 
-/* "Render complete": the bar fills, then the tick lands on its end. */
+.status__meter .status__bar {
+  flex: 1;
+  width: auto;
+}
+
+/* "Render complete": the bar fills, then the tick lands after its end. */
 .status__tick {
-  position: absolute;
-  top: 50%;
-  left: calc(100% - 8px);
-  translate: 0 -50%;
+  flex: none;
   color: var(--tone);
   stroke: currentColor;
   stroke-width: 1.8;

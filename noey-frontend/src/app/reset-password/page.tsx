@@ -4,7 +4,7 @@ import { StatusCard } from "@/components/ds/StatusCard";
 import { ResetPasswordForm } from "@/components/forms/ResetPasswordForm";
 import { MSG } from "@/lib/messages";
 import { tokenPageMetadata } from "@/lib/seo";
-import { keepThai } from "@/components/ds/ThaiText";
+import { keepThaiProse } from "@/components/ds/ThaiText";
 
 // Opened from the reset email: always rendered per request, never cached,
 // noindex, disallowed in robots.txt and sent with Referrer-Policy: no-referrer.
@@ -21,7 +21,7 @@ export default async function ResetPasswordPage({ searchParams }: { searchParams
       <div className="wrap">
         {valid ? (
           <StatusCard tone="info" eyebrow="บัญชีของฉัน" title="ตั้งรหัสผ่านใหม่">
-            <p>{keepThai("ตั้งรหัสผ่านใหม่อย่างน้อย 8 ตัวอักษร เสร็จแล้วระบบจะพาเข้าสู่ระบบให้ทันที")}</p>
+            <p>{keepThaiProse("ตั้งรหัสผ่านใหม่อย่างน้อย 8 ตัวอักษร เสร็จแล้วระบบจะพาเข้าสู่ระบบให้ทันที")}</p>
             <div className="status__form">
               <ResetPasswordForm token={token} />
             </div>

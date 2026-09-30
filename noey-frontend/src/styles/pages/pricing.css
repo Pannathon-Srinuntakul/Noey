@@ -165,7 +165,12 @@
   border-radius: 8px;
 }
 
+/* The readout never changes width: it sits beside the track, so a readout
+   that grew or shrank with the plan's name ("Max" / "Agency") would resize
+   the track under the pointer, move the value, flip the name back — and the
+   thumb would bounce between two plans while dragged. */
 .picker__out {
+  flex: none;
   display: inline-flex;
   align-items: baseline;
   gap: 8px;
@@ -177,6 +182,9 @@
 }
 
 .picker__num {
+  display: inline-block;
+  min-width: 1.9em;
+  text-align: right;
   font-size: var(--fs-20);
   font-weight: 600;
   color: var(--gold-ink);
@@ -192,6 +200,8 @@
 }
 
 .picker__plan {
+  display: inline-block;
+  min-width: 4.4em;
   font-size: var(--fs-17);
   font-weight: 600;
 }

@@ -42,7 +42,7 @@ import { pageMetadata } from "@/lib/seo";
 import { getPriceTable } from "@/lib/server/prices";
 import { PAGES } from "@/lib/site";
 import "../../styles/pages/pricing.css";
-import { keepThai } from "@/components/ds/ThaiText";
+import { keepThaiProse } from "@/components/ds/ThaiText";
 
 // ISR: prices follow GET /billing/plans, refreshed at most every 10 minutes.
 export const revalidate = 600;
@@ -112,7 +112,7 @@ export default async function PricingPage() {
         className="phero--pricing"
         crumb={<Breadcrumb trail={TRAIL} />}
         title="เลือกตามปริมาณงาน"
-        lead={<p className="pricing-answer">{keepThai(answer(table))}</p>}
+        lead={<p className="pricing-answer">{keepThaiProse(answer(table))}</p>}
         meta={
           <p className="stamp">
             อัปเดตล่าสุด <time dateTime={page.updated}>{formatThaiDate(page.updated)}</time> · ราคาเป็นเงินบาทต่อเดือน
@@ -134,7 +134,7 @@ export default async function PricingPage() {
         <div className="wrap quota__grid">
           <SectionHeader id="quota-title" track="A1" timecode="00:00:48:00" title="โควตาคิดยังไง" size="h-2">
             <p>
-              {keepThai("เรานับเป็นจำนวนคลิปที่ AI ตัดให้ต่อเดือน เพราะงานหนักของแต่ละคลิปคือการถอดเสียงและการวางแผนตัด ซึ่งใช้กำลังใกล้เคียงกันไม่ว่าฟุตเทจจะยาวแค่ไหน ตัวเลขบนการ์ดคิดจากคลิปดิบ 5 นาที คลิปที่ยาวกว่าหรือระดับละเอียดใช้โควตามากกว่า และ หน้าตั้งค่าแสดงเป็นเปอร์เซ็นต์ของรอบที่เหลือ")}
+              {keepThaiProse("เรานับเป็นจำนวนคลิปที่ AI ตัดให้ต่อเดือน เพราะงานหนักของแต่ละคลิปคือการถอดเสียงและการวางแผนตัด ซึ่งใช้กำลังใกล้เคียงกันไม่ว่าฟุตเทจจะยาวแค่ไหน ตัวเลขบนการ์ดคิดจากคลิปดิบ 5 นาที คลิปที่ยาวกว่าหรือระดับละเอียดใช้โควตามากกว่า และ หน้าตั้งค่าแสดงเป็นเปอร์เซ็นต์ของรอบที่เหลือ")}
             </p>
           </SectionHeader>
           <div className="quota-card">
@@ -156,7 +156,7 @@ export default async function PricingPage() {
               {QUOTA_RULES.map((rule) => (
                 <li key={rule.key}>
                   <span className="num rule-list__key">{rule.key}</span>
-                  <span>{keepThai(rule.text)}</span>
+                  <span>{keepThaiProse(rule.text)}</span>
                 </li>
               ))}
             </ul>
@@ -169,10 +169,10 @@ export default async function PricingPage() {
           {/* What differs between plans, and what does not, said where the table shows it. */}
           <SectionHeader id="compare-title" track="V1" timecode="00:01:12:00" title="ตารางเทียบแพลน" size="h-2">
             <p>
-              {keepThai("เครื่องมือเหมือนกันทุกแพลน สิ่งที่ต่างคือจำนวนคลิปที่ AI ตัดให้ต่อเดือน ความยาวฟุตเทจที่รับต่อโปรเจกต์ ความละเอียดการวิเคราะห์ และพื้นที่เก็บโปรเจกต์บนบัญชี งานที่กินกำลังมากที่สุดคือการถอดเสียงกับการวางแผนตัด จึงเป็นตัวกำหนดราคา ส่วนการแก้ในไทม์ไลน์และการเรนเดอร์ซ้ำ ไม่จำกัดทุกแพลน")}
+              {keepThaiProse("เครื่องมือเหมือนกันทุกแพลน สิ่งที่ต่างคือจำนวนคลิปที่ AI ตัดให้ต่อเดือน ความยาวฟุตเทจที่รับต่อโปรเจกต์ ความละเอียดการวิเคราะห์ และพื้นที่เก็บโปรเจกต์บนบัญชี งานที่กินกำลังมากที่สุดคือการถอดเสียงกับการวางแผนตัด จึงเป็นตัวกำหนดราคา ส่วนการแก้ในไทม์ไลน์และการเรนเดอร์ซ้ำ ไม่จำกัดทุกแพลน")}
             </p>
             <p className="pricing-muted">
-              {keepThai("ทุกแพลนได้ร่างแรกจากการคัดช็อตเหมือนกัน แล้วยังต้องเกลาต่อเองในไทม์ไลน์ ระบบเหมาะกับคลิปสั้นที่โครงไม่ซับซ้อน ไม่ใช่งานโปรดักชันที่ต้องแทรกภาพหรือตัดซ้อนหลายชั้น")}
+              {keepThaiProse("ทุกแพลนได้ร่างแรกจากการคัดช็อตเหมือนกัน แล้วยังต้องเกลาต่อเองในไทม์ไลน์ ระบบเหมาะกับคลิปสั้นที่โครงไม่ซับซ้อน ไม่ใช่งานโปรดักชันที่ต้องแทรกภาพหรือตัดซ้อนหลายชั้น")}
             </p>
           </SectionHeader>
           <PlanComparisonTable table={table} labelledBy="compare-title" />
@@ -196,7 +196,7 @@ export default async function PricingPage() {
           </Link>
         }
       >
-        <p>{keepThai("สมัครแล้วได้เครดิตทดลองฟรีทันที ไม่ต้องผูกบัตร ใช้หมดแล้วค่อยเลือกแพลนรายเดือน")}</p>
+        <p>{keepThaiProse("สมัครแล้วได้เครดิตทดลองฟรีทันที ไม่ต้องผูกบัตร ใช้หมดแล้วค่อยเลือกแพลนรายเดือน")}</p>
       </CtaBand>
 
       <JsonLd data={jsonLd} />

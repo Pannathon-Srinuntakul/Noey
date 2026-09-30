@@ -8,7 +8,7 @@ import { privatePageMetadata } from "@/lib/seo";
 import { googleSignInEnabled } from "@/lib/server/google";
 import { getMe, resolvePageOutcome } from "@/lib/server/session";
 import { sanitizeDisplayName } from "@/lib/session";
-import { keepThai } from "@/components/ds/ThaiText";
+import { keepThaiProse } from "@/components/ds/ThaiText";
 
 export const metadata: Metadata = privatePageMetadata("ข้อมูลส่วนตัว");
 
@@ -69,7 +69,7 @@ export default async function ProfilePage({ searchParams }: { searchParams: Prom
       <div className="card account-card danger-zone acct-danger" id="delete-account">
         <div className="acct-danger__copy">
           <h3>ลบบัญชี</h3>
-          <p>{keepThai("ลบบัญชีและโปรเจกต์ทั้งหมดบนเซิร์ฟเวอร์อย่างถาวร กู้คืนไม่ได้ ก่อนยืนยันจะแสดงรายละเอียดว่าอะไรถูกลบและอะไรเก็บไว้")}</p>
+          <p>{keepThaiProse("ลบบัญชีและโปรเจกต์ทั้งหมดบนเซิร์ฟเวอร์อย่างถาวร กู้คืนไม่ได้ ก่อนยืนยันจะแสดงรายละเอียดว่าอะไรถูกลบและอะไรเก็บไว้")}</p>
         </div>
         <div className="danger-zone__action">
           <DeleteAccount

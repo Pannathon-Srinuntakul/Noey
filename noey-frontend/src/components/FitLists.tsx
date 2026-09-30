@@ -1,6 +1,6 @@
 import { IconCheck, IconMinus } from "./ds/icons";
 import "../styles/parts/story.css";
-import { keepThai } from "./ds/ThaiText";
+import { keepThaiProse } from "./ds/ThaiText";
 
 /**
  * "Suits this work" and "cannot do yet" as two parallel tracks of equal
@@ -37,7 +37,7 @@ export function FitLists({
               <span className="lane__icon" aria-hidden="true">
                 <IconCheck size={15} />
               </span>
-              <span>{keepThai(item)}</span>
+              <span>{keepThaiProse(item)}</span>
             </li>
           ))}
         </ul>
@@ -55,7 +55,7 @@ export function FitLists({
               <span className="lane__icon" aria-hidden="true">
                 <IconMinus size={15} />
               </span>
-              <span>{keepThai(item)}</span>
+              <span>{keepThaiProse(item)}</span>
             </li>
           ))}
         </ul>

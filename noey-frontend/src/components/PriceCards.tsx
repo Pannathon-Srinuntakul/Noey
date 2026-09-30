@@ -20,7 +20,7 @@ import {
 } from "@/lib/plans";
 import { PlanButton } from "./PlanButton";
 import "../styles/parts/plans.css";
-import { keepThai } from "./ds/ThaiText";
+import { keepThaiProse } from "./ds/ThaiText";
 
 /**
  * The full price, struck through, immediately before the beta price and on the
@@ -67,12 +67,12 @@ export function PriceCards({ table, variant }: { table: PriceTable; variant: "ho
           ))}
         </ol>
         {/* Said once for the page; each card carries only the short basis. */}
-        <p className="clip-note clip-note--grid">{keepThai(CLIPS_FOOTNOTE)}</p>
+        <p className="clip-note clip-note--grid">{keepThaiProse(CLIPS_FOOTNOTE)}</p>
         <section className="price-extra" aria-labelledby="price-extra-title">
           <h2 id="price-extra-title" className="price-extra__title">
             แพลนเพิ่มเติม
           </h2>
-          <p className="price-extra__note">{keepThai(EXTRA_NOTE)}</p>
+          <p className="price-extra__note">{keepThaiProse(EXTRA_NOTE)}</p>
         </section>
       </>
     );
@@ -86,11 +86,11 @@ export function PriceCards({ table, variant }: { table: PriceTable; variant: "ho
         ))}
       </div>
       {/* Said once for the page; each card carries only the short basis. */}
-      <p className="clip-note clip-note--grid">{keepThai(CLIPS_FOOTNOTE)}</p>
+      <p className="clip-note clip-note--grid">{keepThaiProse(CLIPS_FOOTNOTE)}</p>
       <div className="price-more">
         <div className="price-more__head">
           <h3 className="price-more__title">แพลนเพิ่มเติม</h3>
-          <p className="price-more__note">{keepThai(EXTRA_NOTE)}</p>
+          <p className="price-more__note">{keepThaiProse(EXTRA_NOTE)}</p>
         </div>
         <div className="price-more__grid">
           {EXTRA_TIERS.map((tier) => {
@@ -111,12 +111,12 @@ export function PriceCards({ table, variant }: { table: PriceTable; variant: "ho
                     "—"
                   )}
                 </div>
-                <p className="price-more__blurb">{keepThai(PLAN_COPY[tier].homeBlurb)}</p>
+                <p className="price-more__blurb">{keepThaiProse(PLAN_COPY[tier].homeBlurb)}</p>
               </div>
             );
           })}
         </div>
-        <p className="clip-note clip-note--group">{keepThai(CLIPS_FOOTNOTE)}</p>
+        <p className="clip-note clip-note--group">{keepThaiProse(CLIPS_FOOTNOTE)}</p>
       </div>
     </>
   );
@@ -167,12 +167,12 @@ function PriceCard({ tier, table, size }: { tier: Tier; table: PriceTable; size:
         <span className="num usage-mult">{cuts}</span>
         <span className="usage-caption">{tier === "free" ? `${cutsUnit} · ${FREE_CLIPS_CAPTION}` : cutsUnit}</span>
       </div>
-      <p className="clip-note">{keepThai(CLIPS_BASIS_SHORT)}</p>
-      <p className="plan__blurb">{keepThai(detailed ? copy.pricingBlurb : copy.homeBlurb)}</p>
+      <p className="clip-note">{keepThaiProse(CLIPS_BASIS_SHORT)}</p>
+      <p className="plan__blurb">{keepThaiProse(detailed ? copy.pricingBlurb : copy.homeBlurb)}</p>
       {detailed ? (
         <ul className="plan__features">
           {copy.features.map((feature) => (
-            <li key={feature}>{keepThai(feature)}</li>
+            <li key={feature}>{keepThaiProse(feature)}</li>
           ))}
         </ul>
       ) : null}

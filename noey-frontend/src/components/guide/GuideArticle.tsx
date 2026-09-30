@@ -13,7 +13,7 @@ import { articleNode, breadcrumbNode, faqPageNode, jsonLdGraph, webPageNode } fr
 import { CONTENT_AUTHOR } from "@/lib/seo";
 import { PAGES, publishedDate } from "@/lib/site";
 import "../../styles/pages/article.css";
-import { keepThai } from "@/components/ds/ThaiText";
+import { keepThaiProse } from "@/components/ds/ThaiText";
 
 /**
  * A bullet like "ตัดช่วงเงียบ — …" or "ทำให้: …" reads as a term and its
@@ -23,12 +23,12 @@ function Bullet({ text }: { text: string }) {
   const dash = text.indexOf(" — ");
   const colon = text.indexOf(": ");
   const at = dash > 0 ? dash : colon > 0 && colon < 24 ? colon : -1;
-  if (at < 0) return <>{keepThai(text)}</>;
+  if (at < 0) return <>{keepThaiProse(text)}</>;
   const cut = dash > 0 ? at : at + 1;
   return (
     <>
-      <strong>{keepThai(text.slice(0, cut))}</strong>
-      {keepThai(text.slice(cut))}
+      <strong>{keepThaiProse(text.slice(0, cut))}</strong>
+      {keepThaiProse(text.slice(cut))}
     </>
   );
 }
@@ -72,7 +72,7 @@ export function GuideArticle({ doc, extras }: { doc: GuideDoc; extras?: Record<s
   );
 
   const toc = [
-    ...doc.sections.map((section) => ({ id: section.id, label: section.title })),
+    ...doc.sections.map((section) => ({ id: section.id, label: keepThaiProse(section.title) })),
     { id: "faq", label: "คำถามที่พบบ่อย (FAQ)", cue: "FAQ" },
     { id: "related", label: "อ่านต่อ", cue: "→" },
   ];
@@ -85,7 +85,7 @@ export function GuideArticle({ doc, extras }: { doc: GuideDoc; extras?: Record<s
         size="h-1"
         lead={
           // Answer-first: 40–60 words that stand on their own.
-          <p className="answer">{keepThai(doc.answer)}</p>
+          <p className="answer">{keepThaiProse(doc.answer)}</p>
         }
         meta={
           <p className="stamp">
@@ -108,16 +108,17 @@ export function GuideArticle({ doc, extras }: { doc: GuideDoc; extras?: Record<s
                 <span className="trk tc">{String(index + 1).padStart(2, "0")}</span>
               </div>
               <h2 id={`${section.id}-heading`} className="article__h2">
-                {section.title}
+                {keepThaiProse(section.title)}
               </h2>
               <div className="prose">
                 {section.paragraphs.map((paragraph) => (
-                  <p key={paragraph}>{keepThai(paragraph)}</p>
+                  <p key={paragraph}>{keepThaiProse(paragraph)}</p>
                 ))}
                 {section.bullets ? (
                   <ul className="article__bullets">
                     {section.bullets.map((bullet) => (
-                      <li key={bullet}>
+                      // What the system does not do yet gets a hollow marker, not the gold one.
+                      <li key={bullet} data-kind={/^(ยัง(ทำ)?ไม่|ไม่)/.test(bullet) ? "no" : undefined}>
                         <Bullet text={bullet} />
                       </li>
                     ))}
@@ -149,7 +150,7 @@ export function GuideArticle({ doc, extras }: { doc: GuideDoc; extras?: Record<s
               {doc.related.map((item, index) => (
                 <li key={item.path}>
                   <ClipCard title={item.label} titleAs="h3" href={item.path} seed={index + 5}>
-                    <p>{keepThai(item.note)}</p>
+                    <p>{keepThaiProse(item.note)}</p>
                   </ClipCard>
                 </li>
               ))}

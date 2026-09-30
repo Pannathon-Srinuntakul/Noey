@@ -61,10 +61,22 @@ const KEEP_TOGETHER = [
   "สิบนาที",
   "ร่างแรก",
   "5-hour",
+  "ผู้ให้บริการ",
+  "ถูกต้อง",
+  "ทางอ้อม",
+  "ภัยธรรมชาติ",
+  "ภาพรวม",
+  "เข้าสู่ระบบ",
+  "ค่าใช้จ่าย",
+  "ขาดรายได้",
+  "รับผิด",
+  "ความเป็นส่วนตัว",
 ];
 
-/** A number and its unit stay on one line ("10 GB", "499 บาท", "30 นาที"). */
-const NUMBER_UNIT = "\\d[\\d,.]*\\s(?:GB|MB|นาที|วินาที|บาท|คลิป|โปรเจกต์|งาน|วัน|ชั่วโมง|เดือน|ไฟล์|ปี)";
+/** A number and its unit stay on one line ("10 GB", "499 บาท", "30 นาที"), and so
+ * does a plan name with the value after it ("Starter 20 นาที"). */
+const NUMBER_UNIT =
+  "(?:(?:ฟรี|Lite|Starter|Pro|Studio|Agency|Max) )?\\d[\\d,.]*\\s(?:GB|MB|นาที|วินาที|บาท|คลิป|โปรเจกต์|งาน|วัน|ชั่วโมง|เดือน|ไฟล์|ปี)";
 
 const escape = (word: string) => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const PATTERN = new RegExp(
@@ -88,6 +100,62 @@ export function keepThai(text: string): ReactNode {
     ) : part ? (
       <Fragment key={index}>{part}</Fragment>
     ) : null,
+  );
+}
+
+/**
+ * Short words that lean on the next one: a line must not end right after
+ * them. "ไม่ / กิน" reads as "no" at the end of the line; "การ / ขาดรายได้",
+ * "ความ / รับผิด", "ผู้ / ปกครอง", "ค่า / บริการ", "ใน / ห้องตัดต่อ" split a
+ * phrase the reader takes as one word.
+ */
+const LEANS_ON_NEXT = new Set(["ไม่", "การ", "ความ", "ผู้", "ค่า", "ใน"]);
+
+// Made on first use: the module is shipped to the browser too (keepThai),
+// where only keepThaiProse would ever need a segmenter.
+let words: Intl.Segmenter | undefined;
+
+/**
+ * keepThai for long copy rendered on the server only: the same protected
+ * words, plus each word from LEANS_ON_NEXT glued to the word after it, found
+ * with the Thai word segmenter. Server components only — a client component
+ * would re-segment in the browser, whose dictionary may differ, and the
+ * hydrated text would not match; client components use keepThai.
+ */
+export function keepThaiProse(text: string): ReactNode {
+  const tokens: { text: string; keep: boolean; word: boolean }[] = [];
+  for (const part of keepSegments(text)) {
+    if (part.keep) tokens.push({ text: part.text, keep: true, word: true });
+    else {
+      words ??= new Intl.Segmenter("th", { granularity: "word" });
+      for (const piece of words.segment(part.text)) tokens.push({ text: piece.segment, keep: false, word: !!piece.isWordLike });
+    }
+  }
+  const runs: { text: string; keep: boolean }[] = [];
+  for (let index = 0; index < tokens.length; index++) {
+    const token = tokens[index];
+    if (!token.keep && LEANS_ON_NEXT.has(token.text) && tokens[index + 1]?.word) {
+      let glued = token.text;
+      let next = index + 1;
+      glued += tokens[next].text;
+      while (!tokens[next].keep && LEANS_ON_NEXT.has(tokens[next].text) && tokens[next + 1]?.word) glued += tokens[++next].text;
+      runs.push({ text: glued, keep: true });
+      index = next;
+    } else if (!token.keep && runs.length > 0 && !runs[runs.length - 1].keep) {
+      runs[runs.length - 1].text += token.text;
+    } else {
+      runs.push({ text: token.text, keep: token.keep });
+    }
+  }
+  if (runs.length === 1 && !runs[0].keep) return text;
+  return runs.map((run, index) =>
+    run.keep ? (
+      <span key={index} className="kt">
+        {run.text}
+      </span>
+    ) : (
+      <Fragment key={index}>{run.text}</Fragment>
+    ),
   );
 }
 

@@ -7,7 +7,7 @@ import { tokenPageMetadata } from "@/lib/seo";
 import { apiRequest } from "@/lib/server/api";
 import { getMe, readSessionTokens } from "@/lib/server/session";
 import { EDITOR_OPEN_PATH } from "@/lib/editor-handoff";
-import { keepThai } from "@/components/ds/ThaiText";
+import { keepThaiProse } from "@/components/ds/ThaiText";
 
 // Opened from the verification email: rendered per request and never cached,
 // noindex, disallowed in robots.txt, Referrer-Policy: no-referrer. The token
@@ -74,7 +74,7 @@ export default async function VerifyEmailPage({ searchParams }: { searchParams: 
       title = "ยืนยันอีเมลเรียบร้อย";
       body = (
         <>
-          อีเมล {view.email ? <strong>{view.email}</strong> : null} {keepThai("ยืนยันแล้ว เริ่มใช้งาน AI ในห้องตัดต่อได้เลย")}
+          อีเมล {view.email ? <strong>{view.email}</strong> : null} {keepThaiProse("ยืนยันแล้ว เริ่มใช้งาน AI ในห้องตัดต่อได้เลย")}
         </>
       );
       actions = (
@@ -132,7 +132,7 @@ export default async function VerifyEmailPage({ searchParams }: { searchParams: 
     <main id="main" className="status-page page-top">
       <div className="wrap">
         <StatusCard tone={tone} eyebrow="ยืนยันอีเมล" title={title} role={success ? "status" : "alert"} actions={actions}>
-          <p>{typeof body === "string" ? keepThai(body) : body}</p>
+          <p>{typeof body === "string" ? keepThaiProse(body) : body}</p>
         </StatusCard>
       </div>
     </main>
