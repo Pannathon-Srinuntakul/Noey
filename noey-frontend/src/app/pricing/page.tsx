@@ -42,7 +42,7 @@ import { pageMetadata } from "@/lib/seo";
 import { getPriceTable } from "@/lib/server/prices";
 import { PAGES } from "@/lib/site";
 import "../../styles/pages/pricing.css";
-import { keepThaiProse } from "@/components/ds/ThaiText";
+import { keepThaiProse } from "@/components/ds/ThaiProse";
 
 // ISR: prices follow GET /billing/plans, refreshed at most every 10 minutes.
 export const revalidate = 600;

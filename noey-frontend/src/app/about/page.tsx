@@ -7,7 +7,7 @@ import { JsonLd } from "@/components/JsonLd";
 import { IconLock } from "@/components/ds/icons";
 import { PageHero } from "@/components/ds/PageHero";
 import { SectionHeader } from "@/components/ds/SectionHeader";
-import { keepThaiProse } from "@/components/ds/ThaiText";
+import { keepThaiProse } from "@/components/ds/ThaiProse";
 import { formatTimecode } from "@/components/ds/timecode";
 import { Waveform } from "@/components/ds/Waveform";
 import { ContactForm } from "@/components/forms/ContactForm";

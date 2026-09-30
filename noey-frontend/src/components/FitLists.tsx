@@ -1,6 +1,6 @@
 import { IconCheck, IconMinus } from "./ds/icons";
 import "../styles/parts/story.css";
-import { keepThaiProse } from "./ds/ThaiText";
+import { keepThaiProse } from "./ds/ThaiProse";
 
 /**
  * "Suits this work" and "cannot do yet" as two parallel tracks of equal

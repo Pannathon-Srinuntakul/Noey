@@ -13,7 +13,7 @@ import { articleNode, breadcrumbNode, faqPageNode, jsonLdGraph, webPageNode } fr
 import { CONTENT_AUTHOR } from "@/lib/seo";
 import { PAGES, publishedDate } from "@/lib/site";
 import "../../styles/pages/article.css";
-import { keepThaiProse } from "@/components/ds/ThaiText";
+import { keepThaiProse } from "@/components/ds/ThaiProse";
 
 /**
  * A bullet like "ตัดช่วงเงียบ — …" or "ทำให้: …" reads as a term and its

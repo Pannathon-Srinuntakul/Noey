@@ -1,5 +1,5 @@
 import type { FaqItem } from "@/lib/faq";
-import { keepThaiProse } from "./ds/ThaiText";
+import { keepThaiProse } from "./ds/ThaiProse";
 
 /**
  * Native <details> FAQ — server-rendered, works without JavaScript, and the

@@ -34,7 +34,7 @@ import { pageMetadata } from "@/lib/seo";
 import { getPriceTable } from "@/lib/server/prices";
 import { PAGES } from "@/lib/site";
 import "../styles/pages/home.css";
-import { keepThaiProse } from "@/components/ds/ThaiText";
+import { keepThaiProse } from "@/components/ds/ThaiProse";
 
 // Static, re-generated at most every 10 minutes so prices follow the backend.
 export const revalidate = 600;

@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { ResetClock } from "@/components/account/ResetClock";
 import { LevelMeter } from "@/components/ds/LevelMeter";
-import { keepThaiProse } from "@/components/ds/ThaiText";
+import { keepThaiProse } from "@/components/ds/ThaiProse";
 import { formatBytes } from "@/lib/format";
 import { isTier, PLAN_COPY } from "@/lib/plans";
 import { privatePageMetadata } from "@/lib/seo";

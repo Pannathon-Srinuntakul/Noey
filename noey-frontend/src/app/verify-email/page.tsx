@@ -7,7 +7,7 @@ import { tokenPageMetadata } from "@/lib/seo";
 import { apiRequest } from "@/lib/server/api";
 import { getMe, readSessionTokens } from "@/lib/server/session";
 import { EDITOR_OPEN_PATH } from "@/lib/editor-handoff";
-import { keepThaiProse } from "@/components/ds/ThaiText";
+import { keepThaiProse } from "@/components/ds/ThaiProse";
 
 // Opened from the verification email: rendered per request and never cached,
 // noindex, disallowed in robots.txt, Referrer-Policy: no-referrer. The token

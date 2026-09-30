@@ -20,7 +20,7 @@ import {
 } from "@/lib/plans";
 import { PlanButton } from "./PlanButton";
 import "../styles/parts/plans.css";
-import { keepThaiProse } from "./ds/ThaiText";
+import { keepThaiProse } from "./ds/ThaiProse";
 
 /**
  * The full price, struck through, immediately before the beta price and on the

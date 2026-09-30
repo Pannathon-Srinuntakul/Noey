@@ -8,7 +8,7 @@ import { privatePageMetadata } from "@/lib/seo";
 import { googleSignInEnabled } from "@/lib/server/google";
 import { getMe, resolvePageOutcome } from "@/lib/server/session";
 import { sanitizeDisplayName } from "@/lib/session";
-import { keepThaiProse } from "@/components/ds/ThaiText";
+import { keepThaiProse } from "@/components/ds/ThaiProse";
 
 export const metadata: Metadata = privatePageMetadata("ข้อมูลส่วนตัว");
 

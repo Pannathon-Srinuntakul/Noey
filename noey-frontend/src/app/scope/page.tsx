@@ -16,7 +16,7 @@ import { SCOPE_FITS, SCOPE_MISFITS, SCOPE_STEPS, SCOPE_SUMMARY, SCOPE_YOUR_WORK 
 import { markdownTwinPath, pageMetadata, withMarkdownTwin } from "@/lib/seo";
 import { PAGES } from "@/lib/site";
 import "../../styles/pages/scope.css";
-import { keepThaiProse } from "@/components/ds/ThaiText";
+import { keepThaiProse } from "@/components/ds/ThaiProse";
 
 export const metadata: Metadata = withMarkdownTwin(pageMetadata("scope"), markdownTwinPath("scope"));
 

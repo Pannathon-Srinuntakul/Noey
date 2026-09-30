@@ -1,6 +1,6 @@
 import { BETA_BADGE, BETA_PRICE_AFTER_SHORT, BETA_PRICE_LINE } from "@/lib/beta";
 import { isBetaPriced, type PriceTable } from "@/lib/plans";
-import { keepThaiProse } from "./ds/ThaiText";
+import { keepThaiProse } from "./ds/ThaiProse";
 
 /**
  * The strip that sits above every price grid: what the discount is, when it

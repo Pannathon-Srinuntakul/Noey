@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { StatusCard } from "@/components/ds/StatusCard";
 import { SITE_NAME } from "@/lib/site";
-import { keepThaiProse } from "@/components/ds/ThaiText";
+import { keepThaiProse } from "@/components/ds/ThaiProse";
 
 // Where a self-service account deletion lands. Static and never indexed;
 // it shows nothing about the account (the session is already gone).

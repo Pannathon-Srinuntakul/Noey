@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { GUIDE_KEYS, NAV_LINKS, PAGES } from "@/lib/site";
 import { NoeyMark } from "./NoeyMark";
-import { keepThaiProse } from "./ds/ThaiText";
+import { keepThaiProse } from "./ds/ThaiProse";
 
 const ACCOUNT_LINKS = [
   { href: PAGES.login.path, label: PAGES.login.label },

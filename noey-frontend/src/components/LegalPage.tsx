@@ -10,7 +10,7 @@ import { PageHero } from "./ds/PageHero";
 import { TimelineToc } from "./ds/TimelineToc";
 import { JsonLd } from "./JsonLd";
 import "../styles/pages/article.css";
-import { keepThaiProse } from "./ds/ThaiText";
+import { keepThaiProse } from "./ds/ThaiProse";
 
 type LegalKey = Extract<PageKey, "terms" | "privacy">;
 

@@ -2,11 +2,12 @@ import { Fragment, type ReactNode } from "react";
 
 /**
  * Words the browser's Thai line breaker cuts in the wrong place. It breaks
- * Thai with a dictionary, and loanwords are missing from it: "โปรเจกต์" breaks
- * as โปร|เจ|กต์, "ครีเอเตอร์" as ค|รี|เอ|เตอร์, and "แพลน" splits inside
+ * Thai with ICU's dictionary, and loanwords are missing from it: "โปรเจกต์"
+ * breaks as โปร|เจ|กต์, "ครีเอเตอร์" as ค|รี|เอ|เตอร์, and "แพลน" splits inside
  * "ราคาแพลนอื่น". A few native compounds and negations are here too, where a
  * line end between the parts misleads ("ไม่ / จำกัด" reads as "no" at the end
- * of a line).
+ * of a line). Long copy rendered on the server gets far more
+ * (ThaiProse.tsx, from the generated thai-glossary.json).
  */
 const KEEP_TOGETHER = [
   "โปรเจกต์",
@@ -71,6 +72,10 @@ const KEEP_TOGETHER = [
   "ขาดรายได้",
   "รับผิด",
   "ความเป็นส่วนตัว",
+  "ไม่ได้รับ",
+  "พื้นที่เก็บงาน",
+  "ใช้งานหนัก",
+  "ใบเสร็จ",
 ];
 
 /** A number and its unit stay on one line ("10 GB", "499 บาท", "30 นาที"), and so
@@ -85,11 +90,19 @@ const PATTERN = new RegExp(
 );
 
 /**
- * Thai text with those words and number–unit pairs wrapped so a line never
- * ends inside them. The text itself is unchanged (the wrappers are plain
- * spans), so copy, search and screen readers see the same words.
+ * The repeat mark ๆ never starts a line: the space before it ("สั้น ๆ") becomes
+ * a no-break space, which also keeps it on the word it repeats.
  */
-export function keepThai(text: string): ReactNode {
+export const glueRepeat = (text: string) => text.replace(/ ๆ/g, "\u00a0ๆ");
+
+/**
+ * Thai text with those words and number–unit pairs wrapped so a line never
+ * ends inside them. The text is unchanged apart from the no-break space
+ * before ๆ (the wrappers are plain spans), so copy, search and screen readers
+ * see the same words.
+ */
+export function keepThai(source: string): ReactNode {
+  const text = glueRepeat(source);
   const parts = text.split(PATTERN);
   if (parts.length === 1) return text;
   return parts.map((part, index) =>
@@ -100,62 +113,6 @@ export function keepThai(text: string): ReactNode {
     ) : part ? (
       <Fragment key={index}>{part}</Fragment>
     ) : null,
-  );
-}
-
-/**
- * Short words that lean on the next one: a line must not end right after
- * them. "ไม่ / กิน" reads as "no" at the end of the line; "การ / ขาดรายได้",
- * "ความ / รับผิด", "ผู้ / ปกครอง", "ค่า / บริการ", "ใน / ห้องตัดต่อ" split a
- * phrase the reader takes as one word.
- */
-const LEANS_ON_NEXT = new Set(["ไม่", "การ", "ความ", "ผู้", "ค่า", "ใน"]);
-
-// Made on first use: the module is shipped to the browser too (keepThai),
-// where only keepThaiProse would ever need a segmenter.
-let words: Intl.Segmenter | undefined;
-
-/**
- * keepThai for long copy rendered on the server only: the same protected
- * words, plus each word from LEANS_ON_NEXT glued to the word after it, found
- * with the Thai word segmenter. Server components only — a client component
- * would re-segment in the browser, whose dictionary may differ, and the
- * hydrated text would not match; client components use keepThai.
- */
-export function keepThaiProse(text: string): ReactNode {
-  const tokens: { text: string; keep: boolean; word: boolean }[] = [];
-  for (const part of keepSegments(text)) {
-    if (part.keep) tokens.push({ text: part.text, keep: true, word: true });
-    else {
-      words ??= new Intl.Segmenter("th", { granularity: "word" });
-      for (const piece of words.segment(part.text)) tokens.push({ text: piece.segment, keep: false, word: !!piece.isWordLike });
-    }
-  }
-  const runs: { text: string; keep: boolean }[] = [];
-  for (let index = 0; index < tokens.length; index++) {
-    const token = tokens[index];
-    if (!token.keep && LEANS_ON_NEXT.has(token.text) && tokens[index + 1]?.word) {
-      let glued = token.text;
-      let next = index + 1;
-      glued += tokens[next].text;
-      while (!tokens[next].keep && LEANS_ON_NEXT.has(tokens[next].text) && tokens[next + 1]?.word) glued += tokens[++next].text;
-      runs.push({ text: glued, keep: true });
-      index = next;
-    } else if (!token.keep && runs.length > 0 && !runs[runs.length - 1].keep) {
-      runs[runs.length - 1].text += token.text;
-    } else {
-      runs.push({ text: token.text, keep: token.keep });
-    }
-  }
-  if (runs.length === 1 && !runs[0].keep) return text;
-  return runs.map((run, index) =>
-    run.keep ? (
-      <span key={index} className="kt">
-        {run.text}
-      </span>
-    ) : (
-      <Fragment key={index}>{run.text}</Fragment>
-    ),
   );
 }
 

@@ -13,7 +13,7 @@ import { breadcrumbNode, itemListNode, jsonLdGraph, webPageNode } from "@/lib/js
 import { pageMetadata } from "@/lib/seo";
 import { PAGES } from "@/lib/site";
 import "../../styles/pages/guide-index.css";
-import { keepThaiProse } from "@/components/ds/ThaiText";
+import { keepThaiProse } from "@/components/ds/ThaiProse";
 
 export const metadata: Metadata = pageMetadata("guide");
 

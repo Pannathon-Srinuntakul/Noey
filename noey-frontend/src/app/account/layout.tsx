@@ -6,7 +6,7 @@ import { privatePageMetadata } from "@/lib/seo";
 import { currentPathname, getMe, resolvePageOutcome } from "@/lib/server/session";
 import { sanitizeDisplayName } from "@/lib/session";
 import "../../styles/pages/account.css";
-import { keepThaiProse } from "@/components/ds/ThaiText";
+import { keepThaiProse } from "@/components/ds/ThaiProse";
 
 // Signed-in area: never indexed (also disallowed in robots.txt).
 export const metadata: Metadata = privatePageMetadata("บัญชีของฉัน");

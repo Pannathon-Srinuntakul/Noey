@@ -4,7 +4,7 @@ import { StatusCard } from "@/components/ds/StatusCard";
 import { ResetPasswordForm } from "@/components/forms/ResetPasswordForm";
 import { MSG } from "@/lib/messages";
 import { tokenPageMetadata } from "@/lib/seo";
-import { keepThaiProse } from "@/components/ds/ThaiText";
+import { keepThaiProse } from "@/components/ds/ThaiProse";
 
 // Opened from the reset email: always rendered per request, never cached,
 // noindex, disallowed in robots.txt and sent with Referrer-Policy: no-referrer.

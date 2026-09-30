@@ -10,7 +10,7 @@ import { jsonLdGraph, webPageNode } from "@/lib/jsonld";
 import { pageMetadata } from "@/lib/seo";
 import { PAGES } from "@/lib/site";
 import "../../styles/pages/auth.css";
-import { keepThaiProse } from "@/components/ds/ThaiText";
+import { keepThaiProse } from "@/components/ds/ThaiProse";
 
 export const metadata: Metadata = pageMetadata("signup");
 // Static, refreshed every 5 minutes: only whether the Google button shows can change.

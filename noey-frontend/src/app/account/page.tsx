@@ -9,7 +9,7 @@ import { planDisplayName } from "@/lib/plans";
 import { privatePageMetadata } from "@/lib/seo";
 import { loadAccountData } from "@/lib/server/account-data";
 import { EDITOR_OPEN_PATH } from "@/lib/editor-handoff";
-import { keepThaiProse } from "@/components/ds/ThaiText";
+import { keepThaiProse } from "@/components/ds/ThaiProse";
 
 export const metadata: Metadata = privatePageMetadata("บัญชีของฉัน");
 
