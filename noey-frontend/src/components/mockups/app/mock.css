@@ -1,0 +1,412 @@
+/*
+ * The frame around the editor mock-ups (AppScreen.tsx) and the few things the
+ * editor draws that are not Tailwind classes: its body defaults (base.css),
+ * Chrome's native range input, a spinning Loader2, the footage layers, the
+ * selection states EditorLive moves, and the parts a visitor can use (scrub,
+ * scenes, notes). The layout classes are in app.css (generated from the
+ * editor's own Tailwind).
+ *
+ * The mock-ups are drawings of the app in the SITE's style (owner's decisions,
+ * 2026-10-01): colours are the site's tokens, so they follow the site's
+ * light/dark theme; only what makes the picture is drawn, and whatever is
+ * drawn is the app's own — its element, its words, at its position.
+ */
+
+/* The window's scale on screen, as a number: text meant to be read at a
+   fixed size on screen (a note's bubble) divides by it. */
+@property --am-scale {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 1;
+}
+
+.am-view {
+  --am-cx: 0;
+  --am-cy: 0;
+  --am-cw: var(--am-w);
+  --am-ch: var(--am-h);
+  position: relative;
+  overflow: hidden;
+  container-type: inline-size;
+  aspect-ratio: var(--am-cw) / var(--am-ch);
+  background: var(--bg);
+}
+
+.am {
+  position: absolute;
+  top: 0;
+  left: 0;
+  overflow: hidden;
+  transform-origin: 0 0;
+  /* 100cqw / crop width, as a plain number: the window scales to its box. */
+  --am-scale: tan(atan2(100cqw, calc(var(--am-cw) * 1px)));
+  transform: scale(tan(atan2(100cqw, calc(var(--am-cw) * 1px)))) translate(calc(var(--am-cx) * -1px), calc(var(--am-cy) * -1px));
+  container: am / size;
+  /* The editor's theme variables, drawn in the site's palette. */
+  --color-ground: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--panel-2);
+  --color-ink: var(--ink);
+  --color-ink-2: color-mix(in srgb, var(--ink) 50%, var(--ink-2));
+  --color-ink-3: var(--ink-2);
+  --color-muted: var(--ink-3);
+  --color-accent: var(--gold);
+  --color-accent-press: var(--gold-deep);
+  --color-accent-hover-text: var(--gold-ink);
+  --color-accent-tint: color-mix(in srgb, var(--gold) 12%, transparent);
+  --color-accent-tint-hover: color-mix(in srgb, var(--gold) 20%, transparent);
+  --color-accent-tint-press: color-mix(in srgb, var(--gold) 28%, transparent);
+  --color-accent-nav: color-mix(in srgb, var(--gold) 14%, transparent);
+  --color-ok: var(--success);
+  --color-error: var(--danger);
+  --color-error-tint: color-mix(in srgb, var(--danger) 12%, transparent);
+  --color-divider: color-mix(in srgb, var(--ink) 12%, transparent);
+  --color-border: color-mix(in srgb, var(--ink) 22%, transparent);
+  --color-border-strong: color-mix(in srgb, var(--ink) 34%, transparent);
+  --color-border-faint: color-mix(in srgb, var(--ink) 14%, transparent);
+  --shadow-modal: var(--shadow-3);
+  background: var(--bg);
+  /* base.css body */
+  color: var(--ink-2);
+  font: 400 16px/1.6 var(--font-noto-thai), "Noto Sans Thai", ui-sans-serif, system-ui, sans-serif;
+  letter-spacing: normal;
+  text-align: left;
+  text-wrap: wrap;
+  text-rendering: optimizeLegibility;
+  font-kerning: auto;
+  font-feature-settings: normal;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  user-select: none;
+  pointer-events: none;
+}
+
+.am p {
+  text-wrap: inherit;
+}
+
+/* The site's own img/svg rule (max-width: 100%) would let icons shrink out
+   of a row's min-content, which the app's never do. */
+.am img,
+.am svg {
+  max-width: none;
+}
+
+/* A spinning Loader2 (`animate-spin`). */
+.am-spin {
+  animation: am-spin 1s linear infinite;
+}
+
+@keyframes am-spin {
+  to {
+    rotate: 360deg;
+  }
+}
+
+/* A sample-footage tile (ui.tsx Tile): one frame of the strip, width-fitted. */
+.am-tile {
+  display: block;
+  background-color: var(--well);
+  background-image: var(--am-strip, none);
+  background-repeat: no-repeat;
+  background-size: calc(var(--am-tiles) * 100%) auto;
+}
+
+/* The strip's (versioned) URL comes from AppScreen as --am-strip-src; it is
+   attached only once the mock-up nears the screen (MockLive). */
+.am[data-live] {
+  --am-strip: var(--am-strip-src);
+}
+
+/* MusicBlock's volume: a native range with accent-color, as Chrome paints it. */
+.am-range {
+  --v: 0.3;
+  display: block;
+  border-radius: 99px;
+  background: linear-gradient(to right, var(--gold) calc(var(--v) * 100%), color-mix(in srgb, var(--ink) 25%, transparent) calc(var(--v) * 100%));
+}
+
+.am-range::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: calc(var(--v) * (100% - 16px));
+  width: 16px;
+  height: 16px;
+  margin-top: -8px;
+  border-radius: 50%;
+  background: var(--gold);
+}
+
+/* ─── Footage in the preview ─────────────────────────────────────────── */
+
+.am-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0;
+  transition: opacity 240ms ease;
+}
+
+.am[data-playing] .am-video,
+.am[data-shown] .am-video {
+  opacity: 1;
+}
+
+/* FilmstripCanvas draws its frames at 60% over black — right on the app's
+   dark ground; on the site's light ground that reads as mud, so the light
+   theme lifts it. */
+.am {
+  --am-film: 0.85;
+}
+
+html[data-theme="dark"] .am,
+.theme-night .am {
+  --am-film: 0.6;
+}
+
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]) .am {
+    --am-film: 0.6;
+  }
+}
+
+/* Left out of the drawing (ui.tsx Omit): it keeps its place, unpainted. */
+.am-omit {
+  display: contents;
+  visibility: hidden;
+}
+
+/* ─── Selection (the app's classes; EditorLive moves them) ──────────────── */
+
+/* EditedCutBlock: 2px of accent, border plus inset ring; trim bars. */
+[data-am-scene][data-sel] > .am-block {
+  border-color: var(--color-accent);
+  box-shadow: inset 0 0 0 1px var(--color-accent);
+}
+
+.am-handle {
+  display: none;
+}
+
+[data-am-scene][data-sel] .am-handle {
+  display: block;
+}
+
+/* VoiceoverLane: the selected scene's line, else the one being spoken. */
+.am-vo[data-sel] {
+  border-color: var(--color-accent);
+  background: var(--color-accent-nav);
+  color: var(--color-accent);
+}
+
+.am-vo[data-speaking]:not([data-sel]) {
+  border-color: color-mix(in srgb, var(--gold) 45%, transparent);
+  background: color-mix(in srgb, var(--gold) 8%, transparent);
+  color: var(--ink);
+}
+
+/* CaptionLane: the selected scene's chip. */
+.am-cap[data-sel] {
+  border-color: var(--color-accent);
+  background: var(--color-accent-nav);
+}
+
+.am-cap[data-sel] > * {
+  color: var(--color-ink);
+}
+
+/* ScriptTab: the angle that is the selected scene. */
+.am-angle[data-sel] {
+  border-color: var(--color-accent);
+}
+
+/* ─── What a visitor can use (Editor.tsx LaneHits / Tip) ──────────────────
+   Inert until EditorLive wakes it (and while its hero beat is not showing):
+   no cursor, no hover, nothing to focus. */
+.am-hits {
+  position: absolute;
+  inset: 0;
+  z-index: 60;
+  pointer-events: none;
+}
+
+.am-hits:not([inert]) > * {
+  pointer-events: auto;
+}
+
+.am-scrub,
+.am-pick {
+  position: absolute;
+  display: block;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: ew-resize;
+  /* A vertical swipe still scrolls the page; a sideways drag scrubs. */
+  touch-action: pan-y;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.am-pick {
+  z-index: 1;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.am[data-scrubbing] .am-scrub,
+.am[data-scrubbing] .am-pick {
+  cursor: ew-resize;
+}
+
+.am-pick:hover {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--gold) 70%, transparent);
+}
+
+.am-scrub:focus-visible,
+.am-pick:focus-visible,
+.am-tip:focus-visible {
+  outline: calc(2px / var(--am-scale)) solid var(--gold);
+  outline-offset: calc(1px / var(--am-scale));
+}
+
+/* The playhead grows a little while it is being dragged. */
+.am[data-scrubbing] [data-am-playhead] > :first-child {
+  width: 3px;
+}
+
+/* A part's note: the zone is the part; the bubble shows on hover or focus,
+   at a fixed size on screen whatever the window's scale. */
+.am-tipzone {
+  position: absolute;
+}
+
+.am-tip {
+  position: absolute;
+  inset: 0;
+  display: block;
+  border-radius: calc(4px / var(--am-scale));
+  cursor: help;
+  outline: none;
+}
+
+.am-tip:hover {
+  background: color-mix(in srgb, var(--gold) 8%, transparent);
+}
+
+.am-tip__bubble {
+  position: absolute;
+  bottom: calc(100% + 6px / var(--am-scale));
+  left: 0;
+  z-index: 2;
+  padding: calc(5px / var(--am-scale)) calc(10px / var(--am-scale));
+  border-radius: calc(6px / var(--am-scale));
+  background: var(--ink);
+  color: var(--bg);
+  font-size: calc(13px / var(--am-scale));
+  font-weight: 500;
+  line-height: 1.45;
+  white-space: nowrap;
+  box-shadow: var(--shadow-2);
+  opacity: 0;
+  translate: 0 calc(3px / var(--am-scale));
+  visibility: hidden;
+  transition:
+    opacity 140ms ease,
+    translate 140ms ease,
+    visibility 0s linear 140ms;
+}
+
+.am-tip:hover > .am-tip__bubble,
+.am-tip:focus-visible > .am-tip__bubble {
+  opacity: 1;
+  translate: 0 0;
+  visibility: visible;
+  transition-delay: 0s;
+}
+
+/* Over the preview the note sits inside the picture, at its top. */
+[data-am-stage] .am-tip__bubble {
+  top: calc(12px / var(--am-scale));
+  bottom: auto;
+  left: 50%;
+  margin-left: 0;
+  transform: translateX(-50%);
+}
+
+/* The app's wordmark face is a serif (never loaded, so the browser's default
+   serif) — drawn here in the site's serif fallback. */
+.am-display {
+  font-family: serif;
+}
+
+/* ─── States the choreography switches between ────────────────────────────
+   An .am-swap holds two versions of one control or region, stacked in one
+   grid cell: __a (before) and __b (after). Settled — no motion, no script,
+   or once the hero has played — only __b shows. */
+.am-swap {
+  display: inline-grid;
+}
+
+.am-swap--block {
+  display: grid;
+}
+
+.am-swap--fill {
+  display: grid;
+  flex: 1 1 0%;
+  min-height: 0;
+}
+
+.am-swap > * {
+  grid-area: 1 / 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.am-swap__a {
+  visibility: hidden;
+}
+
+/* A stack of full states (progress): the last one is the settled one. It
+   overrides the column's own flex (app.css: .am .flex), or the states would
+   sit one under another and the visible one creep down the page. */
+.am-states {
+  display: grid !important;
+}
+
+.am-states > * {
+  grid-area: 1 / 1;
+  visibility: hidden;
+}
+
+.am-states > :last-child {
+  visibility: visible;
+}
+
+/* Stacked text states (a counter's values, a hint before and after): one
+   grid cell, the last child is the settled one. */
+.am-stack {
+  display: grid !important;
+}
+
+.am-stack > * {
+  grid-area: 1 / 1;
+}
+
+.am-count {
+  display: inline-grid;
+}
+
+.am-count__n {
+  grid-area: 1 / 1;
+  visibility: hidden;
+}
+
+.am-count__n:last-child {
+  visibility: visible;
+}
+

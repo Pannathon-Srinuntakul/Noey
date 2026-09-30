@@ -8,8 +8,9 @@ import { JsonLd } from "@/components/JsonLd";
 import { PlanComparisonTable } from "@/components/PlanComparisonTable";
 import { PriceCards } from "@/components/PriceCards";
 import { CtaBand } from "@/components/ds/CtaBand";
-import { LevelMeter } from "@/components/ds/LevelMeter";
+import { UsageMockup } from "@/components/mockups/UsageMockup";
 import { PageHero } from "@/components/ds/PageHero";
+import { ComputerOnly } from "@/components/ComputerOnly";
 import { SectionHeader } from "@/components/ds/SectionHeader";
 import { PlanRail } from "@/components/pricing/PlanRail";
 import { pricingFaq } from "@/lib/faq";
@@ -123,6 +124,7 @@ export default async function PricingPage() {
       <section className="pricing-plans" aria-label="แพลนทั้งหมด">
         <div className="wrap">
           <CheckoutCanceledNotice />
+          <ComputerOnly className="computer-only--top" />
           <BetaPriceNote table={table} />
           <PlanRail plans={railPlans} initial={APPROX_CUTS_PER_MONTH.pro} footnote={CLIPS_FOOTNOTE} freeNote={`${PLAN_COPY.free.name}: ${FREE_CLIPS_CAPTION}`}>
             <PriceCards table={table} variant="full" />
@@ -138,20 +140,9 @@ export default async function PricingPage() {
             </p>
           </SectionHeader>
           <div className="quota-card">
-            {/* Illustration of the settings screen, not anyone's real usage — labelled as such. */}
+            {/* The editor's own quota card with sample numbers, not anyone's real usage — labelled as such. */}
             <span className="mock-tag quota-card__tag">ตัวอย่างการแสดงผล</span>
-            <div className="quota-card__meters">
-              <div className="meter-row">
-                <span>5-hour limit</span>
-                <span className="num">ใช้ไป 38%</span>
-              </div>
-              <LevelMeter value={38} />
-              <div className="meter-row quota-card__second">
-                <span>Weekly limit</span>
-                <span className="num">ใช้ไป 21%</span>
-              </div>
-              <LevelMeter value={21} />
-            </div>
+            <UsageMockup />
             <ul className="rule-list">
               {QUOTA_RULES.map((rule) => (
                 <li key={rule.key}>

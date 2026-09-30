@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { ComputerOnly } from "@/components/ComputerOnly";
 import type { CSSProperties } from "react";
 import { BetaPriceNote } from "@/components/BetaPriceNote";
 import { FaqList } from "@/components/FaqList";
@@ -14,7 +15,7 @@ import { SectionHeader } from "@/components/ds/SectionHeader";
 import { WordReveal } from "@/components/ds/WordReveal";
 import { HeroBackdrop } from "@/components/hero/HeroBackdrop";
 import { FeatureVisual } from "@/components/home/FeatureVisual";
-import { EditorMockup } from "@/components/mockups/EditorMockup";
+import { EditorMockup, HERO_BEAT_MS } from "@/components/mockups/EditorMockup";
 import { MicroDemo, type MicroKind } from "@/components/mockups/MicroDemos";
 import { HOME_FAQ } from "@/lib/faq";
 import { formatThaiDate } from "@/lib/format";
@@ -52,7 +53,7 @@ const FEATURES = [
   },
   {
     title: "พากย์เสียง พร้อมสคริปต์จาก AI",
-    body: "ระบบเขียนสคริปต์พากย์ภาษาไทยให้ตามภาพที่มี แบ่งเป็นประโยคสั้น ๆ ให้อ่านทีละบรรทัด อัดเสียงในเบราว์เซอร์ อัดใหม่เฉพาะประโยคที่ไม่พอใจได้ แล้วระบบวางเสียงให้ตรงช็อต",
+    body: "ระบบเขียนสคริปต์พากย์ภาษาไทยให้ตามภาพที่ตัดไว้ แบ่งเป็นประโยคสั้น ๆ ตามช็อต ได้คลิปภาพพร้อมสคริปต์ กดคัดลอกไปอัดเสียงเองได้ทันที",
   },
   {
     title: "เปิดเบราว์เซอร์ก็ใช้ได้",
@@ -90,23 +91,27 @@ const STEPS = [
 ];
 
 /**
- * The four beats of the hero scene: the real pipeline, told with copy that
- * already describes it elsewhere on the site (the first step, then the three
- * things the system does before you open the timeline — lib/scope.ts).
+ * The four beats of the hero scene, beside the app's own screens in the order
+ * a user meets them: files in, the outcome chosen and started, the system
+ * cutting, the result in the editor. Copy that already describes each step
+ * elsewhere on the site (the steps below, lib/scope.ts).
  */
-const BEATS = [{ title: STEPS[0].title, body: STEPS[0].body }, ...SCOPE_STEPS];
+const BEATS = [
+  { title: STEPS[0].title, body: STEPS[0].body },
+  { title: STEPS[1].title, body: STEPS[1].body },
+  SCOPE_STEPS[1],
+  SCOPE_STEPS[2],
+];
 
 /**
  * Without JavaScript the hero is not pinned and its illustration shows the
- * finished draft instead of waiting for scroll-driven beats.
+ * finished draft (the editor) instead of waiting for scroll-driven beats.
  */
 const NO_SCRIPT_HERO = `
 .hero-scene{height:auto!important}
 .hero-scene__sticky{position:relative!important;height:auto!important;min-height:0!important}
-.ed-scene .ed__w,.ed-scene .ed__subs,.ed-scene .ed__clip,.ed-scene .ed__cap,.ed-scene .ed__slash{opacity:1!important;scale:1!important;animation:none!important}
-.ed-scene .wave__bar{transform:none!important;animation:none!important}
-.ed-scene .ed__screen .scene{filter:none!important}
-.ed-scene .ed__status-text{display:none!important}.ed-scene .ed__status-text--3{display:inline!important}
+.ed-scene .edm__beat{opacity:0!important;visibility:hidden!important}
+.ed-scene .edm__beat--3{opacity:1!important;visibility:visible!important;scale:1!important}
 .beats li{opacity:1!important}
 `;
 
@@ -158,7 +163,8 @@ export default async function HomePage() {
                   <IconArrowRight size={18} />
                 </Link>
               </div>
-              <p className="hero__fine">{keepThaiProse("สมัครแล้วได้เครดิตทดลองฟรี · ไม่ต้องผูกบัตร · ใช้บนคอมผ่าน Chrome หรือ Edge")}</p>
+              <ComputerOnly />
+              <p className="hero__fine">{keepThaiProse("สมัครแล้วได้เครดิตทดลองฟรี · ไม่ต้องผูกบัตร · ใช้ได้เฉพาะบนคอมผ่าน Chrome หรือ Edge")}</p>
               <p className="hero__fine hero__honest">{keepThaiProse("ระบบทำร่างแรกให้ ไม่ได้ตัดจบแทนคุณ งานที่เหลือยังแก้เองในไทม์ไลน์")}</p>
               <p className="stamp">
                 อัปเดตล่าสุด <time dateTime={home.updated}>{formatThaiDate(home.updated)}</time>
@@ -167,7 +173,7 @@ export default async function HomePage() {
           </div>
         </div>
 
-        <div className="hero-scene ed-scene" data-scene="4" data-scene-auto="" data-beat="0">
+        <div className="hero-scene ed-scene" data-scene="4" data-scene-auto="" data-scene-durations={HERO_BEAT_MS.join(",")} data-beat="0">
           <div className="hero-scene__sticky">
             <div className="wrap hero-scene__grid">
               <ol className="beats">
@@ -259,7 +265,7 @@ export default async function HomePage() {
         <div className="wrap">
           <SectionHeader id="features-title" track="V2" timecode="00:00:42:10" eyebrow="ความสามารถหลัก" title="สามอย่างที่ทำให้งานเสร็จเร็วขึ้นจริง">
             <p>
-              {keepThaiProse("ความสามารถหลักมีสามอย่าง คือตัดคลิปอัตโนมัติจากสิ่งที่พูดจริง เขียนสคริปต์พากย์ภาษาไทยพร้อมให้อัดเสียงในเบราว์เซอร์ และใส่ซับไทยตามเสียงพูด ทั้งสามอย่างทำงานในเบราว์เซอร์โดยไม่ต้องติดตั้งโปรแกรม")}
+              {keepThaiProse("ความสามารถหลักมีสามอย่าง คือตัดคลิปอัตโนมัติจากสิ่งที่พูดจริง เขียนสคริปต์พากย์ภาษาไทยให้เอาไปอัดเสียงได้ทันที และใส่ซับไทยตามเสียงพูด ทั้งสามอย่างทำงานในเบราว์เซอร์โดยไม่ต้องติดตั้งโปรแกรม")}
             </p>
           </SectionHeader>
           <div className="bento" data-reveal="stagger">

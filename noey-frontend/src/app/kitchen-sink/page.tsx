@@ -15,6 +15,11 @@ import { Waveform } from "@/components/ds/Waveform";
 import { EditorMockup } from "@/components/mockups/EditorMockup";
 import { MicroDemo } from "@/components/mockups/MicroDemos";
 import { StepMockup } from "@/components/mockups/StepMockup";
+import { AppScreen } from "@/components/mockups/app/AppScreen";
+import { EditorScreen } from "@/components/mockups/app/Editor";
+import { ProjectDetail } from "@/components/mockups/app/Pages";
+import { ShotSwap } from "@/components/mockups/app/ShotSwap";
+import { sceneStillTime } from "@/components/mockups/sample";
 import { HOME_FAQ } from "@/lib/faq";
 import { HOME_FITS, HOME_MISFITS } from "@/lib/scope";
 import "../../styles/pages/article.css";
@@ -211,6 +216,17 @@ export default function KitchenSinkPage() {
         <Both title="Editor mockup">
           <div style={{ maxWidth: 760, paddingTop: 20 }}>
             <EditorMockup />
+          </div>
+        </Both>
+
+        <Both title="App screens (ปรับช็อต · ส่งออกวิดีโอ)">
+          <div className="ks-grid">
+            <AppScreen width={1024} height={768}>
+              <ShotSwap behind={<EditorScreen windowWidth={1024} time={sceneStillTime(2)} />} />
+            </AppScreen>
+            <AppScreen width={1024} height={768}>
+              <ProjectDetail exportOpen />
+            </AppScreen>
           </div>
         </Both>
 

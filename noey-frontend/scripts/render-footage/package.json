@@ -1,0 +1,16 @@
+{
+  "name": "noey-render-footage",
+  "private": true,
+  "type": "module",
+  "description": "Offline renderer for the site's synthetic product footage (not part of the web build).",
+  "scripts": {
+    "dev": "vite --port 5311 --strictPort"
+  },
+  "devDependencies": {
+    "three": "^0.185.0",
+    "three-gpu-pathtracer": "0.0.26",
+    "three-mesh-bvh": "^0.9.15",
+    "xatlas-web": "^0.1.0",
+    "vite": "^7.1.0"
+  }
+}

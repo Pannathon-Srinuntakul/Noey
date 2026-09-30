@@ -465,21 +465,6 @@
   justify-self: start;
 }
 
-.quota-card__meters {
-  padding: 18px;
-  border-radius: var(--r-lg);
-  background: var(--well);
-  border: 1px solid var(--line);
-}
-
-.quota-card__meters .lvl {
-  background: var(--bg);
-}
-
-.quota-card__second {
-  margin-top: 18px;
-}
-
 .rule-list {
   display: grid;
   gap: 2px;

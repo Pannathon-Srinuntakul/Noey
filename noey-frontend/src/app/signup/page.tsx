@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { ComputerOnly } from "@/components/ComputerOnly";
 import { AuthStage } from "@/components/auth/AuthStage";
 import { JsonLd } from "@/components/JsonLd";
 import { IconCheck } from "@/components/ds/icons";
@@ -32,6 +33,7 @@ export default async function SignupPage() {
       <div className="wrap auth__grid">
         <div className="auth__main">
           <div className="auth__form">
+            <ComputerOnly className="computer-only--top" />
             <SignupForm googleEnabled={googleEnabled} />
           </div>
           <section className="auth-free" aria-labelledby="signup-free-title">
@@ -47,7 +49,7 @@ export default async function SignupPage() {
               ))}
               <li>
                 <IconCheck size={16} className="auth-free__tick" />
-                <span>{keepThaiProse("ใช้บนคอมพิวเตอร์ผ่าน Chrome หรือ Edge เวอร์ชันใหม่ ไม่ต้องติดตั้งโปรแกรม")}</span>
+                <span>{keepThaiProse("ใช้ได้เฉพาะบนคอมพิวเตอร์ผ่าน Chrome หรือ Edge เวอร์ชันใหม่ ไม่ต้องติดตั้งโปรแกรม")}</span>
               </li>
               <li>
                 <IconCheck size={16} className="auth-free__tick" />

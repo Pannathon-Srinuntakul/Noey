@@ -16,7 +16,11 @@ import { useEffect } from "react";
  * Attributes it understands:
  *   data-reveal            reveal once in view (CSS decides how: rise, words, draw…)
  *   data-play              loops inside run only while on screen
- *   data-scene[="n"]       pinned scene: gets --p (0–1) and data-beat (0…n-1)
+ *   data-scene[="n"]       pinned scene: gets --p (0–1) and data-beat (0…n-1);
+ *                          the beat it just left keeps data-leaving while it fades
+ *   data-scene-auto        where nothing is pinned, its beats play on a timer
+ *                          (data-scene-durations: ms per beat; data-scene-hold,
+ *                          set by the scene's own script, keeps the current beat)
  *   data-scene-track       inside a scene: gets --shift (px) for a sideways track
  *   data-countup           a number that counts up when revealed
  *   data-magnetic          a control that leans toward a fine pointer
@@ -25,6 +29,30 @@ import { useEffect } from "react";
 /** Pinned scenes run only where the CSS pins them (see components.css). */
 export const PIN_MEDIA = "(min-width: 1024px) and (min-height: 600px)";
 const STILL = "(prefers-reduced-motion: reduce)";
+/** How long a beat fades out (hero.css .edm__beat transition). */
+const BEAT_FADE_MS = 450;
+
+const leaving = new WeakMap<HTMLElement, number>();
+
+/**
+ * Moves a scene to `beat`. The beat it leaves keeps data-leaving for as long
+ * as it fades, so its choreography can hold the frame it had reached instead
+ * of snapping to its settled state mid-fade (a flash of another screen).
+ */
+function setBeat(scene: HTMLElement, beat: number) {
+  const previous = scene.getAttribute("data-beat");
+  const next = String(beat);
+  if (previous === next) return;
+  if (previous !== null) {
+    scene.setAttribute("data-leaving", previous);
+    window.clearTimeout(leaving.get(scene));
+    leaving.set(
+      scene,
+      window.setTimeout(() => scene.removeAttribute("data-leaving"), BEAT_FADE_MS),
+    );
+  }
+  scene.setAttribute("data-beat", next);
+}
 
 function countUp(element: HTMLElement) {
   const target = element.getAttribute("data-countup") ?? "";
@@ -122,7 +150,7 @@ export function MotionRuntime() {
             const progress = Math.min(1, Math.max(0, -rect.top / length));
             scene.style.setProperty("--p", progress.toFixed(4));
             const beats = Number(scene.getAttribute("data-scene")) || 0;
-            if (beats > 0) scene.setAttribute("data-beat", String(Math.min(beats - 1, Math.floor(progress * beats))));
+            if (beats > 0) setBeat(scene, Math.min(beats - 1, Math.floor(progress * beats)));
             // A track read past a fixed playhead: mark what is under it.
             if (scene.hasAttribute("data-scene-items")) {
               for (const item of scene.querySelectorAll<HTMLElement>("[data-scene-item]")) {
@@ -159,12 +187,13 @@ export function MotionRuntime() {
         });
 
         // Where nothing is pinned (phones, short windows), a scene marked
-        // data-scene-auto plays its beats on a timer while it is on screen.
+        // data-scene-auto plays its beats on a timer while it is on screen:
+        // each beat for its entry in data-scene-durations (ms), else 2.6 s.
         const autos = scenes.filter((scene) => scene.hasAttribute("data-scene-auto"));
         if (autos.length) {
           const timers = new Map<HTMLElement, number>();
           const stop = (scene: HTMLElement) => {
-            window.clearInterval(timers.get(scene));
+            window.clearTimeout(timers.get(scene));
             timers.delete(scene);
           };
           const auto = new IntersectionObserver(
@@ -178,15 +207,17 @@ export function MotionRuntime() {
                 }
                 if (timers.has(scene)) continue;
                 const beats = Number(scene.getAttribute("data-scene")) || 1;
-                let tick = 0;
-                scene.setAttribute("data-beat", "0");
-                timers.set(
-                  scene,
-                  window.setInterval(() => {
-                    tick = (tick + 1) % (beats + 1);
-                    scene.setAttribute("data-beat", String(Math.min(beats - 1, tick)));
-                  }, 2600),
-                );
+                const durations = (scene.getAttribute("data-scene-durations") ?? "").split(",").map(Number);
+                // data-scene-hold (set while a visitor is using the beat, e.g. the
+                // hero editor's timeline) keeps the beat where it is.
+                const show = (beat: number) => {
+                  setBeat(scene, beat);
+                  timers.set(
+                    scene,
+                    window.setTimeout(() => show(scene.hasAttribute("data-scene-hold") ? beat : (beat + 1) % beats), durations[beat] || 2600),
+                  );
+                };
+                show(0);
               }
             },
             { threshold: 0.4 },
@@ -195,7 +226,7 @@ export function MotionRuntime() {
           autos.forEach((scene) => auto.observe(scene.querySelector<HTMLElement>("[data-scene-stage]") ?? scene));
           cleanups.push(() => {
             auto.disconnect();
-            timers.forEach((timer) => window.clearInterval(timer));
+            timers.forEach((timer) => window.clearTimeout(timer));
           });
         }
       }

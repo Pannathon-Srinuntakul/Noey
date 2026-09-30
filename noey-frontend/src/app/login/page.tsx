@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { AuthStage } from "@/components/auth/AuthStage";
+import { ComputerOnly } from "@/components/ComputerOnly";
 import { JsonLd } from "@/components/JsonLd";
 import { GoogleSignInForm, OrDivider } from "@/components/auth/GoogleSignInForm";
 import { LoginForm } from "@/components/forms/LoginForm";
@@ -27,6 +28,7 @@ export default async function LoginPage() {
             <p className="auth-page__switch">
               ยังไม่มีบัญชี <Link href="/signup">สมัครใช้งานฟรี</Link>
             </p>
+            <ComputerOnly />
             <GoogleSignInForm from="login" enabled={googleEnabled} />
             {googleEnabled ? <OrDivider /> : null}
             <LoginForm />

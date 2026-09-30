@@ -51,7 +51,7 @@ export default async function AccountAppPage({ searchParams }: { searchParams: P
               <h2>งานทั้งหมดอยู่ในเบราว์เซอร์</h2>
               <p>
                 {keepThaiProse(
-                  "โปรเจกต์ การสร้างงานใหม่ ไทม์ไลน์ และการอัดเสียงพากย์ อยู่ในห้องตัดต่อบนเว็บทั้งหมด ไม่ต้องติดตั้งโปรแกรม บัญชีเดียวกันนี้เข้าใช้ได้เลย",
+                  "โปรเจกต์ การสร้างงานใหม่ และไทม์ไลน์ อยู่ในห้องตัดต่อบนเว็บทั้งหมด ไม่ต้องติดตั้งโปรแกรม บัญชีเดียวกันนี้เข้าใช้ได้เลย",
                 )}
               </p>
               <a href={EDITOR_OPEN_PATH} className="btn btn-primary btn-lg acct-hero__open" data-magnetic="">

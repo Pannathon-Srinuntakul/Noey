@@ -1,24 +1,48 @@
-import type { CSSProperties } from "react";
-import { Waveform } from "../ds/Waveform";
-import { SAMPLE_FILES, SAMPLE_LINES, SAMPLE_PROJECT, SAMPLE_SUBTITLES, splitWords } from "./sample";
-import "../../styles/mockup.css";
+import { AppScreen } from "./app/AppScreen";
+import { DEMO_PICK, EditorScreen } from "./app/Editor";
+import { EditorLive } from "./app/EditorLive";
+import { MockLive } from "./app/MockLive";
+import { JobProgress, PROGRESS_STATES } from "./app/Pages";
+import { WizardFiles, WizardOutcome, WizardReview } from "./app/Wizard";
+import { Pointer } from "./app/Pointer";
+import { sceneStillTime } from "./sample";
+import "./app/hero.css";
 
 /**
- * The editor, drawn in HTML and CSS (no screenshots, no canvas): media bin,
- * 9:16 preview with Thai subtitles, transcript, and a three-track timeline.
+ * The app itself, in the order a new user meets it (web/src, the web build):
+ *   0 the wizard's file step — five clips dropped in;
+ *   1 the outcome step — ตัดฉากเด่น, 15 วิ — then the review and เริ่มตัดต่อ;
+ *   2 the job progress page, stage by stage;
+ *   3 the timeline editor with the cut playing, captions on the preview —
+ *     the pointer picks a scene, then the visitor can scrub and pick too.
  *
- * It tells the real pipeline in four beats, selected by `data-beat` on the
- * nearest `[data-scene]` ancestor (the pinned hero), or shown all at once
- * (`beat="all"`) where there is no scene:
- *   0 raw clips drop into the bin → 1 waveform + transcript come in word by
- *   word → 2 fluffed takes and silences are struck and cut on the diagonal →
- *   3 what is left flies onto the timeline and the preview plays with
- *   subtitles.
+ * Every screen is the real layout at a 1024×768 window (see app/), always
+ * whole: on a phone it scales down like every other picture of the app. In
+ * the hero the beat comes from `data-beat` on the nearest
+ * `[data-scene]` (MotionRuntime); the "ambient" variant (sign-up / log-in) is
+ * the editor alone, playing; "still" is the editor at rest.
  *
- * Everything inside is an illustration (labelled "ภาพจำลองการทำงาน"): the
- * whole figure has one accessible name and its innards are hidden from
- * assistive technology.
+ * An illustration: labelled "ภาพจำลอง…", one accessible name; the pictures
+ * are hidden from assistive technology, and only the editor's timeline
+ * controls (scrub, scenes, notes) are reachable, once its beat is showing.
  */
+
+export const HERO_WINDOW = { width: 1024, height: 768 };
+/** How long each beat plays where beats advance on a timer (phones, short windows) (ms). */
+export const HERO_BEAT_MS = [5200, 7600, 5600, 15600];
+
+function Screen({ name, children }: { name: string; children: React.ReactNode }) {
+  return (
+    <div className={`edm__screen edm__screen--${name}`}>
+      <AppScreen width={HERO_WINDOW.width} height={HERO_WINDOW.height}>
+        {children}
+      </AppScreen>
+    </div>
+  );
+}
+
+const T0 = sceneStillTime(2);
+
 export function EditorMockup({
   variant = "hero",
   label = "ภาพจำลองการทำงาน",
@@ -28,140 +52,61 @@ export function EditorMockup({
   label?: string;
   className?: string;
 }) {
-  let wordIndex = 0;
+  const editor = (beat?: number) => (
+    <EditorScreen
+      windowWidth={HERO_WINDOW.width}
+      time={T0}
+      interactive={variant === "hero"}
+      video={variant === "still" ? undefined : <EditorLive beat={beat} demoPick={beat === undefined ? undefined : DEMO_PICK} />}
+    />
+  );
   return (
     <figure
-      className={["ed", `ed--${variant}`, className].filter(Boolean).join(" ")}
-      aria-label={`${label}: คลิปดิบหลายไฟล์ถูกถอดเสียงเป็นข้อความ ระบบคัดช่วงที่พูดดี ตัดเทกที่พูดผิดและช่วงเงียบออก แล้วเรียงลงไทม์ไลน์พร้อมซับไทย`}
+      className={["edm", `edm--${variant}`, className].filter(Boolean).join(" ")}
+      aria-label={
+        variant === "hero"
+          ? `${label}: หน้าจอของ Noey Studio ตามลำดับที่ใช้จริง ลากคลิปเข้าหน้าสร้างวิดีโอใหม่ เลือกโหมดตัดฉากเด่นและความยาว 15 วินาที กดเริ่มตัดต่อ รอระบบนำเข้า วิเคราะห์ภาพ และตัดต่อ แล้วเปิดคลิปที่ตัดแล้วในหน้าแก้ไขวิดีโอ พรีวิวแนวตั้งพร้อมคำบรรยายไทย และฉากที่เรียงบนไทม์ไลน์`
+          : `${label}: หน้าแก้ไขวิดีโอของ Noey Studio พรีวิวแนวตั้งพร้อมคำบรรยายไทย และฉากที่ตัดแล้วเรียงบนไทม์ไลน์`
+      }
       data-play=""
     >
-      <div className="ed__frame" aria-hidden="true">
-        <div className="ed__bar">
-          <span className="ed__dots">
-            <i />
-            <i />
-            <i />
-          </span>
-          <span className="ed__project">{SAMPLE_PROJECT}</span>
-          <span className="ed__status">
-            <span className="ed__status-dot" />
-            <span className="ed__status-text ed__status-text--0">นำเข้า 4 ไฟล์</span>
-            <span className="ed__status-text ed__status-text--1">กำลังถอดเสียง</span>
-            <span className="ed__status-text ed__status-text--2">คัดช็อต</span>
-            <span className="ed__status-text ed__status-text--3">ร่างแรกพร้อม</span>
-          </span>
-          <span className="ed__bar-tc tc">00:00:18:12</span>
-        </div>
-
-        <div className="ed__body">
-          <div className="ed__panel ed__bin">
-            <span className="ed__label">คลิปดิบ</span>
-            <ul className="ed__files">
-              {SAMPLE_FILES.map((file, index) => (
-                <li key={file.name} className="ed__file" style={{ "--i": index } as CSSProperties}>
-                  <span className={`ed__thumb ed__thumb--${file.tone}`}>
-                    <span className="ed__thumb-len tc">{file.length}</span>
-                  </span>
-                  <span className="ed__file-name">{file.name}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-
-          <div className="ed__viewer">
-            <div className="ed__screen">
-              <div className="scene">
-                <span className="scene__light" />
-                <span className="scene__table" />
-                <span className="scene__bottle">
-                  <span className="scene__cap" />
-                  <span className="scene__label" />
-                </span>
-                <span className="scene__hand" />
-              </div>
-              <div className="ed__subs">
-                {SAMPLE_SUBTITLES.map((line, lineIndex) => (
-                  <p key={line} className="ed__sub" style={{ "--l": lineIndex } as CSSProperties}>
-                    {splitWords(line).map((part, partIndex) =>
-                      part.word ? (
-                        <span key={partIndex} className="ed__sub-w" style={{ "--w": partIndex } as CSSProperties}>
-                          {part.text}
-                        </span>
-                      ) : (
-                        part.text
-                      ),
-                    )}
-                  </p>
-                ))}
-              </div>
-              <span className="ed__safe" />
-              <span className="ed__res tc">1080 × 1920</span>
+      <div className="edm__stage">
+        {variant === "hero" ? (
+          <>
+            <div className="edm__beat edm__beat--0" aria-hidden="true">
+              <Screen name="files">
+                <WizardFiles animated />
+                <Pointer name="files" drag />
+              </Screen>
             </div>
-          </div>
-
-          <div className="ed__panel ed__script">
-            <span className="ed__label">ถอดเสียง</span>
-            <div className="ed__lines">
-              {SAMPLE_LINES.map((line, lineIndex) => (
-                <p key={line.at} className={`ed__line ed__line--${line.kind}`} style={{ "--l": lineIndex } as CSSProperties}>
-                  <span className="ed__line-at tc">{line.at}</span>
-                  <span className="ed__line-text">
-                    {splitWords(line.text).map((part, partIndex) =>
-                      part.text.trim() ? (
-                        <span key={partIndex} className="ed__w" style={{ "--w": wordIndex++ } as CSSProperties}>
-                          {part.text}
-                        </span>
-                      ) : (
-                        part.text
-                      ),
-                    )}
-                  </span>
-                  <span className="ed__line-cut" />
-                </p>
-              ))}
+            <div className="edm__beat edm__beat--1" aria-hidden="true">
+              <Screen name="outcome">
+                <WizardOutcome animated />
+                <Pointer name="outcome" />
+              </Screen>
+              <Screen name="review">
+                <WizardReview animated />
+                <Pointer name="review" />
+              </Screen>
             </div>
-          </div>
-        </div>
-
-        <div className="ed__tl">
-          <div className="ed__ruler">
-            {["00:00", "00:05", "00:10", "00:15", "00:20"].map((mark) => (
-              <span key={mark} className="tc">
-                {mark}
-              </span>
-            ))}
-          </div>
-          <div className="ed__track ed__track--v">
-            <span className="trk tc">V1</span>
-            <div className="ed__lane">
-              {[0, 1, 2, 3].map((index) => (
-                <span key={index} className={`ed__clip ed__clip--${index + 1}`} style={{ "--i": index } as CSSProperties} />
-              ))}
+            <div className="edm__beat edm__beat--2" aria-hidden="true">
+              <Screen name="progress">
+                <JobProgress states={PROGRESS_STATES.map((_, i) => i)} />
+              </Screen>
             </div>
-          </div>
-          <div className="ed__track ed__track--a">
-            <span className="trk tc">A1</span>
-            <div className="ed__lane">
-              {/* The struck take and the silence sit exactly at the joins between V1's clips. */}
-              <Waveform bars={84} seed={11} className="ed__wave" cut={[[22, 29], [40, 47]]} />
-              <span className="ed__slash ed__slash--1" />
-              <span className="ed__slash ed__slash--2" />
+            <div className="edm__beat edm__beat--3">
+              <Screen name="editor">
+                {editor(3)}
+                <Pointer name="editor" />
+              </Screen>
             </div>
-          </div>
-          <div className="ed__track ed__track--t">
-            <span className="trk tc">ซับ</span>
-            <div className="ed__lane">
-              {SAMPLE_SUBTITLES.map((line, index) => (
-                <span key={line} className="ed__cap" style={{ "--i": index } as CSSProperties}>
-                  {line}
-                </span>
-              ))}
-            </div>
-          </div>
-          <span className="ed__playhead" />
-        </div>
+          </>
+        ) : (
+          <Screen name="editor">{editor()}</Screen>
+        )}
+        <MockLive />
       </div>
-      <figcaption className="ed__tag mock-tag">{label}</figcaption>
+      <figcaption className="edm__tag mock-tag">{label}</figcaption>
     </figure>
   );
 }

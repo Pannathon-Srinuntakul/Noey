@@ -1,0 +1,512 @@
+/*
+ * The editor mock-up figure (EditorMockup.tsx): its frame, the four hero
+ * beats, and the choreography inside each — files dropping in, a card and a
+ * length being picked, the job's stages, the pointer. Every screen's settled
+ * state is the plain one; the motion only runs while its beat is showing, with
+ * motion allowed, and pauses off screen (MotionRuntime's data-paused).
+ *
+ * Timings are seconds into a beat and match the numbers in Wizard.tsx /
+ * Pages.tsx (ROW_AT, ROW_STEP, STATE_AT) and HERO_BEAT_MS.
+ */
+
+.edm {
+  container: edm / inline-size;
+  position: relative;
+  margin: 0;
+  width: 100%;
+  padding-top: 34px;
+}
+
+.edm__stage {
+  position: relative;
+  aspect-ratio: 4 / 3;
+  overflow: hidden;
+  border: 1px solid var(--line-2);
+  border-radius: 12px;
+  background: var(--bg);
+  box-shadow: var(--shadow-3), var(--rim);
+}
+
+.edm--ambient .edm__stage,
+.edm--still .edm__stage {
+  box-shadow: var(--shadow-2), var(--rim);
+}
+
+.edm__tag {
+  position: absolute;
+  top: 0;
+  right: 4px;
+  z-index: 3;
+}
+
+.edm__beat,
+.edm__screen {
+  position: absolute;
+  inset: 0;
+}
+
+.edm__screen .am-view {
+  width: 100%;
+  height: 100%;
+  aspect-ratio: auto;
+}
+
+
+/* ─── Which beat shows ────────────────────────────────────────────────────
+   Settled (no scene, no script, reduced motion): the finished editor. */
+.edm__beat {
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity 0.45s cubic-bezier(0.2, 0, 0, 1),
+    scale 0.45s cubic-bezier(0.2, 0, 0, 1),
+    visibility 0s linear 0.45s;
+}
+
+.edm__beat--3,
+.edm--ambient .edm__beat,
+.edm--still .edm__beat {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* Within beat 1 the review follows the outcome step. */
+.edm__screen--outcome {
+  visibility: hidden;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ed-scene[data-beat] .edm__beat {
+    opacity: 0;
+    visibility: hidden;
+    scale: 0.985;
+  }
+
+  .ed-scene[data-beat="0"] .edm__beat--0,
+  .ed-scene[data-beat="1"] .edm__beat--1,
+  .ed-scene[data-beat="2"] .edm__beat--2,
+  .ed-scene[data-beat="3"] .edm__beat--3 {
+    opacity: 1;
+    visibility: visible;
+    scale: 1;
+    transition-delay: 0s;
+  }
+
+  .edm[data-paused] .edm__stage *,
+  .edm[data-paused] .edm__stage {
+    animation-play-state: paused !important;
+  }
+
+  /* The beat being left holds the frame it reached while it fades out
+     (MotionRuntime setBeat): no snap to its settled screen mid-fade. */
+  .ed-scene[data-leaving="0"] .edm__beat--0 *,
+  .ed-scene[data-leaving="1"] .edm__beat--1 *,
+  .ed-scene[data-leaving="2"] .edm__beat--2 *,
+  .ed-scene[data-leaving="3"] .edm__beat--3 * {
+    animation-play-state: paused !important;
+  }
+}
+
+/* ─── Building blocks ─────────────────────────────────────────────────────
+   am-visible / am-hidden hold `visibility` for exactly the animation's
+   duration (fill: none), so a state lasts from its delay to delay+duration
+   and the stylesheet's own value applies outside it. */
+@keyframes am-visible {
+  from,
+  to {
+    visibility: visible;
+  }
+}
+
+@keyframes am-hidden {
+  from,
+  to {
+    visibility: hidden;
+  }
+}
+
+@keyframes am-row-in {
+  from {
+    opacity: 0;
+    translate: 0 8px;
+  }
+}
+
+@keyframes am-grow {
+  from {
+    max-height: 0;
+    padding-block: 0;
+    border-bottom-width: 0;
+    opacity: 0;
+  }
+  to {
+    max-height: 60px;
+  }
+}
+
+.am-meta-probe,
+.am-empty,
+.am-decoding {
+  visibility: hidden;
+}
+
+.am-dragover {
+  opacity: 0;
+}
+
+/* ─── The pointer ─────────────────────────────────────────────────────── */
+.am-pointer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 400;
+  width: 26px;
+  height: 26px;
+  margin: -3px 0 0 -5px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.am-pointer__arrow {
+  display: block;
+  width: 26px;
+  height: 26px;
+  filter: drop-shadow(0 2px 3px rgb(0 0 0 / 0.5));
+  transform-origin: 5px 3px;
+}
+
+.am-pointer__press {
+  position: absolute;
+  top: -11px;
+  left: -8px;
+  width: 26px;
+  height: 26px;
+  border: 2px solid color-mix(in srgb, var(--ink) 70%, transparent);
+  border-radius: 50%;
+  opacity: 0;
+}
+
+.am-pointer__ghost {
+  position: absolute;
+  top: 16px;
+  left: 14px;
+  display: flex;
+  opacity: 0;
+}
+
+.am-pointer__file {
+  width: 45px;
+  height: 80px;
+  border: 1px solid var(--line-2);
+  border-radius: 4px;
+  box-shadow: var(--shadow-2);
+}
+
+.am-pointer__file:last-child {
+  margin-left: -30px;
+  translate: 0 -8px;
+  rotate: -4deg;
+}
+
+@keyframes am-press {
+  0%,
+  100% {
+    scale: 1;
+  }
+  50% {
+    scale: 0.84;
+  }
+}
+
+@keyframes am-ring {
+  0% {
+    opacity: 0.8;
+    scale: 0.3;
+  }
+  100% {
+    opacity: 0;
+    scale: 1.7;
+  }
+}
+
+/* ─── The choreography ───────────────────────────────────────────────── */
+@media (prefers-reduced-motion: no-preference) {
+  /* Beat 0 — files dropped into the wizard (5.2 s). */
+  :is(.ed-scene[data-beat="0"], .ed-scene[data-leaving="0"]) .edm__beat--0 {
+    .am-pointer[data-aimed] {
+      animation: am-pointer-files 5.2s linear both;
+    }
+
+    .am-pointer__ghost {
+      animation: am-ghost 1.6s linear both;
+    }
+
+    .am-pointer__arrow {
+      animation: am-press 0.3s ease-in-out 4.05s both;
+    }
+
+    .am-pointer__press {
+      animation: am-ring 0.5s ease-out 4.15s both;
+    }
+
+    .am-dragover {
+      animation: am-dragover 1.6s linear both;
+    }
+
+    .am-row {
+      animation: am-row-in 0.32s cubic-bezier(0.2, 0, 0, 1) calc(1.5s + var(--i) * 0.16s) backwards;
+    }
+
+    .am-decoding,
+    .am-meta-probe {
+      animation: am-visible 0.5s linear calc(1.5s + var(--i) * 0.16s) none;
+    }
+
+    .am-meta {
+      animation: am-hidden calc(2s + var(--i) * 0.16s) linear none;
+    }
+
+    .am-count__n:last-child {
+      visibility: hidden;
+    }
+
+    .am-count__n {
+      animation: am-visible calc(var(--out) - var(--in)) linear var(--in) none;
+    }
+
+    .am-count__n:last-child {
+      animation-fill-mode: forwards;
+    }
+
+    .am-estimate {
+      animation: am-grow 0.3s cubic-bezier(0.2, 0, 0, 1) 1.9s backwards;
+      overflow: hidden;
+    }
+
+    .am-empty {
+      animation: am-visible 1.5s linear none;
+    }
+
+    .am-filled {
+      animation: am-hidden 1.5s linear none;
+    }
+
+    [data-am="next"] > .am-swap__a {
+      animation: am-visible 1.5s linear none;
+    }
+
+    [data-am="next"] > .am-swap__b {
+      animation: am-hidden 1.5s linear none;
+    }
+  }
+
+  /* Beat 1 — the outcome step, then the review (7.6 s). */
+  :is(.ed-scene[data-beat="1"], .ed-scene[data-leaving="1"]) .edm__beat--1 {
+    .edm__screen--outcome {
+      animation: am-visible 3.55s linear none;
+    }
+
+    .edm__screen--review {
+      animation: am-hidden 3.5s linear none;
+    }
+
+    [data-am="mode"] > .am-swap__a {
+      animation: am-visible 1.15s linear none;
+    }
+
+    [data-am="mode"] > .am-swap__b {
+      animation: am-hidden 1.15s linear none;
+    }
+
+    /* A state that turns visible inside a region still hidden would show
+       through it (visibility is not inherited over an explicit value): the
+       length's first state waits for the highlight rows (1.15 s), the start
+       button's for the review screen (3.5 s). */
+    [data-am="length"] > .am-swap__a {
+      animation: am-visible 1.1s linear 1.15s none;
+    }
+
+    [data-am="length"] > .am-swap__b {
+      animation: am-hidden 2.25s linear none;
+    }
+
+    [data-am="start"] > .am-swap__a {
+      animation: am-visible 1.35s linear 3.5s none;
+    }
+
+    [data-am="start"] > .am-swap__b {
+      animation: am-hidden 4.85s linear none;
+    }
+
+    .am-pointer--outcome[data-aimed] {
+      animation: am-pointer-outcome 3.55s linear both;
+    }
+
+    .am-pointer--outcome .am-pointer__arrow {
+      animation:
+        am-press 0.3s ease-in-out 0.95s,
+        am-press 0.3s ease-in-out 2.05s,
+        am-press 0.3s ease-in-out 3.1s;
+    }
+
+    .am-pointer--outcome .am-pointer__press {
+      animation:
+        am-ring 0.5s ease-out 1.05s,
+        am-ring 0.5s ease-out 2.15s,
+        am-ring 0.5s ease-out 3.2s;
+    }
+
+    .am-pointer--review[data-aimed] {
+      animation: am-pointer-review 7.6s linear both;
+    }
+
+    .am-pointer--review .am-pointer__arrow {
+      animation: am-press 0.3s ease-in-out 4.7s both;
+    }
+
+    .am-pointer--review .am-pointer__press {
+      animation: am-ring 0.5s ease-out 4.8s both;
+    }
+  }
+
+  /* Beat 2 — the job's stages (5.6 s). */
+  :is(.ed-scene[data-beat="2"], .ed-scene[data-leaving="2"]) .edm__beat--2 {
+    .am-states > :last-child {
+      visibility: hidden;
+    }
+
+    .am-states > * {
+      animation: am-visible calc(var(--out) - var(--in)) linear var(--in) none;
+    }
+
+    .am-states > :last-child {
+      animation-fill-mode: forwards;
+    }
+  }
+
+  /* Beat 3 — the editor: the pointer clicks scene 5 (EditorLive selects it
+     at 0.45 s and the cut plays on from there), then moves off the lanes. */
+  :is(.ed-scene[data-beat="3"], .ed-scene[data-leaving="3"]) .edm__beat--3 {
+    .am-pointer--editor[data-aimed] {
+      animation: am-pointer-editor 2.2s linear both;
+    }
+
+    .am-pointer--editor .am-pointer__arrow {
+      animation: am-press 0.3s ease-in-out 0.35s both;
+    }
+
+    .am-pointer--editor .am-pointer__press {
+      animation: am-ring 0.5s ease-out 0.45s both;
+    }
+  }
+}
+
+@keyframes am-pointer-files {
+  0% {
+    opacity: 0;
+    translate: 120px 700px;
+  }
+  6% {
+    opacity: 1;
+  }
+  18% {
+    translate: var(--to-drop);
+  }
+  30% {
+    translate: var(--to-drop);
+  }
+  58% {
+    translate: 820px 560px;
+  }
+  76%,
+  100% {
+    opacity: 1;
+    translate: var(--to-next);
+  }
+}
+
+@keyframes am-ghost {
+  0%,
+  82% {
+    opacity: 0.95;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes am-dragover {
+  0%,
+  46% {
+    opacity: 0;
+  }
+  52%,
+  86% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes am-pointer-outcome {
+  0% {
+    opacity: 0;
+    translate: 520px 700px;
+  }
+  8% {
+    opacity: 1;
+  }
+  26%,
+  32% {
+    translate: var(--to-mode);
+  }
+  56%,
+  62% {
+    translate: var(--to-length);
+  }
+  86%,
+  100% {
+    opacity: 1;
+    translate: var(--to-next);
+  }
+}
+
+@keyframes am-pointer-review {
+  0%,
+  46% {
+    opacity: 0;
+    translate: 960px 735px;
+  }
+  47% {
+    opacity: 1;
+    translate: 960px 735px;
+  }
+  60%,
+  100% {
+    opacity: 1;
+    translate: var(--to-start);
+  }
+}
+
+@keyframes am-pointer-editor {
+  0% {
+    opacity: 0;
+    translate: 420px 520px;
+  }
+  12% {
+    opacity: 1;
+  }
+  18%,
+  30% {
+    translate: var(--to-pick);
+  }
+  70% {
+    opacity: 1;
+    translate: 700px 470px;
+  }
+  100% {
+    opacity: 0;
+    translate: 730px 470px;
+  }
+}

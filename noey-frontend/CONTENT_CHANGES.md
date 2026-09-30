@@ -151,6 +151,74 @@ second stays under the button once it is ticked. Same words.
 Why: the buttons are locked by the box, so the reason belongs at the box; it
 was about 480px away, below the fold on a phone.
 
+## 11. /pricing: the quota illustration is the editor's own quota card
+
+The example meters under "โควตาคิดยังไง" were a drawing with English labels.
+The owner asked for every picture of the app to be the app (MOCKUP_FIX_PROMPT.md),
+so the illustration is now the settings page's quota card
+(`web/src/components/settings/UsageCard.tsx`) with the same sample
+percentages. Its window names are the app's.
+
+| Old | New | Why |
+| --- | --- | --- |
+| "5-hour limit" | "โควตารอบ 5 ชั่วโมง" | the app's label for the 5-hour window (`LIMIT_LABELS` in `web/src/lib/usageLimits.ts`) |
+| "Weekly limit" | "โควตารายสัปดาห์" | the app's label for the weekly window |
+
+"ใช้ไป 38%" and "ใช้ไป 21%" stay. The card also shows what the real one shows
+around them: "แผน Pro", "ทำพร้อมกันได้ 2 งาน", "เปลี่ยนแผน", each window's
+reset line, "ที่เก็บไฟล์", "ลบโปรเจกต์เก่าเพื่อคืนพื้นที่ได้" and
+"แก้ไทม์ไลน์ สลับช็อต และเรนเดอร์ซ้ำ ไม่กินโควตา". It is still labelled
+"ตัวอย่างการแสดงผล", and the drawing is hidden from assistive technology like
+every other illustration. The plan comparison table keeps its own labels.
+
+## 12. Where it runs: a computer only, and no desktop app
+
+The owner confirmed on 2026-10-01 what customers can use today: the web
+editor, on a computer. It does not run on phones, and customers are not given
+the desktop app. The copy said phones were "not recommended" and mentioned
+"the app on your computer"; both now say what is true.
+
+| Old | New | Why |
+| --- | --- | --- |
+| "ไม่ต้อง เปิดผ่าน Chrome หรือ Edge เวอร์ชันใหม่บนคอมพิวเตอร์ได้เลย ตอนนี้ยังแนะนำให้ใช้บนคอม เพราะการเรนเดอร์ใช้กำลังเครื่องพอสมควร" | "… ตอนนี้ใช้ได้เฉพาะบนคอม เพราะการเรนเดอร์ใช้กำลังเครื่องพอสมควร" | FAQ: computer only |
+| "ทำไมยังไม่แนะนำให้ใช้บนมือถือ" | "ทำไมยังใช้บนมือถือไม่ได้" | FAQ question |
+| "เพราะการเรนเดอร์วิดีโอทำงานบนเครื่องของผู้ใช้ผ่านเบราว์เซอร์ ซึ่งกินกำลังเครื่องพอสมควร บนคอมพิวเตอร์ที่รัน Chrome หรือ Edge เวอร์ชันใหม่จึงได้ประสบการณ์ที่นิ่งกว่า" | "… ตอนนี้จึงใช้ได้เฉพาะบนคอมพิวเตอร์ที่รัน Chrome หรือ Edge เวอร์ชันใหม่" | FAQ answer |
+| "ระบบใช้งานบนคอมพิวเตอร์ผ่าน Chrome หรือ Edge เวอร์ชันใหม่ ไม่ต้องติดตั้งโปรแกรม แต่ยังไม่แนะนำให้ใช้บนมือถือ เพราะการเรนเดอร์ใช้กำลังเครื่องพอสมควร ไฟล์ที่รับคือ MP4 และ MOV จากมือถือและกล้องทั่วไป" | "… แต่ยังใช้บนมือถือไม่ได้ …" | guide |
+| "ยังไม่แนะนำ ระบบออกแบบให้ใช้บนคอมพิวเตอร์ผ่าน Chrome หรือ Edge เวอร์ชันใหม่ เพราะการเรนเดอร์ใช้กำลังเครื่องพอสมควร" | "ยังไม่ได้ ตอนนี้ใช้ได้เฉพาะบนคอมพิวเตอร์ผ่าน Chrome หรือ Edge เวอร์ชันใหม่ …" | guide FAQ "ใช้บนมือถือได้ไหม" |
+| "- ใช้บนคอมพิวเตอร์ผ่าน Chrome หรือ Edge เวอร์ชันใหม่ ยังไม่แนะนำให้ใช้บนมือถือ" | "- ใช้ได้เฉพาะบนคอมพิวเตอร์ผ่าน Chrome หรือ Edge เวอร์ชันใหม่ ยังใช้บนมือถือไม่ได้" | llms.txt limits |
+| "ไฟล์ที่อยู่ในเครื่องของคุณเอง เช่น โปรเจกต์ในเบราว์เซอร์ของห้องตัดต่อหรือในแอปบนคอมพิวเตอร์ ยังอยู่ในเครื่องนั้น ลบเองได้ตามต้องการ" | "… เช่น โปรเจกต์ในเบราว์เซอร์ของห้องตัดต่อ ยังอยู่ในเครื่องนั้น …" | /account-deleted: no desktop app |
+| "ไฟล์ที่อยู่ในเครื่องของคุณเอง (ในเบราว์เซอร์ของห้องตัดต่อ หรือในแอปบนคอมพิวเตอร์) ระบบลบให้ไม่ได้ ลบเองได้จากเครื่องนั้น" | "ไฟล์ที่อยู่ในเครื่องของคุณเอง (ในเบราว์เซอร์ของห้องตัดต่อ) ระบบลบให้ไม่ได้ ลบเองได้จากเครื่องนั้น" | delete-account panel |
+| "สมัครแล้วได้เครดิตทดลองฟรี · ไม่ต้องผูกบัตร · ใช้บนคอมผ่าน Chrome หรือ Edge" | "… · ใช้ได้เฉพาะบนคอมผ่าน Chrome หรือ Edge" | home hero fine print |
+| "ใช้บนคอมพิวเตอร์ผ่าน Chrome หรือ Edge เวอร์ชันใหม่ ไม่ต้องติดตั้งโปรแกรม" | "ใช้ได้เฉพาะบนคอมพิวเตอร์ผ่าน Chrome หรือ Edge เวอร์ชันใหม่ ไม่ต้องติดตั้งโปรแกรม" | /signup, what the free plan includes |
+
+The owner also asked that visitors be told plainly. On a phone or a touch
+tablet, a note says so where a visitor would start — under the home page's
+"เริ่มใช้ฟรี", above the sign-up and log-in forms, and above the plans on
+/pricing (`components/ComputerOnly.tsx`; hidden on computers, where the copy
+around it already says it): "ห้องตัดต่อใช้ได้เฉพาะบนคอมพิวเตอร์ ผ่าน Chrome
+หรือ Edge ยังใช้บนมือถือหรือแท็บเล็ตไม่ได้".
+
+"MP4 และ MOV จากมือถือและกล้องทั่วไป" (files shot on a phone) and
+"รับวิดีโอจากมือถือ" (sending clips from a phone to the editor on the computer)
+stay: both are true on the web build.
+
+## 13. Voiceover: the web editor hands over a script, it does not record
+
+The editor customers use (the web build) does not record: its in-app recorder
+is hidden on the web (`canRecordVoiceover = !isBrowser` in
+`web/src/lib/platformFeatures.ts`, since 2026-09-09). A ตัดฉากเด่น run with
+an AI script gives a picture-only cut plus the script, which the project page
+offers to copy ("คัดลอก") for dubbing elsewhere. The owner approved these
+rewordings on 2026-10-01.
+
+| Old | New | Where |
+| --- | --- | --- |
+| "ระบบเขียนสคริปต์พากย์ภาษาไทยให้ตามภาพที่มี แบ่งเป็นประโยคสั้น ๆ ให้อ่านทีละบรรทัด อัดเสียงในเบราว์เซอร์ อัดใหม่เฉพาะประโยคที่ไม่พอใจได้ แล้วระบบวางเสียงให้ตรงช็อต" | "ระบบเขียนสคริปต์พากย์ภาษาไทยให้ตามภาพที่ตัดไว้ แบ่งเป็นประโยคสั้น ๆ ตามช็อต ได้คลิปภาพพร้อมสคริปต์ กดคัดลอกไปอัดเสียงเองได้ทันที" | home, feature "พากย์เสียง พร้อมสคริปต์จาก AI" |
+| "ความสามารถหลักมีสามอย่าง คือตัดคลิปอัตโนมัติจากสิ่งที่พูดจริง เขียนสคริปต์พากย์ภาษาไทยพร้อมให้อัดเสียงในเบราว์เซอร์ และใส่ซับไทยตามเสียงพูด ทั้งสามอย่างทำงานในเบราว์เซอร์โดยไม่ต้องติดตั้งโปรแกรม" | "… เขียนสคริปต์พากย์ภาษาไทยให้เอาไปอัดเสียงได้ทันที …" | home, summary paragraph |
+| "): ระบบเขียนสคริปต์พากย์ภาษาไทยตามภาพ อัดเสียงในเบราว์เซอร์ แล้ววางเสียงให้ตรงช็อต" | "): ระบบเขียนสคริปต์พากย์ภาษาไทยตามภาพที่ตัดไว้ ได้คลิปภาพพร้อมสคริปต์ให้คัดลอกไปอัดเสียงเอง" | llms.txt feature list (the text after the feature's link) |
+| "ถ้าเลือกพากย์ใหม่ ระบบเขียนสคริปต์ภาษาไทยให้ตามภาพที่มี แบ่งเป็นประโยคสั้น ๆ ให้อ่านทีละบรรทัด คุณอัดเสียงในเบราว์เซอร์ อัดใหม่เฉพาะประโยคที่ไม่พอใจได้ แล้วระบบวางเสียงให้ตรงกับช็อต สคริปต์แก้ข้อความได้ก่อนอัดเสมอ ถ้าคำไหนไม่ใช่คำที่คุณใช้จริงก็พิมพ์ทับได้" | "ถ้าเลือกพากย์ใหม่ ระบบเขียนสคริปต์ภาษาไทยให้ตามภาพที่ตัดไว้ แบ่งเป็นประโยคสั้น ๆ ตามช็อต ได้คลิปภาพพร้อมสคริปต์ กดคัดลอกไปอัดเสียงเองได้ทันที สคริปต์แก้ข้อความได้ก่อนอัดเสมอ" | guide |
+| "โปรเจกต์ การสร้างงานใหม่ ไทม์ไลน์ และการอัดเสียงพากย์ อยู่ในห้องตัดต่อบนเว็บทั้งหมด ไม่ต้องติดตั้งโปรแกรม บัญชีเดียวกันนี้เข้าใช้ได้เลย" | "โปรเจกต์ การสร้างงานใหม่ และไทม์ไลน์ อยู่ในห้องตัดต่อบนเว็บทั้งหมด …" | /account |
+
 ## Text added (not replacing anything)
 
 Only labels, no claims:
@@ -165,9 +233,20 @@ Only labels, no claims:
 - Editor furniture drawn as decoration and hidden from assistive technology:
   track labels (V1, A1, R1…, L1…, Q01…, CH1…), timecodes, file names in the
   guide bin ("ai-cut-tiktok.mov" …), "BIN", "MSG", "END".
-- The sample transcript and subtitles inside the editor illustration
-  ("สวัสดีค่ะ วันนี้มารีวิวเซรั่มขวดนี้" …) — an example project, inside the
-  figure labelled "ภาพจำลองการทำงาน".
+- The editor illustrations (hero, sign-in stage, the three steps, the
+  feature pictures and strips) are the app's own screens: every label in them
+  is copied from the editor's code (`web/src`), and they show an example
+  project — a serum review cut from five clips, with the script lines
+  "ทุกเช้าต้องมีเซรั่มขวดนี้", "เนื้อบางเบา ไม่เหนอะหนะ", "หยดเดียวก็ทั่วหน้า",
+  "ขวดเล็กมีหลอดหยด พกใส่กระเป๋าได้", "กดตะกร้าด้านล่างได้เลย" and the
+  captions the editor derives from them. All inside figures labelled
+  "ภาพจำลอง…"; the pictures are hidden from assistive technology.
+- The hero's editor and the third step's timeline can be used (scrub, pick a
+  scene): the playhead slider is named "หัวเล่น" with the time as its value
+  ("0:04.2 จาก 0:14"), each scene button "ฉาก N · ยาว X.XX วิ", and the notes
+  on hover or focus reuse the home page's own words — "แก้ทับได้ทุกช็อต",
+  "พากย์เสียง พร้อมสคริปต์จาก AI", "ใส่เพลงประกอบ", "ซับไทยอัตโนมัติ",
+  "AI ตัดคลิปให้อัตโนมัติ".
 - /pricing: the clips slider label "ใช้ประมาณกี่คลิปต่อเดือน"; its readout is
   built from `plans.ts` only (`clipsHeadline`, `FREE_CLIPS_CAPTION`) with
   `CLIPS_FOOTNOTE` under it.

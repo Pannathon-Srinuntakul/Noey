@@ -179,6 +179,13 @@ export const IconLevels = (props: IconProps) => (
   </Svg>
 );
 
+export const IconMonitor = (props: IconProps) => (
+  <Svg {...props}>
+    <rect x="3" y="4.5" width="18" height="12" rx="2" />
+    <path d="M9 20.5h6M12 16.5v4" />
+  </Svg>
+);
+
 export const IconCard = (props: IconProps) => (
   <Svg {...props}>
     <rect x="3" y="5.5" width="18" height="13" rx="2.2" />

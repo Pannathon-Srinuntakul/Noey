@@ -12,6 +12,9 @@
  *   - the "Sign in with Google" button (`.gsi-button` in
  *     styles/parts/google.css and the "G" in GoogleButton.tsx): its colours
  *     are Google's, required by the branding guidelines;
+ *   - the editor mock-ups (src/components/mockups/app/): pictures of the app,
+ *     drawn in the app's own dark theme, colours and fonts included
+ *     (MOCKUP_FIX_PROMPT.md: the editor's theme, not the site's);
  *   - keywords that are not colours: transparent, currentColor, inherit;
  *     and mask gradients, where only the alpha channel counts.
  *
@@ -91,12 +94,14 @@ const FONT_OK = /^(var\(--font-[\w-]+\)|"?Noto Sans Thai"?|system-ui|sans-serif|
 
 /** Files whose colours are someone else's brand, by requirement. */
 const BRAND_FILES = new Set(["src/components/auth/GoogleButton.tsx"]);
+/** The editor replica: its colours and fonts are the app's theme, by requirement. */
+const APP_REPLICA = "src/components/mockups/app/";
 
 for (const file of walk(SRC)) {
   // Blank out comments (keeping line numbers): colours named in prose are not colours used.
   const text = readFileSync(file, "utf8").replace(/\/\*[\s\S]*?\*\//g, (comment) => comment.replace(/[^\n]/g, " "));
   const rel = relative(ROOT, file);
-  if (BRAND_FILES.has(rel)) continue;
+  if (BRAND_FILES.has(rel) || rel.startsWith(APP_REPLICA)) continue;
   const google = new Set(googleRanges(file, text));
   const isCss = file.endsWith(".css");
   text.split("\n").forEach((line, index) => {

@@ -1,73 +1,42 @@
-import type { CSSProperties } from "react";
-import { IconArrowRight, IconMusic } from "../ds/icons";
-import { splitWords } from "./sample";
-import "../../styles/mockup.css";
+import { AppScreen, type Crop } from "./app/AppScreen";
+import { HEADER_COL_PX, LaneCrop, fitPxPerSec } from "./app/Editor";
+import { MockLive } from "./app/MockLive";
+import { ExportRow, JobProgressMessage } from "./app/Pages";
+import { SAMPLE_SCENES } from "./sample";
+import "./app/parts.css";
 
 /**
- * Tiny looping demos for the six feature cards: each shows its own feature
- * working (subtitles by word, the music switch, a trimmed clip, a swapped
- * take, a converted file, the 1080×1920 frame). Decorative; they only run
- * while on screen and never with reduced motion.
+ * The six small feature cards' pictures: each a strip cut from the part of the
+ * app that does the job — the caption lane, the music lane and its volume, a
+ * scene being trimmed, a scene swapped for its backup shot, clips being
+ * converted, the finished file ticked for export. The motion is in parts.css
+ * (only on screen, never with reduced motion). Decorative: the card's text
+ * says what it shows.
  */
 export type MicroKind = "subs" | "music" | "trim" | "swap" | "convert" | "frame";
 
+const WINDOW = 1024;
+const PX = fitPxPerSec(WINDOW);
+const scene3 = HEADER_COL_PX + SAMPLE_SCENES[2].start * PX;
+
+/** Window size and crop for each strip (window pixels; strips are about 6:1). */
+const STRIPS: Record<MicroKind, { width: number; height: number; crop: Crop }> = {
+  subs: { width: WINDOW, height: 40, crop: { x: 4, y: -8, w: 330, h: 56 } },
+  music: { width: WINDOW, height: 40, crop: { x: 4, y: -12, w: 380, h: 64 } },
+  trim: { width: WINDOW, height: 72, crop: { x: scene3 - 130, y: 0, w: 424, h: 72 } },
+  swap: { width: WINDOW, height: 48, crop: { x: scene3 - 90, y: 0, w: 284, h: 48 } },
+  convert: { width: 440, height: 100, crop: { x: 0, y: 44, w: 300, h: 50 } },
+  frame: { width: 572, height: 76, crop: { x: 0, y: 0, w: 448, h: 76 } },
+};
+
 export function MicroDemo({ kind }: { kind: MicroKind }) {
-  switch (kind) {
-    case "subs":
-      return (
-        <span className="micro micro--subs">
-          {splitWords("ซับขึ้นตามเสียงพูด")
-            .filter((part) => part.word)
-            .map((part, index) => (
-              <span key={index} style={{ "--i": index } as CSSProperties}>
-                {part.text}
-              </span>
-            ))}
-        </span>
-      );
-    case "music":
-      return (
-        <span className="micro">
-          <IconMusic size={15} />
-          <span className="micro__toggle" />
-          <span className="micro__eq">
-            {[0, 1, 2, 3, 4, 5].map((index) => (
-              <i key={index} style={{ "--i": index } as CSSProperties} />
-            ))}
-          </span>
-        </span>
-      );
-    case "trim":
-      return (
-        <span className="micro micro--trim">
-          <span className="micro__block" style={{ width: "30%" }} />
-          <span className="micro__block micro__block--b" />
-        </span>
-      );
-    case "swap":
-      return (
-        <span className="micro micro--swap">
-          <span className="micro__slot">
-            <span className="micro__take micro__take--1">TAKE 1</span>
-            <span className="micro__take micro__take--2">TAKE 2</span>
-          </span>
-        </span>
-      );
-    case "convert":
-      return (
-        <span className="micro micro--convert">
-          <span className="micro__chip">ฟอร์แมตแปลก</span>
-          <span className="micro__progress" />
-          <IconArrowRight size={14} />
-          <span className="micro__chip micro__chip--out">MP4</span>
-        </span>
-      );
-    case "frame":
-      return (
-        <span className="micro micro--frame">
-          <span className="micro__phone" />
-          <span className="micro__dims">1080 × 1920</span>
-        </span>
-      );
-  }
+  const { width, height, crop } = STRIPS[kind];
+  return (
+    <span className={`ammini ammini--${kind}`} aria-hidden="true" data-play="">
+      <AppScreen width={width} height={height} crop={crop}>
+        {kind === "convert" ? <JobProgressMessage animated /> : kind === "frame" ? <ExportRow animated /> : <LaneCrop kind={kind} px={PX} />}
+      </AppScreen>
+      <MockLive />
+    </span>
+  );
 }

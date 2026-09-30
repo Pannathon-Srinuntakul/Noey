@@ -9,6 +9,8 @@
 .lanes {
   display: grid;
   gap: 14px;
+  /* The clips slide in from the right: clipped here, they never widen the page. */
+  overflow-x: clip;
   border: 1px solid var(--line);
   border-radius: var(--r-lg);
   padding: 14px;

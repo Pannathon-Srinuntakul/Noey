@@ -35,6 +35,9 @@ coverage/
 # Next.js (noey-frontend/) — build output, generated types, deploy link, certs
 .next/
 noey-frontend/out/
+# The real editor's reference screenshots and harness for the site's mock-ups
+# (MOCKUP_FIX_PROMPT.md: kept locally, not committed).
+noey-frontend/.mockup-reference/
 admin/out/
 next-env.d.ts
 .vercel/

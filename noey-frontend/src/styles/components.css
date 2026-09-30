@@ -15,7 +15,8 @@
  *   styles/parts/status.css  StatusCard
  *   styles/parts/level.css   LevelMeter (/pricing, the quota tab)
  *   styles/parts/google.css  GoogleButton + GoogleSignInForm
- *   styles/mockup.css        the editor mock-ups
+ *   components/mockups/app/*.css  the editor mock-ups (app.css is generated
+ *                             from the editor's own Tailwind: scripts/app-mock-css.mjs)
  *   styles/pages/article.css TimelineToc (articles only)
  *
  * Motion contract: nothing here is hidden unless MotionRuntime has marked it
@@ -1289,5 +1290,38 @@
 
   .nf__links .btn {
     width: 100%;
+  }
+}
+
+/* The editor is computer-only (ComputerOnly.tsx): said where a visitor on a
+   phone or touch tablet would start. */
+.computer-only {
+  display: none;
+}
+
+@media (max-width: 767px), (pointer: coarse) {
+  .computer-only {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    margin: 14px 0 16px;
+    padding: 12px 14px;
+    border: 1px solid color-mix(in srgb, var(--gold) 45%, transparent);
+    border-radius: 10px;
+    background: var(--gold-softer);
+    color: var(--ink);
+    font-size: var(--fs-15);
+    line-height: 1.6;
+  }
+
+  .computer-only__icon {
+    flex: none;
+    margin-top: 3px;
+    color: var(--gold-ink);
+  }
+
+  /* Above a form or a list rather than under a button. */
+  .computer-only--top {
+    margin: 0 0 18px;
   }
 }
