@@ -73,10 +73,13 @@
   z-index: 60;
   padding-inline: var(--gutter);
   pointer-events: none;
-  view-transition-name: site-header;
 }
 
+/* The bar, not the full-width .hdr, carries the header's transition name: a
+   named element is a backdrop root, so on .hdr it would leave the bar's
+   backdrop blur nothing to blur (the page read through it, sharp). */
 .hdr__bar {
+  view-transition-name: site-header;
   pointer-events: auto;
   position: relative;
   width: min(100%, var(--page-max) + 24px);
@@ -93,12 +96,11 @@
     border-radius var(--dur-4) var(--ease-out);
 }
 
-/* Once content passes under it, the bar is all but opaque: large text behind
-   the labels still read through at 95%, and where backdrop blur is not drawn
-   (some renderers skip it) nothing softens it. */
+/* Once content passes under it, the frosted bar turns nearly opaque: the
+   blur softens what little shows through, and labels never sit on text. */
 html[data-scrolled] .hdr__bar {
   width: min(100%, 1080px);
-  background: color-mix(in srgb, var(--color-bg) 98%, transparent);
+  background: color-mix(in srgb, var(--color-bg) 92%, transparent);
 }
 
 .hdr__row {
@@ -837,6 +839,7 @@ html:has(.menu[open]) {
   left: 0;
   right: 0;
   z-index: 61;
+  view-transition-name: beta-strip;
   height: var(--beta-h);
   display: flex;
   align-items: center;
@@ -1253,16 +1256,21 @@ html[data-cursor="on"] :is(a, button, summary, [role="button"]) {
   animation: none;
 }
 
-::view-transition-group(site-header) {
+/* The header and the beta strip hold still above the cut, as they do on the
+   page: the old page's frame must not slide over them. */
+::view-transition-group(site-header),
+::view-transition-group(beta-strip) {
   animation: none;
   z-index: 100;
 }
 
-::view-transition-old(site-header) {
+::view-transition-old(site-header),
+::view-transition-old(beta-strip) {
   display: none;
 }
 
-::view-transition-new(site-header) {
+::view-transition-new(site-header),
+::view-transition-new(beta-strip) {
   animation: none;
 }
 
@@ -1276,7 +1284,11 @@ html[data-cursor="on"] :is(a, button, summary, [role="button"]) {
 
 /* The old page is cut along the logo's diagonal: a slanted edge sweeps
    left to right and takes the old frame with it, uncovering the new one. */
+/* The old frame is opaque (its snapshot has no background of its own), so
+   the new page shows only where the cut has passed, never through the old
+   page's lines of text. */
 ::view-transition-old(.splice-out) {
+  background: var(--color-bg);
   animation: splice-out 380ms var(--ease-cut) both;
   -webkit-mask-image: linear-gradient(104deg, transparent 0 41%, #000 41% 100%);
   mask-image: linear-gradient(104deg, transparent 0 41%, #000 41% 100%);
@@ -1369,19 +1381,10 @@ html[data-theme-switch]::view-transition-new(root) {
   mask-repeat: no-repeat;
 }
 
-html[data-theme-switch]::view-transition-old(site-header) {
-  display: block;
-  animation: none;
-}
-
-html[data-theme-switch]::view-transition-new(site-header) {
-  animation: theme-splice 560ms var(--ease-cut) both;
-  -webkit-mask-image: linear-gradient(104deg, #000 0 41%, transparent 41% 100%);
-  mask-image: linear-gradient(104deg, #000 0 41%, transparent 41% 100%);
-  -webkit-mask-size: 260% 100%;
-  mask-size: 260% 100%;
-  -webkit-mask-repeat: no-repeat;
-  mask-repeat: no-repeat;
+/* During a theme switch the header is part of the root frame, so the same
+   diagonal crosses the bar and the page in one line. */
+html[data-theme-switch] :is(.hdr__bar, .beta-banner) {
+  view-transition-name: none;
 }
 
 html[data-theme-switch] .splice-seam {

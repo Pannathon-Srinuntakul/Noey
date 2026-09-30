@@ -2,6 +2,7 @@
 
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { IconArrowLeft, IconArrowRight } from "../ds/icons";
+import { keepThai } from "../ds/ThaiText";
 
 /** Slider resolution. */
 const SCALE = 1000;
@@ -121,9 +122,9 @@ export function PlanRail({
             ))}
           </div>
           <p className="picker__note" id={noteId}>
-            {footnote}
+            {keepThai(footnote)}
           </p>
-          <p className="picker__note">{freeNote}</p>
+          <p className="picker__note">{keepThai(freeNote)}</p>
         </div>
         <div className="plan-rail__nav">
           <button type="button" className="btn btn-secondary btn-icon" onClick={() => step(-1)} aria-label="แพลนก่อนหน้า">

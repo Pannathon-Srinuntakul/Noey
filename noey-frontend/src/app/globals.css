@@ -1003,8 +1003,9 @@ textarea.input {
   white-space: nowrap;
 }
 
-p a:not(.btn),
-.agree__text a {
+/* Zero-specificity wrapper: a link styled with its own display (.btn,
+   .more-link, …) keeps it. */
+:where(p, .agree__text) a {
   display: inline-block;
 }
 

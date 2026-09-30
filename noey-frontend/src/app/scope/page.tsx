@@ -16,6 +16,7 @@ import { SCOPE_FITS, SCOPE_MISFITS, SCOPE_STEPS, SCOPE_SUMMARY, SCOPE_YOUR_WORK 
 import { markdownTwinPath, pageMetadata, withMarkdownTwin } from "@/lib/seo";
 import { PAGES } from "@/lib/site";
 import "../../styles/pages/scope.css";
+import { keepThai } from "@/components/ds/ThaiText";
 
 export const metadata: Metadata = withMarkdownTwin(pageMetadata("scope"), markdownTwinPath("scope"));
 
@@ -60,9 +61,7 @@ export default function ScopePage() {
         lead={
           // Answer-first: the whole scope in one quotable paragraph.
           <p>
-            Noey Studio ไม่ใช่โปรแกรมตัดต่อที่ทำแทนทั้งกระบวนการ และไม่ใช่ปุ่มเดียวจบ สิ่งที่ระบบทำคือขั้นตอนที่ซ้ำและกินเวลาที่สุดของคลิปสั้น —
-            ฟังฟุตเทจทั้งกอง หาว่าช่วงไหนพูดได้ดี ตัดช่วงที่ไม่เอาออก แล้วพิมพ์ซับตามที่พูด สามอย่างนี้ระบบทำให้เสร็จก่อนคุณจะเปิดไทม์ไลน์ครั้งแรก
-            ที่เหลือคือการเกลา ซึ่งยังเป็นงานของคุณ
+            {keepThai("Noey Studio ไม่ใช่โปรแกรมตัดต่อที่ทำแทนทั้งกระบวนการ และไม่ใช่ปุ่มเดียวจบ สิ่งที่ระบบทำคือขั้นตอนที่ซ้ำและกินเวลาที่สุดของคลิปสั้น — ฟังฟุตเทจทั้งกอง หาว่าช่วงไหนพูดได้ดี ตัดช่วงที่ไม่เอาออก แล้วพิมพ์ซับตามที่พูด สามอย่างนี้ระบบทำให้เสร็จก่อนคุณจะเปิดไทม์ไลน์ครั้งแรก ที่เหลือคือการเกลา ซึ่งยังเป็นงานของคุณ")}
           </p>
         }
         meta={
@@ -98,8 +97,7 @@ export default function ScopePage() {
                   <div className="handoff__title" data-scene-item="">
                     <SectionHeader id="scope-steps-title" track="AI" timecode="00:00:00:00" title="ระบบทำให้ถึงไหน" size="h-2" className="handoff__head">
                       <p>
-                        ระบบทำให้สามขั้น คือถอดเสียงฟุตเทจทุกไฟล์เป็นข้อความพร้อมเวลา คัดช่วงที่ใช้ได้แล้วเรียงเป็นร่างแรก และใส่ซับไทยตามที่พูด
-                        จบสามขั้นนี้คือสิ่งที่ส่งให้คุณ ไม่ใช่คลิปที่พร้อมลงทันทีทุกครั้ง
+                        {keepThai("ระบบทำให้สามขั้น คือถอดเสียงฟุตเทจทุกไฟล์เป็นข้อความพร้อมเวลา คัดช่วงที่ใช้ได้แล้วเรียงเป็นร่างแรก และใส่ซับไทยตามที่พูด จบสามขั้นนี้คือสิ่งที่ส่งให้คุณ ไม่ใช่คลิปที่พร้อมลงทันทีทุกครั้ง")}
                       </p>
                     </SectionHeader>
                   </div>
@@ -109,8 +107,8 @@ export default function ScopePage() {
                         <span className="handoff__n num" aria-hidden="true">
                           {String(index + 1).padStart(2, "0")}
                         </span>
-                        <h3>{step.title}</h3>
-                        <p>{step.body}</p>
+                        <h3>{keepThai(step.title)}</h3>
+                        <p>{keepThai(step.body)}</p>
                       </li>
                     ))}
                   </ol>
@@ -127,7 +125,7 @@ export default function ScopePage() {
                 <section className="handoff__part handoff__part--you" aria-labelledby="scope-yours-title">
                   <div className="handoff__title" data-scene-item="">
                     <SectionHeader id="scope-yours-title" track="คุณ" timecode="00:00:18:00" title="สิ่งที่คุณยังต้องทำเอง" size="h-2" className="handoff__head">
-                      <p>ไทม์ไลน์เปิดให้แก้ทุกอย่างเสมอ และงานเหล่านี้คือส่วนที่ AI ตัดสินใจแทนไม่ได้</p>
+                      <p>{keepThai("ไทม์ไลน์เปิดให้แก้ทุกอย่างเสมอ และงานเหล่านี้คือส่วนที่ AI ตัดสินใจแทนไม่ได้")}</p>
                     </SectionHeader>
                   </div>
                   <ul className="handoff__blocks">
@@ -136,8 +134,8 @@ export default function ScopePage() {
                         <span className="handoff__n num" aria-hidden="true">
                           {String(index + 4).padStart(2, "0")}
                         </span>
-                        <h3>{item.title}</h3>
-                        <p>{item.body}</p>
+                        <h3>{keepThai(item.title)}</h3>
+                        <p>{keepThai(item.body)}</p>
                       </li>
                     ))}
                   </ul>
@@ -157,8 +155,7 @@ export default function ScopePage() {
         <div className="wrap">
           <SectionHeader id="scope-fit-title" track="V1" timecode="00:00:36:00" title="เหมาะกับงานแบบไหน">
             <p>
-              เหมาะที่สุดกับคลิปสั้นที่โครงเรื่องไม่ซับซ้อนและเนื้อหาเดินด้วยคำพูด เช่น คลิปรีวิว คลิปพูดหน้ากล้อง และคลิปยาวที่อยากตัดเป็นคลิปสั้น
-              ยังไม่เหมาะกับงานที่ต้องแทรกภาพประกอบตามบท ตัดซ้อนหลายชั้น หรือใช้กราฟิกและโมชันเยอะ
+              {keepThai("เหมาะที่สุดกับคลิปสั้นที่โครงเรื่องไม่ซับซ้อนและเนื้อหาเดินด้วยคำพูด เช่น คลิปรีวิว คลิปพูดหน้ากล้อง และคลิปยาวที่อยากตัดเป็นคลิปสั้น ยังไม่เหมาะกับงานที่ต้องแทรกภาพประกอบตามบท ตัดซ้อนหลายชั้น หรือใช้กราฟิกและโมชันเยอะ")}
             </p>
           </SectionHeader>
           <FitLists fits={SCOPE_FITS} misfits={SCOPE_MISFITS} fitTitle="เหมาะ" misfitTitle="ยังไม่เหมาะ" headingLevel="h3" />
@@ -170,8 +167,7 @@ export default function ScopePage() {
         <div className="wrap scope-time__grid">
           <SectionHeader id="scope-time-title" track="A1" timecode="00:00:52:12" title="ประหยัดเวลาได้เท่าไหร่">
             <p>
-              ขึ้นกับฟุตเทจและความละเอียดที่ต้องการ งานที่เคยใช้เวลาไล่ฟุตเทจและพิมพ์ซับเป็นชั่วโมง มักเหลือเวลาเกลาในไทม์ไลน์เป็นสิบนาที
-              แต่ถ้าคลิปต้องแทรกภาพหรือคุมจังหวะละเอียด เวลาที่ประหยัดจะน้อยลงตามส่วน
+              {keepThai("ขึ้นกับฟุตเทจและความละเอียดที่ต้องการ งานที่เคยใช้เวลาไล่ฟุตเทจและพิมพ์ซับเป็นชั่วโมง มักเหลือเวลาเกลาในไทม์ไลน์เป็นสิบนาที แต่ถ้าคลิปต้องแทรกภาพหรือคุมจังหวะละเอียด เวลาที่ประหยัดจะน้อยลงตามส่วน")}
             </p>
           </SectionHeader>
           <div className="summary" data-reveal="rise">
@@ -181,7 +177,7 @@ export default function ScopePage() {
                 <li key={row.label} className={`summary__row summary__row--${index}`}>
                   <span className="summary__bar" aria-hidden="true" />
                   <span className="summary__label num">{row.label}</span>
-                  <span className="summary__text">{row.text}</span>
+                  <span className="summary__text">{keepThai(row.text)}</span>
                 </li>
               ))}
             </ul>
@@ -205,7 +201,7 @@ export default function ScopePage() {
             {GUIDE_LINKS.map((item, index) => (
               <li key={item.href}>
                 <ClipCard title={item.label} titleAs="h3" href={item.href} track={`G${index + 1}`} seed={index + 11}>
-                  <p>{item.note}</p>
+                  <p>{keepThai(item.note)}</p>
                 </ClipCard>
               </li>
             ))}
