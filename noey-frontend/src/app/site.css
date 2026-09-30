@@ -94,13 +94,6 @@
   color: var(--color-neutral-800);
 }
 
-.fine {
-  margin: 16px 0 0;
-  font-size: 13px;
-  color: var(--color-neutral-700);
-}
-
-
 .updated {
   margin: 14px 0 0;
   font-size: 13px;
@@ -145,89 +138,6 @@
   color: var(--color-neutral-800);
 }
 
-/* ── About page ───────────────────────────────────────────────────────────── */
-
-.about-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-  gap: 64px;
-  align-items: start;
-}
-
-.about-title {
-  font-size: clamp(27px, 4vw, 42px);
-  line-height: 1.4;
-  font-weight: 300;
-  margin-bottom: 24px;
-}
-
-.about-body {
-  font-size: 16px;
-  color: var(--color-neutral-800);
-  max-width: 38em;
-}
-
-.about-body p {
-  margin: 0 0 16px;
-}
-
-.about-body p:last-child {
-  margin: 0;
-}
-
-.contact-card {
-  padding: 32px;
-  scroll-margin-top: 96px;
-}
-
-.contact-card h2 {
-  font-size: 24px;
-  font-weight: 500;
-  line-height: 1.5;
-  margin: 6px 0 18px;
-}
-
-/* ── Login / signup ───────────────────────────────────────────────────────── */
-
-.auth-page {
-  padding-block: clamp(56px, 8vw, 96px) 120px;
-}
-
-.auth-page__form {
-  max-width: 420px;
-  margin-inline: auto;
-}
-
-.auth-page h1 {
-  font-size: clamp(28px, 3.8vw, 38px);
-  line-height: 1.4;
-  font-weight: 300;
-  margin-bottom: 10px;
-}
-
-.auth-page__switch {
-  margin: 0 0 28px;
-  font-size: 15px;
-  color: var(--color-neutral-800);
-}
-
-.auth-page .tag + h1 {
-  margin-top: 16px;
-}
-
-.forgot {
-  text-align: right;
-  margin-top: 8px;
-  font-size: 13px;
-}
-
-.legal-line {
-  margin: 4px 0 0;
-  font-size: 12px;
-  color: var(--color-neutral-700);
-}
-
-/* Terms consent on sign-up: the submit stays disabled until it is ticked. */
 /* ── Account area ─────────────────────────────────────────────────────────── */
 
 .account {

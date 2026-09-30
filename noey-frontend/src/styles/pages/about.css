@@ -1,0 +1,370 @@
+/*
+ * /about — the story as chapters on a vertical timeline (a timecode per
+ * chapter, a rail that fills as you read), the contact form held beside it,
+ * and the five principles drawn as locked tracks.
+ */
+
+.about-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(340px, 420px);
+  gap: clamp(40px, 6vw, 96px);
+  align-items: start;
+  padding-bottom: calc(var(--section-y) * 0.4);
+}
+
+@media (max-width: 1023px) {
+  .about-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ── Chapters ───────────────────────────────────────────────────────────── */
+
+.chapters {
+  position: relative;
+  view-timeline-name: --story;
+}
+
+/* The rail, and the part of it you have read. */
+.chapters::before,
+.chapters::after {
+  content: "";
+  position: absolute;
+  left: 7px;
+  top: 14px;
+  bottom: 14px;
+  width: 1px;
+  background: var(--line-2);
+}
+
+.chapters::after {
+  left: 6px;
+  width: 3px;
+  border-radius: 3px;
+  background: linear-gradient(180deg, var(--gold), var(--gold-deep));
+  transform-origin: top;
+  scale: 1 0;
+}
+
+@supports (animation-timeline: --story) {
+  @media (prefers-reduced-motion: no-preference) {
+    .chapters::after {
+      animation: story-read linear both;
+      animation-timeline: --story;
+      animation-range: entry 40% exit 60%;
+    }
+  }
+}
+
+@keyframes story-read {
+  to {
+    scale: 1 1;
+  }
+}
+
+.chapter {
+  display: grid;
+  grid-template-columns: 148px minmax(0, 1fr);
+  gap: 20px;
+  padding-block: clamp(20px, 2.6vw, 34px);
+}
+
+.chapter:first-child {
+  padding-top: 0;
+}
+
+.chapter__mark {
+  position: relative;
+  display: grid;
+  justify-items: start;
+  align-content: start;
+  gap: 8px;
+  padding: 6px 0 0 32px;
+}
+
+.chapter__dot {
+  position: absolute;
+  left: 2px;
+  top: 9px;
+  width: 12px;
+  height: 12px;
+  rotate: 45deg;
+  border: 2px solid var(--line-3);
+  border-radius: 3px;
+  background: var(--bg);
+  transition:
+    background-color var(--dur-3) ease,
+    border-color var(--dur-3) ease,
+    box-shadow var(--dur-3) ease;
+}
+
+.chapter[data-reveal-state="in"] .chapter__dot {
+  border-color: var(--gold);
+  background: var(--gold);
+  box-shadow: 0 0 0 4px var(--gold-soft);
+}
+
+.chapter__tc {
+  color: var(--ink-3);
+}
+
+.chapter__text p {
+  max-width: 62ch;
+  margin: 0 0 1.05em;
+  font-size: var(--fs-17);
+  line-height: 1.95;
+  color: var(--ink-2);
+}
+
+.chapter__text p:last-child {
+  margin-bottom: 0;
+}
+
+.chapter__text--open p:first-child {
+  font-size: var(--fs-lead);
+  line-height: 1.85;
+  color: var(--ink);
+}
+
+.chapter__text a {
+  color: var(--gold-ink);
+  font-weight: 500;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--color-accent) 55%, transparent);
+  text-underline-offset: 4px;
+}
+
+.chapter__text a:hover {
+  text-decoration-color: currentColor;
+}
+
+@media (max-width: 639px) {
+  .chapter {
+    grid-template-columns: 1fr;
+    gap: 12px;
+    padding-left: 32px;
+  }
+
+  .chapter__mark {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0;
+    margin-left: -32px;
+    padding-left: 32px;
+  }
+
+  .chapter__dot {
+    top: 50%;
+    margin-top: -6px;
+  }
+}
+
+/* ── Contact, held beside the story ─────────────────────────────────────── */
+
+@media (min-width: 1024px) and (min-height: 760px) {
+  .about-contact {
+    position: sticky;
+    top: calc(var(--beta-h) + var(--header-top) + var(--header-h) + 28px);
+  }
+}
+
+.contact-card {
+  --pad: clamp(20px, 2.4vw, 28px);
+  gap: 10px;
+  padding: 0 var(--pad) var(--pad);
+  box-shadow: var(--shadow-2), var(--rim);
+  scroll-margin-top: calc(var(--beta-h) + var(--header-top) + var(--header-h) + 24px);
+}
+
+/* A panel's title strip, as in the editor. */
+.contact-card__bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 calc(var(--pad) * -1) 10px;
+  padding: 11px var(--pad);
+  border-bottom: 1px solid var(--line);
+  border-radius: var(--r-lg) var(--r-lg) 0 0;
+  background: color-mix(in srgb, var(--color-text) 3%, transparent);
+  color: var(--ink-3);
+}
+
+.contact-card__rec {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--gold);
+  box-shadow: 0 0 0 3px var(--gold-soft);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .contact-card__rec {
+    animation: rec-blink 2.4s ease-in-out infinite;
+  }
+}
+
+@keyframes rec-blink {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.contact-card__rule {
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, var(--line-2), transparent);
+}
+
+.contact-card__title {
+  margin-bottom: 8px;
+  font-size: clamp(1.375rem, 1.2rem + 0.6vw, 1.625rem);
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.contact-note {
+  margin: 0;
+  font-size: var(--fs-13);
+  line-height: 1.7;
+  color: var(--ink-3);
+}
+
+/* ── Principles: locked tracks ──────────────────────────────────────────── */
+
+.locked {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.locked__track {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+  box-shadow: var(--rim);
+}
+
+.locked__head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 20px 16px;
+  border-right: 1px solid var(--line);
+  background: color-mix(in srgb, var(--color-text) 3%, transparent);
+  color: var(--gold-ink);
+}
+
+.locked__lock {
+  margin-top: 2px;
+}
+
+/* A locked track is hatched in an editor: nobody cuts it by accident. */
+.locked__clip {
+  display: grid;
+  grid-template-columns: minmax(0, 68ch) minmax(96px, 1fr);
+  gap: clamp(20px, 3vw, 48px);
+  align-items: center;
+  padding: 18px clamp(18px, 2vw, 26px);
+  background: repeating-linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--color-text) 3.5%, transparent) 0 1px,
+    transparent 1px 11px
+  );
+}
+
+.locked__copy {
+  display: grid;
+  gap: 6px;
+}
+
+/* The locked audio under each principle: present, muted, not to be cut. */
+.locked__wave {
+  height: 34px;
+  opacity: 0.55;
+}
+
+.locked__title {
+  font-size: var(--fs-17);
+  font-weight: 600;
+  line-height: 1.55;
+  color: var(--ink);
+}
+
+.locked__text {
+  font-size: var(--fs-15);
+  line-height: 1.85;
+  color: var(--ink-2);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .locked[data-reveal-state="in"] .locked__lock {
+    animation: lock-shut 520ms var(--ease-out) both;
+  }
+
+  .locked[data-reveal-state="in"] > :nth-child(2) .locked__lock {
+    animation-delay: 70ms;
+  }
+
+  .locked[data-reveal-state="in"] > :nth-child(3) .locked__lock {
+    animation-delay: 140ms;
+  }
+
+  .locked[data-reveal-state="in"] > :nth-child(4) .locked__lock {
+    animation-delay: 210ms;
+  }
+
+  .locked[data-reveal-state="in"] > :nth-child(5) .locked__lock {
+    animation-delay: 280ms;
+  }
+}
+
+@keyframes lock-shut {
+  0% {
+    translate: 0 -4px;
+    rotate: -14deg;
+  }
+  60% {
+    translate: 0 1px;
+    rotate: 0deg;
+  }
+  100% {
+    translate: 0 0;
+  }
+}
+
+@media (max-width: 899px) {
+  .locked__clip {
+    grid-template-columns: 1fr;
+  }
+
+  .locked__wave {
+    display: none;
+  }
+}
+
+@media (max-width: 639px) {
+  .locked__track {
+    grid-template-columns: 1fr;
+  }
+
+  .locked__head {
+    align-items: center;
+    padding: 10px 16px;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+}
+
+.about-faq {
+  padding-top: calc(var(--section-y) * 0.4);
+}
+
+.about-faq__list {
+  max-width: 880px;
+}

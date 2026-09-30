@@ -11,11 +11,12 @@ export default async function CheckoutSuccessPage() {
   const { billing } = await loadAccountData("/checkout/success", { billing: true });
   const initial = billing ? { plan: billing.plan, status: billing.status } : null;
 
+  // The title ("ขอบคุณที่อัปเกรดแพลน") and eyebrow live on CheckoutStatus's status card.
   return (
-    <main id="main" className="container page">
-      <p className="eyebrow">การชำระเงิน</p>
-      <h1 className="page-title">ขอบคุณที่อัปเกรดแพลน</h1>
-      <CheckoutStatus initial={initial} />
+    <main id="main" className="status-page page-top">
+      <div className="wrap">
+        <CheckoutStatus initial={initial} />
+      </div>
     </main>
   );
 }

@@ -1,0 +1,159 @@
+/*
+ * /signup and /login — split screen. The form column is plain and still
+ * (nothing moves while you type); the stage beside it is a viewer panel with
+ * the editor mockup playing slowly. Phones and tablets get the form alone.
+ */
+
+.auth {
+  --auth-top: calc(var(--beta-h) + var(--header-top) + var(--header-h));
+  padding-top: calc(var(--auth-top) + clamp(28px, 4vw, 48px));
+  padding-bottom: clamp(56px, 7vw, 96px);
+}
+
+.auth__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+  gap: clamp(40px, 5vw, 88px);
+  align-items: start;
+}
+
+@media (max-width: 1023px) {
+  .auth__grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .auth__stage {
+    display: none;
+  }
+}
+
+.auth__main {
+  display: grid;
+  gap: clamp(40px, 5vw, 56px);
+  justify-items: center;
+  padding-top: clamp(8px, 2vw, 24px);
+}
+
+.auth__form,
+.auth-free {
+  width: 100%;
+  max-width: 440px;
+}
+
+.auth__form h1 {
+  margin-bottom: 10px;
+  font-size: clamp(2rem, 1.55rem + 1.6vw, 2.75rem);
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.012em;
+}
+
+.auth__form .tag + h1 {
+  margin-top: 16px;
+}
+
+.auth-page__switch {
+  margin: 0 0 28px;
+  font-size: var(--fs-15);
+  color: var(--ink-2);
+}
+
+.auth-page__switch a {
+  font-weight: 500;
+}
+
+/* ── What the free plan includes ────────────────────────────────────────── */
+
+.auth-free {
+  padding-top: 28px;
+  border-top: 1px solid var(--line);
+}
+
+.auth-free__title {
+  margin-bottom: 14px;
+  font-size: var(--fs-17);
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.auth-free__list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.auth-free__list li {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: 8px;
+  font-size: var(--fs-15);
+  line-height: 1.75;
+  color: var(--ink-2);
+}
+
+.auth-free__tick {
+  margin-top: 0.3em;
+  padding: 2px;
+  border-radius: 50%;
+  background: var(--gold-soft);
+  color: var(--gold-ink);
+  box-sizing: content-box;
+}
+
+.auth-free__read {
+  margin-top: 18px;
+  line-height: 1.8;
+}
+
+/* ── The stage ──────────────────────────────────────────────────────────── */
+
+.auth__stage {
+  position: sticky;
+  top: calc(var(--auth-top) + 20px);
+}
+
+.auth__viewer {
+  position: relative;
+  display: grid;
+  align-content: center;
+  min-height: min(680px, calc(100svh - var(--auth-top) - 56px));
+  padding: clamp(28px, 3vw, 48px) clamp(24px, 3vw, 44px);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  background:
+    linear-gradient(180deg, transparent 60%, color-mix(in srgb, var(--color-neutral-900) 8%, transparent)),
+    var(--well);
+  box-shadow: var(--rim);
+}
+
+.auth__glow {
+  position: absolute;
+  top: -30%;
+  right: -20%;
+  width: 80%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, var(--gold-soft), transparent);
+  pointer-events: none;
+}
+
+/* A ruler along the top edge of the viewer. */
+.auth__ruler {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 14px;
+  border-bottom: 1px solid var(--line);
+  background:
+    repeating-linear-gradient(90deg, var(--line-2) 0 1px, transparent 1px 12px) bottom / 100% 5px no-repeat,
+    repeating-linear-gradient(90deg, var(--line-3) 0 1px, transparent 1px 60px) bottom / 100% 9px no-repeat;
+  opacity: 0.8;
+}
+
+.auth__mock {
+  position: relative;
+}

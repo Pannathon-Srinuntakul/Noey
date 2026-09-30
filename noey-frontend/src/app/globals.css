@@ -983,6 +983,27 @@ textarea.input {
   min-height: 65px;
 }
 
+/* Small print under a form or a control. */
+.fine {
+  margin: 16px 0 0;
+  font-size: var(--fs-13);
+  line-height: 1.7;
+  color: var(--ink-3);
+}
+
+.forgot {
+  margin-top: 8px;
+  text-align: right;
+  font-size: var(--fs-13);
+}
+
+.legal-line {
+  margin: 4px 0 0;
+  font-size: var(--fs-12);
+  line-height: 1.6;
+  color: var(--ink-3);
+}
+
 /* ── Tags ───────────────────────────────────────────────────────────────── */
 
 .tag {

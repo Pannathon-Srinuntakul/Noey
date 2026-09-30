@@ -1082,6 +1082,7 @@
 /* The render bar under the mark: full = done, cut = failed, running = waiting. */
 .status__bar {
   position: relative;
+  display: block;
   width: 168px;
   height: 6px;
   border-radius: 6px;
@@ -1101,9 +1102,59 @@
   display: none;
 }
 
-.status--success .status__fill {
-  animation: render-fill 1.3s var(--ease-out) both;
+.status__meter {
+  position: relative;
+  display: block;
 }
+
+/* "Render complete": the bar fills, then the tick lands at its end. */
+.status__tick {
+  position: absolute;
+  top: 50%;
+  left: calc(100% + 10px);
+  translate: 0 -50%;
+  color: var(--tone);
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.status__tick circle {
+  fill: var(--tone-soft);
+}
+
+.status__tick path {
+  stroke-dasharray: 1;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .status--success .status__tick {
+    animation: tick-pop 420ms var(--ease-spring) 1.1s both;
+  }
+
+  .status--success .status__tick path {
+    animation: draw-stroke 360ms var(--ease-out) 1.3s both;
+  }
+}
+
+@keyframes tick-pop {
+  from {
+    opacity: 0;
+    scale: 0.4;
+  }
+}
+
+/* Quiet: an ending that is neither a success to celebrate nor an error. */
+.status--quiet {
+  --tone: var(--ink-3);
+  --tone-soft: color-mix(in srgb, var(--color-text) 6%, transparent);
+}
+
+.status--quiet .status__fill {
+  display: none;
+}
+
 
 .status--danger .status__fill {
   right: 48%;
@@ -1136,7 +1187,17 @@
 .status--pending .status__fill {
   right: auto;
   width: 38%;
-  animation: render-run 1.4s var(--ease-in-out) infinite;
+  translate: 80% 0;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .status--success .status__fill {
+    animation: render-fill 1.3s var(--ease-out) both;
+  }
+
+  .status--pending .status__fill {
+    animation: render-run 1.4s var(--ease-in-out) infinite;
+  }
 }
 
 .status--info .status__fill {
@@ -1200,6 +1261,22 @@
   margin: 0;
 }
 
+/* A state inside a page whose title stays put (checkout). */
+.status__body h2 {
+  margin-bottom: 6px;
+  font-size: var(--fs-h4);
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--ink);
+}
+
+/* A form held by the card (reset password): reads left to right, not centred. */
+.status__form {
+  width: min(100%, 400px);
+  margin: 18px auto 0;
+  text-align: start;
+}
+
 .mark-draw path {
   stroke-dasharray: 1;
   stroke-dashoffset: 0;
@@ -1229,12 +1306,38 @@
   }
 }
 
-/* A page that holds nothing but a status card. */
+/* A page that holds nothing but a status card, laid on a timeline track. */
 .status-page {
-  min-height: 78vh;
-  display: grid;
-  align-content: center;
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  flex-direction: column;
+  min-height: 82vh;
   padding-bottom: clamp(64px, 8vw, 120px);
+}
+
+.status-page.page-top {
+  padding-top: calc(var(--beta-h) + var(--header-top) + var(--header-h) + clamp(28px, 5vw, 64px));
+}
+
+/* Auto margins centre the card but never push a tall one under the header. */
+.status-page > .wrap {
+  margin-block: auto;
+}
+
+.status-page::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 56px;
+  background:
+    repeating-linear-gradient(90deg, var(--line-2) 0 1px, transparent 1px 16px) center / 100% 12px no-repeat,
+    linear-gradient(var(--line-2), var(--line-2)) center / 100% 1px no-repeat;
+  -webkit-mask-image: linear-gradient(90deg, transparent, var(--ink) 18%, var(--ink) 82%, transparent);
+  mask-image: linear-gradient(90deg, transparent, var(--ink) 18%, var(--ink) 82%, transparent);
 }
 
 /* ── CTA band: fade to black ────────────────────────────────────────────── */

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { ResendVerificationButton } from "@/components/account/VerifyEmail";
+import { StatusCard, type StatusTone } from "@/components/ds/StatusCard";
 import { MSG } from "@/lib/messages";
 import { tokenPageMetadata } from "@/lib/seo";
 import { apiRequest } from "@/lib/server/api";
@@ -116,13 +117,14 @@ export default async function VerifyEmailPage({ searchParams }: { searchParams: 
   }
 
   const success = view.kind === "verified" || view.kind === "changed" || view.kind === "already";
+  // The emblem's render bar: full for done, cut for a failure, running while it is only a matter of waiting.
+  const tone: StatusTone = success ? "success" : view.kind === "rate-limited" ? "pending" : "danger";
   return (
-    <main id="main" className="container page">
-      <p className="eyebrow">ยืนยันอีเมล</p>
-      <h1 className="page-title">{title}</h1>
-      <div className="card status-card" role={success ? "status" : "alert"}>
-        <p>{body}</p>
-        <div className="button-row">{actions}</div>
+    <main id="main" className="status-page page-top">
+      <div className="wrap">
+        <StatusCard tone={tone} eyebrow="ยืนยันอีเมล" title={title} role={success ? "status" : "alert"} actions={actions}>
+          <p>{body}</p>
+        </StatusCard>
       </div>
     </main>
   );

@@ -391,14 +391,16 @@
 }
 
 @media (prefers-reduced-motion: no-preference) {
+  /* Negative delays: every line starts mid-cycle, so none is held at its
+     first (visible) keyframe while it waits — no two lines overlap. */
   [data-play] .ed__sub {
     animation: sub-line 12s linear infinite both;
-    animation-delay: calc(var(--l) * 3s);
+    animation-delay: calc(var(--l) * 3s - 12s);
   }
 
   [data-play] .ed__sub-w {
     animation: sub-word 3s linear infinite both;
-    animation-delay: calc(var(--l) * 3s + var(--w) * 0.16s);
+    animation-delay: calc(var(--w) * 0.16s - 3s);
   }
 }
 
@@ -899,12 +901,12 @@
 
   [data-play] .ed--ambient .ed__sub {
     animation-duration: 24s;
-    animation-delay: calc(var(--l) * 6s);
+    animation-delay: calc(var(--l) * 6s - 24s);
   }
 
   [data-play] .ed--ambient .ed__sub-w {
     animation-duration: 6s;
-    animation-delay: calc(var(--l) * 6s + var(--w) * 0.3s);
+    animation-delay: calc(var(--w) * 0.3s - 6s);
   }
 }
 
