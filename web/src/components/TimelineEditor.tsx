@@ -103,6 +103,14 @@ import { createModifierTracker, type ModifierTracker } from '../lib/modifierStat
 import { decodeAudioPeaks } from '../lib/waveform'
 import { TimelineViewportContext } from '../lib/timelineViewport'
 import { useFilmstripStrips } from '../lib/useFilmstripStrips'
+import { loadingTileCount } from '../lib/filmstripImageCache'
+import {
+  createSettleDetector,
+  filmstripSettled,
+  firstViewGate,
+  FIRST_VIEW_CAP_MS,
+  waitForFirstFrame
+} from '../lib/editorFirstView'
 import { Tabs } from './ui/Tabs'
 import type { MenuItemDef } from './ui/Menu'
 import { useFxJobs } from '../lib/fxJobs'
@@ -293,6 +301,12 @@ export const VideoTimelineEditor = memo(function VideoTimelineEditor({
   // filmstrip is being waited for, and the effect below owns the flip to
   // 'ready' (strips landed / failed / wait cap / user pressed skip).
   const [filmstripGateArmed, setFilmstripGateArmed] = useState(false)
+  // The other two halves of the first-view gate (lib/editorFirstView.ts),
+  // both measured on the editor body mounted UNDER the preparing screen: the
+  // preview has painted its first frame, and no tile a visible lane asked for
+  // is still decoding.
+  const [previewSettled, setPreviewSettled] = useState(false)
+  const [tilesSettled, setTilesSettled] = useState(false)
   const [error, setError] = useState<string | null>(null)
   // What "ลองอีกครั้ง" on the error bar re-runs — only a failed save is retryable.
   const [errorRetry, setErrorRetry] = useState<'save' | null>(null)
@@ -934,44 +948,89 @@ export const VideoTimelineEditor = memo(function VideoTimelineEditor({
     if (!layoutChosenRef.current) setLayout(touchScrub ? 'strip' : 'lanes')
   }, [touchScrub])
   // Clips are short: the whole cut on screen is the right first view.
+  // Fitted while the body is still under the preparing screen, so the lanes
+  // subscribe to the tiles of the view that will actually be revealed — the
+  // first-view gate waits on exactly those.
   const fittedOnceRef = useRef(false)
   useEffect(() => {
-    if (editorPhase !== 'ready' || fittedOnceRef.current) return
+    if (editorPhase === 'loading' || !timeline || fittedOnceRef.current) return
     fittedOnceRef.current = true
     fitToScreen()
-  }, [editorPhase])
+  }, [editorPhase, timeline])
+
+  // Preview half of the gate: the player sends the first scene's file to
+  // video A and seeks it to the in-point; the gate waits for that frame.
+  // A project with no scenes has no preview to wait for.
+  useEffect(() => {
+    if (editorPhase !== 'preparing' || !timeline || previewSettled) return
+    if (cutsRef.current.length === 0) {
+      setPreviewSettled(true)
+      return
+    }
+    const v = videoARef.current
+    if (!previewSrc || !v) return
+    const ac = new AbortController()
+    void waitForFirstFrame(v, ac.signal).then(() => {
+      if (!ac.signal.aborted) setPreviewSettled(true)
+    })
+    return () => ac.abort()
+  }, [editorPhase, timeline, previewSrc, previewSettled])
+
+  // Thumbnail half: once the strips are in hand, poll the tile cache each
+  // frame until nothing a lane is waiting for is still decoding.
+  const stripsSettled = filmstripSettled(filmstrip)
+  useEffect(() => {
+    if (editorPhase !== 'preparing' || !timeline || !stripsSettled || tilesSettled) return
+    const settled = createSettleDetector()
+    let raf = requestAnimationFrame(function tick() {
+      if (settled(loadingTileCount())) {
+        setTilesSettled(true)
+        return
+      }
+      raf = requestAnimationFrame(tick)
+    })
+    return () => cancelAnimationFrame(raf)
+  }, [editorPhase, timeline, stripsSettled, tilesSettled])
 
   const filmstripCapRef = useRef<number | null>(null)
-  // The filmstrip half of the preparing gate. Bounded at 8s: past that the
-  // in-lane pending wash takes over and the user edits while lanes fill in.
+  // The preparing gate. Bounded at FIRST_VIEW_CAP_MS: past that the editor
+  // opens anyway and whatever is still loading shows its placeholder (lanes,
+  // thumbnails) and fills in behind.
   useEffect(() => {
     if (!filmstripGateArmed || editorPhase === 'ready') {
       window.clearTimeout(filmstripCapRef.current ?? undefined)
       filmstripCapRef.current = null
       return
     }
-    if (filmstrip.status === 'ready' || filmstrip.status === 'error' || filmstrip.total === 0) {
+    const gate = firstViewGate({ filmstrip, tilesSettled, previewSettled })
+    if (gate.open) {
       setEditorPhase('ready')
       return
     }
-    setPrepareHint(
-      filmstrip.total > 1
-        ? `กำลังเตรียมภาพตัวอย่างวิดีโอ… (${Math.min(filmstrip.done + 1, filmstrip.total)}/${filmstrip.total})`
-        : 'กำลังเตรียมภาพตัวอย่างวิดีโอ…'
-    )
+    setPrepareHint(gate.hint)
     // Armed ONCE per gate, not per progress tick: keyed on `filmstrip.done`
     // the timer restarted for every clip, so N clips could hold the preparing
-    // screen for N × 8 s.
+    // screen for N × the cap.
     if (filmstripCapRef.current === null) {
-      filmstripCapRef.current = window.setTimeout(() => setEditorPhase('ready'), 8000)
+      filmstripCapRef.current = window.setTimeout(() => setEditorPhase('ready'), FIRST_VIEW_CAP_MS)
     }
-  }, [filmstripGateArmed, editorPhase, filmstrip.status, filmstrip.done, filmstrip.total])
+  }, [
+    filmstripGateArmed,
+    editorPhase,
+    filmstrip.status,
+    filmstrip.done,
+    filmstrip.total,
+    tilesSettled,
+    previewSettled
+  ])
   useEffect(() => () => window.clearTimeout(filmstripCapRef.current ?? undefined), [])
 
   useEffect(() => {
     let cancelled = false
     setEditorPhase('loading')
     setFilmstripGateArmed(false)
+    setPreviewSettled(false)
+    setTilesSettled(false)
     setPrepareHint('')
     setError(null)
     setPreviewSrc(null)
@@ -2902,383 +2961,405 @@ export const VideoTimelineEditor = memo(function VideoTimelineEditor({
           />
         )}
 
-        {editorPhase !== 'ready' ? (
+        {editorPhase === 'loading' || (editorPhase === 'preparing' && !timeline) ? (
           <PreparingScreen
             prepareHint={prepareHint}
             canSkip={filmstripGateArmed}
             onSkip={skipPreparing}
           />
         ) : !timeline ? null : (
-          <>
-            {/* middle: stage (centre) + inspector (right) */}
-            {/* Below `lg` the inspector goes under the stage instead of beside
+          // While 'preparing' the body is mounted but covered: the preview
+          // loads its first frame and the lanes decode their visible tiles
+          // behind the preparing screen, so what is revealed is already whole
+          // (lib/editorFirstView.ts). `inert` keeps focus and clicks out of
+          // it until then; the shortcuts and autosave are gated on 'ready'.
+          <div className="relative flex min-h-0 flex-1 flex-col">
+            <div
+              className={`flex min-h-0 flex-1 flex-col ${
+                editorPhase === 'ready' ? '' : 'pointer-events-none opacity-0'
+              }`}
+              aria-hidden={editorPhase !== 'ready' || undefined}
+              inert={editorPhase !== 'ready'}
+            >
+              {/* middle: stage (centre) + inspector (right) */}
+              {/* Below `lg` the inspector goes under the stage instead of beside
                 it: 360px of panel next to a 9:16 preview leaves the video a
                 sliver. The whole middle scrolls as one column there. */}
-            <div className="flex min-h-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
-              {/* A floor for the stage: stacked, the inspector's 210px minimum
+              <div className="flex min-h-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
+                {/* A floor for the stage: stacked, the inspector's 210px minimum
                   took the rest and left the preview a ~94px sliver. */}
-              <div className="flex min-h-[46dvh] min-w-0 flex-1 flex-col items-center justify-center gap-2 px-5 py-3 lg:min-h-0">
-                <PreviewPane
-                  videoARef={videoARef}
-                  videoBRef={videoBRef}
-                  captionOverlayRef={captionOverlayRef}
-                  holdFrameRef={holdFrameRef}
-                  musicAudioRef={musicAudioRef}
-                  seekbarRef={seekbarRef}
-                  timeLabelRef={timeLabelRef}
-                  isPlaying={isPlaying}
-                  durationSec={getActiveDurationSec()}
-                  hasPreview={!!previewSrc}
-                  videoEvents={videoEvents}
-                  onTogglePlay={onTogglePlay}
-                  onSeek={onSeek}
-                  onScrubStart={onScrubStart}
-                  onScrubEnd={onScrubEnd}
-                  onStepBack={onStepBack}
-                  onStepForward={onStepForward}
-                  loop={isLooping}
-                  onToggleLoop={onToggleLoop}
-                  onPlayScene={onPlayScene}
-                  canPlayScene={!!selectedCut}
-                  twoUp={twoUp}
-                  twoUpIncoming={twoUpIncoming}
-                  onTimeEditStart={onTimeEditStart}
-                  onTimeEditEnd={onTimeEditEnd}
-                />
-              </div>
-
-              {/* inspector — R3 right rail */}
-              <aside className="flex min-h-[210px] w-full shrink-0 flex-col overflow-hidden border-t border-divider lg:max-h-none lg:min-h-0 lg:w-[360px] lg:border-l lg:border-t-0">
-                <SelectedSceneHeader
-                  selectedCut={headerCut}
-                  playOrder={selectedCut ? playOrderMap.get(selectedCut.id) : undefined}
-                  cutCount={cuts.length}
-                  sourceLabel={selectedCut ? sourceLabelById.get(selectedCut.source) : undefined}
-                  skipped={selectedCut ? isSkipped(selectedCut) : false}
-                  selectionCount={selection.ids.length}
-                />
-
-                {showTabs && (
-                  <Tabs
-                    className="shrink-0 px-4"
-                    items={[
-                      { key: 'script', label: isHighlight ? 'โน้ตประกอบ' : 'บทพากย์' },
-                      captionLines
-                        ? { key: 'caption', label: 'คำบรรยายบนภาพ' }
-                        : {
-                            key: 'caption',
-                            label: 'คำบรรยายบนภาพ',
-                            disabled: true,
-                            disabledReason: 'โปรเจกต์นี้ไม่ได้เปิดคำบรรยาย'
-                          }
-                    ]}
-                    activeKey={activeInspectorTab}
-                    onChange={(k) => setInspectorTab(k as 'script' | 'caption')}
+                <div className="flex min-h-[46dvh] min-w-0 flex-1 flex-col items-center justify-center gap-2 px-5 py-3 lg:min-h-0">
+                  <PreviewPane
+                    videoARef={videoARef}
+                    videoBRef={videoBRef}
+                    captionOverlayRef={captionOverlayRef}
+                    holdFrameRef={holdFrameRef}
+                    musicAudioRef={musicAudioRef}
+                    seekbarRef={seekbarRef}
+                    timeLabelRef={timeLabelRef}
+                    isPlaying={isPlaying}
+                    durationSec={getActiveDurationSec()}
+                    hasPreview={!!previewSrc}
+                    videoEvents={videoEvents}
+                    onTogglePlay={onTogglePlay}
+                    onSeek={onSeek}
+                    onScrubStart={onScrubStart}
+                    onScrubEnd={onScrubEnd}
+                    onStepBack={onStepBack}
+                    onStepForward={onStepForward}
+                    loop={isLooping}
+                    onToggleLoop={onToggleLoop}
+                    onPlayScene={onPlayScene}
+                    canPlayScene={!!selectedCut}
+                    twoUp={twoUp}
+                    twoUpIncoming={twoUpIncoming}
+                    onTimeEditStart={onTimeEditStart}
+                    onTimeEditEnd={onTimeEditEnd}
                   />
-                )}
-
-                <div className="scroll-ghost min-h-0 flex-1 overflow-y-auto px-4 py-3">
-                  {activeInspectorTab === 'script' && isDub ? (
-                    <ScriptTab
-                      selectedCut={selectedCut}
-                      selectedId={selectedId}
-                      isHighlight={isHighlight}
-                      cuts={cuts}
-                      strips={strips}
-                      onScriptChange={onScriptChange}
-                      onBeginEdit={onBeginEdit}
-                      onCommitEdit={onCommitEdit}
-                      onSelectCut={onGoToCut}
-                      onAddAngle={onAddAngle}
-                    />
-                  ) : (
-                    <CaptionTabBody
-                      captionLines={captionLines}
-                      captionCursorIdx={captionCursorIdx}
-                      cursorLine={cursorLine}
-                      captionStyle={captionStyle}
-                      srtNote={srtNote}
-                      onUpdateLine={onUpdateCaptionLine}
-                      onBeginEdit={onBeginEdit}
-                      onCommitEdit={onCommitEdit}
-                      onDeleteLine={onDeleteCaptionLine}
-                      onJump={onJumpToCaption}
-                      onOpenStyle={openCaptionStyle}
-                    />
-                  )}
                 </div>
 
-                {activeInspectorTab === 'caption' && captionLines && captionLines.length > 0 && (
-                  <CaptionFooter
-                    lineCount={captionLines.length}
-                    isDub={isDub}
-                    srtBusy={srtBusy}
-                    onExport={onExportSrt}
+                {/* inspector — R3 right rail */}
+                <aside className="flex min-h-[210px] w-full shrink-0 flex-col overflow-hidden border-t border-divider lg:max-h-none lg:min-h-0 lg:w-[360px] lg:border-l lg:border-t-0">
+                  <SelectedSceneHeader
+                    selectedCut={headerCut}
+                    playOrder={selectedCut ? playOrderMap.get(selectedCut.id) : undefined}
+                    cutCount={cuts.length}
+                    sourceLabel={selectedCut ? sourceLabelById.get(selectedCut.source) : undefined}
+                    skipped={selectedCut ? isSkipped(selectedCut) : false}
+                    selectionCount={selection.ids.length}
                   />
-                )}
 
-                <SceneActions
+                  {showTabs && (
+                    <Tabs
+                      className="shrink-0 px-4"
+                      items={[
+                        { key: 'script', label: isHighlight ? 'โน้ตประกอบ' : 'บทพากย์' },
+                        captionLines
+                          ? { key: 'caption', label: 'คำบรรยายบนภาพ' }
+                          : {
+                              key: 'caption',
+                              label: 'คำบรรยายบนภาพ',
+                              disabled: true,
+                              disabledReason: 'โปรเจกต์นี้ไม่ได้เปิดคำบรรยาย'
+                            }
+                      ]}
+                      activeKey={activeInspectorTab}
+                      onChange={(k) => setInspectorTab(k as 'script' | 'caption')}
+                    />
+                  )}
+
+                  <div className="scroll-ghost min-h-0 flex-1 overflow-y-auto px-4 py-3">
+                    {activeInspectorTab === 'script' && isDub ? (
+                      <ScriptTab
+                        selectedCut={selectedCut}
+                        selectedId={selectedId}
+                        isHighlight={isHighlight}
+                        cuts={cuts}
+                        strips={strips}
+                        onScriptChange={onScriptChange}
+                        onBeginEdit={onBeginEdit}
+                        onCommitEdit={onCommitEdit}
+                        onSelectCut={onGoToCut}
+                        onAddAngle={onAddAngle}
+                      />
+                    ) : (
+                      <CaptionTabBody
+                        captionLines={captionLines}
+                        captionCursorIdx={captionCursorIdx}
+                        cursorLine={cursorLine}
+                        captionStyle={captionStyle}
+                        srtNote={srtNote}
+                        onUpdateLine={onUpdateCaptionLine}
+                        onBeginEdit={onBeginEdit}
+                        onCommitEdit={onCommitEdit}
+                        onDeleteLine={onDeleteCaptionLine}
+                        onJump={onJumpToCaption}
+                        onOpenStyle={openCaptionStyle}
+                      />
+                    )}
+                  </div>
+
+                  {activeInspectorTab === 'caption' && captionLines && captionLines.length > 0 && (
+                    <CaptionFooter
+                      lineCount={captionLines.length}
+                      isDub={isDub}
+                      srtBusy={srtBusy}
+                      onExport={onExportSrt}
+                    />
+                  )}
+
+                  <SceneActions
+                    hasSelection={!!selectedCut}
+                    selectionCount={selection.ids.length}
+                    skipped={selectedCut ? isSkipped(selectedCut) : false}
+                    onSplit={onSplit}
+                    onDuplicate={onDuplicate}
+                    onDelete={onDeleteSelected}
+                    onPlayScene={onPlayScene}
+                    onToggleSkip={onToggleSkip}
+                    onOpenShotSwap={onOpenShotSwap ? onOpenShotSwapSelected : undefined}
+                  />
+                </aside>
+              </div>
+
+              {/* timeline — toolbar · ruler+tracks (one scroll container) · hint */}
+              <div className="shrink-0 border-t border-divider">
+                <TimelineToolbar
+                  viewMode={viewMode}
+                  thStats={thStats}
                   hasSelection={!!selectedCut}
                   selectionCount={selection.ids.length}
-                  skipped={selectedCut ? isSkipped(selectedCut) : false}
+                  snapEnabled={snapEnabled}
+                  beatCount={music?.beats?.length ?? 0}
+                  skimEnabled={skimEnabled && !coarse}
+                  pxPerSec={pxPerSec}
+                  canZoomSelection={!!selectedCut}
+                  layout={layout}
+                  showLayoutToggle={coarse}
+                  onSwitchView={onSwitchView}
                   onSplit={onSplit}
-                  onDuplicate={onDuplicate}
+                  onAddScene={onAddScene}
                   onDelete={onDeleteSelected}
-                  onPlayScene={onPlayScene}
-                  onToggleSkip={onToggleSkip}
-                  onOpenShotSwap={onOpenShotSwap ? onOpenShotSwapSelected : undefined}
+                  onToggleSnap={onToggleSnap}
+                  onToggleSkim={onToggleSkim}
+                  onZoom={setPxPerSec}
+                  onFitToggle={onFitToggle}
+                  onZoomSelection={onZoomSelection}
+                  onLayout={onLayout}
                 />
-              </aside>
-            </div>
 
-            {/* timeline — toolbar · ruler+tracks (one scroll container) · hint */}
-            <div className="shrink-0 border-t border-divider">
-              <TimelineToolbar
-                viewMode={viewMode}
-                thStats={thStats}
-                hasSelection={!!selectedCut}
-                selectionCount={selection.ids.length}
-                snapEnabled={snapEnabled}
-                beatCount={music?.beats?.length ?? 0}
-                skimEnabled={skimEnabled && !coarse}
-                pxPerSec={pxPerSec}
-                canZoomSelection={!!selectedCut}
-                layout={layout}
-                showLayoutToggle={coarse}
-                onSwitchView={onSwitchView}
-                onSplit={onSplit}
-                onAddScene={onAddScene}
-                onDelete={onDeleteSelected}
-                onToggleSnap={onToggleSnap}
-                onToggleSkim={onToggleSkim}
-                onZoom={setPxPerSec}
-                onFitToggle={onFitToggle}
-                onZoomSelection={onZoomSelection}
-                onLayout={onLayout}
-              />
-
-              {layout === 'strip' && viewMode === 'edited' ? (
-                /* The phone storyboard: one thumbnail per scene, in play
+                {layout === 'strip' && viewMode === 'edited' ? (
+                  /* The phone storyboard: one thumbnail per scene, in play
                    order — tap to select, long-press to reorder. */
-                <SceneStrip
-                  cuts={cuts}
-                  strips={strips}
-                  selectedIds={selectedIds}
-                  primaryId={selectedId}
-                  playOrderMap={playOrderMap}
-                  skippedIds={skippedIds}
-                  onSelect={onSelectCut}
-                  onOpen={onGoToCut}
-                  onReorder={onStripReorder}
-                  onContextMenu={onContextMenuCut}
-                />
-              ) : (
-                <div
-                  ref={viewportRef}
-                  onScroll={onViewportScroll}
-                  onPointerMove={onLaneHover}
-                  onPointerLeave={onLaneLeave}
-                  // Hover skim; both handlers branch on pointerType (a finger
-                  // lifting is not a mouse leaving — see responsive.test.ts).
-                  // touch-action pan-x pan-y (not none): one finger still
-                  // scrolls natively, while a two-finger pinch is kept from
-                  // the browser so it reaches the viewport's pinch-zoom
-                  // pointer listeners (useTimelineViewport).
-                  className="scroll-ghost relative max-h-[248px] touch-pan-x touch-pan-y overflow-auto select-none"
-                >
+                  <SceneStrip
+                    cuts={cuts}
+                    strips={strips}
+                    selectedIds={selectedIds}
+                    primaryId={selectedId}
+                    playOrderMap={playOrderMap}
+                    skippedIds={skippedIds}
+                    onSelect={onSelectCut}
+                    onOpen={onGoToCut}
+                    onReorder={onStripReorder}
+                    onContextMenu={onContextMenuCut}
+                  />
+                ) : (
                   <div
-                    className="relative"
-                    // leadPx: the touch-scrub model pads the axis so t=0 can
-                    // sit under the centred playhead (useTimelineViewport).
-                    // The lead is applied by each child (the ruler's tick x,
-                    // TrackRow's lane margin, the absolute layers' left) so
-                    // the content div only reserves the width — padding here
-                    // would offset the flow children a second time.
-                    style={{ width: HEADER_COL_PX + contentW + leadPx }}
+                    ref={viewportRef}
+                    onScroll={onViewportScroll}
+                    onPointerMove={onLaneHover}
+                    onPointerLeave={onLaneLeave}
+                    // Hover skim; both handlers branch on pointerType (a finger
+                    // lifting is not a mouse leaving — see responsive.test.ts).
+                    // touch-action pan-x pan-y (not none): one finger still
+                    // scrolls natively, while a two-finger pinch is kept from
+                    // the browser so it reaches the viewport's pinch-zoom
+                    // pointer listeners (useTimelineViewport).
+                    className="scroll-ghost relative max-h-[248px] touch-pan-x touch-pan-y overflow-auto select-none"
                   >
-                    {/* ruler */}
-                    <div className="flex" style={{ height: rulerPx }}>
-                      <div
-                        // Same stacking rule as trackLabelCls — this is the
-                        // ruler's corner and the ruler ticks must scroll under it.
-                        className="sticky left-0 z-40 h-full shrink-0 bg-ground"
-                        style={{ width: HEADER_COL_PX }}
-                      />
-                      <TimelineRuler
-                        durationSec={axisDur}
-                        pxPerSec={pxPerSec}
-                        widthPx={contentW}
-                        heightPx={rulerPx}
-                        leadPx={leadPx}
-                        coarse={coarse}
-                        range={viewMode === 'edited' ? range : null}
-                        onPointerDown={onRulerDown}
-                        onHover={onTimelineHover}
-                      />
-                      {viewMode === 'edited' && (
-                        <MarkerLayer
-                          markers={markers}
-                          pxPerSec={pxPerSec}
-                          leadPx={leadPx}
-                          onPick={onPickMarker}
-                          onMove={onMoveMarker}
-                          onRename={onRenameMarker}
-                          onRemove={onRemoveMarker}
-                          dragScroller={dragScroll}
-                          getSnapContext={getSnapContext}
+                    <div
+                      className="relative"
+                      // leadPx: the touch-scrub model pads the axis so t=0 can
+                      // sit under the centred playhead (useTimelineViewport).
+                      // The lead is applied by each child (the ruler's tick x,
+                      // TrackRow's lane margin, the absolute layers' left) so
+                      // the content div only reserves the width — padding here
+                      // would offset the flow children a second time.
+                      style={{ width: HEADER_COL_PX + contentW + leadPx }}
+                    >
+                      {/* ruler */}
+                      <div className="flex" style={{ height: rulerPx }}>
+                        <div
+                          // Same stacking rule as trackLabelCls — this is the
+                          // ruler's corner and the ruler ticks must scroll under it.
+                          className="sticky left-0 z-40 h-full shrink-0 bg-ground"
+                          style={{ width: HEADER_COL_PX }}
                         />
-                      )}
-                    </div>
+                        <TimelineRuler
+                          durationSec={axisDur}
+                          pxPerSec={pxPerSec}
+                          widthPx={contentW}
+                          heightPx={rulerPx}
+                          leadPx={leadPx}
+                          coarse={coarse}
+                          range={viewMode === 'edited' ? range : null}
+                          onPointerDown={onRulerDown}
+                          onHover={onTimelineHover}
+                        />
+                        {viewMode === 'edited' && (
+                          <MarkerLayer
+                            markers={markers}
+                            pxPerSec={pxPerSec}
+                            leadPx={leadPx}
+                            onPick={onPickMarker}
+                            onMove={onMoveMarker}
+                            onRename={onRenameMarker}
+                            onRemove={onRemoveMarker}
+                            dragScroller={dragScroll}
+                            getSnapContext={getSnapContext}
+                          />
+                        )}
+                      </div>
 
-                    {viewMode === 'edited' ? (
-                      <>
-                        <ImageLane
-                          cuts={cuts}
-                          selectedId={selectedId}
-                          selectedIds={selectedIds}
-                          playOrderMap={playOrderMap}
+                      {viewMode === 'edited' ? (
+                        <>
+                          <ImageLane
+                            cuts={cuts}
+                            selectedId={selectedId}
+                            selectedIds={selectedIds}
+                            playOrderMap={playOrderMap}
+                            strips={strips}
+                            filmstripPending={filmstrip.status === 'running'}
+                            sourceDurationById={sourceDurationById}
+                            sourceLabelById={sourceLabelById}
+                            pxPerSec={pxPerSec}
+                            contentW={contentW}
+                            leadPx={leadPx}
+                            coarse={coarse}
+                            focusedEdge={focusedEdge}
+                            skippedIds={skippedIds}
+                            editedInById={editedInById}
+                            getSnapContext={getSnapContext}
+                            dragScroller={dragScroll}
+                            onLaneBackgroundPointerDown={onLaneDown}
+                            onSelectCut={onSelectCut}
+                            onOpenCut={onGoToCut}
+                            onContextMenu={onContextMenuCut}
+                            onUpdateCut={onUpdateCut}
+                            onTrimCut={onTrimCut}
+                            onRoll={onRoll}
+                            onSlip={onSlip}
+                            onFocusEdge={onFocusEdge}
+                            onMarquee={onMarquee}
+                            onBlockEditStart={onBlockEditStart}
+                            onBlockEditEnd={onBlockEditEnd}
+                            onReorder={onReorder}
+                            onReorderMany={onReorderMany}
+                          />
+                          {isDub && (
+                            <VoiceoverLane
+                              voBlocks={voBlocks}
+                              playingLineId={playingLineId}
+                              selectedLineId={selectedCut ? cutLineId(selectedCut) : null}
+                              pxPerSec={pxPerSec}
+                              contentW={contentW}
+                              leadPx={leadPx}
+                              onLaneBackgroundPointerDown={onLaneDown}
+                              onPickLine={onPickVoiceoverLine}
+                            />
+                          )}
+                          {canHaveMusic && (
+                            <MusicLane
+                              music={music}
+                              musicPeaks={musicPeaks}
+                              musicDurationSec={musicDurationSec}
+                              musicBusy={musicBusy}
+                              editedDur={editedDur}
+                              getSnapContext={getSnapContext}
+                              dragScroller={dragScroll}
+                              pxPerSec={pxPerSec}
+                              contentW={contentW}
+                              leadPx={leadPx}
+                              onLaneBackgroundPointerDown={onLaneDown}
+                              onCommitMusic={onCommitMusic}
+                              onMusicDraft={setMusicDraft}
+                              onPickMusic={onPickMusic}
+                              onRemoveMusic={onRemoveMusic}
+                            />
+                          )}
+                          {captionLines && captionLines.length > 0 && (
+                            <CaptionLane
+                              captionLines={captionLines}
+                              capSpans={capSpans}
+                              captionCursorIdx={captionCursorIdx}
+                              pxPerSec={pxPerSec}
+                              contentW={contentW}
+                              leadPx={leadPx}
+                              onLaneBackgroundPointerDown={onLaneDown}
+                              onDragEdge={onDragCaptionEdge}
+                              onPickChip={onPickCaptionChip}
+                            />
+                          )}
+                        </>
+                      ) : (
+                        /* source view (จ) — one lane per file under the shared axis */
+                        <SourceLanes
+                          sources={timeline.sources}
+                          previewSource={previewSource}
                           strips={strips}
                           filmstripPending={filmstrip.status === 'running'}
-                          sourceDurationById={sourceDurationById}
-                          sourceLabelById={sourceLabelById}
+                          cutsBySource={cutsBySource}
+                          laneDurationById={laneDurationById}
+                          playOrderMap={playOrderMap}
+                          selectedId={selectedId}
+                          selectedIds={selectedIds}
+                          coarse={coarse}
                           pxPerSec={pxPerSec}
                           contentW={contentW}
                           leadPx={leadPx}
-                          coarse={coarse}
-                          focusedEdge={focusedEdge}
-                          skippedIds={skippedIds}
-                          editedInById={editedInById}
                           getSnapContext={getSnapContext}
                           dragScroller={dragScroll}
-                          onLaneBackgroundPointerDown={onLaneDown}
+                          onSourceLanePointerDown={onSourceLaneDown}
                           onSelectCut={onSelectCut}
-                          onOpenCut={onGoToCut}
                           onContextMenu={onContextMenuCut}
                           onUpdateCut={onUpdateCut}
                           onTrimCut={onTrimCut}
-                          onRoll={onRoll}
                           onSlip={onSlip}
                           onFocusEdge={onFocusEdge}
-                          onMarquee={onMarquee}
                           onBlockEditStart={onBlockEditStart}
                           onBlockEditEnd={onBlockEditEnd}
-                          onReorder={onReorder}
-                          onReorderMany={onReorderMany}
                         />
-                        {isDub && (
-                          <VoiceoverLane
-                            voBlocks={voBlocks}
-                            playingLineId={playingLineId}
-                            selectedLineId={selectedCut ? cutLineId(selectedCut) : null}
-                            pxPerSec={pxPerSec}
-                            contentW={contentW}
-                            leadPx={leadPx}
-                            onLaneBackgroundPointerDown={onLaneDown}
-                            onPickLine={onPickVoiceoverLine}
-                          />
-                        )}
-                        {canHaveMusic && (
-                          <MusicLane
-                            music={music}
-                            musicPeaks={musicPeaks}
-                            musicDurationSec={musicDurationSec}
-                            musicBusy={musicBusy}
-                            editedDur={editedDur}
-                            getSnapContext={getSnapContext}
-                            dragScroller={dragScroll}
-                            pxPerSec={pxPerSec}
-                            contentW={contentW}
-                            leadPx={leadPx}
-                            onLaneBackgroundPointerDown={onLaneDown}
-                            onCommitMusic={onCommitMusic}
-                            onMusicDraft={setMusicDraft}
-                            onPickMusic={onPickMusic}
-                            onRemoveMusic={onRemoveMusic}
-                          />
-                        )}
-                        {captionLines && captionLines.length > 0 && (
-                          <CaptionLane
-                            captionLines={captionLines}
-                            capSpans={capSpans}
-                            captionCursorIdx={captionCursorIdx}
-                            pxPerSec={pxPerSec}
-                            contentW={contentW}
-                            leadPx={leadPx}
-                            onLaneBackgroundPointerDown={onLaneDown}
-                            onDragEdge={onDragCaptionEdge}
-                            onPickChip={onPickCaptionChip}
-                          />
-                        )}
-                      </>
-                    ) : (
-                      /* source view (จ) — one lane per file under the shared axis */
-                      <SourceLanes
-                        sources={timeline.sources}
-                        previewSource={previewSource}
-                        strips={strips}
-                        filmstripPending={filmstrip.status === 'running'}
-                        cutsBySource={cutsBySource}
-                        laneDurationById={laneDurationById}
-                        playOrderMap={playOrderMap}
-                        selectedId={selectedId}
-                        selectedIds={selectedIds}
-                        coarse={coarse}
-                        pxPerSec={pxPerSec}
-                        contentW={contentW}
-                        leadPx={leadPx}
-                        getSnapContext={getSnapContext}
-                        dragScroller={dragScroll}
-                        onSourceLanePointerDown={onSourceLaneDown}
-                        onSelectCut={onSelectCut}
-                        onContextMenu={onContextMenuCut}
-                        onUpdateCut={onUpdateCut}
-                        onTrimCut={onTrimCut}
-                        onSlip={onSlip}
-                        onFocusEdge={onFocusEdge}
-                        onBlockEditStart={onBlockEditStart}
-                        onBlockEditEnd={onBlockEditEnd}
-                      />
-                    )}
+                      )}
 
-                    {/* Beat ticks sit BEHIND the lanes (z-0): they are a guide for
+                      {/* Beat ticks sit BEHIND the lanes (z-0): they are a guide for
                       the eye, and painting them over a block's own artwork or
                       label makes both harder to read (HANDOFF §3). Shown whenever
                       the track has beats and the magnet is on — they are what
                       it pulls to. */}
-                    {viewMode === 'edited' &&
-                      snapEnabled &&
-                      effectiveMusic?.beats &&
-                      effectiveMusic.beats.length > 0 && (
-                        <BeatTicks
-                          beats={effectiveMusic.beats}
-                          trimInSec={effectiveMusic.trimInSec}
-                          offsetSec={effectiveMusic.offsetSec}
-                          editedDur={editedDur}
-                          pxPerSec={pxPerSec}
-                          leadPx={leadPx}
-                        />
-                      )}
+                      {viewMode === 'edited' &&
+                        snapEnabled &&
+                        effectiveMusic?.beats &&
+                        effectiveMusic.beats.length > 0 && (
+                          <BeatTicks
+                            beats={effectiveMusic.beats}
+                            trimInSec={effectiveMusic.trimInSec}
+                            offsetSec={effectiveMusic.offsetSec}
+                            editedDur={editedDur}
+                            pxPerSec={pxPerSec}
+                            leadPx={leadPx}
+                          />
+                        )}
 
-                    <Playhead
-                      playheadRef={playheadRef}
-                      playheadLineRef={playheadLineRef}
-                      edgeHintRef={edgeHintRef}
-                      coarse={coarse}
-                      onGrabPointerDown={onRulerDown}
-                    />
-                    {/* The snap guide and the skim line, painted per frame. */}
-                    <GuideLines ref={guideRef} leadPx={leadPx} pxPerSecRef={pxPerSecRef} />
+                      <Playhead
+                        playheadRef={playheadRef}
+                        playheadLineRef={playheadLineRef}
+                        edgeHintRef={edgeHintRef}
+                        coarse={coarse}
+                        onGrabPointerDown={onRulerDown}
+                      />
+                      {/* The snap guide and the skim line, painted per frame. */}
+                      <GuideLines ref={guideRef} leadPx={leadPx} pxPerSecRef={pxPerSecRef} />
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
 
-              <p className="truncate px-4 py-1.5 text-[13px] text-muted">
-                {viewMode === 'edited'
-                  ? 'ลากขอบ = ยืด–หด · Alt+ลาก = เลื่อนหน้าต่าง · ⌘/Ctrl+ลากที่จับ = เลื่อนรอยตัด · Shift+ลาก = เลือกหลายฉาก · Alt ค้าง = ปิดดูดขอบ · ⌘/Ctrl+ล้อ = ซูม'
-                  : 'ตัวเลขในบล็อกคือลำดับที่จะเล่นจริง · ช่วงที่ไม่มีบล็อกคือส่วนที่ไม่ถูกใช้ · ลากขอบเพื่อเปลี่ยนช่วงที่ตัดมาใช้ · Alt+ลาก = เลื่อนหน้าต่าง'}
-              </p>
+                <p className="truncate px-4 py-1.5 text-[13px] text-muted">
+                  {viewMode === 'edited'
+                    ? 'ลากขอบ = ยืด–หด · Alt+ลาก = เลื่อนหน้าต่าง · ⌘/Ctrl+ลากที่จับ = เลื่อนรอยตัด · Shift+ลาก = เลือกหลายฉาก · Alt ค้าง = ปิดดูดขอบ · ⌘/Ctrl+ล้อ = ซูม'
+                    : 'ตัวเลขในบล็อกคือลำดับที่จะเล่นจริง · ช่วงที่ไม่มีบล็อกคือส่วนที่ไม่ถูกใช้ · ลากขอบเพื่อเปลี่ยนช่วงที่ตัดมาใช้ · Alt+ลาก = เลื่อนหน้าต่าง'}
+                </p>
+              </div>
             </div>
-          </>
+            {editorPhase !== 'ready' ? (
+              <div className="absolute inset-0 flex flex-col bg-ground">
+                <PreparingScreen
+                  prepareHint={prepareHint}
+                  canSkip={filmstripGateArmed}
+                  onSkip={skipPreparing}
+                />
+              </div>
+            ) : null}
+          </div>
         )}
       </div>
     </TimelineViewportContext.Provider>

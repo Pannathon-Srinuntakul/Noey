@@ -24,6 +24,7 @@ import { memo, useMemo, useRef, useState } from 'react'
 import type { FilmstripStripMap } from '../../../lib/useFilmstripStrips'
 import { LONG_PRESS_MS } from '../constants'
 import type { WorkingCut } from '../types'
+import { FilmstripThumb } from '../FilmstripThumb'
 import { shouldStartReorder } from './marquee'
 import { selectModsOf, stripTileFor, type SelectMods } from './sceneLabel'
 
@@ -153,7 +154,7 @@ export const SceneStrip = memo(function SceneStrip({
       <DragOverlay dropAnimation={null}>
         {activeCut ? (
           <div
-            className="overflow-hidden rounded-md border-2 border-accent bg-black opacity-80 shadow-lg"
+            className="overflow-hidden rounded-md border-2 border-accent bg-surface opacity-80 shadow-lg"
             style={{ width: TILE_W, height: TILE_H }}
           >
             <Thumb cut={activeCut} strip={strips[activeCut.source] ?? null} />
@@ -164,7 +165,7 @@ export const SceneStrip = memo(function SceneStrip({
   )
 })
 
-/** The tile nearest the scene's in-point, or a grey box. */
+/** The tile nearest the scene's in-point, over a neutral placeholder. */
 function Thumb({
   cut,
   strip
@@ -173,17 +174,7 @@ function Thumb({
   strip: FilmstripStripMap[string] | null
 }): React.JSX.Element {
   const idx = stripTileFor(strip, cut.in)
-  if (strip && idx !== null) {
-    return (
-      <img
-        src={strip.urlFor(idx)}
-        alt=""
-        draggable={false}
-        className="pointer-events-none h-full w-full object-cover"
-      />
-    )
-  }
-  return <span className="block h-full w-full bg-surface" />
+  return <FilmstripThumb url={strip && idx !== null ? strip.urlFor(idx) : null} />
 }
 
 const SceneTile = memo(function SceneTile({
@@ -255,7 +246,7 @@ const SceneTile = memo(function SceneTile({
       }}
     >
       <div
-        className={`relative overflow-hidden rounded-md border-2 bg-black ${
+        className={`relative overflow-hidden rounded-md border-2 bg-surface ${
           primary ? 'border-accent' : selected ? 'border-dashed border-accent' : 'border-border'
         } ${skipped ? 'opacity-40 grayscale' : ''}`}
         style={{ width: TILE_W, height: TILE_H }}

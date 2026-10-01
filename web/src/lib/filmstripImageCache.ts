@@ -111,6 +111,24 @@ export function forgetDecodedFilmstripImagesFor(fragment: string): void {
   forgetDecodedFilmstripImages((url) => url.includes(fragment))
 }
 
+/**
+ * Tiles something on screen is waiting for that have not decoded yet.
+ *
+ * The editor's first-view gate (`lib/editorFirstView.ts`) polls this while the
+ * editor body is mounted under the loading screen: the lanes subscribe to
+ * exactly the tiles their visible window needs, so "zero still loading" means
+ * the strip will paint whole the moment it is revealed. An entry nobody
+ * listens to any more (a lane that scrolled or re-zoomed past it) is not
+ * waited for.
+ */
+export function loadingTileCount(): number {
+  let n = 0
+  for (const entry of decodedImages.values()) {
+    if (entry.status === 'loading' && entry.listeners.size > 0) n++
+  }
+  return n
+}
+
 function forgetDecodedFilmstripImages(match: (url: string) => boolean): void {
   for (const [url, entry] of decodedImages) {
     if (!match(url)) continue

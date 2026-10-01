@@ -377,7 +377,7 @@ function StorageTab(): React.JSX.Element {
   const [serverError, setServerError] = useState<string | null>(null)
   const [clearing, setClearing] = useState(false)
   const confirm = useConfirm()
-  const { session } = useJobs()
+  const { session, clearLocalCopy, runningJobs, projects } = useJobs()
 
   // What the account holds on the SERVER, which is the number that actually
   // runs out — the browser's own store is a cache in front of it.
@@ -428,16 +428,26 @@ function StorageTab(): React.JSX.Element {
    */
   const onClear = async (): Promise<void> => {
     const bytes = report?.totalBytes ?? 0
-    if (bytes === 0) return
+    if (bytes === 0 || runningJobs.length > 0) return
+    // A project whose files never reached the server (`syncPending`) is the
+    // one case where this copy IS the only copy — say so instead of
+    // promising that nothing is lost.
+    const unsynced = projects.filter((p) => p.syncPending).length
     const ok = await confirm({
       title: `ล้างสำเนาในเครื่องนี้ (${fmtGB(bytes)})?`,
-      body: 'ไม่ได้ลบงาน — งานอยู่บนเซิร์ฟเวอร์และจะถูกดึงกลับมาตอนเปิดใช้ นี่คือการคืนพื้นที่ในเครื่องนี้เท่านั้น',
+      body:
+        unsynced > 0
+          ? `มี ${unsynced} โปรเจกต์ที่ยังสำรองขึ้นเซิร์ฟเวอร์ไม่สำเร็จ ถ้าล้างตอนนี้งานนั้นจะหายไป — โปรเจกต์อื่นอยู่บนเซิร์ฟเวอร์และจะถูกดึงกลับมาเอง`
+          : 'ไม่ได้ลบงาน — งานอยู่บนเซิร์ฟเวอร์และจะถูกดึงกลับมาเอง นี่คือการคืนพื้นที่ในเครื่องนี้เท่านั้น',
       confirmLabel: 'ล้างสำเนา'
     })
     if (!ok) return
     setClearing(true)
     try {
-      await window.noey.storage.clearAll()
+      // Through the job store, not `storage.clearAll` directly: the store
+      // pulls the projects back from the server right after, so the projects
+      // page is not left empty until a reload.
+      await clearLocalCopy()
       load()
     } finally {
       setClearing(false)
@@ -487,9 +497,22 @@ function StorageTab(): React.JSX.Element {
       </p>
       {cachedBytes > 0 ? (
         <div className="mt-4">
-          <Button variant="secondary" loading={clearing} onClick={() => void onClear()}>
-            ล้างสำเนาในเครื่องนี้
-          </Button>
+          {/* A running job reads and writes this copy as it goes; wiping it
+              under the job would fail the run half-way. */}
+          {runningJobs.length > 0 ? (
+            <Button
+              variant="secondary"
+              reasonAs="below"
+              disabled
+              disabledReason="มีงานกำลังทำอยู่ — ล้างได้เมื่องานเสร็จ"
+            >
+              ล้างสำเนาในเครื่องนี้
+            </Button>
+          ) : (
+            <Button variant="secondary" loading={clearing} onClick={() => void onClear()}>
+              ล้างสำเนาในเครื่องนี้
+            </Button>
+          )}
         </div>
       ) : null}
     </Section>
