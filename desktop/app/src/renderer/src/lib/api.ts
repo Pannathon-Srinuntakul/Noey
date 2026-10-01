@@ -195,6 +195,8 @@ export interface PlanFeatures {
    * server, 2026-09-29, for exactly that reason.)
    */
   approx_cuts?: number | null
+  /** The same count at ความละเอียด "high"; null below Pro (it cannot pick High). */
+  approx_cuts_high?: number | null
   footage_sec: number | null
   max_projects: number | null
   music: boolean

@@ -3,7 +3,8 @@
  *
  * The site never shows token counts — only a percentage per enforced window and
  * when that window starts over. Labels stay in English to match the pricing
- * page ("5-hour limit", "Weekly limit", "Trial credit").
+ * page ("Monthly limit", "Trial credit"; the 5-hour and weekly labels stay for
+ * rows an older account may still report).
  */
 
 export type LimitKey = "five_hour" | "weekly" | "monthly" | "lifetime";
@@ -96,7 +97,9 @@ export function resetInText(resetsAt: string | null, now: number = Date.now()): 
 
 /** The one-line explainer under the meters, per plan (design copy for Free). */
 export function planLimitNote(plan: string): string | null {
-  if (plan === "free") return "แพลนรายเดือนได้โควตาใหม่ทุกรอบเป็น Weekly limit ส่วน Pro ขึ้นไปมี 5-hour limit เพิ่มอีกชั้น";
-  if (plan === "lite" || plan === "starter") return "Pro ขึ้นไปมี 5-hour limit เพิ่มอีกชั้น และทำงานพร้อมกันได้หลายงาน";
+  // Every paid plan enforces one Monthly limit and nothing else since
+  // 2026-09-30 (backend limits.py rule 1) — no weekly or 5-hour tier to sell.
+  if (plan === "free") return "แพลนรายเดือนได้โควตาใหม่ทุกรอบบิลเป็น Monthly limit และแพลนใหญ่ขึ้นได้คลิปต่อบาทมากขึ้น";
+  if (plan === "lite" || plan === "starter") return "Pro ขึ้นไปเลือกระดับละเอียดได้ ทำงานพร้อมกันได้หลายงาน และได้คลิปต่อบาทมากขึ้น";
   return null;
 }

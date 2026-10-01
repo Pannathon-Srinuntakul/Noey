@@ -40,9 +40,9 @@ from sqlalchemy import text
 DOMAIN = "loadtest.noey.local"
 #: Default plan spread — per-user job concurrency differs (pro 2, studio 3,
 #: max 5), so one plan's ceiling is not the only thing a run measures. Each
-#: plan also has a TOKEN budget per 5-hour window, and a fake analysis bills
-#: real tokens: ~48k for an 8s clip, i.e. ~7 runs (pro) / 15 (studio) / 53
-#: (max) before the start route answers 402 limit_reached. For a capacity run
+#: plan also has a monthly TOKEN budget (packages/billing/limits.py), and a
+#: fake analysis bills real tokens: ~48k for an 8s clip, i.e. ~116 runs (pro) /
+#: 250 (studio) / 1,000 (max) before a run pauses in paused_quota. For a capacity run
 #: that must not hit that wall, seed with --plans enterprise (unlimited tokens,
 #: 5 concurrent jobs) or clear the windows between runs with --reset-usage.
 PLANS = ("pro", "studio", "max")

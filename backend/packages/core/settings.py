@@ -511,6 +511,11 @@ class Settings(BaseSettings):
     email_from_name: str = "Noey Studio"
     #: Where POST /contact delivers (Reply-To is the visitor). Unset → /contact 503.
     contact_to_email: str | None = None
+    #: The support address printed in the footer of every email.
+    support_email: str = "support@noeystudio.com"
+    #: Optional postal/business address line for the email footer. Unset → the
+    #: footer has no address line (never a placeholder).
+    email_business_address: str | None = None
     #: Unverified, non-admin accounts cannot START paid AI work (403) — see
     #: services/api/ai_gate.py for the endpoints it covers.
     require_verified_email_for_ai: bool = True

@@ -3,6 +3,7 @@ import { BETA_END_INSTANT_MS } from "./beta";
 import {
   BETA_PRICES_THB,
   APPROX_CUTS_PER_MONTH,
+  APPROX_HIGH_CUTS_PER_MONTH,
   CLIPS_FOOTNOTE,
   COMPARISON_ROWS,
   EXTRA_TIERS,
@@ -13,6 +14,9 @@ import {
   PLAN_COPY,
   TIERS,
   clipsHeadline,
+  clipsHeadlineFull,
+  clipsHighLine,
+  clipsHighListItem,
   clipsLadderSentence,
   clipsListItem,
   displayPrice,
@@ -215,13 +219,44 @@ describe("what a plan sells", () => {
   it("is an APPROXIMATE cut count per month, one map behind every surface", () => {
     // Owner, 2026-09-29: the cost of a cut is dominated by a fixed per-run
     // cost, not by the footage, so minutes were the wrong unit to sell.
-    expect(TIERS.map((tier) => APPROX_CUTS_PER_MONTH[tier])).toEqual([2, 4, 9, 22, 45, 90, 160]);
+    // Owner, 2026-10-01: HONEST counts — budget ÷ a 5-minute cut from the
+    // fitted production model (185,070 Standard / 267,420 High), ROUNDED
+    // DOWN. The backend's tests/test_plan_features.py pins the same numbers.
+    expect(TIERS.map((tier) => APPROX_CUTS_PER_MONTH[tier])).toEqual([2, 4, 10, 30, 64, 140, 259]);
+    expect(TIERS.map((tier) => APPROX_HIGH_CUTS_PER_MONTH[tier] ?? null)).toEqual([null, null, null, 20, 44, 97, 179]);
     expect(clipsHeadline("free")).toBe("ราว 2 คลิป");
-    expect(clipsHeadline("pro")).toBe("ตัดได้ราว 22 คลิป/เดือน");
+    expect(clipsHeadline("pro")).toBe("ตัดได้ราว 30 คลิป/เดือน");
     const row = COMPARISON_ROWS.find((r) => r.label === "จำนวนคลิปต่อเดือน (โดยประมาณ)");
     expect(row?.values).toEqual(["ราว 2 คลิป ครั้งเดียว", ...TIERS.slice(1).map((tier) => clipsListItem(tier))]);
     for (const tier of TIERS) {
       expect(PLAN_COPY[tier].accountFeatures[0], `${tier} leads with its clip count`).toContain(clipsHeadline(tier));
+    }
+  });
+
+  it("quotes BOTH precisions exactly where the plan has the finer one", () => {
+    for (const tier of TIERS) {
+      const high = APPROX_HIGH_CUTS_PER_MONTH[tier];
+      expect(Boolean(high), `${tier} high count vs precision`).toBe(hasHighPrecision(tier));
+      if (high) expect(high, tier).toBeLessThan(APPROX_CUTS_PER_MONTH[tier]);
+    }
+    expect(clipsHighLine("pro")).toBe(`ระดับ${PRECISION_NAMES.high}ราว 20 คลิป`);
+    expect(clipsHighLine("starter")).toBeNull();
+    expect(clipsHeadlineFull("pro")).toBe("ตัดได้ราว 30 คลิป/เดือน · ระดับละเอียดราว 20 คลิป");
+    expect(clipsHeadlineFull("lite")).toBe(clipsHeadline("lite"));
+    for (const tier of ["pro", "studio", "agency", "max"] as const) {
+      expect(PLAN_COPY[tier].accountFeatures[0]).toBe(clipsHeadlineFull(tier));
+      expect(PLAN_COPY[tier].dialogSummary).toContain(clipsHeadlineFull(tier));
+    }
+    const row = COMPARISON_ROWS.find((r) => r.label === `จำนวนคลิปต่อเดือน ระดับ${PRECISION_NAMES.high} (โดยประมาณ)`);
+    expect(row?.values).toEqual(["—", "—", "—", "ราว 20 คลิป", "ราว 44 คลิป", "ราว 97 คลิป", "ราว 179 คลิป"]);
+    expect(clipsHighListItem("lite")).toBeNull();
+  });
+
+  it("bigger plans buy each clip for less, at the full AND the beta ladder", () => {
+    // The volume discount (owner, 2026-10-01) the "แพลนใหญ่ขึ้น" cue states.
+    for (const ladder of [FULL_PRICES_THB, BETA_PRICES_THB]) {
+      const perClip = PAID_TIERS.map((tier) => ladder[tier] / APPROX_CUTS_PER_MONTH[tier]);
+      for (let i = 1; i < perClip.length; i++) expect(perClip[i]).toBeLessThan(perClip[i - 1]);
     }
   });
 
@@ -231,11 +266,13 @@ describe("what a plan sells", () => {
     for (const tier of TIERS) expect(clipsHeadline(tier), tier).toMatch(/ราว/);
     // The compact list form keeps the hedge too: an agent may quote one item.
     for (const tier of TIERS) expect(clipsListItem(tier), tier).toMatch(/^ราว \d+ คลิป$/);
-    expect(clipsLadderSentence(["lite", "pro"])).toBe("Lite ราว 4 คลิป · Pro ราว 22 คลิป");
+    expect(clipsLadderSentence(["lite", "pro"])).toBe("Lite ราว 4 คลิป · Pro ราว 30 คลิป (ระดับละเอียดราว 20 คลิป)");
     for (const tier of TIERS) {
       const text = [...PLAN_COPY[tier].accountFeatures, PLAN_COPY[tier].dialogSummary].join("\n");
       const bare = new RegExp(`(?<!ราว )${APPROX_CUTS_PER_MONTH[tier]} คลิป`);
       expect(text, `${tier} states a bare count`).not.toMatch(bare);
+      const high = APPROX_HIGH_CUTS_PER_MONTH[tier];
+      if (high) expect(text, `${tier} states a bare high count`).not.toMatch(new RegExp(`(?<!ราว )${high} คลิป`));
     }
   });
 
@@ -252,10 +289,10 @@ describe("what a plan sells", () => {
     }
   });
 
-  it("show limits by their English names, 5-hour only from Pro up", () => {
+  it("show limits by their English names — one Monthly limit on every paid plan", () => {
+    // Backend limits.py rule 1 (2026-09-30): no weekly or 5-hour sub-window.
     expect(PLAN_COPY.free.limits).toEqual(["Trial credit"]);
-    expect(PLAN_COPY.starter.limits).toEqual(["Weekly limit"]);
-    expect(PLAN_COPY.pro.limits).toEqual(["Weekly limit", "5-hour limit"]);
+    for (const tier of PAID_TIERS) expect(PLAN_COPY[tier].limits, tier).toEqual(["Monthly limit"]);
     expect(TIERS.map((tier) => PLAN_COPY[tier].concurrentJobs)).toEqual([1, 1, 1, 2, 3, 4, 5]);
   });
 

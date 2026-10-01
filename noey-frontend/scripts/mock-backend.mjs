@@ -67,7 +67,6 @@ function scenarioOf(request) {
 }
 
 const inDays = (days) => new Date(Date.now() + days * 86_400_000).toISOString();
-const inHours = (hours) => new Date(Date.now() + hours * 3_600_000).toISOString();
 
 function me(s) {
   return {
@@ -88,11 +87,9 @@ function me(s) {
 function usage(s) {
   const limits = [];
   if (s.plan === "free") limits.push({ key: "lifetime", used_pct: s.spent ? 100 : 46, resets_at: null, active: true, resets: false });
-  else if (s.plan === "lite" || s.plan === "starter") limits.push({ key: "weekly", used_pct: 63, resets_at: inDays(4), active: true });
-  else {
-    limits.push({ key: "weekly", used_pct: 21, resets_at: inDays(5), active: true });
-    limits.push({ key: "five_hour", used_pct: 84, resets_at: inHours(2.3), active: true });
-  }
+  // One window per paid account since 2026-09-30 (backend limits.py rule 1):
+  // the monthly one, reset on the billing date.
+  else limits.push({ key: "monthly", used_pct: s.plan === "lite" || s.plan === "starter" ? 63 : 84, resets_at: inDays(12), active: true });
   return {
     plan: s.plan,
     unlimited: !!s.unlimited,

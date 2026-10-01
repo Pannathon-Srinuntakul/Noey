@@ -17,7 +17,8 @@ import {
   TIERS,
   displayPrice,
   CLIPS_FOOTNOTE,
-  clipsHeadline,
+  VOLUME_VALUE_NOTE,
+  clipsHeadlineFull,
   clipsLadderSentence,
   footageLadderSentence,
   formatBaht,
@@ -69,6 +70,7 @@ export function buildPricingMarkdown(table: PriceTable, updatedIso: string): str
   lines.push("- สกุลเงิน: บาท (THB) ราคาต่อเดือน ชำระด้วยบัตรเครดิตหรือเดบิต ตัดอัตโนมัติทุกเดือน");
   lines.push(`- จำนวนคลิปต่อเดือนของแต่ละแพลน: ${clipsLadderSentence()}`);
   lines.push(`- วิธีนับ: ${CLIPS_FOOTNOTE}`);
+  lines.push(`- ความคุ้ม: ${VOLUME_VALUE_NOTE}`);
   lines.push(`- สมัครใช้งาน: ${absoluteUrl(PAGES.signup.path)}`);
   lines.push("");
 
@@ -78,7 +80,7 @@ export function buildPricingMarkdown(table: PriceTable, updatedIso: string): str
     lines.push("");
     lines.push(`- ราคา: ${priceLine(table, tier)}`);
     lines.push(`- สรุป: ${copy.pricingBlurb}`);
-    lines.push(`- จำนวนคลิป: ${clipsHeadline(tier)} (${CLIPS_FOOTNOTE})`);
+    lines.push(`- จำนวนคลิป: ${clipsHeadlineFull(tier)} (${CLIPS_FOOTNOTE})`);
     lines.push(`- ขีดจำกัดการใช้งาน: ${copy.limits.join(" + ")} · ทำงาน AI พร้อมกันได้ ${copy.concurrentJobs} งาน`);
     lines.push(`- ความละเอียดการวิเคราะห์: ${precisionLabel(tier)}`);
     for (const feature of copy.features) lines.push(`- ${feature}`);

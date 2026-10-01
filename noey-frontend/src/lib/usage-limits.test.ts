@@ -69,8 +69,10 @@ describe("usage limits", () => {
   });
 
   it("explains the next tier's limits only where one exists", () => {
-    expect(planLimitNote("free")).toContain("Weekly limit");
-    expect(planLimitNote("starter")).toContain("5-hour limit");
+    expect(planLimitNote("free")).toContain("Monthly limit");
+    expect(planLimitNote("starter")).toContain("ระดับละเอียด");
+    // No plan sells a weekly or 5-hour window any more (backend limits.py rule 1).
+    for (const plan of ["free", "lite", "starter"]) expect(planLimitNote(plan)).not.toMatch(/Weekly|5-hour/);
     expect(planLimitNote("pro")).toBeNull();
   });
 });

@@ -153,6 +153,17 @@
   color: var(--ink-3);
 }
 
+/* Pro and up: the ระดับละเอียด count on its own line under the headline
+   (owner, 2026-10-01). Quieter than the headline, but a real number, not a
+   footnote — a plan bought for that setting must say what it buys there. */
+.usage-high {
+  display: block;
+  margin-top: 2px;
+  font-size: var(--fs-13);
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+
 .clip-note {
   margin: -4px 0 0;
   font-size: var(--fs-12);
@@ -275,6 +286,12 @@
   font-size: var(--fs-13);
   font-weight: 400;
   color: var(--gold-ink);
+}
+
+.price-more__high {
+  margin: 0;
+  font-size: var(--fs-13);
+  color: var(--ink-2);
 }
 
 .price-more__price {

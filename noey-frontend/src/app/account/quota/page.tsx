@@ -24,8 +24,8 @@ const TASK_LABELS: Record<string, string> = {
 /*
  * Only real numbers from GET /usage/me (and /videos/storage) are rendered, and
  * never a token count — one percentage per window the plan actually enforces
- * (Free: Trial credit, a one-off `lifetime` window; Lite/Starter: Weekly; Pro+:
- * Weekly + 5-hour), with when it starts over. A window that carries
+ * (Free: Trial credit, a one-off `lifetime` window; every paid plan: Monthly),
+ * with when it starts over. A window that carries
  * `resets: false` never starts over, so it gets the spent-credit line and an
  * upgrade link instead of a countdown. The design's per-type counts
  * ("6 โปรเจกต์") are not something the backend records, so the task table shows

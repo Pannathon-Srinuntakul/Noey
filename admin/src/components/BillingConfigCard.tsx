@@ -110,7 +110,9 @@ export function BillingConfigCard({
                 {PRICED_KEYS.map((k) => {
                   const l = PLAN_LIMITS[k];
                   const shown = l.windows.map((w) =>
-                    `${WINDOW_LABELS[w]} ${num(w === "monthly" ? l.monthly : w === "weekly" ? weeklyLimit(l.monthly) : fiveHourLimit(l.monthly))}`);
+                    w === "lifetime"
+                      ? `Trial credit ${num(l.monthly)} (ครั้งเดียว)`
+                      : `${WINDOW_LABELS[w]} ${num(w === "monthly" ? l.monthly : w === "weekly" ? weeklyLimit(l.monthly) : fiveHourLimit(l.monthly))}`);
                   return (
                     <tr key={k}>
                       <td>{planLabel(k)}</td>
@@ -126,7 +128,7 @@ export function BillingConfigCard({
               </tbody>
             </table>
           </div>
-          <p className="small" style={{ margin: "8px 0 0" }}>Weekly = ต่อเดือน ÷ 4.33 · 5-hour = 40% ของ Weekly · ช่วงเริ่มนับเมื่อใช้ครั้งแรก · บัญชีผู้ดูแลและ Enterprise ไม่จำกัด</p>
+          <p className="small" style={{ margin: "8px 0 0" }}>แผนรายเดือนบังคับ Monthly อย่างเดียว (รอบบิล) · ฟรีเป็นเครดิตทดลองครั้งเดียว ไม่รีเซ็ต · บัญชีผู้ดูแลและ Enterprise ไม่จำกัด</p>
         </div>
 
         <div>

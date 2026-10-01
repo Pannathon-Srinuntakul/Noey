@@ -325,14 +325,15 @@ def test_the_pricing_pages_cut_count_is_approximate_and_rounds_down():
     page's "ตัดได้ราว N คลิป". It rounds DOWN, so the claim is never one the
     account cannot finish, and it is deliberately approximate — a longer or
     high-precision cut costs more than one ``TYPICAL_CUT_TOKENS``."""
-    assert [limits.plan_cuts(p) for p in PLANS] == [2, 4, 8, 20, 40, 80, 140]
+    assert [limits.plan_cuts(p) for p in PLANS] == [2, 4, 10, 30, 64, 140, 259]
     assert limits.plan_cuts("mystery") == limits.plan_cuts("free")
     # Free's 450,000 is 2.25 typical cuts and is advertised as 2, never 3.
     free = limits.PLAN_LIMITS["free"].monthly
     assert free / limits.TYPICAL_CUT_TOKENS > limits.plan_cuts("free")
     # And it really is a claim about a typical cut, not about the cheapest
-    # one a plan allows: 5 minutes of Standard source with a voiceover.
-    assert 180_000 <= limits.TYPICAL_CUT_TOKENS <= 220_000
+    # one a plan allows: 5 minutes of Standard source with a voiceover, as
+    # measured — 185,070, not a rounded-up stand-in.
+    assert limits.TYPICAL_CUT_TOKENS == 185_070
 
 
 # ── the endpoint ─────────────────────────────────────────────────────────────

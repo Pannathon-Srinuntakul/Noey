@@ -78,10 +78,25 @@ The table is sized on the measurement; the estimate only has to be safe.)
 3. **Every advertised cap is runnable.** The pre-flight estimate at each
    plan's own ``footage_sec``, at the best precision that plan may pick, is
    192,510 (Free/Lite), 254,610 (Starter) and 689,310 (Pro and up) against
-   monthly budgets of 450 k / 800 k / 1.8 M / 4.4 M and up. Nothing can reach
+   budgets of 450 k / 800 k / 2 M / 5.6 M and up. Nothing can reach
    ``plan_features.check_run_size`` any more. That is the bug this table
    fixes — a cap that says 30 minutes while a 20-minute clip is refused — and
    tests/test_plan_features.py pins it per plan so it cannot come back.
+
+── the volume discount (owner, 2026-10-01) ──
+
+Prices did not move; budgets did, upward only. The margin floor at FULL price,
+after the January-2027 vendor rise, is 60 % for the top plan and steps down
+the ladder — a bigger plan buys each token cheaper. Margin is
+``(P - 0.0435 P - 10 - tokens * 50 / 1e6) / P``: Stripe card 3.65 % + ฿10,
+Stripe Billing 0.7 %, ฿50 per 1M rate-card tokens at 2027 prices.
+
+    lite 0.8 M 70.5 % · starter 2 M 68.1 % · pro 5.6 M 66.4 %
+    studio 12 M 65.0 % · agency 26 M 62.8 % · max 48 M 61.2 %
+
+tests/test_plan_features.py recomputes every row, so a budget edit that
+breaks the floor fails there. While the beta ladder runs (half price) the
+same budgets earn roughly 27-45 % (docs/unit-economics.md §4).
 """
 
 from __future__ import annotations
@@ -155,8 +170,9 @@ QUEUE_LEAD_FIRST_SEC = 600
 # (noey-frontend/src/lib/plans.ts — the source of truth, owner 2026-09-22).
 # One window rule per account: Free spends a lifetime credit, every paid plan
 # a month (rule 1 in the module docstring). High precision from Pro up
-# (rule 2). Budgets in whole credits: 2 / 4 / 9 / 22 / 45 / 90 / 160 — see
-# ``plan_cuts`` and ``plan_cuts_at_cap``, the two counts the page quotes.
+# (rule 2). Budgets step up faster than prices — the volume discount above.
+# What the page quotes is DERIVED from these budgets (``plan_cuts``,
+# ``plan_cuts_high``, ``plan_cuts_at_cap``), never typed in beside them.
 PLAN_LIMITS: dict[str, PlanLimits] = {
     # Free = a one-time credit, never reset: two 10-minute Standard cuts with
     # a voiceover (204,762 each).
@@ -166,16 +182,16 @@ PLAN_LIMITS: dict[str, PlanLimits] = {
     "lite": PlanLimits(800_000, ("monthly",), 1, 3,
                        footage_sec=10 * 60, max_projects=10, transcode=False,
                        high_precision=False),
-    "starter": PlanLimits(1_600_000, ("monthly",), 1, 5,
+    "starter": PlanLimits(2_000_000, ("monthly",), 1, 5,
                           footage_sec=20 * 60, max_projects=20,
                           high_precision=False),
-    "pro": PlanLimits(4_000_000, ("monthly",), 2, 10,
+    "pro": PlanLimits(5_600_000, ("monthly",), 2, 10,
                       footage_sec=30 * 60, queue_lead_sec=QUEUE_LEAD_AHEAD_SEC),
-    "studio": PlanLimits(8_000_000, ("monthly",), 3, 30,
+    "studio": PlanLimits(12_000_000, ("monthly",), 3, 30,
                          footage_sec=30 * 60, queue_lead_sec=QUEUE_LEAD_FIRST_SEC),
-    "agency": PlanLimits(16_000_000, ("monthly",), 4, 60,
+    "agency": PlanLimits(26_000_000, ("monthly",), 4, 60,
                          footage_sec=30 * 60, queue_lead_sec=QUEUE_LEAD_FIRST_SEC),
-    "max": PlanLimits(28_000_000, ("monthly",), 5, 100,
+    "max": PlanLimits(48_000_000, ("monthly",), 5, 100,
                       footage_sec=30 * 60, queue_lead_sec=QUEUE_LEAD_FIRST_SEC),
 }
 
@@ -189,52 +205,81 @@ PLAN_LIMITS: dict[str, PlanLimits] = {
 # (``local_meta["clips"]``, ``clip_secs``) for a source video file.
 #
 # What a percentage cannot do is sell a plan, so the PRICING PAGE quotes an
-# approximate cut count instead — "ตัดได้ราว 22 คลิป/เดือน · คิดจากคลิปดิบ
-# 5 นาที". That claim is generated here so the website and the plan screen
+# approximate cut count instead — "ตัดได้ราว 30 คลิป/เดือน", plus "ระดับ
+# ละเอียดราว 20 คลิป" on a plan that has High, "คิดจากคลิปดิบ 5 นาที". That claim is generated here so the website and the plan screen
 # cannot drift from the table, and it is the ONLY place a count is allowed:
 # it carries "ราว", it states its basis, and no meter is ever drawn from it.
 # The question it answers inside the app — "how many more runs do I have?" —
 # is answered by pricing each run before it starts ("งานนี้ใช้ประมาณ 5 %"),
 # not by counting anything.
 
+#: Rate-card tokens per second of footage, PROMPT-EXCLUSIVE, per precision,
+#: and the fixed part of a cut with a voiceover (prompt + thinking + edit
+#: script, 125,390, plus the ~40,000 voiceover pass) — the fitted production
+#: model in the module docstring. Every clip count the product quotes is
+#: derived from these four numbers, so a re-fit moves every surface at once.
+_STANDARD_TOKENS_PER_SEC = 65.6
+_HIGH_TOKENS_PER_SEC = 340.1
+_TOKENS_PER_SEC: dict[str, float] = {
+    "standard": _STANDARD_TOKENS_PER_SEC,
+    "high": _HIGH_TOKENS_PER_SEC,
+}
+_CUT_FIXED_TOKENS = 125_390 + 40_000
+#: The basis every quoted count states: "คิดจากคลิปดิบ 5 นาที".
+TYPICAL_CUT_SOURCE_SEC = 5 * 60
+
+
+def cut_tokens(seconds: float, precision: str | None = "standard") -> int:
+    """Rate-card tokens one cut of ``seconds`` of source costs at
+    ``precision``, voiceover pass included — rounded UP, so a count divided
+    from it can only err towards promising less."""
+    rate = _TOKENS_PER_SEC.get(precision or "standard", _STANDARD_TOKENS_PER_SEC)
+    # round() first: 65.6 * 300 is 19680.000000000004 in binary floating point,
+    # and ceil() of that would charge a phantom token.
+    return math.ceil(round(rate * seconds, 6)) + _CUT_FIXED_TOKENS
+
+
 #: What an ordinary cut costs: 5 minutes of source at Standard with a
-#: voiceover measures ~185,000 rate-card tokens (module docstring), rounded up
-#: so the claim is never optimistic. Longer footage and high precision cost
-#: more, which is what "ราว" and the stated basis are carrying.
-TYPICAL_CUT_TOKENS = 200_000
+#: voiceover — 185,070. It is the measurement itself, not a rounded-up guess:
+#: the owner asked for HONEST counts (2026-10-01), and honesty here is the
+#: floor division below, which never rounds a count up.
+TYPICAL_CUT_TOKENS = cut_tokens(TYPICAL_CUT_SOURCE_SEC, "standard")
+#: The same 5-minute cut at High (ละเอียด) — 267,420.
+TYPICAL_HIGH_CUT_TOKENS = cut_tokens(TYPICAL_CUT_SOURCE_SEC, "high")
 
 
 def plan_cuts(plan: str | None) -> int:
-    """Roughly how many ordinary cuts the plan's window pays for — the
-    pricing page's first number, rounded DOWN. Marketing copy only: never a
-    meter, never a quota, never subtracted from."""
+    """Roughly how many 5-minute Standard cuts the plan's window pays for — the
+    pricing page's headline, rounded DOWN. Marketing copy only: never a meter,
+    never a quota, never subtracted from."""
     return int(plan_limits(plan).monthly // TYPICAL_CUT_TOKENS)
 
 
-#: Rate-card tokens per second of footage at Standard, and the fixed part of a
-#: cut with a voiceover — the same model as the module docstring, kept here so
-#: ``plan_cuts_at_cap`` cannot drift from it.
-_STANDARD_TOKENS_PER_SEC = 65.6
-_CUT_FIXED_TOKENS = 125_390 + 40_000
+def plan_cuts_high(plan: str | None) -> int | None:
+    """The same count at High (ละเอียด), rounded DOWN; None for a plan that
+    cannot pick High (below Pro), which must therefore quote no such number.
+
+    Shown beside ``plan_cuts`` on every plan that has High (owner,
+    2026-10-01): a plan sold on its High setting that quotes only the
+    Standard count overstates what the feature it was bought for delivers.
+    """
+    lim = plan_limits(plan)
+    if not lim.high_precision:
+        return None
+    return int(lim.monthly // TYPICAL_HIGH_CUT_TOKENS)
 
 
 def plan_cuts_at_cap(plan: str | None) -> int:
-    """The pricing page's SECOND number: cuts per window when every clip runs
-    the full ``footage_sec`` at Standard.
+    """Cuts per window when every clip runs the full ``footage_sec`` at
+    Standard — the arithmetic behind "length costs".
 
-    One number cannot describe this plan. Pro pays for about 20 five-minute
-    cuts but only 14 thirty-minute ones, and quoting just the 20 next to a
-    "30 นาที" cap invites exactly the wrong arithmetic. Quoting both says the
-    true thing — length costs — in the place where the user is choosing a
-    plan, instead of leaving them to discover it from a falling meter.
-
-    High precision is deliberately NOT a third number: it is priced as a
-    percentage before every run, and a third figure on a card nobody finishes
-    reading buys less than that does.
+    Pro pays for about 30 five-minute cuts but only 19 thirty-minute ones.
+    Not quoted on the pricing page today (the 5-minute basis and "ราว" carry
+    it there); kept so the docs and tests can state and pin the long-clip
+    case from the same model.
     """
     lim = plan_limits(plan)
-    per_cut = _STANDARD_TOKENS_PER_SEC * lim.footage_sec + _CUT_FIXED_TOKENS
-    return int(lim.monthly // per_cut)
+    return int(lim.monthly // cut_tokens(lim.footage_sec, "standard"))
 
 
 # ── how much footage ONE model request can carry ─────────────────────────────

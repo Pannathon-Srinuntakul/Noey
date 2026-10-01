@@ -45,6 +45,12 @@ so FX or vendor price moves change only our margin, never how fast a user's limi
 | Agency | 3,990 | 20x | 16M | Weekly + 5-hour | 4 |
 | Max | 6,990 | 35x | 28M | Weekly + 5-hour | 5 |
 
+> **Superseded budgets and windows.** This table is the original spec. Current
+> values (owner, 2026-10-01 volume discount): Free 450k one-time `lifetime`
+> credit; Lite 0.8M, Starter 2M, Pro 5.6M, Studio 12M, Agency 26M, Max 48M, each
+> enforcing `monthly` only. Source of truth: `packages/billing/limits.py`;
+> margins and clip counts: `docs/unit-economics.md` §4.
+
 - Weekly = monthly ÷ 4.33. 5-hour = 40% of weekly. Windows start at first use (rolling).
 - **Nothing is held up front** (owner, 2026-09-26): a run is charged per vendor request as it
   works, not against an estimate of what it might use. A run that outgrows a window it started

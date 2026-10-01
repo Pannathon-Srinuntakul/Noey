@@ -35,10 +35,69 @@ def test_the_table_is_what_the_pricing_page_promises():
     assert [r.transcode for r in rows.values()] == [False, False, True, True, True, True, True]
     # High ความละเอียด: Pro and up — it is 5.2x Standard per second of footage.
     assert [r.high_precision for r in rows.values()] == [False, False, False, True, True, True, True]
-    # What the pricing page prints: whole clips, rounded down.
-    assert [limits.plan_cuts(k) for k in rows] == [2, 4, 8, 20, 40, 80, 140]
+    # What the pricing page prints: whole 5-minute clips, rounded down, at
+    # BOTH precisions where the plan has High (owner, 2026-10-01).
+    assert [limits.plan_cuts(k) for k in rows] == [2, 4, 10, 30, 64, 140, 259]
+    assert [limits.plan_cuts_high(k) for k in rows] == [None, None, None, 20, 44, 97, 179]
     leads = [r.queue_lead_sec for r in rows.values()]
     assert leads[:3] == [0, 0, 0] and 0 < leads[3] < leads[4] == leads[5] == leads[6]
+
+
+#: The owner's volume-discount table (2026-10-01): monthly budget in rate-card
+#: tokens, full and beta price in baht, and the full-price margin he signed off.
+_LADDER = {
+    #          budget      full  beta  margin at full price
+    "lite":    (800_000,     199,   99, 0.705),
+    "starter": (2_000_000,   399,  199, 0.681),
+    "pro":     (5_600_000,   990,  499, 0.664),
+    "studio":  (12_000_000, 1990,  999, 0.650),
+    "agency":  (26_000_000, 3990, 1999, 0.628),
+    "max":     (48_000_000, 6990, 3499, 0.612),
+}
+
+
+def _margin(price_thb: float, tokens: int) -> float:
+    """Gross margin at full burn: Stripe card 3.65 % + ฿10, Stripe Billing
+    0.7 %, and ฿50 per 1M rate-card tokens at the 2027 vendor prices."""
+    return (price_thb - 0.0435 * price_thb - 10 - tokens * 50 / 1_000_000) / price_thb
+
+
+def test_budgets_are_the_volume_discount_the_owner_signed_off():
+    """Prices never moved; budgets rose, more steeply up the ladder. Every row
+    must land on the margin the owner approved, never under the 60 % floor
+    at full price, and each step up must buy tokens more cheaply."""
+    last_price_per_1m = float("inf")
+    last_margin = 1.0
+    for plan, (budget, full, _beta, approved) in _LADDER.items():
+        assert limits.PLAN_LIMITS[plan].monthly == budget, plan
+        margin = _margin(full, budget)
+        assert round(margin, 3) == approved, (plan, margin)
+        assert margin >= 0.60, plan
+        assert margin < last_margin, plan  # a volume discount: it steps DOWN
+        price_per_1m = full / (budget / 1_000_000)
+        assert price_per_1m < last_price_per_1m, plan
+        last_margin, last_price_per_1m = margin, price_per_1m
+    # Free is untouched: a 450 k credit, spent once.
+    assert limits.PLAN_LIMITS["free"].monthly == 450_000
+
+
+def test_beta_margins_are_thinner_but_never_a_loss():
+    """While the beta ladder runs the same budgets earn ~27–45 % at full burn
+    (docs/unit-economics.md §4) — thin, and stated, but still positive."""
+    beta = {plan: _margin(row[2], row[0]) for plan, row in _LADDER.items()}
+    assert 0.26 < min(beta.values()) and max(beta.values()) < 0.46
+    assert round(beta["lite"], 3) == 0.451 and round(beta["max"], 3) == 0.268
+
+
+def test_quoted_counts_come_from_the_fitted_cut_model():
+    """5-minute cut = per-second rate × 300 + 125,390 fixed + 40,000 voiceover."""
+    assert limits.cut_tokens(300, "standard") == 185_070 == limits.TYPICAL_CUT_TOKENS
+    assert limits.cut_tokens(300, "high") == 267_420 == limits.TYPICAL_HIGH_CUT_TOKENS
+    for plan in ("free", "lite", "starter", "pro", "studio", "agency", "max"):
+        budget = limits.PLAN_LIMITS[plan].monthly
+        assert limits.plan_cuts(plan) == budget // 185_070, plan
+        if limits.PLAN_LIMITS[plan].high_precision:
+            assert limits.plan_cuts_high(plan) == budget // 267_420, plan
 
 
 def test_footage_cap_with_a_small_tolerance():
@@ -118,16 +177,20 @@ def test_a_run_too_big_for_every_window_is_refused_whatever_is_left():
     assert plan_features.check_run_size(_user("enterprise"), 10**9) is None
 
 
-def test_the_page_quotes_two_counts_and_the_longer_one_is_smaller():
-    """A plan that says "30 นาที" and "20 คลิป" invites the wrong sum: 20 cuts
-    is what five-minute sources buy, and thirty-minute ones buy 14. Both
-    numbers are quoted, and the cap one must always be the smaller — if it
-    ever is not, the cap stopped costing anything and the claim is noise."""
+def test_the_longer_clip_and_the_finer_setting_both_buy_fewer_cuts():
+    """A plan that says "30 นาที" and "30 คลิป" invites the wrong sum: 30 cuts
+    is what five-minute sources buy, and thirty-minute ones buy 19. The cap
+    count must always be the smaller — if it ever is not, the cap stopped
+    costing anything and the claim is noise. Same for High: it must quote
+    fewer than Standard, or the second number on the card is noise."""
     for plan in ("free", "lite", "starter", "pro", "studio", "agency", "max"):
         typical = limits.plan_cuts(plan)
         at_cap = limits.plan_cuts_at_cap(plan)
         assert at_cap >= 1, plan
         assert at_cap <= typical, plan
+        high = limits.plan_cuts_high(plan)
+        assert (high is None) == (not limits.plan_limits(plan).high_precision), plan
+        assert high is None or 1 <= high < typical, plan
     # Free's cap IS about five minutes' worth of budget, so the two agree;
     # everywhere else the cap costs real cuts.
     assert limits.plan_cuts_at_cap("free") == limits.plan_cuts("free")
@@ -218,6 +281,10 @@ def test_music_and_conversion_name_the_cheapest_plan_that_has_them():
     # The plan's advertised clip count travels with the features, in clips.
     assert plan_features.features_payload(_user("pro"))["approx_cuts"] == limits.plan_cuts("pro")
     assert plan_features.features_payload(_user("enterprise"))["approx_cuts"] is None
+    # …and at High, only on the plans that can pick it.
+    assert plan_features.features_payload(_user("pro"))["approx_cuts_high"] == 20
+    assert plan_features.features_payload(_user("starter"))["approx_cuts_high"] is None
+    assert plan_features.features_payload(_user("enterprise"))["approx_cuts_high"] is None
     assert plan_features.check_feature(_user("free"), "music")["required_plan"] == "lite"
     assert plan_features.check_feature(_user("lite"), "music") is None
     assert plan_features.check_feature(_user("lite"), "transcode")["required_plan"] == "starter"

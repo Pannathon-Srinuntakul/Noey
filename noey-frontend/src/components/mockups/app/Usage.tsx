@@ -3,7 +3,9 @@ import { cn } from "./ui";
 /**
  * The quota card of the editor's settings page
  * (web/src/components/settings/UsageCard.tsx), with sample numbers: a Pro
- * plan part-way through its windows. Percent only, like the app.
+ * plan part-way through its month. Percent only, like the app. One window
+ * per account since 2026-09-30 (backend limits.py rule 1): the monthly one,
+ * reset on the billing date ("รีเซ็ต 13 ต.ค.", web/src/lib/usageLimits.ts).
  */
 
 function MeterRow({ name, value, pct, line }: { name: string; value: string; pct: number; line: string }) {
@@ -33,9 +35,8 @@ export function UsageCard() {
         <span className="text-[13.5px] text-accent">เปลี่ยนแผน</span>
       </div>
       <div className="mt-4 flex flex-col gap-4">
-        <MeterRow name="โควตารายสัปดาห์" value="ใช้ไป 21%" pct={21} line="รอบใหม่ พฤหัสบดี 09:40" />
-        <MeterRow name="โควตารอบ 5 ชั่วโมง" value="ใช้ไป 38%" pct={38} line="รอบใหม่ใน 1 ชม. 48 นาที" />
-        <MeterRow name="ที่เก็บไฟล์" value="6.2 / 50 GB" pct={12.4} line="ลบโปรเจกต์เก่าเพื่อคืนพื้นที่ได้" />
+        <MeterRow name="โควตารายเดือน" value="ใช้ไป 38%" pct={38} line="รีเซ็ต 13 ต.ค." />
+        <MeterRow name="ที่เก็บไฟล์" value="3.7 / 10 GB" pct={37} line="ลบโปรเจกต์เก่าเพื่อคืนพื้นที่ได้" />
       </div>
       <p className="mt-4 border-t border-divider pt-3.5 text-[13px] leading-[1.6] text-muted">
         แก้ไทม์ไลน์ สลับช็อต และเรนเดอร์ซ้ำ ไม่กินโควตา

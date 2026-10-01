@@ -229,14 +229,36 @@ export type UsageLimit = "Trial credit" | "Monthly limit" | "Weekly limit" | "5-
 // percentage, everywhere, always (owner's standing decision).
 //
 // Free is NOT a monthly allowance: it is one trial credit, spent once.
+//
+// HONEST since 2026-10-01 (owner): each figure is the plan's monthly budget
+// divided by what a 5-minute raw clip actually costs under the fitted
+// production model, ROUNDED DOWN — never rounded up, never a hand-picked
+// round number. Standard (ระดับปกติ) = 185,070 rate-card tokens per cut,
+// High (ระดับละเอียด) = 267,420. The backend derives the same numbers in
+// `packages/billing/limits.py` (`plan_cuts` / `plan_cuts_high`, served as
+// `approx_cuts` / `approx_cuts_high`) and its tests pin them; change both
+// together. Budgets are not written here on purpose: the site never states a
+// token count.
 export const APPROX_CUTS_PER_MONTH: Record<Tier, number> = {
   free: 2,
   lite: 4,
-  starter: 9,
-  pro: 22,
-  studio: 45,
-  agency: 90,
-  max: 160,
+  starter: 10,
+  pro: 30,
+  studio: 64,
+  agency: 140,
+  max: 259,
+};
+
+/**
+ * The same count at ระดับละเอียด, for the plans that can pick it (Pro and
+ * up). A plan bought FOR its finer setting must not quote only the ordinary
+ * count, so every surface that states a Pro+ count states this one too.
+ */
+export const APPROX_HIGH_CUTS_PER_MONTH: Partial<Record<Tier, number>> = {
+  pro: 20,
+  studio: 44,
+  agency: 97,
+  max: 179,
 };
 
 /**
@@ -247,25 +269,63 @@ export const CUTS_APPROX_PREFIX = "ตัดได้ราว";
 /** The bare hedge, for the free plan's one-off credit and for enumerations. */
 export const CUTS_APPROX_SHORT = "ราว";
 
-/** The headline itself: "ตัดได้ราว 22 คลิป/เดือน", or the free plan's one-off credit. */
+/** The headline itself: "ตัดได้ราว 30 คลิป/เดือน", or the free plan's one-off credit. */
 export function clipsHeadline(tier: Tier): string {
   const cuts = APPROX_CUTS_PER_MONTH[tier];
   return tier === "free" ? `${CUTS_APPROX_SHORT} ${cuts} คลิป` : `${CUTS_APPROX_PREFIX} ${cuts} คลิป/เดือน`;
 }
 
+/** The ระดับละเอียด count as a phrase — "ระดับละเอียดราว 20 คลิป" — or null below Pro. */
+export function clipsHighLine(tier: Tier): string | null {
+  const cuts = APPROX_HIGH_CUTS_PER_MONTH[tier];
+  return cuts ? `ระดับ${PRECISION_NAMES.high}${CUTS_APPROX_SHORT} ${cuts} คลิป` : null;
+}
+
+/**
+ * Both counts in one line — "ตัดได้ราว 30 คลิป/เดือน · ระดับละเอียดราว 20
+ * คลิป" — for a surface that has room for only one line per plan (account
+ * card, upgrade dialog). Lite/Starter/Free get the headline alone.
+ */
+export function clipsHeadlineFull(tier: Tier): string {
+  const high = clipsHighLine(tier);
+  return high ? `${clipsHeadline(tier)} · ${high}` : clipsHeadline(tier);
+}
+
 /**
  * Compact form for a list whose lead already said "ต่อเดือน". It keeps "ราว"
  * per item on purpose: an agent may quote one item out of the list, and a bare
- * number there would be a promise.
+ * number there would be a promise. The ordinary count only — the comparison
+ * table carries the finer one in its own row.
  */
 export function clipsListItem(tier: Tier): string {
   return `${CUTS_APPROX_SHORT} ${APPROX_CUTS_PER_MONTH[tier]} คลิป`;
 }
 
-/** "Lite ราว 4 คลิป · Starter ราว 9 คลิป · …" — the ladder, written once. */
-export function clipsLadderSentence(tiers: readonly Tier[] = TIERS): string {
-  return tiers.map((tier) => `${PLAN_COPY[tier].name} ${clipsListItem(tier)}`).join(" · ");
+/** The ระดับละเอียด count in the same compact form, or null below Pro. */
+export function clipsHighListItem(tier: Tier): string | null {
+  const cuts = APPROX_HIGH_CUTS_PER_MONTH[tier];
+  return cuts ? `${CUTS_APPROX_SHORT} ${cuts} คลิป` : null;
 }
+
+/**
+ * "Lite ราว 4 คลิป · … · Pro ราว 30 คลิป (ระดับละเอียดราว 20 คลิป) · …" —
+ * the ladder, written once, with both counts wherever the plan has both.
+ */
+export function clipsLadderSentence(tiers: readonly Tier[] = TIERS): string {
+  return tiers
+    .map((tier) => {
+      const high = clipsHighLine(tier);
+      return `${PLAN_COPY[tier].name} ${clipsListItem(tier)}${high ? ` (${high})` : ""}`;
+    })
+    .join(" · ");
+}
+
+/**
+ * The volume discount in words (owner, 2026-10-01): bigger plans buy each
+ * clip for less. Stated as a fact about the ladder, never as a baht figure —
+ * the price per clip moves with the beta ladder and the site does not quote it.
+ */
+export const VOLUME_VALUE_NOTE = "แพลนใหญ่ขึ้น ได้คลิปต่อบาทมากขึ้น";
 
 /**
  * The basis of every clip count. A count with no basis is a promise the product
@@ -278,7 +338,7 @@ export function clipsLadderSentence(tiers: readonly Tier[] = TIERS): string {
  * repetition is free there, and an agent may read one plan in isolation.
  */
 export const CLIPS_FOOTNOTE =
-  "คิดจากคลิปดิบ 5 นาที · คลิปที่ยาวกว่าหรือระดับละเอียดใช้โควตามากกว่า · ระบบบอกก่อนเริ่มทุกครั้งว่างานนี้ใช้เท่าไหร่";
+  "คิดจากคลิปดิบ 5 นาที ปัดลง · คลิปที่ยาวกว่าหรือระดับละเอียดใช้โควตามากกว่า · ระบบบอกก่อนเริ่มทุกครั้งว่างานนี้ใช้เท่าไหร่";
 
 /** What a card puts under its own count; the page states the rest once. */
 export const CLIPS_BASIS_SHORT = "~คลิปดิบ 5 นาที";
@@ -394,7 +454,7 @@ export const PLAN_COPY: Record<Tier, PlanCopy> = {
     ],
     dialogSummary: `${clipsHeadline("lite")} · ฟุตเทจ ${FOOTAGE_PER_PROJECT.lite}ต่อโปรเจกต์ · 3 GB`,
     pricingCta: "เลือกแพลนนี้",
-    limits: ["Weekly limit"],
+    limits: ["Monthly limit"],
     concurrentJobs: 1,
   },
   starter: {
@@ -415,7 +475,7 @@ export const PLAN_COPY: Record<Tier, PlanCopy> = {
     ],
     dialogSummary: `${clipsHeadline("starter")} · ฟุตเทจ ${FOOTAGE_PER_PROJECT.starter}ต่อโปรเจกต์ · 5 GB`,
     pricingCta: "เลือกแพลนนี้",
-    limits: ["Weekly limit"],
+    limits: ["Monthly limit"],
     concurrentJobs: 1,
   },
   pro: {
@@ -430,14 +490,14 @@ export const PLAN_COPY: Record<Tier, PlanCopy> = {
       "คิวประมวลผลก่อนแพลนอื่น · จำนวนโปรเจกต์ไม่จำกัด ภายใน 10 GB",
     ],
     accountFeatures: [
-      clipsHeadline("pro"),
+      clipsHeadlineFull("pro"),
       `ฟุตเทจรวม ${FOOTAGE_PER_PROJECT.pro}ต่อโปรเจกต์ · ${precisionFeature("pro")}`,
       "คิวประมวลผลก่อนแพลนอื่น · เก็บโปรเจกต์ไม่จำกัดจำนวน · 10 GB",
     ],
-    dialogSummary: `${clipsHeadline("pro")} · วิเคราะห์ระดับ${PRECISION_NAMES.high} · 10 GB`,
+    dialogSummary: `${clipsHeadlineFull("pro")} · 10 GB`,
     pricingCta: "เลือกแพลนนี้",
     recommended: true,
-    limits: ["Weekly limit", "5-hour limit"],
+    limits: ["Monthly limit"],
     concurrentJobs: 2,
   },
   studio: {
@@ -452,13 +512,13 @@ export const PLAN_COPY: Record<Tier, PlanCopy> = {
       "คิวประมวลผลลำดับแรก · จำนวนโปรเจกต์ไม่จำกัด ภายใน 30 GB",
     ],
     accountFeatures: [
-      clipsHeadline("studio"),
+      clipsHeadlineFull("studio"),
       `ฟุตเทจรวม ${FOOTAGE_PER_PROJECT.studio}ต่อโปรเจกต์ · ${precisionFeature("studio")}`,
       "คิวประมวลผลลำดับแรก · เก็บโปรเจกต์ไม่จำกัด · 30 GB",
     ],
-    dialogSummary: `${clipsHeadline("studio")} · ทำงานพร้อมกัน 3 งาน · 30 GB`,
+    dialogSummary: `${clipsHeadlineFull("studio")} · ทำงานพร้อมกัน 3 งาน · 30 GB`,
     pricingCta: "เลือกแพลนนี้",
-    limits: ["Weekly limit", "5-hour limit"],
+    limits: ["Monthly limit"],
     concurrentJobs: 3,
   },
   agency: {
@@ -473,13 +533,13 @@ export const PLAN_COPY: Record<Tier, PlanCopy> = {
       "คิวประมวลผลลำดับแรก · จำนวนโปรเจกต์ไม่จำกัด ภายใน 60 GB",
     ],
     accountFeatures: [
-      clipsHeadline("agency"),
+      clipsHeadlineFull("agency"),
       "ทำงาน AI พร้อมกันได้ 4 งาน",
       "คิวประมวลผลลำดับแรก · เก็บโปรเจกต์ไม่จำกัด · 60 GB",
     ],
-    dialogSummary: `${clipsHeadline("agency")} · ทำงานพร้อมกัน 4 งาน · 60 GB`,
+    dialogSummary: `${clipsHeadlineFull("agency")} · ทำงานพร้อมกัน 4 งาน · 60 GB`,
     pricingCta: "เลือกแพลนนี้",
-    limits: ["Weekly limit", "5-hour limit"],
+    limits: ["Monthly limit"],
     concurrentJobs: 4,
   },
   max: {
@@ -494,13 +554,13 @@ export const PLAN_COPY: Record<Tier, PlanCopy> = {
       "คิวประมวลผลลำดับแรก · จำนวนโปรเจกต์ไม่จำกัด ภายใน 100 GB",
     ],
     accountFeatures: [
-      clipsHeadline("max"),
+      clipsHeadlineFull("max"),
       "ทำงาน AI พร้อมกันได้ 5 งาน",
       "คิวประมวลผลลำดับแรก · เก็บโปรเจกต์ไม่จำกัด · 100 GB",
     ],
-    dialogSummary: `${clipsHeadline("max")} · ทำงานพร้อมกัน 5 งาน · 100 GB`,
+    dialogSummary: `${clipsHeadlineFull("max")} · ทำงานพร้อมกัน 5 งาน · 100 GB`,
     pricingCta: "เลือกแพลนนี้",
-    limits: ["Weekly limit", "5-hour limit"],
+    limits: ["Monthly limit"],
     concurrentJobs: 5,
   },
 };
@@ -534,6 +594,14 @@ export const COMPARISON_ROWS: ReadonlyArray<{ label: string; values: Row7; numer
     values: TIERS.map((tier) =>
       tier === "free" ? `${clipsListItem(tier)} ครั้งเดียว` : clipsListItem(tier),
     ) as unknown as Row7,
+    numeric: true,
+  },
+  {
+    // Pro and up quote the finer setting's count too (owner, 2026-10-01);
+    // below Pro the setting does not exist, so the cell says so rather than
+    // repeating the ordinary count.
+    label: `จำนวนคลิปต่อเดือน ระดับ${PRECISION_NAMES.high} (โดยประมาณ)`,
+    values: TIERS.map((tier) => clipsHighListItem(tier) ?? "—") as unknown as Row7,
     numeric: true,
   },
   {

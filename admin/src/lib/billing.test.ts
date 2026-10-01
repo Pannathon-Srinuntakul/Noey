@@ -91,12 +91,17 @@ describe("limits, wallet, breaker, accuracy helpers", async () => {
     expect(b.ratioLabel(1.234)).toBe("×1.23");
   });
 
-  it("plan limits match the backend table (weekly = monthly ÷ 4.33, 5-hour = 40%)", () => {
-    expect(plans.weeklyLimit(plans.PLAN_LIMITS.pro.monthly)).toBe(923_787);
-    expect(plans.fiveHourLimit(plans.PLAN_LIMITS.pro.monthly)).toBe(369_514);
-    expect(plans.PLAN_LIMITS.free.windows).toEqual(["monthly"]);
-    expect(plans.PLAN_LIMITS.starter.windows).toEqual(["weekly"]);
-    expect(plans.PLAN_LIMITS.max).toMatchObject({ monthly: 28_000_000, concurrency: 5, storageGb: 100 });
+  it("plan limits match the backend table (volume-discount budgets, 2026-10-01)", () => {
+    expect(Object.fromEntries(Object.entries(plans.PLAN_LIMITS).map(([k, v]) => [k, v.monthly]))).toEqual({
+      free: 450_000, lite: 800_000, starter: 2_000_000, pro: 5_600_000,
+      studio: 12_000_000, agency: 26_000_000, max: 48_000_000,
+    });
+    expect(plans.PLAN_LIMITS.free.windows).toEqual(["lifetime"]);
+    for (const k of plans.PAID_KEYS) expect(plans.PLAN_LIMITS[k].windows).toEqual(["monthly"]);
+    expect(plans.PLAN_LIMITS.max).toMatchObject({ concurrency: 5, storageGb: 100 });
+    // The sub-window arithmetic is still defined for rows that record it.
+    expect(plans.weeklyLimit(4_000_000)).toBe(923_787);
+    expect(plans.fiveHourLimit(4_000_000)).toBe(369_514);
   });
 
   it("run labels never name a vendor", () => {

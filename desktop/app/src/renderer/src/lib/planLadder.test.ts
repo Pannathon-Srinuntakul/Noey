@@ -21,6 +21,8 @@ import {
   planChangeBody,
   PLAN_APPROX_CUTS,
   planApproxCuts,
+  planApproxHighCuts,
+  PLAN_APPROX_HIGH_CUTS,
   planConsentText,
   planFooter,
   priceText,
@@ -44,7 +46,10 @@ describe('plan list (design §5)', () => {
       'agency',
       'max'
     ])
-    expect(PLAN_ROWS[3].sub).toBe('ตัดได้ราว 22 คลิป/เดือน · ฟุตเทจ 30 นาที · ระดับละเอียด')
+    expect(PLAN_ROWS[3].sub).toBe(
+      'ตัดได้ราว 30 คลิป/เดือน · ระดับละเอียดราว 20 คลิป · ฟุตเทจ 30 นาที'
+    )
+    expect(PLAN_ROWS[2].sub).toBe('ตัดได้ราว 10 คลิป/เดือน · ฟุตเทจ 20 นาที · ระดับปกติ')
   })
 
   it('labels the row button by direction', () => {
@@ -80,23 +85,32 @@ describe('plan list (design §5)', () => {
     expect(PLAN_ROWS.every((r) => r.sub.includes('ราว'))).toBe(true)
     // The three cheapest plans are Standard-only (owner, 2026-09-29 revision).
     expect(PLAN_ROWS.slice(0, 3).every((r) => r.sub.endsWith('ระดับปกติ'))).toBe(true)
-    expect(PLAN_ROWS.slice(3).every((r) => r.sub.endsWith('ระดับละเอียด'))).toBe(true)
+    // Pro and up: the ระดับละเอียด count names the setting and what it buys.
+    expect(PLAN_ROWS.slice(3).every((r) => r.sub.includes('ระดับละเอียดราว '))).toBe(true)
   })
 
   it('keeps the printed count and the figure from drifting apart', () => {
+    // Honest counts (owner, 2026-10-01): budget ÷ a 5-minute cut, rounded
+    // down — the backend's tests pin the same figures.
     expect(PLAN_APPROX_CUTS).toEqual({
       free: 2,
       lite: 4,
-      starter: 9,
-      pro: 22,
-      studio: 45,
-      agency: 90,
-      max: 160
+      starter: 10,
+      pro: 30,
+      studio: 64,
+      agency: 140,
+      max: 259
     })
+    expect(PLAN_APPROX_HIGH_CUTS).toEqual({ pro: 20, studio: 44, agency: 97, max: 179 })
     for (const row of PLAN_ROWS) {
       expect(row.sub).toContain(`ราว ${PLAN_APPROX_CUTS[row.key]} คลิป`)
+      const high = PLAN_APPROX_HIGH_CUTS[row.key]
+      if (high) expect(row.sub).toContain(`ระดับละเอียดราว ${high} คลิป`)
     }
-    expect(planApproxCuts('pro')).toBe(22)
+    expect(planApproxCuts('pro')).toBe(30)
+    expect(planApproxHighCuts('pro')).toBe(20)
+    expect(planApproxHighCuts('starter')).toBeNull()
+    expect(planApproxHighCuts('enterprise')).toBeNull()
     // An admin-set or unknown plan advertises none, so nothing may show one.
     expect(planApproxCuts('enterprise')).toBeNull()
     expect(planApproxCuts(null)).toBeNull()

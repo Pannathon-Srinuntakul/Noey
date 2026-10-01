@@ -30,6 +30,7 @@ import {
   FREE_CLIPS_CAPTION,
   PAID_TIERS,
   PLAN_COPY,
+  VOLUME_VALUE_NOTE,
   clipsHeadline,
   clipsLadderSentence,
   displayPrice,
@@ -97,11 +98,13 @@ function priceList(table: PriceTable): string {
  * The rules of the quota, one per row of the example card. The windows keep
  * their English names (lib/usage-limits.ts); under each, quietly, the name
  * the editor's own quota card gives it (web/src/lib/usageLimits.ts) — the
- * card drawn just above says "โควตารายสัปดาห์", not "Weekly limit".
+ * card drawn just above says "โควตารายเดือน", not "Monthly limit". One window
+ * per account since 2026-09-30 (backend limits.py rule 1): the weekly and
+ * 5-hour sub-windows no longer exist.
  */
 const QUOTA_RULES: ReadonlyArray<{ key: string; editor?: string; text: string }> = [
-  { key: "Weekly limit", editor: "โควตารายสัปดาห์", text: "ทุกแพลนรายเดือน นับ 7 วันจากงานแรกของรอบ ใช้ได้เมื่อไหร่ก็ได้ในสัปดาห์" },
-  { key: "5-hour limit", editor: "โควตารอบ 5 ชั่วโมง", text: "Pro ขึ้นไป อีกชั้นหนึ่งกันการใช้งานหนักต่อเนื่อง รีเซ็ต 5 ชั่วโมงหลังงานแรกของรอบ" },
+  { key: "Monthly limit", editor: "โควตารายเดือน", text: "ทุกแพลนรายเดือน ได้โควตาใหม่ทุกรอบบิล ใช้หนักวันไหนก็ได้ ไม่มีเพดานรายสัปดาห์หรือรายชั่วโมง" },
+  { key: "แพลนใหญ่", text: `${VOLUME_VALUE_NOTE} ตัวเลขบนการ์ดคิดให้แล้ว` },
   { key: "Trial credit", editor: "เครดิตทดลองใช้", text: `แพลนฟรี ได้เครดิตทดลองก้อนเดียวตอนสมัคร ตัดได้ ${clipsHeadline("free")} ไม่รีเซ็ตรายเดือน` },
   { key: "บอกก่อนเริ่ม", text: "ระบบบอกก่อนเริ่มทุกครั้งว่างานนี้ใช้โควตาเท่าไหร่ จึงไม่มีการหักเกินโดยไม่รู้ตัว" },
   { key: "ไม่กินโควตา", text: "การแก้ไทม์ไลน์ การสลับช็อต และการเรนเดอร์ซ้ำ ทำได้ไม่จำกัด" },
@@ -165,7 +168,7 @@ export default async function PricingPage() {
         <div className="wrap quota__grid">
           <SectionHeader id="quota-title" marker timecode="00:00:48:00" title="โควตาคิดยังไง" size="h-2">
             <p>
-              {keepThaiProse("เรานับเป็นจำนวนคลิปที่ AI ตัดให้ต่อเดือน เพราะงานหนักของแต่ละคลิปคือการถอดเสียงและการวางแผนตัด ซึ่งใช้กำลังใกล้เคียงกันไม่ว่าฟุตเทจจะยาวแค่ไหน ตัวเลขบนการ์ดคิดจากคลิปดิบ 5 นาที คลิปที่ยาวกว่าหรือระดับละเอียดใช้โควตามากกว่า และ หน้าตั้งค่าแสดงเป็นเปอร์เซ็นต์ของรอบที่เหลือ")}
+              {keepThaiProse("เรานับเป็นจำนวนคลิปที่ AI ตัดให้ต่อเดือน เพราะงานหนักของแต่ละคลิปคือการถอดเสียงและการวางแผนตัด ซึ่งใช้กำลังใกล้เคียงกันไม่ว่าฟุตเทจจะยาวแค่ไหน ตัวเลขบนการ์ดคิดจากคลิปดิบ 5 นาทีและปัดลง แพลน Pro ขึ้นไปบอกทั้งจำนวนที่ระดับปกติและระดับละเอียด คลิปที่ยาวกว่าใช้โควตามากกว่า และหน้าตั้งค่าแสดงเป็นเปอร์เซ็นต์ของรอบที่เหลือ")}
             </p>
           </SectionHeader>
           <div className="quota-card">

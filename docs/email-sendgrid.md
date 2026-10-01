@@ -183,12 +183,27 @@ failures send nothing from here — Stripe's own customer emails cover them.
 
 ---
 
-## 3. Templates (`packages/email/templates.py`)
+## 3. Templates (`packages/email/templates.py` + `packages/email/layout.py`)
 
-Thai copy, minimal branded HTML with inline CSS (background `#f3f2f2`, text
-`#201f1d`, accent `#b68235`, white card) plus a plain-text part. Table layout,
-Thai-capable font stack, every dynamic value HTML-escaped, a copy-paste link
-under each button. No AI vendor is named anywhere.
+`templates.py` holds only the Thai copy of each email, described as content
+blocks (paragraph, action button, one-time code, notice, label/value details,
+quoted text). `layout.py` is the ONE layout every email renders through:
+header (hosted logo `{SITE_URL}/email/logo-96.png` + live-text wordmark),
+white card with a gold rule, footer (why you received this, `SUPPORT_EMAIL`,
+`/privacy` + `/terms`, and `EMAIL_BUSINESS_ADDRESS` only when set). It writes
+both parts: HTML (table layout, `role="presentation"`, 600px fluid column,
+inline styles, bulletproof table-cell button, hidden preheader, `lang="th"`,
+`color-scheme: light dark` with dark-mode overrides) and a plain-text twin with
+every URL written out. Brand colours: dark `#171614`, gold `#d9a441` (gold is
+decoration only; link text uses `#8a5a12` for contrast). Every value is
+escaped by the layout; contact-form input is also stripped of control and
+bidi-override characters. No AI vendor is named anywhere, and transactional
+mail carries no unsubscribe link.
+
+Preview every email with sample data (sends nothing):
+`cd backend && python scripts/preview_emails.py /tmp/email-previews`.
+The logo file lives in `noey-frontend/public/email/` — it appears in mail only
+once the site is deployed.
 
 | Template | To | Subject |
 |---|---|---|
@@ -196,7 +211,10 @@ under each button. No AI vendor is named anywhere.
 | `reset_password` | the account | ตั้งรหัสผ่านใหม่ — {brand} |
 | `change_email_confirm` | the NEW address | ยืนยันอีเมลใหม่ของบัญชี — {brand} |
 | `change_email_notice` | the OLD address | มีคำขอเปลี่ยนอีเมลของบัญชีคุณ — {brand} |
+| `account_deleted` | the deleted account's address | บัญชีของคุณถูกลบแล้ว — {brand} |
 | `contact_message` | `CONTACT_TO_EMAIL` | [{brand}] ข้อความจากฟอร์มติดต่อ — {name} |
+| `admin_login_code` | the admin | รหัสเข้าสู่แผงผู้ดูแลระบบ — {brand} |
+| `circuit_breaker_tripped` | every admin | งาน AI หยุดชั่วคราว: ถึงเพดานค่าใช้จ่ายรายวัน — {brand} |
 
 ---
 
@@ -214,6 +232,8 @@ under each button. No AI vendor is named anywhere.
 | `SMTP_USERNAME` / `SMTP_PASSWORD` | unset | Both or neither. |
 | `SMTP_TIMEOUT_SEC` | `15` | Per socket operation. |
 | `CONTACT_TO_EMAIL` | unset | Contact-form inbox. Unset → `/contact` 503. |
+| `SUPPORT_EMAIL` | `support@noeystudio.com` | Support address in every email footer. |
+| `EMAIL_BUSINESS_ADDRESS` | unset | Optional address line in the email footer. Unset → no line. |
 | `REQUIRE_VERIFIED_EMAIL_FOR_AI` | `true` | The AI gate (§1). |
 | `TRUSTED_PROXY_HOPS` | `0` | Proxies in front of the API for client-IP resolution (§5). |
 | `SITE_URL` | `http://localhost:3000` | Base of every link. On a non-local deployment a localhost value keeps email off (503), like billing. |

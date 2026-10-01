@@ -32,7 +32,14 @@ describe("nonce CSP for the signed-in pages", () => {
   });
 
   it("keeps every other directive identical to the static policy", () => {
-    const strip = (p: string) => p.split("; ").filter((d) => !d.startsWith("script-src ")).join("; ");
+    // The only intended differences: script-src (nonce vs unsafe-inline) and
+    // the analytics report origin, which the public policy alone allows.
+    const strip = (p: string) =>
+      p
+        .split("; ")
+        .filter((d) => !d.startsWith("script-src "))
+        .map((d) => d.replace(" https://cloudflareinsights.com", ""))
+        .join("; ");
     const origin = "https://o1.ingest.sentry.io";
     expect(strip(nonceContentSecurityPolicy("n", origin))).toBe(strip(staticContentSecurityPolicy(origin)));
   });
@@ -120,4 +127,14 @@ describe("form-action covers every host a form submit is redirected to", () => {
       expect(formAction).toContain("https://billing.stripe.com");
     });
   }
+});
+
+describe("Cloudflare Web Analytics", () => {
+  it("is allowed on the public (static) policy only", () => {
+    const pub = staticContentSecurityPolicy(null);
+    expect(scriptSrc(pub)).toContain("https://static.cloudflareinsights.com");
+    expect(pub).toMatch(/connect-src 'self' https:\/\/cloudflareinsights\.com/);
+    const signedIn = nonceContentSecurityPolicy("abc", null);
+    expect(signedIn).not.toContain("cloudflareinsights");
+  });
 });
