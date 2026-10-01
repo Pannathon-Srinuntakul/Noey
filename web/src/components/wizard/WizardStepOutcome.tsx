@@ -7,6 +7,7 @@ import { ENGINE_OPTIONS, PRECISION_OPTIONS } from '../../lib/qualityTiers'
 import {
   UI_MODE_LABEL,
   VOICEOVER_LABEL,
+  beatSyncOffer,
   captionGate,
   fmtClock,
   type UiMode,
@@ -20,7 +21,7 @@ import { Switch } from '../ui/Switch'
 import { Textarea } from '../ui/Input'
 import { Checkbox } from '../ui/Checkbox'
 import { CaptionPanel } from './CaptionPanel'
-import { canSnapToBeat, canUseOriginalVoice, canUseStyles } from '../../lib/platformFeatures'
+import { canUseOriginalVoice, canUseStyles } from '../../lib/platformFeatures'
 
 type Patch = (patch: Partial<WizardState>) => void
 
@@ -159,6 +160,7 @@ export function WizardStepOutcome({
   const isLongform = state.uiMode === 'longform'
   // ใช้เสียงในคลิป (R17): no script, no music — the rows below branch on it.
   const isOriginalVoice = isCut && state.voiceover === 'original'
+  const beatSync = beatSyncOffer(state, Boolean(musicLocked))
   // ตัดช่วงเงียบ/ตัดไฮไลต์ have one real setting on this screen and the rest
   // lives in here, so the panel opens with the step in those modes. Switching
   // INTO them later opens it too (see the mode-card handler); switching away
@@ -464,11 +466,9 @@ export function WizardStepOutcome({
                     >
                       <X size={15} />
                     </button>
-                    {/* Hidden where the build cannot do it: the cut comes
-                        out byte-identical with this on or off, and the
-                        timeline editor already hides its own snap control
-                        behind the same flag. */}
-                    {canSnapToBeat ? (
+                    {/* Live only when the beat analysis will run — see
+                        beatSyncOffer. */}
+                    {beatSync === 'available' ? (
                       <Switch
                         checked={state.beatSync}
                         onChange={(beatSync) => patch({ beatSync })}
@@ -501,7 +501,7 @@ export function WizardStepOutcome({
                         }
                       ]}
                     />
-                    {canSnapToBeat ? (
+                    {beatSync === 'needs_music' ? (
                       <Switch
                         checked={false}
                         onChange={() => undefined}

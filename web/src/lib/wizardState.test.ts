@@ -285,12 +285,9 @@ describe('buildSubmission', () => {
     expect(buildSubmission({ ...s, duration: 'auto' }).targetDurationSec).toBeUndefined()
   })
 
-  it('never reports beat sync on a build that cannot snap to a beat', () => {
-    // `canSnapToBeat` is false in the browser: computing the grid is a
-    // server-side pass this build does not run, and the editor has no snap
-    // control to use the result. The wizard's switch is hidden accordingly, so
-    // the submission must not carry the state's default `true` into a project
-    // and describe a cut that was never made that way.
+  it('reports beat sync only for a cut with a track attached', () => {
+    // Without a track there is nothing for the server to analyse, so the
+    // state's default `true` must not travel into the project.
     expect(buildSubmission(stateWith({ beatSync: true })).beatSync).toBe(false)
 
     const withMusic = stateWith({
@@ -298,8 +295,10 @@ describe('buildSubmission', () => {
       beatSync: true,
       music: { path: 'a.mp3', name: 'a.mp3', trimInSec: 0, trimOutSec: 30 }
     })
-    expect(buildSubmission(withMusic).beatSync).toBe(false)
+    expect(buildSubmission(withMusic).beatSync).toBe(true)
     expect(buildSubmission({ ...withMusic, beatSync: false }).beatSync).toBe(false)
+    // Speech modes keep the original audio — no beat grid.
+    expect(buildSubmission({ ...withMusic, uiMode: 'longform' }).beatSync).toBe(false)
   })
 })
 

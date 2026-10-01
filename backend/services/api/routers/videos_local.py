@@ -76,6 +76,7 @@ import asyncio
 import json
 import pathlib
 import re
+import shutil
 import uuid
 from pathlib import Path
 from typing import Literal
@@ -2444,47 +2445,42 @@ async def upload_music(
     if suffix not in _MUSIC_VIDEO_SUFFIXES and suffix not in _MUSIC_AUDIO_SUFFIXES:
         raise HTTPException(422, f"ไฟล์ประเภทนี้ไม่รองรับ ({suffix or 'ไม่ทราบนามสกุล'})")
 
-    root = data_root()
-    music_dir = root / "video_outputs" / uid / "music"
-    music_dir.mkdir(parents=True, exist_ok=True)
-    for stale in music_dir.iterdir():
-        stale.unlink(missing_ok=True)
-
-    raw_path = music_dir / f"upload{suffix}"
-    await receive_upload(file, raw_path, limit=cap, label="เพลง")
-
-    import asyncio
-
-    from packages.video.beat_analysis import detect_beats, extract_audio_for_analysis
-
+    # Scratch OUTSIDE the project's store. `video_outputs/<uid>/music/` is the
+    # web build's synced `music/` root (see _WEB_FILE_ROOTS): the user's own
+    # track lives there, and this route used to write its copy into that folder
+    # and then wipe it — locally and on S3 — taking the web user's music with
+    # it. The analysis copy has no business in the store at all.
+    scratch = data_root() / "music_analysis" / f"{uid}_{uuid.uuid4().hex[:8]}"
+    scratch.mkdir(parents=True, exist_ok=True)
     try:
-        if suffix in _MUSIC_VIDEO_SUFFIXES:
-            analysis_path = music_dir / "track.wav"
-            await asyncio.to_thread(extract_audio_for_analysis, raw_path, analysis_path)
-        else:
-            analysis_path = raw_path
-        beats = await asyncio.to_thread(detect_beats, analysis_path)
-    except Exception as exc:
-        # librosa / ffmpeg word their failures with file paths and library
-        # internals; the user learns the file could not be read, the log
-        # learns why.
-        log.warning("dub_music_analysis_failed", uid=uid, suffix=suffix, error=str(exc)[:300])
-        raise HTTPException(422, "วิเคราะห์จังหวะเพลงไม่สำเร็จ — กรุณาลองไฟล์เพลงอื่น") from exc
+        raw_path = scratch / f"upload{suffix}"
+        await receive_upload(file, raw_path, limit=cap, label="เพลง")
 
-    # The BEATS are what the pipeline uses from here on (worker tasks read
-    # `music_beats`; the mix happens on the client, from the client's own copy
-    # of the track). Nothing reads the uploaded audio again, so it goes now
-    # rather than sitting on our disk — the file was only ever here so librosa
-    # could look at it.
+        from packages.video.beat_analysis import detect_beats, extract_audio_for_analysis
+
+        try:
+            if suffix in _MUSIC_VIDEO_SUFFIXES:
+                analysis_path = scratch / "track.wav"
+                await asyncio.to_thread(extract_audio_for_analysis, raw_path, analysis_path)
+            else:
+                analysis_path = raw_path
+            beats = await asyncio.to_thread(detect_beats, analysis_path)
+        except Exception as exc:
+            # librosa / ffmpeg word their failures with file paths and library
+            # internals; the user learns the file could not be read, the log
+            # learns why.
+            log.warning("dub_music_analysis_failed", uid=uid, suffix=suffix, error=str(exc)[:300])
+            raise HTTPException(422, "วิเคราะห์จังหวะเพลงไม่สำเร็จ — กรุณาลองไฟล์เพลงอื่น") from exc
+    finally:
+        # The BEATS are what the pipeline uses from here on (worker tasks read
+        # `music_beats`; the mix happens on the client, from the client's own
+        # copy of the track). Nothing reads the uploaded audio again, so it
+        # goes now — the file was only ever here so librosa could look at it.
+        shutil.rmtree(scratch, ignore_errors=True)
+
     proj.music_beats = beats
     proj.music_path = None
     await session.commit()
-
-    from packages.video.s3 import delete_output_subdir
-    from packages.video.storage import purge_uploaded_media
-
-    await asyncio.to_thread(purge_uploaded_media, uid, ("music",))
-    await delete_output_subdir(uid, "music")
 
     log.info("dub_music_uploaded", uid=uid, tempo=beats["tempo"], beats=len(beats["beats"]))
     return MusicBeatsOut(**beats)
@@ -2497,16 +2493,13 @@ async def delete_music(
     session: AsyncSession = Depends(db_session),
 ) -> None:
     proj = await _get_local_project(session, uid, auth.user_id)
+    # Only the beat grid goes. The folder `video_outputs/<uid>/music/` is the
+    # web build's synced music root — its files are the project's, removed by
+    # the web's own sync when the track is detached (and kept when an undo
+    # puts it back), never by this route.
     proj.music_path = None
     proj.music_beats = None
     await session.commit()
-
-    root = data_root()
-    music_dir = root / "video_outputs" / uid / "music"
-    if music_dir.is_dir():
-        for f in music_dir.iterdir():
-            f.unlink(missing_ok=True)
-        music_dir.rmdir()
     log.info("dub_music_deleted", uid=uid)
 
 

@@ -174,15 +174,23 @@ def test_every_mode_a_client_can_pick_is_footage_capped():
 
 def test_every_speech_mode_fits_the_footage_its_plan_advertises():
     """The sibling of test_plan_features' cap check, for the modes that check
-    does not walk: a plan's own footage cap, in the dearest speech mode, must
-    still sit inside every window the plan enforces — otherwise a run the
-    pricing page promises is refused by ``check_run_size``."""
+    does not walk. The speech modes are off the plan's ladder (owner,
+    2026-10-01): two hours on every plan, bounded by what the plan's window
+    can pay (``check_run_size``). The pricing page states exactly that, so pin
+    it: talking_head runs the full two hours on every plan, every speech mode
+    still fits the length the plan's ladder used to allow, and only Free and
+    Lite stop short of two hours of speech_highlights."""
+    full = float(limits.SPEECH_FOOTAGE_SEC)
     for plan in PLANS:
         limit = limits.plan_limits(plan)
+        biggest = max(limits.window_limit(plan, w) for w in limit.windows)
+        assert est.estimate_run(mode="talking_head", clip_secs=[full], model=PRO).tokens < biggest, plan
         for mode in ("talking_head", "speech_scenes", "speech_highlights"):
             run = est.estimate_run(mode=mode, clip_secs=[float(limit.footage_sec)], model=PRO)
             for window in limit.windows:
                 assert run.tokens < limits.window_limit(plan, window), (plan, mode, window)
+        longform = est.estimate_run(mode="speech_highlights", clip_secs=[full], model=PRO)
+        assert (longform.tokens <= biggest) == (plan not in ("free", "lite")), plan
 
 
 def test_frames_are_priced_per_image():

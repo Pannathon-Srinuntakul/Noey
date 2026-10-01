@@ -112,7 +112,10 @@ function wizardPlanNotices(state: WizardState, usage: Usage | null): LimitNotice
       : [state.files]
   const out: LimitNotice[] = []
   const longest = Math.max(0, ...groups.map((g) => totalDurationSec(g) ?? 0))
-  const footage = footageNotice(longest, usage.features.footage_sec)
+  // The plan's footage ladder caps ตัดฉากเด่น only (owner, 2026-10-01); the
+  // speech modes' two hours is `capSecFor`, checked with the files.
+  const footage =
+    state.uiMode === 'highlight' ? footageNotice(longest, usage.features.footage_sec) : null
   if (footage) out.push(footage)
   const bytes = state.files.reduce((sum, f) => sum + (f.sizeBytes ?? 0), 0)
   const storage = storageNotice(usage.storage.used_bytes, usage.storage.quota_bytes, bytes)
@@ -181,8 +184,12 @@ export default function WizardPage({
    * components, the projects that get created) reads THIS, and `setState`
    * still owns what the user typed.
    */
-  const effective: WizardState =
+  const planned: WizardState =
     precisionLocked && state.precision === 'high' ? { ...state, precision: 'standard' } : state
+  // A plan without music never stages the track (see stagedMusic), so there is
+  // no beat grid to cut to — the project must not say it was beat-cut.
+  const effective: WizardState =
+    musicLocked && planned.beatSync ? { ...planned, beatSync: false } : planned
   // Pre-flight estimate (docs/token-billing-plan.md §4.1): asked as soon as
   // every chosen clip has a length, re-asked when the mode or tiers change.
   const { estimate, loading: estimating } = useUsageEstimate(session, estimateRequestFor(effective))

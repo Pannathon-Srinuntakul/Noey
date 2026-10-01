@@ -1,6 +1,5 @@
 import { Crosshair, Magnet, Maximize2, Plus, Scan, Scissors, Trash2 } from 'lucide-react'
 import { memo } from 'react'
-import { canSnapToBeat } from '../../lib/platformFeatures'
 import { fmtTime } from '../../lib/timelineMath'
 import { Button } from '../ui/Button'
 import { Segmented } from '../ui/Segmented'
@@ -191,12 +190,13 @@ export const TimelineToolbar = memo(function TimelineToolbar({
       <span className="flex-1" />
       {/* One magnet, always on screen: cut edges, the playhead and the
         voiceover lines exist on every project, so there is always something
-        to snap to. Beats only change the wording — canSnapToBeat gates the
-        beat SOURCE of targets, never this control. */}
+        to snap to. The music's beats are one more target source when the
+        track has them — wording only here; there is no separate beat-snap
+        control (owner, 2026-10-01). */}
       <ToggleButton
         on={snapEnabled}
         onClick={onToggleSnap}
-        title={snapTitle(canSnapToBeat ? beatCount : 0)}
+        title={snapTitle(beatCount)}
         icon={<Magnet size={13} />}
       >
         ดูดขอบ

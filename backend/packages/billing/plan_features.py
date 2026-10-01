@@ -9,8 +9,9 @@ into an HTTP error — a dict with a stable ``code`` the clients branch on and a
 Thai ``message`` they can show as is:
 
 - ``footage_over_limit`` (422): total footage above the plan's per-project cap
-  — or, for a mode that sends the whole project to the model in ONE video
-  request, above what that request can hold at the chosen ความละเอียด;
+  (ตัดฉากเด่น) or the speech modes' one cap — or, for a mode that sends the
+  whole project to the model in ONE video request, above what that request
+  can hold at the chosen ความละเอียด;
 - ``run_too_large`` (422): the run cannot fit an enforced window even empty;
 - ``project_limit`` (403): creating one more project than the plan keeps.
   Existing projects past the cap stay openable and editable — only a NEW one
@@ -25,6 +26,8 @@ from typing import Any, Literal
 
 from packages.billing import catalog
 from packages.billing.limits import (
+    SPEECH_FOOTAGE_SEC,
+    SPEECH_MODES,
     VIDEO_CALL_MODES,
     is_unlimited,
     plan_limits,
@@ -97,12 +100,16 @@ def footage_limit_sec(
 ) -> int | None:
     """The shortest cap that applies: the plan's, and — for a mode that sends
     the whole project to the model in one request — what that request can
-    hold at ``precision`` (limits.video_call_footage_sec).
+    hold at ``precision`` (limits.video_call_footage_sec). A speech mode is
+    not on the plan's ladder at all: it gets ``SPEECH_FOOTAGE_SEC`` on every
+    plan (owner, 2026-10-01).
 
     An unlimited account skips the PLAN cap but not the request one: no plan
     can make a 2-hour request fit a 1 M-token context.
     """
     unlimited = is_unlimited(user)
+    if mode in SPEECH_MODES:
+        return None if unlimited else SPEECH_FOOTAGE_SEC
     plan_cap = None if unlimited else plan_limits(_plan(user)).footage_sec
     if mode not in VIDEO_CALL_MODES:
         return plan_cap
@@ -130,7 +137,9 @@ def check_footage(
         reason = " ที่ความละเอียดนี้"
     else:
         advice = "ตัดให้สั้นลงหรือแยกเป็นสองโปรเจกต์"
-        reason = "ของแผนนี้"
+        # The speech cap is the same on every plan: changing plan would not
+        # move it, so do not blame the plan.
+        reason = "ของโหมดนี้" if mode in SPEECH_MODES else "ของแผนนี้"
     return {
         "code": "footage_over_limit",
         "limit_sec": limit,
@@ -277,7 +286,10 @@ def features_payload(user: Any) -> dict[str, Any]:
     lim = plan_limits(plan)
     lead = QUEUE_LEAD_FIRST_SEC if unlimited else lim.queue_lead_sec
     return {
+        # ตัดฉากเด่น only (``video_call_modes`` below); every speech mode gets
+        # ``speech_footage_sec`` on every plan.
         "footage_sec": None if unlimited else lim.footage_sec,
+        "speech_footage_sec": None if unlimited else SPEECH_FOOTAGE_SEC,
         # The pricing page's APPROXIMATE cut count, not a quota: the meter is
         # a percentage and this is never subtracted from. Served so a
         # signed-in plan screen quotes the same number as the website instead

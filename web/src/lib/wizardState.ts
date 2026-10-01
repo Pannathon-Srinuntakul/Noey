@@ -7,7 +7,6 @@
 import { CAPTION_STYLE_DEFAULT, type CaptionStyle } from './captionStyle'
 import { buildDubBrief, dubTargetDurationSec } from './dubBrief'
 import type { ProjectMode } from './projectFlow'
-import { canSnapToBeat } from './platformFeatures'
 import { ENGINE_NAMES, PRECISION_NAMES, precisionLevelName } from './qualityTiers'
 
 /** What the user picks. `highlight` (ตัดฉากเด่น) fans out into three backend
@@ -362,6 +361,25 @@ export function mergeNameValue(state: WizardState): string {
  * Everything the wizard has to hand to `projects.create` / `projects.update`,
  * derived in one place so step 3 can display exactly what will be sent.
  */
+/**
+ * How the wizard offers ตัดตามจังหวะ (beat-synced cut) in the เพลงประกอบ row.
+ *
+ * Honest by construction — the switch is only live when the beat analysis
+ * will actually run:
+ * - `hidden`: the row has no music choice at all (speech modes keep the
+ *   original audio; ใช้เสียงในคลิป cannot mix music) or the plan does not
+ *   include music (the server refuses the upload with `plan_feature`).
+ * - `needs_music`: drawn disabled with its reason (เลือกเพลงก่อน).
+ * - `available`: a track is attached; on by default (`beatSync: true`).
+ */
+export type BeatSyncOffer = 'hidden' | 'needs_music' | 'available'
+
+export function beatSyncOffer(state: WizardState, musicLocked: boolean): BeatSyncOffer {
+  if (state.uiMode !== 'highlight' || state.voiceover === 'original') return 'hidden'
+  if (musicLocked) return 'hidden'
+  return state.music ? 'available' : 'needs_music'
+}
+
 export interface WizardSubmission {
   mode: ProjectMode
   brief: string
@@ -401,10 +419,11 @@ export function buildSubmission(state: WizardState): WizardSubmission {
     // Same condition the UI shows — see captionGate.
     captionStyle: captionGate(state).ok && state.captionEnabled ? state.captionStyle : undefined,
     // Speech modes keep the original audio — no music track, no beat grid.
-    // And never true on a build that cannot snap: the switch is hidden there,
-    // so a default of `true` would travel into the project and describe a cut
-    // that was never made that way.
-    beatSync: canSnapToBeat && isCut && Boolean(state.music) && state.beatSync
+    // Without a track there is nothing to analyse, so the state's default
+    // `true` must not travel into the project and describe a cut that was
+    // never made that way. (A plan without music is handled by the wizard's
+    // `effective` state, which turns this off before it gets here.)
+    beatSync: isCut && Boolean(state.music) && state.beatSync
   }
 }
 
@@ -457,7 +476,7 @@ export function summaryRows(state: WizardState, cutStyleName: string | null): Su
       key: 'music',
       label: 'เพลงประกอบ',
       value: state.music
-        ? `${state.music.name}${canSnapToBeat && state.beatSync ? ' · ตัดตามจังหวะ' : ''}`
+        ? `${state.music.name}${state.beatSync ? ' · ตัดตามจังหวะ' : ''}`
         : 'ไม่ใส่',
       step: 2
     })

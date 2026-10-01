@@ -95,7 +95,7 @@ import type { CaptionStyle } from './captionStyle'
 import { pickFile } from './pickFile'
 import type { ProjectMode, ProjectStep } from './projectFlow'
 import { isBusy, isTerminal, resumeStep } from './projectFlow'
-import { canSnapToBeat, canUseZoomEffects } from './platformFeatures'
+import { canUseZoomEffects } from './platformFeatures'
 import { transcodeOnServer } from './serverTranscode'
 import { isWaitingSlot } from './usageLimits'
 
@@ -1153,13 +1153,10 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
 
       // `beatSync !== false` rather than `=== true`: projects created before
       // the wizard exposed the switch have no field, and they were beat-cut.
-      //
-      // `canSnapToBeat` gates the whole block on this build: the analysis is a
-      // server-side pass and the editor has no snap control to use its result,
-      // so the grid would be computed and then ignored. (It is NOT about
-      // keeping the music off the server — `music/` is a synced root and the
-      // track is already there.)
-      if (canSnapToBeat && current.music?.path && current.beatSync !== false) {
+      // The track is uploaded for the server's beat analysis only; the grid
+      // comes back onto `music.beats`, where the cut AI calls (via the music
+      // window) and the editor's magnet both read it.
+      if (current.music?.path && current.beatSync !== false) {
         setProgressMsg('กำลังวิเคราะห์จังหวะเพลง…')
         try {
           const absMusicPath = await window.noey.projects.resolvePath(
@@ -1211,7 +1208,10 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
         // Re-sent every run, including "ให้ AI ตัดใหม่": the local project row
         // is the source of truth for the user's tier choice.
         { engine: current.engine, precision: current.precision },
-        walletOptIn()
+        walletOptIn(),
+        // The beat grid uploaded above is in file time; this is where the
+        // song plays in the cut (PARITY #41).
+        current.music
       )
       await spendWalletOptIn()
 
@@ -1752,7 +1752,8 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
         remoteUid,
         voDuration,
         live().clips.map((c) => c.durationSec),
-        walletOptIn()
+        walletOptIn(),
+        live().music
       )
       await spendWalletOptIn()
 
@@ -3157,7 +3158,8 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
       previewPath,
       { selectedLineIds, instruction },
       project.cutStyleUid,
-      walletOptIn()
+      walletOptIn(),
+      live().music
     )
     await spendWalletOptIn()
     const final = await pollTracked(session, job_id, (status) => {
