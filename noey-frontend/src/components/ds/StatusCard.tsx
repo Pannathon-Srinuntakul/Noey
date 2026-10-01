@@ -38,6 +38,7 @@ export function StatusCard({
   className,
 }: {
   tone: StatusTone;
+  /** The task the card belongs to ("การชำระเงิน"), printed on its title strip; decoration. */
   eyebrow?: ReactNode;
   title: ReactNode;
   titleAs?: "h1" | "h2";
@@ -46,7 +47,7 @@ export function StatusCard({
   actions?: ReactNode;
   role?: "status" | "alert";
   busy?: boolean;
-  /** A readout under the render bar, as the editor prints one ("EXPORT · 100%"); decoration. */
+  /** A readout after the render bar, as the editor prints one ("100%"); decoration. */
   readout?: string;
   /** The whole card reads from the left (a calm, plain ending). */
   start?: boolean;
@@ -61,12 +62,14 @@ export function StatusCard({
       aria-busy={busy || undefined}
       aria-labelledby={titleId}
     >
-      {/* The card's title strip, as every panel in the editor has one. */}
+      {/* The card's title strip, as every panel in the editor has one: the
+          state as a render queue prints it, and the task it belongs to (the
+          eyebrow — on the strip, not stacked over a title that names it). */}
       <div className="status__strip" aria-hidden="true">
         <span className="status__rec" />
         <span className="tc">{STRIP[tone]}</span>
         <span className="status__rule" />
-        <span className="tc">00:00:00:00</span>
+        {eyebrow ? <span className="status__task">{eyebrow}</span> : <span className="tc">00:00:00:00</span>}
       </div>
       <div className="status__emblem" aria-hidden="true">
         <span className="status__halo" />
@@ -86,7 +89,6 @@ export function StatusCard({
           {readout ? <span className="status__readout tc">{readout}</span> : null}
         </span>
       </div>
-      {eyebrow ? <p className="status__eyebrow">{eyebrow}</p> : null}
       <Title className="status__title" id={titleId}>
         {title}
       </Title>

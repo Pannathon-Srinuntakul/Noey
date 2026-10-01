@@ -85,7 +85,7 @@ export function CheckoutStatus({ initial }: { initial: BillingSnapshot | null })
         eyebrow={EYEBROW}
         title={TITLE}
         role="status"
-        readout="EXPORT · 100%"
+        readout="100%"
         footer={<ComputerOnly />}
         actions={
           <>
@@ -98,7 +98,7 @@ export function CheckoutStatus({ initial }: { initial: BillingSnapshot | null })
           </>
         }
       >
-        <h2>อัปเกรดเป็นแพลน {planDisplayName(view.plan)} แล้ว</h2>
+        <h2>แพลน {planDisplayName(view.plan)} เริ่มใช้งานแล้ว</h2>
         <p>{keepThai("โควตาใหม่พร้อมใช้ในห้องตัดต่อ ใบเสร็จจะส่งไปที่อีเมลของบัญชีนี้")}</p>
       </StatusCard>
     );

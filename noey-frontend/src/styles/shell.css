@@ -755,13 +755,18 @@ html[data-auth-name] .acct__fallback {
   z-index: 2;
 }
 
-/* With the sheet open, the theme switch sits in the bar beside the close
-   button, where the bar's other controls are. */
+/* With the sheet open, the theme switch sits in the bar right beside the
+   close button; the bar's account button steps out (the sheet's foot holds
+   the same actions, full size). */
 @media (max-width: 1023px) {
   .hdr__bar:has(.menu[open]) .hdr__tools > .theme-toggle {
     display: inline-flex;
     position: relative;
     z-index: 2;
+  }
+
+  .hdr__bar:has(.menu[open]) .hdr__tools > .auth-area {
+    display: none;
   }
 
   .menu__sheet .menu__theme {
@@ -793,6 +798,7 @@ html[data-auth-name] .acct__fallback {
 }
 
 .menu__nav a {
+  position: relative;
   display: flex;
   align-items: baseline;
   gap: 16px;
@@ -811,8 +817,34 @@ html[data-auth-name] .acct__fallback {
   min-width: 2.2em;
 }
 
-.menu__nav a[aria-current="page"] {
+.menu__nav a[aria-current] {
   color: var(--gold-ink);
+}
+
+/* The page you are on carries the playhead: a gold line down the row's end
+   under its cap. */
+.menu__nav a[aria-current]::before,
+.menu__nav a[aria-current]::after {
+  content: "";
+  position: absolute;
+  background: var(--gold);
+}
+
+.menu__nav a[aria-current]::before {
+  top: 9px;
+  right: 2px;
+  width: 11px;
+  height: 9px;
+  clip-path: polygon(0 0, 100% 0, 100% 45%, 50% 100%, 0 45%);
+}
+
+.menu__nav a[aria-current]::after {
+  top: 12px;
+  bottom: 9px;
+  right: 6.5px;
+  width: 2px;
+  border-radius: 1px;
+  box-shadow: 0 0 8px var(--gold-glow);
 }
 
 /* Straight after the list (pushed to the bottom, it left a screen-tall gap). */
@@ -1081,12 +1113,7 @@ html:has(.menu[open]) {
   margin: 18px 0 0;
   font-size: var(--fs-13);
   line-height: 1.7;
-  color: var(--ink-3);
-}
-
-.beta-dialog__badge {
-  margin-left: 10px;
-  vertical-align: middle;
+  color: var(--ink-2);
 }
 
 /* Phone width: the dialog becomes a bottom sheet. This works only because
@@ -1103,7 +1130,15 @@ html:has(.menu[open]) {
   }
 
   .beta-sheet .dialog-inner {
+    --dialog-pad: 20px;
     padding: 26px 20px calc(20px + env(safe-area-inset-bottom));
+  }
+}
+
+/* Phones: the box is read before the answer it qualifies — above the button. */
+@media (max-width: 480px) {
+  .beta-sheet .dialog-actions {
+    flex-direction: column;
   }
 }
 

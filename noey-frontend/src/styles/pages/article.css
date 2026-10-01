@@ -35,7 +35,7 @@
 
 .article-layout {
   display: grid;
-  grid-template-columns: 280px minmax(0, 1fr);
+  grid-template-columns: 300px minmax(0, 1fr);
   gap: clamp(32px, 5vw, 80px);
   align-items: start;
   padding-bottom: var(--section-y);
@@ -223,11 +223,46 @@
   animation: none !important;
 }
 
-/* The page meant to be the easiest to read: body text at full ink and the
-   regular weight (the light weight thins out at reading size). */
-.legal-page .prose {
+/* Long reads (the guides and the legal pages): body text at full ink and
+   the regular weight (the light weight thins out at reading size). In the
+   dark theme full ink glares over a long read: the body steps down to the
+   second ink (still over 11:1) and the headings keep the full one. */
+.article .prose {
   font-weight: 400;
   color: var(--ink);
+}
+
+html[data-theme="dark"] .article .prose {
+  color: var(--ink-2);
+}
+
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]) .article .prose {
+    color: var(--ink-2);
+  }
+}
+
+/* Under 1200px, with the contents in a bar instead of a rail, the column
+   and its bar are centred: flush left, they left a third of the screen
+   empty for the whole article. A wide table (the plan limits) steps out of
+   the column to the page's width, centred on it. */
+@media (min-width: 720px) and (max-width: 1199px) {
+  .article-page .article-layout {
+    max-width: 660px;
+    margin-inline: auto;
+  }
+
+  .article-page .article__extra {
+    --extra-w: min(calc(100vw - 2 * var(--gutter)), 944px);
+    width: var(--extra-w);
+    margin-left: calc((100% - var(--extra-w)) / 2);
+  }
+}
+
+/* The FAQ list closes on its own rule: the next section does not draw a
+   second one 40px below it. */
+#faq + .article__section::before {
+  display: none;
 }
 
 .legal-page .phero__beam {
@@ -367,6 +402,8 @@
   color: var(--ink-2);
   line-height: 1.55;
   text-decoration: none;
+  /* Two-line entries split evenly, never a word alone on the second line. */
+  text-wrap: balance;
   transition:
     color var(--dur-2) ease,
     background-color var(--dur-2) ease;
@@ -432,6 +469,11 @@
   }
 }
 /* ── The guide's picture: the part of the editor it is about ────────────── */
+
+/* Level with the title and the answer, not pinned under them. */
+.article-page .phero--split .phero__inner {
+  align-items: center;
+}
 
 .guide-visual {
   position: relative;

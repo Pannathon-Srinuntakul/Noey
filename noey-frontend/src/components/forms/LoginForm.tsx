@@ -7,7 +7,7 @@ import { Dialog } from "../ui/Dialog";
 import { SearchParam } from "./SearchParam";
 import { TURNSTILE_SITE_KEY, TurnstileWidget } from "./TurnstileWidget";
 
-/** The design's "ตั้งรหัสผ่านใหม่" dialog -> POST /auth/forgot-password. */
+/** The "ลืมรหัสผ่าน" dialog -> POST /auth/forgot-password (it only emails a link; the new password is set on /reset-password). */
 function ForgotPasswordDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [state, action, pending] = useActionState<ActionState | undefined, FormData>(forgotPasswordAction, undefined);
   const errors = state?.fieldErrors ?? {};
@@ -15,7 +15,7 @@ function ForgotPasswordDialog({ open, onClose }: { open: boolean; onClose: () =>
     <Dialog
       open={open}
       onClose={onClose}
-      title="ตั้งรหัสผ่านใหม่"
+      title="ลืมรหัสผ่าน"
       maxWidth={440}
       description={<p style={{ margin: 0 }}>กรอกอีเมลที่ใช้สมัคร เราจะส่งลิงก์ตั้งรหัสผ่านใหม่ไปให้</p>}
     >
@@ -33,6 +33,7 @@ function ForgotPasswordDialog({ open, onClose }: { open: boolean; onClose: () =>
             defaultValue={state?.values?.email}
             aria-invalid={errors.email ? true : undefined}
             aria-describedby={errors.email ? "f-email-error" : undefined}
+            data-autofocus=""
           />
           {errors.email ? <p className="field-error" id="f-email-error">{errors.email}</p> : null}
         </div>
@@ -44,10 +45,8 @@ function ForgotPasswordDialog({ open, onClose }: { open: boolean; onClose: () =>
           {state?.success ? <p className="form-success" role="status">{state.success}</p> : null}
           {state?.error ? <p className="form-error" role="alert">{state.error}</p> : null}
         </div>
+        {/* One action: the dialog closes with its ✕ or Escape. */}
         <div className="dialog-actions" style={{ marginTop: 22 }}>
-          <button type="button" className="btn btn-secondary" onClick={onClose}>
-            ปิด
-          </button>
           <button type="submit" className="btn btn-primary" disabled={pending} aria-busy={pending || undefined}>
             {pending ? "กำลังส่ง…" : "ส่งลิงก์"}
           </button>

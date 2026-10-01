@@ -35,6 +35,25 @@ describe("keepThaiProse", () => {
     expect(kept(keepThaiProse("แก้ได้ไม่จำกัดครั้ง"))).toContain("ไม่จำกัด");
   });
 
+  it("glues a word that leans back to the word before it", () => {
+    const joined = (node: ReactNode) => runs(node).map(([text]) => text).join("");
+    for (const [text, unit] of [
+      ["ตราบที่บัญชียังใช้งานอยู่", "ใช้งานอยู่"],
+      ["ห้ามดัดแปลงส่วนใดของบริการ", "ส่วนใด"],
+      ["คืนเงินตามรอบที่ใช้ไปแล้ว", "ใช้ไป"],
+    ] as const) {
+      const out = keepThaiProse(text);
+      expect(joined(out)).toBe(text);
+      expect(kept(out).some((run) => run.includes(unit))).toBe(true);
+    }
+  });
+
+  it("keeps a condition or a possessive with what follows", () => {
+    expect(kept(keepThaiProse("หากไม่ยอมรับข้อกำหนดฉบับนี้")).some((run) => run.startsWith("หากไม่"))).toBe(true);
+    expect(kept(keepThaiProse("สิทธิในข้อมูลของคุณ")).some((run) => run.includes("ของคุณ"))).toBe(true);
+    expect(kept(keepThaiProse("เมื่อเป็นการเปลี่ยนแปลงสาระสำคัญ")).some((run) => run.startsWith("เป็นการ"))).toBe(true);
+  });
+
   it("puts a no-break space before ๆ", () => {
     expect(runs(keepThaiProse("ประโยคสั้น ๆ ให้อ่าน")).map(([text]) => text).join("")).toBe("ประโยคสั้น ๆ ให้อ่าน");
     expect(runs(keepThai("สั้น ๆ")).map(([text]) => text).join("")).toBe("สั้น ๆ");

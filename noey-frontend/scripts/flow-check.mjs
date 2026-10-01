@@ -151,7 +151,7 @@ const flows = {
     await page.goto(`${BASE}/reset-password?token=ok`);
     await page.getByLabel("รหัสผ่านใหม่", { exact: true }).fill("password123");
     await page.getByLabel("ยืนยันรหัสผ่านใหม่").fill("password123");
-    await Promise.all([page.waitForURL((url) => !url.pathname.startsWith("/reset-password")), page.getByRole("button", { name: "ตั้งรหัสผ่านใหม่" }).click()]);
+    await Promise.all([page.waitForURL((url) => !url.pathname.startsWith("/reset-password")), page.getByRole("button", { name: "บันทึกรหัสผ่านใหม่" }).click()]);
     return { at: where(page) };
   },
   async "account: sign out"() {

@@ -112,12 +112,19 @@
   color: var(--ink-3);
 }
 
+/* One measure for the chapter's text, lead included (62ch of the body size). */
 .chapter__text p {
-  max-width: 62ch;
+  max-width: min(100%, 600px);
   margin: 0 0 1.05em;
   font-size: var(--fs-17);
+  font-weight: 400;
   line-height: 1.95;
   color: var(--ink-2);
+}
+
+/* Each chapter opens on its first paragraph at full ink, as the first does. */
+.chapter__text p:first-child {
+  color: var(--ink);
 }
 
 .chapter__text p:last-child {
@@ -166,12 +173,11 @@
 
 /* ── Contact, held beside the story ─────────────────────────────────────── */
 
-/* Under the story (tablet widths) the card lines up with the story's text
-   column instead of running the full width. */
+/* Under the story (tablet widths) the card keeps a form's width, on the
+   page's own margin (the rail has ended above it). */
 @media (min-width: 640px) and (max-width: 1099px) {
   .about-contact {
     max-width: 640px;
-    margin-left: 168px;
   }
 }
 
@@ -270,13 +276,18 @@
   box-shadow: var(--rim);
 }
 
+/* A locked track is hatched in an editor: nobody cuts it by accident. The
+   hatching sits on the track's header and behind its audio, never under
+   the words. */
 .locked__head {
   display: flex;
   align-items: flex-start;
   gap: 10px;
   padding: 20px 16px;
   border-right: 1px solid var(--line);
-  background: color-mix(in srgb, var(--color-text) 3%, transparent);
+  background:
+    repeating-linear-gradient(135deg, color-mix(in srgb, var(--color-text) 6%, transparent) 0 1px, transparent 1px 9px),
+    color-mix(in srgb, var(--color-text) 3%, transparent);
   color: var(--gold-ink);
 }
 
@@ -284,18 +295,15 @@
   margin-top: 2px;
 }
 
-/* A locked track is hatched in an editor: nobody cuts it by accident. */
+/* The audio keeps one width (its bars one size at every width), at the
+   track's far end. */
 .locked__clip {
   display: grid;
-  grid-template-columns: minmax(0, 68ch) minmax(96px, 1fr);
+  grid-template-columns: minmax(0, 68ch) 200px;
+  justify-content: space-between;
   gap: clamp(20px, 3vw, 48px);
   align-items: center;
   padding: 18px clamp(18px, 2vw, 26px);
-  background: repeating-linear-gradient(
-    135deg,
-    color-mix(in srgb, var(--color-text) 3.5%, transparent) 0 1px,
-    transparent 1px 11px
-  );
 }
 
 .locked__copy {
@@ -303,10 +311,14 @@
   gap: 6px;
 }
 
-/* The locked audio under each principle: present, muted, not to be cut. */
+/* The locked audio under each principle: present, muted, not to be cut —
+   on its own hatched strip. */
 .locked__wave {
   height: 34px;
-  opacity: 0.55;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--color-text) 6%, transparent) 0 1px, transparent 1px 9px);
+  opacity: 0.7;
 }
 
 .locked__title {
@@ -426,9 +438,14 @@
   background: var(--success-soft);
   color: var(--ink);
   font-size: var(--fs-15);
-  font-weight: 500;
   line-height: 1.7;
-  text-wrap: balance;
+  text-wrap: pretty;
+}
+
+/* "ส่งข้อความแล้ว" on a line of its own, over the thanks. */
+#contact .form-success strong {
+  display: block;
+  font-weight: 600;
 }
 
 /* Sent: the message's render bar, full, with its tick and readout. */
@@ -439,11 +456,12 @@
   width: 100%;
 }
 
+/* Done as the status cards say it: the bar in gold, green only in the tick. */
 .contact-sent__bar {
   flex: 1;
   height: 6px;
   border-radius: 6px;
-  background: var(--success);
+  background: var(--gold);
 }
 
 .contact-sent__tick {
@@ -461,8 +479,9 @@
 
 .contact-sent__meter .tc {
   font-size: 10.5px;
+  font-weight: 600;
   letter-spacing: 0.08em;
-  color: var(--success);
+  color: var(--gold-ink);
 }
 
 @media (prefers-reduced-motion: no-preference) {

@@ -15,8 +15,12 @@ import { glueMarks, keepSegments } from "./ThaiText";
  * 2. Short words that lean on the next one — a line must not end right after
  *    them: "ไม่ / กิน" reads as "no" at the end of the line; "การ / ขาดรายได้",
  *    "ความ / รับผิด", "ผู้ / ปกครอง", "ค่า / บริการ", "ใน / ห้องตัดต่อ", "บน / คอมพิวเตอร์",
- *    "โดย / ไม่ผูก", "ผ่าน / Chrome", "แต่ละ / แพลน", "หลาย / ตัว" split a phrase the reader
- *    takes as one unit. Each is glued to the word after it.
+ *    "โดย / ไม่ผูก", "ผ่าน / Chrome", "แต่ละ / แพลน", "หลาย / ตัว", "หาก / ไม่ยอมรับ",
+ *    "ของ / คุณ" split a phrase the reader takes as one unit. Each is glued to the
+ *    word after it.
+ * 3. Short words that lean on the one before — a line must not start with
+ *    them: "ส่วน / ใด", "ใช้ / ไป", "ใช้งาน / อยู่", "ทัก / มา", "เก็บ / ไว้". Each is
+ *    glued to the word before it (only when no space separates them).
  *
  * Server components only: a client component would segment again in the
  * browser, whose dictionary may differ, and the hydrated text would not match
@@ -46,7 +50,17 @@ const LEANS_ON_NEXT = new Set([
   "สี่",
   "ห้า",
   "หก",
+  "หาก",
+  "ถ้า",
+  "ขอ",
+  "ของ",
+  "กับ",
+  "ฐาน",
+  // ICU returns "เป็นการ" as one word, so "การ" alone never sees it.
+  "เป็นการ",
 ]);
+
+const LEANS_ON_PREVIOUS = new Set(["ใด", "ไป", "มา", "อยู่", "ไว้"]);
 
 /** Glossary words by first character, longest first. */
 const BY_FIRST = new Map<string, string[]>();
@@ -102,8 +116,21 @@ export function keepThaiProse(source: string): ReactNode {
       let next = index + 1;
       glued += tokens[next].text;
       while (LEANS_ON_NEXT.has(tokens[next].text) && tokens[next + 1]?.word) glued += tokens[++next].text;
+      // …and a word that leans back joins it too ("ใช้งาน|อยู่").
+      while (LEANS_ON_PREVIOUS.has(tokens[next + 1]?.text ?? "")) glued += tokens[++next].text;
       runs.push({ text: glued, keep: true });
       index = next;
+    } else if (LEANS_ON_PREVIOUS.has(token.text) && index > 0 && tokens[index - 1].word && runs.length > 0) {
+      // Glue to the end of the run before: a kept run grows; in a plain run the
+      // last word moves out into a kept run with it.
+      const last = runs[runs.length - 1];
+      if (last.keep) last.text += token.text;
+      else {
+        const before = tokens[index - 1].text;
+        last.text = last.text.slice(0, last.text.length - before.length);
+        if (!last.text) runs.pop();
+        runs.push({ text: before + token.text, keep: true });
+      }
     } else if (!token.keep && runs.length > 0 && !runs[runs.length - 1].keep) {
       runs[runs.length - 1].text += token.text;
     } else {

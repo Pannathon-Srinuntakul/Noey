@@ -4,7 +4,6 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import {
-  BETA_BADGE,
   BETA_NOTICE_DISMISS,
   BETA_NOTICE_NEVER,
   BETA_NOTICE_STORAGE_KEY,
@@ -137,7 +136,6 @@ export function BetaNotice({ betaPriced }: { betaPriced: boolean }) {
       className="beta-sheet"
       maxWidth={580}
       title={copy.title}
-      titleExtra={<span className="tag tag-accent beta-dialog__badge">{BETA_BADGE}</span>}
     >
       <ol className="beta-points">
         {copy.points.map((point) => (
@@ -159,8 +157,9 @@ export function BetaNotice({ betaPriced }: { betaPriced: boolean }) {
           <input type="checkbox" className="agree__box" checked={never} onChange={(event) => setNever(event.target.checked)} />
           <span>{BETA_NOTICE_NEVER}</span>
         </label>
-        {/* Focus lands on the answer, not on the terms link in the fine print. */}
-        <button type="button" className="btn btn-primary" onClick={close} autoFocus>
+        {/* Focus lands on the answer, not on the ✕ or the terms link (Dialog
+            moves it to [data-autofocus] once the dialog is open). */}
+        <button type="button" className="btn btn-primary" onClick={close} data-autofocus="">
           {BETA_NOTICE_DISMISS}
         </button>
       </div>

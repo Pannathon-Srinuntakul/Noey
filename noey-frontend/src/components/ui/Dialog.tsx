@@ -37,7 +37,13 @@ export function Dialog({
   useEffect(() => {
     const dialog = ref.current;
     if (!dialog) return;
-    if (open && !dialog.open) dialog.showModal();
+    if (open && !dialog.open) {
+      dialog.showModal();
+      // showModal() focuses the first control, the ✕. A dialog whose answer is
+      // the point of it marks that control instead; no focus ring unless the
+      // visitor goes on with the keyboard.
+      dialog.querySelector<HTMLElement>("[data-autofocus]")?.focus({ focusVisible: false } as FocusOptions);
+    }
     if (!open && dialog.open) dialog.close();
   }, [open]);
 

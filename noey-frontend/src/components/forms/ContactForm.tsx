@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { CONTACT_LIMITS, HONEYPOT_FIELD, type ContactFieldErrors } from "@/lib/contact";
 import { MSG } from "@/lib/messages";
+import { keepThai } from "../ds/ThaiText";
 import { SearchParam } from "./SearchParam";
 import { TURNSTILE_SITE_KEY, TurnstileWidget } from "./TurnstileWidget";
 
@@ -10,6 +11,8 @@ type Outcome = "sent" | "invalid" | "rate-limited" | "unavailable" | "captcha" |
 type Status = { kind: "idle" } | { kind: "sending" } | { kind: "done"; outcome: Outcome; errors?: ContactFieldErrors };
 
 const FAILED = "ส่งข้อความไม่สำเร็จ ลองอีกครั้ง หรืออีเมลหาเราโดยตรงตามที่อยู่ด้านล่าง";
+/** Its first words ("ส่งข้อความแล้ว") are set on a line of their own. */
+const SENT = "ส่งข้อความแล้ว ขอบคุณที่ทักมา เราจะตอบกลับทางอีเมลที่ให้ไว้";
 
 function isOutcome(value: unknown): value is Outcome {
   return ["sent", "invalid", "rate-limited", "unavailable", "captcha", "error"].includes(String(value));
@@ -20,7 +23,7 @@ function OutcomeMessage({ outcome, contactEmail }: { outcome: Outcome; contactEm
     case "sent":
       return (
         <p className="form-success" role="status">
-          ส่งข้อความแล้ว ขอบคุณที่ทักมา เราจะตอบกลับทางอีเมลที่ให้ไว้
+          <strong>{SENT.slice(0, SENT.indexOf(" "))}</strong> {keepThai(SENT.slice(SENT.indexOf(" ") + 1))}
         </p>
       );
     case "invalid":
@@ -124,6 +127,7 @@ export function ContactForm({ contactEmail }: { contactEmail: string }) {
           name="name"
           className="input"
           type="text"
+          placeholder="ชื่อที่ให้เราเรียก"
           autoComplete="name"
           required
           maxLength={CONTACT_LIMITS.nameMax}

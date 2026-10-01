@@ -22,13 +22,15 @@ export function ResetPasswordForm({ token }: { token: string }) {
           name="new_password"
           className="input"
           type="password"
-          placeholder="อย่างน้อย 8 ตัวอักษร"
           autoComplete="new-password"
           minLength={8}
           required
           aria-invalid={errors.new_password ? true : undefined}
-          aria-describedby={errors.new_password ? "r-new-error" : undefined}
+          aria-describedby={errors.new_password ? "r-new-hint r-new-error" : "r-new-hint"}
         />
+        <p className="field-hint" id="r-new-hint">
+          อย่างน้อย 8 ตัวอักษร
+        </p>
         {errors.new_password ? <p className="field-error" id="r-new-error">{errors.new_password}</p> : null}
       </div>
       <div className="field">
@@ -57,7 +59,7 @@ export function ResetPasswordForm({ token }: { token: string }) {
         </div>
       ) : null}
       <button type="submit" className="btn btn-primary btn-block btn-lg" disabled={pending} aria-busy={pending || undefined}>
-        {pending ? "กำลังบันทึก…" : "ตั้งรหัสผ่านใหม่"}
+        {pending ? "กำลังบันทึก…" : "บันทึกรหัสผ่านใหม่"}
       </button>
     </form>
   );

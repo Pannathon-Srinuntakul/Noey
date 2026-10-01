@@ -24,9 +24,11 @@
   overflow: hidden;
 }
 
+/* Done: one language for every finished state — the render bar and the
+   card's top line in the brand's gold, green only in the tick. */
 .status--success {
-  --tone: var(--success);
-  --tone-soft: var(--success-soft);
+  --tone: var(--gold);
+  --tone-soft: var(--gold-soft);
 }
 
 .status--danger {
@@ -113,7 +115,7 @@ html:not([data-theme="dark"]) .status__halo {
 /* "Render complete": the bar fills, then the tick lands after its end. */
 .status__tick {
   flex: none;
-  color: var(--tone);
+  color: var(--success);
   stroke: currentColor;
   stroke-width: 1.8;
   stroke-linecap: round;
@@ -121,7 +123,7 @@ html:not([data-theme="dark"]) .status__halo {
 }
 
 .status__tick circle {
-  fill: var(--tone-soft);
+  fill: var(--success-soft);
 }
 
 .status__tick path {
@@ -289,10 +291,6 @@ html:not([data-theme="dark"]) .status__halo {
   --tone-soft: var(--gold-soft);
 }
 
-.status--celebrate .status__tick circle {
-  fill: var(--gold-softer);
-}
-
 @media (prefers-reduced-motion: no-preference) {
   .status--celebrate .status__fill {
     animation: render-fill 1.3s var(--ease-out) both;
@@ -311,11 +309,13 @@ html:not([data-theme="dark"]) .status__halo {
   }
 }
 
-.status__eyebrow {
-  margin: 0;
-  font-size: var(--fs-13);
+/* The task, at the strip's end: Thai, so no tracking. */
+.status__task {
+  flex: none;
+  font-size: var(--fs-12);
   font-weight: 500;
-  color: var(--gold-ink);
+  letter-spacing: 0;
+  color: var(--ink-2);
 }
 
 .status__title {
@@ -365,18 +365,6 @@ html:not([data-theme="dark"]) .status__halo {
   color: var(--ink);
 }
 
-/* A form held by the card (reset password): reads left to right, not centred. */
-.status__form {
-  width: min(100%, 400px);
-  margin: 18px auto 0;
-  text-align: start;
-}
-
-/* A card that holds a form: its text keeps to the form's width, so the two
-   read as one column. */
-.status__body:has(.status__form) {
-  max-width: 400px;
-}
 
 @media (prefers-reduced-motion: no-preference) {
   .status .mark-draw path {

@@ -121,7 +121,7 @@ export function LegalPage({ pageKey, title, doc }: { pageKey: LegalKey; title: s
             </ul>
           </section>
           <div className="article__foot article__foot--legal">
-            <Link href="/" className="btn btn-ghost">
+            <Link href="/" className="btn btn-secondary">
               <IconArrowLeft size={16} />
               กลับหน้าแรก
             </Link>
