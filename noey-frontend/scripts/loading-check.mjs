@@ -169,6 +169,55 @@ async function rulerPending(page) {
   });
 }
 
+/**
+ * The ruler's tag (still: the pill under the header bar): shown, saying
+ * "กำลังโหลด" at no less than 12px, over a solid bar.
+ */
+async function rulerTag(page) {
+  return page.evaluate(() => {
+    const tag = document.querySelector(".stl__wait");
+    const label = document.querySelector(".stl__wait-label");
+    const scrub = document.querySelector(".stl__scrub");
+    const seen = (element) =>
+      !!element && element.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }) && Number(getComputedStyle(element).opacity) > 0.9;
+    const bar = scrub ? getComputedStyle(scrub, "::before") : null;
+    // The colour's alpha, from rgb()/rgba() or a color() with "/ a".
+    const alpha = (colour) => {
+      const rgb = colour.match(/rgba?\(([^)]+)\)/);
+      if (rgb) {
+        const parts = rgb[1].split(/[\s,/]+/).filter(Boolean);
+        return parts.length > 3 ? parseFloat(parts[3]) : 1;
+      }
+      const slash = colour.match(/\/\s*([\d.]+)\s*\)/);
+      return slash ? parseFloat(slash[1]) : 1;
+    };
+    return {
+      tag: seen(tag) && seen(label),
+      words: (label?.textContent ?? "").trim(),
+      labelPx: label ? parseFloat(getComputedStyle(label).fontSize) : 0,
+      bar: !!bar && bar.display !== "none" && parseFloat(bar.height) >= 2 && alpha(bar.backgroundColor) > 0.99,
+    };
+  });
+}
+
+const tagOk = (facts) => facts.tag && facts.words === "กำลังโหลด" && facts.labelPx >= 12 && facts.bar;
+
+/** Card title strips the account loading state's centre piece covers (none, at any width). */
+async function chipCovers(page) {
+  return page.evaluate(() => {
+    const chip = document.querySelector("[data-loading='route'] .acct-skel__centre");
+    if (!chip) return [];
+    const c = chip.getBoundingClientRect();
+    return [...document.querySelectorAll("[data-loading='route'] .card-kicker")]
+      .filter((kicker) => kicker.checkVisibility())
+      .filter((kicker) => {
+        const k = kicker.getBoundingClientRect();
+        return k.left < c.right && k.right > c.left && k.top < c.bottom && k.bottom > c.top;
+      })
+      .map((kicker) => kicker.textContent.trim());
+  });
+}
+
 async function cls(page) {
   return page.evaluate(() => window.__shifts.filter((shift) => !shift.recent).reduce((sum, shift) => sum + shift.value, 0));
 }
@@ -198,10 +247,14 @@ async function run({ theme, width, still }) {
     const visible = await shown(page, "[data-loading='route'] .rl");
     const ruler = width >= 1024 || still ? await rulerPending(page) : true;
     const motion = still ? await moving(page, "[data-loading='route']") : [];
+    const rTag = still ? await rulerTag(page) : null;
+    const covers = await chipCovers(page);
     await shot(page, variant, mode);
-    record(`${variant} loading, ${tag}`, visible && facts.busy && facts.status && facts.says === "กำลังโหลด" && facts.clock && ruler && motion.length === 0, {
-      visible, ...facts, ruler, ...(still ? { moving: motion } : {}),
-    });
+    record(
+      `${variant} loading, ${tag}`,
+      visible && facts.busy && facts.status && facts.says === "กำลังโหลด" && facts.clock && ruler && motion.length === 0 && (!rTag || tagOk(rTag)) && covers.length === 0,
+      { visible, ...facts, ruler, covers, ...(still ? { moving: motion, rulerTag: rTag } : {}) },
+    );
     await page.locator(`${real}:not([data-loading] *)`).first().waitFor({ timeout: 8000 });
     await page.waitForTimeout(700);
     const left = await page.locator("[data-loading='route']").count();
@@ -227,8 +280,15 @@ async function run({ theme, width, still }) {
     });
     const greeting = await page.locator(".acct-page__title").innerText();
     const facts = await loadingFacts(page);
+    const covers = await chipCovers(page);
     await shot(page, "account-tab-switch", mode);
-    record(`tab switch loading, ${tag}`, body && tab === "grid" && greeting === greetingBefore && facts.clock && facts.says === "กำลังโหลด", { body, tab, greeting, ...facts });
+    record(`tab switch loading, ${tag}`, body && tab === "grid" && greeting === greetingBefore && facts.clock && facts.says === "กำลังโหลด" && covers.length === 0, {
+      body,
+      tab,
+      greeting,
+      covers,
+      ...facts,
+    });
     await page.locator(".acct-quota:not([data-loading] *)").first().waitFor({ timeout: 8000 });
     await page.waitForTimeout(700);
     const shift = await cls(page);
@@ -303,9 +363,9 @@ async function run({ theme, width, still }) {
     const linkSel = width < 1024 ? ".menu__nav a[href='/about']" : ".hdr__nav a[href='/about']";
     const link = await shown(page, `${linkSel} .pend`);
     const busy = (await page.locator(linkSel).getAttribute("aria-busy")) === "true";
-    const label = still && width < 1024 ? await shown(page, ".stl__wait") : true;
+    const rTag = still ? await rulerTag(page) : null;
     await shot(page, "nav-marketing", mode);
-    record(`marketing navigation pending, ${tag}`, pending && ruler && link && busy && label, { pending, ruler, link, busy, label });
+    record(`marketing navigation pending, ${tag}`, pending && ruler && link && busy && (!rTag || tagOk(rTag)), { pending, ruler, link, busy, ...(rTag ? { rulerTag: rTag } : {}) });
     await page.waitForURL(/\/about$/, { timeout: 15000 });
     await page.waitForTimeout(800);
     const after = await rulerPending(page);
