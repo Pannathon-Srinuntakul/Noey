@@ -155,7 +155,7 @@ class _Renderer:
             "NOEY_COVER_FONTS": json.dumps(_font_list()),
             # The V8 heap stays small: a cover needs a few MB of JS objects;
             # the pixel buffers live outside the heap and are freed per job.
-            "NODE_OPTIONS": "--max-old-space-size=96",
+            "NODE_OPTIONS": "--max-old-space-size=96 --max-semi-space-size=2",
         }
         try:
             self.proc = await asyncio.create_subprocess_exec(

@@ -387,7 +387,8 @@ def build_server() -> MCPServer:
                     db, actor, "create_visual", None, False,
                     {"bytes": len(html) + len(css) + len(js), "w": width, "h": height, "problems": problems[:25]},
                 )
-                raise ToolError("Refused (invalid_visual). Fix the following and call again:\n" + "\n".join(f"- {p}" for p in problems))
+        if problems or prepared is None:
+            raise ToolError("Refused (invalid_visual). Fix the following and call again:\n" + "\n".join(f"- {p}" for p in problems))
         await visual.store(prepared)
         async with _db() as db:
             await service.record_visual(
