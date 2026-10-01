@@ -50,8 +50,9 @@ export async function POST(request: NextRequest) {
 
   // Every fetch the blog makes carries `blog`; a post's also `blog:<slug>`.
   revalidateTag("blog", { expire: 0 });
-  // Proxy's index of published posts (the 404 gate) is read again on the next request.
-  forgetBlogIndex();
+  // Proxy's index of published posts (the 404 gate) is stale now, and these
+  // posts are checked again before Proxy lets them through or turns them away.
+  forgetBlogIndex(slugs);
   for (const slug of slugs) {
     revalidateTag(`blog:${slug}`, { expire: 0 });
     revalidatePath(blogPostPath(slug));

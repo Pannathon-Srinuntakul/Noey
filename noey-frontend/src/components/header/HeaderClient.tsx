@@ -1,10 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useSelectedLayoutSegments } from "next/navigation";
 import { useEffect, useLayoutEffect, type CSSProperties, type ReactNode } from "react";
 import { AUTH_HINT_EVENT, applyAuthHint } from "@/lib/client/auth-hint";
-import { navPathname } from "@/lib/nav-path";
+import { NOT_FOUND_SEGMENT, navPathname } from "@/lib/nav-path";
 import { THEME_STORAGE_KEY } from "@/lib/prepaint";
 import { IconMoon, IconSun } from "../ds/icons";
 
@@ -101,11 +101,14 @@ export function NavLinks({
   numbered?: boolean;
 }) {
   const pathname = navPathname(usePathname());
+  // A 404 is no section's page, whatever its address (/blog?page=99 is not
+  // the blog): no link is marked current on it.
+  const notFound = useSelectedLayoutSegments().includes(NOT_FOUND_SEGMENT);
   return (
     <nav aria-label={label} className={className}>
       {links.map((link, index) => {
-        const exact = pathname === link.href;
-        const inside = !exact && link.href !== "/" && pathname.startsWith(`${link.href}/`);
+        const exact = !notFound && pathname === link.href;
+        const inside = !notFound && !exact && link.href !== "/" && pathname.startsWith(`${link.href}/`);
         return (
           <Link
             key={link.href}

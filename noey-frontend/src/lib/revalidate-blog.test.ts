@@ -79,6 +79,6 @@ describe("POST /api/revalidate-blog", () => {
 
   it("drops Proxy's index of published posts, so a post just published or taken down is judged afresh", async () => {
     expect((await POST(request({ slugs: ["a-post"] }))).status).toBe(200);
-    expect(gate.forgetBlogIndex).toHaveBeenCalledTimes(1);
+    expect(gate.forgetBlogIndex).toHaveBeenCalledWith(["a-post"]);
   });
 });
