@@ -20,6 +20,7 @@ import { b0, baht, num } from "@/lib/format";
 import { ctxFrom, forecastDefaults, priceAt, pricesFromSatang, summarize, type ForecastIn } from "@/lib/money";
 import { PAID_KEYS, planLabel } from "@/lib/plans";
 import type { CostConfig, DashboardData, UserDetail } from "@/lib/types";
+import { BlogTab } from "./BlogTab";
 import { CostsTab } from "./CostsTab";
 import { OverviewTab } from "./OverviewTab";
 import { PlansTab } from "./PlansTab";
@@ -28,11 +29,11 @@ import { ConfirmDialog, Seg, type ConfirmSpec } from "./ui";
 import { UserDrawer } from "./UserDrawer";
 import { DEFAULT_USERS_VIEW, UsersTab, type UsersView } from "./UsersTab";
 
-type Tab = "overview" | "users" | "plans" | "costs" | "pricing";
+type Tab = "overview" | "users" | "plans" | "costs" | "pricing" | "blog";
 type Period = "today" | "7d" | "30d" | "custom";
 
 const TABS: Array<[Tab, string]> = [
-  ["overview", "ภาพรวม"], ["users", "ผู้ใช้"], ["plans", "แผน"], ["costs", "ต้นทุน"], ["pricing", "ราคาและแผน"],
+  ["overview", "ภาพรวม"], ["users", "ผู้ใช้"], ["plans", "แผน"], ["costs", "ต้นทุน"], ["pricing", "ราคาและแผน"], ["blog", "บทความ"],
 ];
 const MAX_DAYS = 366;
 
@@ -327,6 +328,14 @@ export function Dashboard({ initial, adminEmail, idleMs }: { initial: DashboardD
                 },
               });
             }}
+          />
+        )}
+        {tab === "blog" && (
+          <BlogTab
+            handle={handle}
+            ask={setConfirm}
+            done={(msg) => { setConfirm(null); say(msg); }}
+            active={!confirm}
           />
         )}
         {tab === "pricing" && (

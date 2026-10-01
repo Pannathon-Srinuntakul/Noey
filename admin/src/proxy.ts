@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { contentSecurityPolicy } from "@/lib/csp";
+import { contentSecurityPolicy, originOf } from "@/lib/csp";
 import { sentryDsn, sentryIngestOrigin } from "@/lib/sentry-config";
-import { cookieName, isAdminTokens, isFresh, sessionSpecs, type AdminTokens } from "@/lib/session";
+import { cookieName, isAdminTokens, isFresh, safeNext, sessionSpecs, type AdminTokens } from "@/lib/session";
 
 /**
  * Next.js 16 Proxy (formerly middleware), on every page request:
@@ -22,6 +22,8 @@ const SECURE = process.env.NODE_ENV === "production";
 const DEV = process.env.NODE_ENV === "development";
 /** Read once per process: SENTRY_DSN is a run-time setting, fixed for the process's life. */
 const SENTRY_ORIGIN = sentryIngestOrigin(sentryDsn());
+/** The blog image store, for the article preview (same value as the backend's BLOG_MEDIA_PUBLIC_URL). */
+const MEDIA_ORIGIN = originOf(process.env.BLOG_MEDIA_PUBLIC_URL);
 
 type Refreshed = AdminTokens | "invalid" | "unavailable";
 
@@ -56,7 +58,7 @@ function withSecurityHeaders(response: NextResponse, policy: string): NextRespon
 export async function proxy(request: NextRequest) {
   const nonce = Buffer.from(crypto.randomUUID()).toString("base64");
   const https = request.nextUrl.protocol === "https:" || request.headers.get("x-forwarded-proto") === "https";
-  const policy = contentSecurityPolicy({ nonce, https, dev: DEV, sentryOrigin: SENTRY_ORIGIN });
+  const policy = contentSecurityPolicy({ nonce, https, dev: DEV, sentryOrigin: SENTRY_ORIGIN, mediaOrigin: MEDIA_ORIGIN });
   const forwarded = new Headers(request.headers);
   forwarded.set("x-nonce", nonce);
   forwarded.set("Content-Security-Policy", policy);
@@ -80,7 +82,10 @@ export async function proxy(request: NextRequest) {
   };
 
   if (pathname === "/login") {
-    if (access && isFresh(access)) return withSecurityHeaders(NextResponse.redirect(new URL("/", request.url)), policy);
+    if (access && isFresh(access)) {
+      const next = safeNext(request.nextUrl.searchParams.get("next"));
+      return withSecurityHeaders(NextResponse.redirect(new URL(next, request.url)), policy);
+    }
     return withSecurityHeaders(NextResponse.next({ request: { headers: forwarded } }), policy);
   }
 

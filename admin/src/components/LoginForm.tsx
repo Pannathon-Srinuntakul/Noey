@@ -6,9 +6,19 @@ import { authAction, resendAction, type LoginState } from "@/app/actions";
 const label: React.CSSProperties = { display: "block", fontSize: 12.5, color: "var(--color-neutral-700)", marginBottom: 5 };
 const box: React.CSSProperties = { border: "1px solid var(--color-divider)", borderRadius: 4, padding: "24px 24px 22px" };
 
-/** Password → emailed 6-digit code. One server action drives both steps. */
-export function LoginForm({ idle }: { idle: boolean }) {
-  const [state, dispatch, busy] = useActionState<LoginState, FormData>(authAction, { step: "login" });
+/**
+ * Password → emailed 6-digit code. One server action drives both steps.
+ *
+ * `next`: where to land after signing in (only same-site paths — the proxy and
+ * the action both run it through `safeNext`). A visitor arriving from another
+ * site (a connector's consent link from claude.ai) is sent here even when
+ * already signed in, because SameSite=Strict cookies are withheld on that
+ * first cross-site navigation; the "continue" link is a same-site click, so
+ * the cookies go with it.
+ */
+export function LoginForm({ idle, next }: { idle: boolean; next?: string }) {
+  const [state, dispatch, busy] = useActionState<LoginState, FormData>(authAction, { step: "login", next });
+  const target = state.next ?? next;
   const [otp, setOtp] = useState("");
   const [resent, setResent] = useState<{ for: LoginState; text: string; error: boolean } | null>(null);
   const [resending, start] = useTransition();
@@ -28,7 +38,14 @@ export function LoginForm({ idle }: { idle: boolean }) {
             <span className="brand-kicker">แผงผู้ดูแลระบบ</span>
           </div>
 
+          {target && !onOtp && (
+            <p style={{ margin: "0 0 14px", fontSize: 13, color: "var(--color-neutral-700)" }}>
+              มีคำขอเชื่อมต่อรอการอนุมัติ · เข้าสู่ระบบอยู่แล้ว?{" "}
+              <a href={target}>ดำเนินการต่อ</a>
+            </p>
+          )}
           <form action={dispatch} style={box} noValidate>
+            {target && <input type="hidden" name="next" value={target} />}
             {!onOtp ? (
               <>
                 <input type="hidden" name="intent" value="login" />

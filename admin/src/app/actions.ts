@@ -14,7 +14,11 @@ import { PAID_KEYS, PLAN_KEYS } from "@/lib/plans";
 import { adminApi } from "@/lib/server/api";
 import { accessToken, clearSession, deleteCookie, readCookie, writeTokens } from "@/lib/server/auth";
 import { ADMIN_URL, COOKIE_SECURE, PRICES_REVALIDATE_SECRET, SITE_URL } from "@/lib/server/config";
-import { CHALLENGE_MAX_AGE, isAdminTokens, spec } from "@/lib/session";
+import { CHALLENGE_MAX_AGE, isAdminTokens, safeNext, spec } from "@/lib/session";
+import {
+  editProblems, validRequestId, validSlug, validSource, validStatus,
+  type AuditEntry, type BlogOverview, type BlogSettings, type Category, type Connector, type PostEdit, type PostFull, type PostRow,
+} from "@/lib/blog";
 import {
   FX_BAND, validBreaker, validFxOverride, validInvoice, validMonth, validPer1M, validWalletAdjust, validWindow,
 } from "@/lib/billing";
@@ -59,7 +63,8 @@ function validId(id: unknown): id is number {
 
 // ── login ────────────────────────────────────────────────────────────────────
 
-export type LoginState = { step: "login" | "otp"; error?: string; sentTo?: string; email?: string; notice?: string };
+/** `next`: a same-site path to land on after signing in (e.g. the connector consent page). */
+export type LoginState = { step: "login" | "otp"; error?: string; sentTo?: string; email?: string; notice?: string; next?: string };
 
 function text(formData: FormData, key: string, max = 300): string {
   const v = formData.get(key);
@@ -85,14 +90,15 @@ async function loginAction(_prev: LoginState, formData: FormData): Promise<Login
     if (r.status === 503) return { step: "login", error: r.detail ?? "ส่งอีเมลรหัสยืนยันไม่ได้ในตอนนี้", email };
     return { step: "login", error: r.status === 0 ? UNREACHABLE : GENERIC, email };
   }
+  const next = safeNext(text(formData, "next", 300));
   if (r.data.status === "signed_in" && isAdminTokens(r.data)) {
     await writeTokens(r.data);
-    redirect("/");
+    redirect(next);
   }
   if (r.data.status === "otp_required" && typeof r.data.challenge_id === "string") {
     const c = spec("challenge", r.data.challenge_id, CHALLENGE_MAX_AGE, COOKIE_SECURE);
     (await cookies()).set(c.name, c.value, c.options);
-    return { step: "otp", sentTo: String(r.data.sent_to ?? ""), email };
+    return { step: "otp", sentTo: String(r.data.sent_to ?? ""), email, next };
   }
   return { step: "login", error: GENERIC, email };
 }
@@ -100,8 +106,9 @@ async function loginAction(_prev: LoginState, formData: FormData): Promise<Login
 async function verifyAction(_prev: LoginState, formData: FormData): Promise<LoginState> {
   const code = text(formData, "code", 12).replace(/\D/g, "");
   const sentTo = text(formData, "sentTo", 255);
-  if (!(await sameOrigin())) return { step: "otp", error: GENERIC, sentTo };
-  if (code.length !== 6) return { step: "otp", error: "กรอกรหัสให้ครบ 6 หลัก", sentTo };
+  const next = safeNext(text(formData, "next", 300));
+  if (!(await sameOrigin())) return { step: "otp", error: GENERIC, sentTo, next };
+  if (code.length !== 6) return { step: "otp", error: "กรอกรหัสให้ครบ 6 หลัก", sentTo, next };
   const challenge = await readCookie("challenge");
   if (!challenge) return { step: "login", error: "รหัสหมดอายุแล้ว กรุณาเข้าสู่ระบบใหม่" };
   const r = await adminApi<unknown>("/admin/auth/verify", {
@@ -109,13 +116,13 @@ async function verifyAction(_prev: LoginState, formData: FormData): Promise<Logi
     body: { challenge_id: challenge, code, remember_device: true },
   });
   if (!r.ok) {
-    if (r.status === 429) return { step: "otp", error: r.detail ?? "ลองผิดหลายครั้งเกินไป", sentTo };
-    if (r.status === 401) return { step: "otp", error: r.detail ?? "รหัสไม่ถูกต้องหรือหมดอายุ", sentTo };
-    return { step: "otp", error: r.status === 0 ? UNREACHABLE : GENERIC, sentTo };
+    if (r.status === 429) return { step: "otp", error: r.detail ?? "ลองผิดหลายครั้งเกินไป", sentTo, next };
+    if (r.status === 401) return { step: "otp", error: r.detail ?? "รหัสไม่ถูกต้องหรือหมดอายุ", sentTo, next };
+    return { step: "otp", error: r.status === 0 ? UNREACHABLE : GENERIC, sentTo, next };
   }
   await deleteCookie("challenge");
   await writeTokens(r.data);
-  redirect("/");
+  redirect(next);
 }
 
 export async function resendAction(): Promise<ActionResult<{ sentTo: string }>> {
@@ -141,7 +148,7 @@ export async function authAction(prev: LoginState, formData: FormData): Promise<
   if (intent === "verify") return verifyAction(prev, formData);
   if (intent === "back") {
     await backToLoginAction();
-    return { step: "login", email: prev.email };
+    return { step: "login", email: prev.email, next: prev.next };
   }
   return loginAction(prev, formData);
 }
@@ -306,4 +313,87 @@ export async function saveCircuitBreakerAction(b: BreakerSettings): Promise<Acti
     method: "PUT",
     body: { enabled: b.enabled, daily_cap_thb: b.daily_cap_thb, hard_stop_ratio: b.hard_stop_ratio, alert_email: email },
   });
+}
+
+// ── blog moderation + MCP connectors ─────────────────────────────────────────
+
+export async function getBlogOverviewAction(status: string, source: string): Promise<ActionResult<BlogOverview>> {
+  if (!validStatus(status) || !validSource(source)) return { ok: false, error: GENERIC };
+  const q = new URLSearchParams({ limit: "200" });
+  if (status) q.set("status", status);
+  if (source) q.set("source", source);
+  const [posts, settings, connectors, audit, categories] = await Promise.all([
+    authed<{ items: PostRow[]; total: number }>(`/admin/blog/posts?${q}`),
+    authed<BlogSettings>("/admin/blog/settings"),
+    authed<Connector[]>("/admin/blog/connectors"),
+    authed<AuditEntry[]>("/admin/blog/audit?limit=100"),
+    authed<Category[]>("/admin/blog/categories"),
+  ]);
+  if (!posts.ok) return posts;
+  if (!settings.ok) return settings;
+  if (!connectors.ok) return connectors;
+  if (!audit.ok) return audit;
+  if (!categories.ok) return categories;
+  return {
+    ok: true,
+    data: {
+      posts: posts.data.items, total: posts.data.total, settings: settings.data,
+      connectors: connectors.data, audit: audit.data, categories: categories.data,
+    },
+  };
+}
+
+export async function getBlogPostAction(slug: string): Promise<ActionResult<PostFull>> {
+  if (!validSlug(slug)) return { ok: false, error: GENERIC };
+  return authed<PostFull>(`/admin/blog/posts/${slug}`);
+}
+
+/** Saving marks the post as the owner's (source = human): MCP can no longer change it. */
+export async function saveBlogPostAction(slug: string, edit: PostEdit): Promise<ActionResult<PostFull>> {
+  if (!validSlug(slug) || !edit || typeof edit !== "object") return { ok: false, error: GENERIC };
+  const problems = editProblems(edit);
+  if (problems.length) return { ok: false, error: problems.join(" · ") };
+  const body: Record<string, unknown> = {
+    title: edit.title.trim(),
+    meta_title: edit.meta_title.trim(),
+    meta_description: edit.meta_description.trim(),
+    excerpt: edit.excerpt.trim(),
+    content_md: edit.content_md,
+    cover_image_url: edit.cover_image_url?.trim() || null,
+    cover_alt: edit.cover_alt?.trim() || null,
+    category: edit.category,
+    tags: edit.tags.map((t) => ({ slug: t.slug, name: t.name })),
+    faq: edit.faq.map((f) => ({ question: f.question.trim(), answer: f.answer.trim() })),
+  };
+  if (edit.new_slug && edit.new_slug !== slug) body.new_slug = edit.new_slug;
+  return authed<PostFull>(`/admin/blog/posts/${slug}`, { method: "PUT", body });
+}
+
+export async function publishBlogPostAction(slug: string, publish: boolean): Promise<ActionResult<{ post: PostFull }>> {
+  if (!validSlug(slug) || typeof publish !== "boolean") return { ok: false, error: GENERIC };
+  return authed<{ post: PostFull }>(`/admin/blog/posts/${slug}/${publish ? "publish" : "unpublish"}`, { method: "POST" });
+}
+
+/** `null` = follow the server's env value again. */
+export async function saveBlogSettingsAction(autoPublish: boolean | null, maxPerDay: number | null): Promise<ActionResult<BlogSettings>> {
+  if (autoPublish !== null && typeof autoPublish !== "boolean") return { ok: false, error: GENERIC };
+  if (maxPerDay !== null && (!Number.isInteger(maxPerDay) || maxPerDay < 0 || maxPerDay > 50)) {
+    return { ok: false, error: "เพดานต่อวันต้องเป็นจำนวนเต็ม 0–50" };
+  }
+  return authed<BlogSettings>("/admin/blog/settings", { method: "PUT", body: { auto_publish: autoPublish, max_per_day: maxPerDay } });
+}
+
+export async function revokeConnectorAction(grantId: number): Promise<ActionResult<{ revoked: boolean }>> {
+  if (!validId(grantId)) return { ok: false, error: GENERIC };
+  return authed<{ revoked: boolean }>(`/admin/blog/connectors/${grantId}/revoke`, { method: "POST" });
+}
+
+/** The consent screen's decision → where to send the browser back to (the connector's callback). */
+export async function decideConnectAction(requestId: string, approve: boolean): Promise<ActionResult<{ redirect_to: string }>> {
+  if (!validRequestId(requestId) || typeof approve !== "boolean") return { ok: false, error: GENERIC };
+  const r = await authed<{ redirect_to: string }>(`/admin/blog/oauth/requests/${requestId}/${approve ? "approve" : "deny"}`, { method: "POST" });
+  // The backend only ever answers with the client's registered (allow-listed)
+  // callback; refuse anything that is not an https or loopback URL anyway.
+  if (r.ok && !/^(https:\/\/|http:\/\/(localhost|127\.0\.0\.1)[:/])/.test(r.data.redirect_to)) return { ok: false, error: GENERIC };
+  return r;
 }
