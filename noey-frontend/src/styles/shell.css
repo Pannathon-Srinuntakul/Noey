@@ -972,6 +972,18 @@ html:has(.menu[open]) {
   .hdr__row {
     gap: 12px;
   }
+
+  /* Six sections and a signed-in name share the bar: the name gives way
+     first (it ends in "…"; the full name is in the menu it opens). */
+  .acct__label {
+    max-width: 7.5em;
+  }
+}
+
+@media (max-width: 1099px) and (min-width: 1024px) {
+  .hdr__nav a {
+    padding-inline: 7px;
+  }
 }
 
 @media (max-width: 420px) {
