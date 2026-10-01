@@ -112,6 +112,29 @@ def test_footage_cap_with_a_small_tolerance():
     assert plan_features.check_footage(_user("enterprise"), 10 * 3600) is None
 
 
+def test_the_plan_footage_ladder_is_a_cut_rule_only():
+    """Owner, 2026-10-01: the 10/20/30-minute ladder caps ตัดฉากเด่น. The
+    speech modes get the same two hours on every plan, Free included, and an
+    over-long one is not blamed on the plan (changing plan would not help)."""
+    two_hours = limits.SPEECH_FOOTAGE_SEC
+    assert two_hours == 2 * 3600
+    for plan in ("free", "lite", "starter", "pro", "max"):
+        user = _user(plan)
+        cap = limits.plan_limits(plan).footage_sec
+        for mode in ("talking_head", "speech_scenes", "speech_highlights"):
+            assert plan_features.check_footage(user, two_hours, mode=mode) is None, (plan, mode)
+            over = plan_features.check_footage(user, two_hours + 60, mode=mode)
+            assert over["code"] == "footage_over_limit" and over["limit_sec"] == two_hours
+            assert "ของโหมดนี้" in over["message"] and "ของแผนนี้" not in over["message"]
+        for mode in ("dub_first", "highlight"):
+            cut = plan_features.check_footage(user, cap + 60, mode=mode, precision="standard")
+            assert cut["limit_sec"] == cap and "ของแผนนี้" in cut["message"], (plan, mode)
+    # Unlimited accounts keep no speech cap, as before.
+    assert plan_features.check_footage(_user("enterprise"), 10 * 3600, mode="talking_head") is None
+    assert plan_features.features_payload(_user("free"))["speech_footage_sec"] == two_hours
+    assert plan_features.features_payload(_user("enterprise"))["speech_footage_sec"] is None
+
+
 def test_the_video_call_cap_is_derived_from_the_two_real_constants():
     """1 hour is the owner's cap (2026-09-26), but an hour at High prices
     3600 × 300 = 1.08 M tokens — past the model's 1 M input context. One
@@ -456,8 +479,11 @@ async def test_measured_footage_is_checked_again_at_start(monkeypatch):
     from tests.media_helpers import wav_bytes
 
     monkeypatch.setenv("REQUIRE_VERIFIED_EMAIL_FOR_AI", "false")
+    # A speech mode's cap is two hours on every plan; shrink it rather than
+    # encode two hours of WAV.
+    monkeypatch.setattr(plan_features, "SPEECH_FOOTAGE_SEC", 120)
     token = await user_token(await make_user(email("feat")))
-    over_cap = limits.plan_limits("free").footage_sec + 60
+    over_cap = 120 + 60
     async with client() as c:
         r = await c.post(
             "/videos/local",

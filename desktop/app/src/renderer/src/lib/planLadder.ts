@@ -66,7 +66,14 @@ export const PLAN_APPROX_HIGH_CUTS: Partial<Record<PlanKey, number>> = {
 /** What the advertised cut count is counted from, and the fact that it is not
  * a quota. Without both, the count is a promise we break on the first
  * 20-minute clip. */
-export const APPROX_CUTS_NOTE = `คิดจากคลิปดิบ 5 นาที ปัดลง · คลิปที่ยาวกว่าหรือ${precisionLevelName('high')}ใช้โควตามากกว่า · ไม่ใช่โควตา ระบบไม่ได้นับถอยหลังจากจำนวนนี้`
+export const APPROX_CUTS_NOTE = `คิดจากโหมดตัดฉากเด่น คลิปดิบ 5 นาที ปัดลง · คลิปที่ยาวกว่าหรือ${precisionLevelName('high')}ใช้โควตามากกว่า · ไม่ใช่โควตา ระบบไม่ได้นับถอยหลังจากจำนวนนี้`
+
+/** The footage figure in each row is a ตัดฉากเด่น cap (owner, 2026-10-01). The
+ * two speech modes take two hours on every plan — packages/billing/limits.py
+ * `SPEECH_FOOTAGE_SEC`, `capSecFor` in lib/wizardState.ts — and only a run
+ * bigger than the plan's whole window is refused. */
+export const FOOTAGE_NOTE =
+  'ฟุตเทจในตารางคือเพดานของโหมดตัดฉากเด่น · ตัดช่วงเงียบและตัดไฮไลต์จากคลิปยาวรับได้ถึง 2 ชั่วโมงทุกแผน ถ้าโควตาของแผนพอสำหรับงานนั้น'
 
 /** A plan's advertised cut count; null for an admin-set or unknown plan,
  * which advertises none and must therefore show none. */

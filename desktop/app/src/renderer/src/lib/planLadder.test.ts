@@ -10,6 +10,7 @@ import {
   footageNotice,
   FULL_PRICE_SATANG,
   APPROX_CUTS_NOTE,
+  FOOTAGE_NOTE,
   fullPriceAfterBeta,
   HIGH_PRECISION_MIN_PLAN,
   highPrecisionLocked,
@@ -120,6 +121,9 @@ describe('plan list (design §5)', () => {
     expect(APPROX_CUTS_NOTE).toContain('5 นาที')
     expect(APPROX_CUTS_NOTE).toContain('ระดับละเอียด')
     expect(APPROX_CUTS_NOTE).toContain('ไม่ใช่โควตา')
+    expect(APPROX_CUTS_NOTE).toContain('ตัดฉากเด่น')
+    expect(FOOTAGE_NOTE).toContain('ตัดฉากเด่น')
+    expect(FOOTAGE_NOTE).toContain('2 ชั่วโมง')
   })
 })
 

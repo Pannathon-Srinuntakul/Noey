@@ -5,6 +5,7 @@ import {
   betaPricing,
   canChangePlan,
   APPROX_CUTS_NOTE,
+  FOOTAGE_NOTE,
   fullPriceAfterBeta,
   PLAN_ROWS,
   planButtonLabel,
@@ -115,6 +116,7 @@ export function PlansCard({
             allowance — this says what they are counted from and that nothing
             counts down from them (owner, 2026-09-29). Not optional. */}
         <p>{APPROX_CUTS_NOTE}</p>
+        <p className="mt-1">{FOOTAGE_NOTE}</p>
         <p className="mt-1">
           {changeable ? planFooter() : 'แผนนี้ผู้ดูแลตั้งให้ ติดต่อผู้ดูแลเพื่อเปลี่ยนแผน'}
         </p>

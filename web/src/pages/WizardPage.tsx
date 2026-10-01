@@ -112,7 +112,10 @@ function wizardPlanNotices(state: WizardState, usage: Usage | null): LimitNotice
       : [state.files]
   const out: LimitNotice[] = []
   const longest = Math.max(0, ...groups.map((g) => totalDurationSec(g) ?? 0))
-  const footage = footageNotice(longest, usage.features.footage_sec)
+  // The plan's footage ladder caps ตัดฉากเด่น only (owner, 2026-10-01); the
+  // speech modes' two hours is `capSecFor`, checked with the files.
+  const footage =
+    state.uiMode === 'highlight' ? footageNotice(longest, usage.features.footage_sec) : null
   if (footage) out.push(footage)
   const bytes = state.files.reduce((sum, f) => sum + (f.sizeBytes ?? 0), 0)
   const storage = storageNotice(usage.storage.used_bytes, usage.storage.quota_bytes, bytes)

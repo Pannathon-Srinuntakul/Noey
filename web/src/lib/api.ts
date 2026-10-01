@@ -244,7 +244,10 @@ export interface PlanFeatures {
   approx_cuts?: number | null
   /** The same count at ความละเอียด "high"; null below Pro (it cannot pick High). */
   approx_cuts_high?: number | null
+  /** Footage per project for ตัดฉากเด่น only (`video_call_modes`). */
   footage_sec: number | null
+  /** The speech modes' footage cap, the same on every plan; null = unlimited. */
+  speech_footage_sec?: number | null
   max_projects: number | null
   music: boolean
   transcode: boolean

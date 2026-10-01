@@ -83,6 +83,9 @@ The table is sized on the measurement; the estimate only has to be safe.)
    fixes — a cap that says 30 minutes while a 20-minute clip is refused — and
    tests/test_plan_features.py pins it per plan so it cannot come back.
 
+   The ladder is a ตัดฉากเด่น cap (``VIDEO_CALL_MODES``). The speech modes are
+   capped at ``SPEECH_FOOTAGE_SEC`` on every plan instead (owner, 2026-10-01).
+
 ── the volume discount (owner, 2026-10-01) ──
 
 Prices did not move; budgets did, upward only. The margin floor at FULL price,
@@ -147,6 +150,8 @@ class PlanLimits:
     concurrency: int
     storage_gb: int
     #: Total footage per project, seconds (the website's "ฟุตเทจรวมต่อโปรเจกต์").
+    #: ตัดฉากเด่น only (``VIDEO_CALL_MODES``); the speech modes share
+    #: ``SPEECH_FOOTAGE_SEC`` on every plan.
     footage_sec: int = 2 * 3600
     #: Projects kept on the account; None = unlimited (within storage).
     max_projects: int | None = None
@@ -331,7 +336,22 @@ def video_call_footage_sec(precision: str | None, *, unlimited: bool = False) ->
 
 #: Modes whose footage all travels in a single video request — the only ones
 #: the cap above applies to. The speech modes send audio per clip instead.
+#: They are also the only modes the plan's ``footage_sec`` applies to.
 VIDEO_CALL_MODES: frozenset[str] = frozenset({"dub_first", "highlight"})
+
+#: The modes that never send footage to the model as video: speech-to-text,
+#: then arithmetic (talking_head) or a transcript-only selection.
+SPEECH_MODES: frozenset[str] = frozenset({"talking_head", "speech_scenes", "speech_highlights"})
+#: Footage cap for a speech mode, on EVERY plan (owner, 2026-10-01). The
+#: per-plan ``footage_sec`` ladder is a ตัดฉากเด่น rule — it was sized on what a
+#: cut costs (rule 3 above) — and applying it to these modes was a side effect
+#: of the 2026-09-30 refit, not a decision. This is the editor's own per-mode
+#: cap (web/src/lib/wizardState.ts ``capSecFor``); change both together. What
+#: a long run costs stays bounded by the plan: a run bigger than the whole
+#: window is refused by ``plan_features.check_run_size`` (Free can run about
+#: 19 minutes of speech_highlights, Lite about 76; talking_head fits every
+#: plan at the full two hours).
+SPEECH_FOOTAGE_SEC = 2 * 3600
 
 UNLIMITED_PLANS = frozenset({"enterprise"})
 #: Unlimited accounts still run at most this many AI jobs at once — a vendor
