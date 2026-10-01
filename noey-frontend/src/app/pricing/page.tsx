@@ -21,6 +21,7 @@ import {
   CLIPS_FOOTNOTE,
   PAID_TIERS,
   PLAN_COPY,
+  VOLUME_VALUE_NOTE,
   clipsHeadline,
   clipsLadderSentence,
   displayPrice,
@@ -112,34 +113,29 @@ export default async function PricingPage() {
           </h2>
           <p>
             เรานับเป็นจำนวนคลิปที่ AI ตัดให้ต่อเดือน เพราะงานหนักของแต่ละคลิปคือการถอดเสียงและการวางแผนตัด ซึ่งใช้กำลังใกล้เคียงกันไม่ว่าฟุตเทจจะยาวแค่ไหน
-            ตัวเลขบนการ์ดคิดจากคลิปดิบ 5 นาที คลิปที่ยาวกว่าหรือระดับละเอียดใช้โควตามากกว่า และ หน้าตั้งค่าแสดงเป็นเปอร์เซ็นต์ของรอบที่เหลือ
+            ตัวเลขบนการ์ดคิดจากคลิปดิบ 5 นาทีและปัดลง แพลน Pro ขึ้นไปบอกทั้งจำนวนที่ระดับปกติและระดับละเอียด คลิปที่ยาวกว่าใช้โควตามากกว่า และหน้าตั้งค่าแสดงเป็นเปอร์เซ็นต์ของรอบที่เหลือ
           </p>
         </div>
         <div className="card" style={{ padding: 28 }}>
           {/* Illustration of the settings screen, not anyone's real usage — labelled as such. */}
           <span className="tag tag-neutral example-tag">ตัวอย่างการแสดงผล</span>
           <div className="meter-row" style={{ marginTop: 4 }}>
-            <span>5-hour limit</span>
+            <span>Monthly limit</span>
             <span className="num">ใช้ไป 38%</span>
           </div>
           <div className="meter" aria-hidden="true">
             <div className="meter__fill" style={{ width: "38%" }} />
           </div>
-          <div className="meter-row" style={{ marginTop: 14 }}>
-            <span>Weekly limit</span>
-            <span className="num">ใช้ไป 21%</span>
-          </div>
-          <div className="meter" aria-hidden="true">
-            <div className="meter__fill" style={{ width: "21%" }} />
-          </div>
           <ul className="rule-list">
+            {/* One window per account since 2026-09-30 (backend limits.py
+                rule 1): the weekly and 5-hour sub-windows no longer exist. */}
             <li>
-              <span className="num">Weekly limit</span>
-              <span>ทุกแพลนรายเดือน นับ 7 วันจากงานแรกของรอบ ใช้ได้เมื่อไหร่ก็ได้ในสัปดาห์</span>
+              <span className="num">Monthly limit</span>
+              <span>ทุกแพลนรายเดือน ได้โควตาใหม่ทุกรอบบิล ใช้หนักวันไหนก็ได้ ไม่มีเพดานรายสัปดาห์หรือรายชั่วโมง</span>
             </li>
             <li>
-              <span className="num">5-hour limit</span>
-              <span>Pro ขึ้นไป อีกชั้นหนึ่งกันการใช้งานหนักต่อเนื่อง รีเซ็ต 5 ชั่วโมงหลังงานแรกของรอบ</span>
+              <span className="num">แพลนใหญ่</span>
+              <span>{VOLUME_VALUE_NOTE} ตัวเลขบนการ์ดคิดให้แล้ว</span>
             </li>
             <li>
               <span className="num">Trial credit</span>

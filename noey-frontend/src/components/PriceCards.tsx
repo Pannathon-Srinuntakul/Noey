@@ -12,6 +12,7 @@ import {
   PAID_TIERS,
   PLAN_COPY,
   clipsHeadline,
+  clipsHighLine,
   displayPrice,
   strikePrice,
   type PriceTable,
@@ -79,12 +80,14 @@ export function PriceCards({ table, variant }: { table: PriceTable; variant: "ho
           <div className="price-more__grid">
             {EXTRA_TIERS.map((tier) => {
               const price = displayPrice(table, tier);
+              const high = clipsHighLine(tier);
               return (
                 <div key={tier} className="price-more__item">
                   <div className="price-more__name">
                     <span>{PLAN_COPY[tier].name}</span>
                     <span className="num price-more__mult">{clipsHeadline(tier)}</span>
                   </div>
+                  {high ? <p className="num price-more__high">{high}</p> : null}
                   <div className="num price-more__price">
                     {price ? (
                       <>
@@ -124,6 +127,8 @@ function PriceCard({ tier, table, size }: { tier: Tier; table: PriceTable; size:
   const cuts = APPROX_CUTS_PER_MONTH[tier];
   const cutsPrefix = tier === "free" ? CUTS_APPROX_SHORT : CUTS_APPROX_PREFIX;
   const cutsUnit = tier === "free" ? "คลิป" : "คลิป / เดือน";
+  // Pro and up: the same count at ระดับละเอียด, rounded down like the first.
+  const high = clipsHighLine(tier);
 
   return (
     <div className={classes.join(" ")}>
@@ -145,6 +150,7 @@ function PriceCard({ tier, table, size }: { tier: Tier; table: PriceTable; size:
         <span className="usage-approx">{cutsPrefix}</span>
         <span className="num usage-mult">{cuts}</span>
         <span className="usage-caption">{tier === "free" ? `${cutsUnit} · ${FREE_CLIPS_CAPTION}` : cutsUnit}</span>
+        {high ? <span className="usage-high">{high}</span> : null}
       </div>
       <p className="clip-note">{CLIPS_BASIS_SHORT}</p>
       <p className="card-body">{detailed ? copy.pricingBlurb : copy.homeBlurb}</p>

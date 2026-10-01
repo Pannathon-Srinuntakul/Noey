@@ -119,7 +119,7 @@ export const PAGES: Record<PageKey, PageEntry> = {
     description:
       "Noey Studio ตัดคลิปสั้นด้วย AI ในเบราว์เซอร์ ถอดเสียงไทย เลือกช่วงไฮไลต์ เขียนสคริปต์พากย์ ใส่ซับไทยอัตโนมัติ แก้ต่อได้ทุกช็อต เริ่มใช้ฟรี",
     label: "หน้าแรก",
-    updated: "2026-09-29", published: "2026-09-21",
+    updated: "2026-10-01", published: "2026-09-21",
     indexable: true,
   },
   scope: {
@@ -139,7 +139,7 @@ export const PAGES: Record<PageKey, PageEntry> = {
     description:
       "เทียบราคาทุกแพลนของ Noey Studio เครดิตทดลองฟรีเมื่อสมัคร และแพลนรายเดือน Lite ถึง Max ดูปริมาณการใช้งาน ความยาวฟุตเทจ และพื้นที่เก็บงาน",
     label: "ราคา",
-    updated: "2026-09-29", published: "2026-09-21",
+    updated: "2026-10-01", published: "2026-09-21",
     indexable: true,
   },
   about: {
@@ -233,7 +233,7 @@ export const PAGES: Record<PageKey, PageEntry> = {
     description:
       "วิธีตัดคลิปยาว เช่น ไลฟ์หรือคลิปพูดยาว ให้กลายเป็นคลิปสั้นหลายตัว ระบบฟังเนื้อหาแล้วเลือกช่วงที่จบในตัวเอง พร้อมข้อจำกัดเรื่องความยาวฟุตเทจต่อแพลน",
     label: "ตัดคลิปยาวเป็นคลิปสั้น",
-    updated: "2026-09-23",
+    updated: "2026-10-01",
     published: "2026-09-23",
     indexable: true,
   },
@@ -243,7 +243,7 @@ export const PAGES: Record<PageKey, PageEntry> = {
     description:
       "เกณฑ์เลือกเครื่องมือ AI ตัดต่อวิดีโอภาษาไทย ดูความแม่นของการถอดเสียงไทย การแก้ทับในไทม์ไลน์ ฟอร์แมตไฟล์ที่รับ ผลลัพธ์ที่ได้ และวิธีคิดค่าบริการ",
     label: "เลือกเครื่องมือ AI ตัดต่อ",
-    updated: "2026-09-23",
+    updated: "2026-10-01",
     published: "2026-09-23",
     indexable: true,
   },
@@ -253,7 +253,7 @@ export const PAGES: Record<PageKey, PageEntry> = {
     description:
       "เอกสารช่วยเหลือ Noey Studio อธิบายโหมดการตัดทั้งสามแบบ ไฟล์ที่รองรับ ขีดจำกัดของแต่ละแพลน สิ่งที่ AI ทำได้และทำไม่ได้ และวิธีแก้ปัญหาที่เจอบ่อย",
     label: "ช่วยเหลือ",
-    updated: "2026-09-26",
+    updated: "2026-10-01",
     published: "2026-09-23",
     indexable: true,
   },

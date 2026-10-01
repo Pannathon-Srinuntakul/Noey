@@ -88,7 +88,7 @@ describe('the UI never names the AI stack', () => {
  * unit of spending may not also mean.
  *
  * So: the modules that word the meters may not carry the word at all. The
- * plan TABLE may — it advertises "ตัดได้ราว 22 คลิป/เดือน" as marketing copy
+ * plan TABLE may — it advertises "ตัดได้ราว 30 คลิป/เดือน" as marketing copy
  * with its basis attached — which is exactly why this guard names the meter
  * files one by one instead of scanning everything.
  */

@@ -946,10 +946,22 @@ html[data-auth="in"] .auth-out {
 /* Usage multiplier ("5x" of Lite) — how plans are compared, never tokens. */
 .price-card__usage {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   gap: 8px;
   margin-bottom: 10px;
   min-width: 0;
+}
+
+/* Pro and up: the ระดับละเอียด count on its own line under the headline
+   (owner, 2026-10-01). Quieter than the headline, but a real number, not a
+   footnote — a plan bought for that setting must say what it buys there. */
+.usage-high {
+  flex-basis: 100%;
+  margin-top: -4px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--color-neutral-700);
 }
 
 .price-card--full .price-card__usage {
@@ -1062,6 +1074,12 @@ html[data-auth="in"] .auth-out {
   font-size: 13px;
   font-weight: 400;
   color: var(--color-accent-700);
+}
+
+.price-more__high {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--color-neutral-700);
 }
 
 .price-more__price {
