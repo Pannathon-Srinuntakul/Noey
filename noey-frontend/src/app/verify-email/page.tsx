@@ -80,7 +80,7 @@ export default async function VerifyEmailPage({ searchParams }: { searchParams: 
       );
       actions = (
         <>
-          <a href={EDITOR_OPEN_PATH} className="btn btn-primary btn-lg">
+          <a href={EDITOR_OPEN_PATH} className="btn btn-primary btn-lg status__editor">
             เปิดห้องตัดต่อ
           </a>
           {accountLinkAs("secondary")}

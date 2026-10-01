@@ -2,7 +2,7 @@ import Link from "next/link";
 import { EDITOR_OPEN_PATH } from "@/lib/editor-handoff";
 import { NAV_LINKS } from "@/lib/site";
 import { SignOutButton } from "../account/SignOutButton";
-import { IconCard, IconChevronDown, IconLevels, IconScissors, IconUser } from "../ds/icons";
+import { IconCard, IconChevronDown, IconKey, IconLevels, IconUser } from "../ds/icons";
 import { NoeyMark } from "../NoeyMark";
 import { ScrollTimeline } from "../shell/ScrollTimeline";
 import { AuthHintSync, HeaderDisclosures, NavLinks, PageLink, ThemeToggle } from "./HeaderClient";
@@ -73,9 +73,10 @@ export function SiteHeader() {
                     </span>
                     <span className="auth-name" />
                   </div>
-                  {/* The account's four tabs, with the tabs' own icons (AccountTabs). */}
+                  {/* The account's four tabs, with the tabs' icons (AccountTabs) — the
+                      first row names the whole account here, so it gets the person. */}
                   <Link href="/account" prefetch={false}>
-                    <IconScissors size={16} />
+                    <IconUser size={16} />
                     บัญชีของฉัน
                   </Link>
                   <Link href="/account/quota" prefetch={false}>
@@ -87,7 +88,7 @@ export function SiteHeader() {
                     แพลนและการชำระเงิน
                   </Link>
                   <Link href="/account/profile" prefetch={false}>
-                    <IconUser size={16} />
+                    <IconKey size={16} />
                     ข้อมูลส่วนตัว
                   </Link>
                   <SignOutButton className="auth-signout" icon />

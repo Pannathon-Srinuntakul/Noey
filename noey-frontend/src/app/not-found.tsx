@@ -40,7 +40,7 @@ const A = clipsOf(AUDIO);
  * per tick or bar: the root not-found tree travels in every page's RSC
  * payload, so its size is paid on every page load.
  */
-// The ticks stop short of the readout box at the right (x 626–714): none runs under it.
+// The ticks stop short of the time readout at the top right (.nf__readout): none runs under it.
 const TICKS_PATH = Array.from({ length: 48 }, (_, index) => `M${50 + index * 12} ${index % 5 === 0 ? 8 : 13}V18`).join("");
 const WAVE_PATH = (() => {
   const mid = (AUDIO.top + AUDIO.bottom) / 2;
@@ -82,15 +82,6 @@ function MissingClip() {
           {`00:00:0${second}:00`}
         </text>
       ))}
-      {/* The playhead's readout, boxed like an editor's current-time display
-          so it cannot be read as a label on the ruler. */}
-      <g className="nf__readout">
-        <rect x="626" y="0" width="88" height="14" rx="4" className="nf__readout-box" />
-        <text x="670" y="10" textAnchor="middle" className="nf__tc nf__tc--gold">
-          00:00:04:04
-        </text>
-      </g>
-
       {/* Track labels and lanes */}
       {[VIDEO, AUDIO].map((lane, index) => (
         <g key={lane.top}>
@@ -142,6 +133,9 @@ export default function NotFound() {
       <div className="wrap nf__inner">
         <div className="nf__stage">
           <MissingClip />
+          {/* The playhead's current time, boxed like an editor's time display;
+              it counts with the run (its digits are CSS counters). */}
+          <span className="nf__readout" aria-hidden="true" />
           <span className="mock-tag nf__tag">ภาพจำลอง</span>
         </div>
 

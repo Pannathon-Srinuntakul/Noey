@@ -3,14 +3,14 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef } from "react";
-import { IconCard, IconLevels, IconScissors, IconUser } from "../ds/icons";
+import { IconCard, IconKey, IconLevels, IconScissors } from "../ds/icons";
 import { keepThai } from "../ds/ThaiText";
 
 const TABS = [
   { href: "/account", label: "ห้องตัดต่อ", Icon: IconScissors },
   { href: "/account/quota", label: "โควตาและลิมิต", Icon: IconLevels },
   { href: "/account/billing", label: "แพลนและการชำระเงิน", Icon: IconCard },
-  { href: "/account/profile", label: "ข้อมูลส่วนตัว", Icon: IconUser },
+  { href: "/account/profile", label: "ข้อมูลส่วนตัว", Icon: IconKey },
 ] as const;
 
 /**

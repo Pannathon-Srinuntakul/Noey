@@ -60,6 +60,11 @@
   background: radial-gradient(closest-side, var(--tone-soft), transparent);
 }
 
+/* Day theme: a faint warm glow (a grey or green one read as a smudge). */
+html:not([data-theme="dark"]) .status__halo {
+  background: radial-gradient(closest-side, var(--gold-softer), transparent);
+}
+
 /* The mark stays the brand's gold in every state (the header shows the same
    mark): the state's colour is carried by the bar, the tick, the glow and
    the line along the card's top. */
@@ -156,6 +161,11 @@
   clip-path: polygon(0 0, 100% 0, calc(100% - 5px) 100%, 0 100%);
 }
 
+/* The dropped piece hangs below the bar: the emblem keeps room for it. */
+.status--danger .status__emblem {
+  margin-bottom: 18px;
+}
+
 .status--danger .status__gap {
   display: block;
   position: absolute;
@@ -211,13 +221,66 @@
   border-bottom: 0;
 }
 
-/* The render's readout under the bar ("EXPORT · 100%"): decoration, in the
-   editor's timecode type. */
+/* The render's readout after the tick ("100%"): decoration, in the editor's
+   timecode type and the legible gold. */
 .status__readout {
-  margin-top: -6px;
+  flex: none;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--gold-ink);
+}
+
+.status__meter:has(.status__readout) {
+  width: 220px;
+}
+
+/* The card's title strip: a recording light, the state, a rule, a timecode. */
+.status__strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  align-self: stretch;
+  justify-self: stretch;
+  margin: calc(clamp(28px, 5vw, 48px) * -1) calc(clamp(20px, 5vw, 48px) * -1) 6px;
+  padding: 11px clamp(20px, 5vw, 48px);
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--color-text) 3%, transparent);
+  color: var(--ink-3);
   font-size: 10.5px;
   letter-spacing: 0.08em;
-  color: var(--tone);
+}
+
+.status__strip .tc:first-of-type {
+  color: var(--tone-ink, var(--gold-ink));
+  font-weight: 600;
+}
+
+.status__rec {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--tone);
+  box-shadow: 0 0 0 3px var(--tone-soft);
+}
+
+.status__rule {
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, var(--line-2), transparent);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .status--pending .status__rec {
+    animation: status-rec 1.4s ease-in-out infinite;
+  }
+}
+
+@keyframes status-rec {
+  50% {
+    opacity: 0.3;
+  }
 }
 
 /* Celebrate (checkout): "render complete" in the brand's gold. */

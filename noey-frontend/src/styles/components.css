@@ -1121,15 +1121,71 @@
   font-variant-numeric: tabular-nums;
 }
 
-.nf__tc--gold {
-  fill: var(--gold-ink);
-  font-weight: 600;
+/*
+ * The playhead's time display. It counts with the playhead's run — nf-run's
+ * first half, 1.8 s across 4 s 4 frames of the ruler at 25 fps — and rests on
+ * 00:00:04:04, where the hole is. A static 04:04 with reduced motion.
+ */
+@property --nf-s {
+  syntax: "<integer>";
+  inherits: false;
+  initial-value: 4;
 }
 
-.nf__readout-box {
-  fill: var(--panel);
-  stroke: color-mix(in srgb, var(--color-accent) 45%, transparent);
-  stroke-width: 1;
+@property --nf-f {
+  syntax: "<integer>";
+  inherits: false;
+  initial-value: 4;
+}
+
+.nf__readout {
+  --nf-s: 4;
+  --nf-f: 4;
+  position: absolute;
+  top: 12px;
+  right: 14px;
+  padding: 0 8px;
+  border: 1px solid color-mix(in srgb, var(--color-accent) 45%, transparent);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--gold-ink);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 20px;
+  letter-spacing: 0.08em;
+  font-variant-numeric: tabular-nums;
+  counter-reset: nf-s var(--nf-s) nf-f var(--nf-f);
+}
+
+.nf__readout::before {
+  content: "00:00:0" counter(nf-s) ":" counter(nf-f, decimal-leading-zero);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .nf__readout {
+    /* One second of the ruler passes in 1.8 s ÷ 4.165 = 0.4322 s of the run. */
+    animation:
+      nf-seconds 2.161s 0.5s steps(5) 0.833 both,
+      nf-frames 0.4322s 0.5s steps(25) 4.165 both;
+  }
+}
+
+@keyframes nf-seconds {
+  from {
+    --nf-s: 0;
+  }
+  to {
+    --nf-s: 5;
+  }
+}
+
+@keyframes nf-frames {
+  from {
+    --nf-f: 0;
+  }
+  to {
+    --nf-f: 25;
+  }
 }
 
 /* Bottom right, in a row of its own under the drawing: clear of the audio
@@ -1300,9 +1356,12 @@
     margin-left: -55%;
   }
 
-  /* Into the zoomed crop, whose right edge is x ≈ 638. */
   .nf__readout {
-    transform: translateX(-88px);
+    top: 8px;
+    right: 10px;
+    padding: 0 6px;
+    font-size: 10px;
+    line-height: 17px;
   }
 
   .nf__links {
@@ -1352,12 +1411,36 @@
     margin: 0 0 18px;
   }
 
-  /* Under a status card's actions (verified, paid): the width of the
-     actions, reading from the left like every other note. */
+  /* In a status card (verified, paid): before the actions, so it is read
+     before the editor's button — which steps back to an outline here, the
+     editor not running on this device. */
   .status .computer-only {
+    order: 1;
     width: 100%;
     margin: 6px 0 0;
     text-align: start;
+  }
+
+  .status:has(.computer-only) .status__actions {
+    order: 2;
+  }
+
+  .status .btn.status__editor {
+    --btn-bg: color-mix(in srgb, var(--panel) 70%, transparent);
+    --btn-ink: var(--ink);
+    --btn-line: var(--gold);
+    --btn-handle: var(--gold);
+    font-weight: 500;
+    box-shadow: none;
+  }
+
+  .status .btn.status__editor:hover {
+    --btn-bg: var(--gold-softer);
+  }
+
+  /* …and the header's own editor button is not a third call to the same place. */
+  body:has(main.status-page .computer-only) .hdr__tools > .auth-in > .btn-primary {
+    display: none;
   }
 }
 

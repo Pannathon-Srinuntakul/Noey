@@ -4,6 +4,16 @@ import "../../styles/parts/status.css";
 
 export type StatusTone = "success" | "celebrate" | "danger" | "info" | "pending" | "quiet";
 
+/** The panel strip's word for each state, as an editor's render queue prints it (decoration). */
+const STRIP: Record<StatusTone, string> = {
+  success: "DONE",
+  celebrate: "EXPORT",
+  danger: "FAILED",
+  info: "READY",
+  pending: "RENDERING",
+  quiet: "END",
+};
+
 /**
  * The one card every utility page is built on (verify email, reset password,
  * checkout, account deleted, errors): a state emblem — the splice mark in the
@@ -51,6 +61,13 @@ export function StatusCard({
       aria-busy={busy || undefined}
       aria-labelledby={titleId}
     >
+      {/* The card's title strip, as every panel in the editor has one. */}
+      <div className="status__strip" aria-hidden="true">
+        <span className="status__rec" />
+        <span className="tc">{STRIP[tone]}</span>
+        <span className="status__rule" />
+        <span className="tc">00:00:00:00</span>
+      </div>
       <div className="status__emblem" aria-hidden="true">
         <span className="status__halo" />
         {/* A lighter stroke at this size keeps the splice gap open (≈2px, not 1). */}
@@ -66,8 +83,8 @@ export function StatusCard({
               <path d="M6 10.4 8.7 13 14 7.4" pathLength={1} />
             </svg>
           ) : null}
+          {readout ? <span className="status__readout tc">{readout}</span> : null}
         </span>
-        {readout ? <span className="status__readout tc">{readout}</span> : null}
       </div>
       {eyebrow ? <p className="status__eyebrow">{eyebrow}</p> : null}
       <Title className="status__title" id={titleId}>

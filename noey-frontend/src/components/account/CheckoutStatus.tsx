@@ -89,7 +89,7 @@ export function CheckoutStatus({ initial }: { initial: BillingSnapshot | null })
         footer={<ComputerOnly />}
         actions={
           <>
-            <a href={EDITOR_OPEN_PATH} className="btn btn-primary btn-lg">
+            <a href={EDITOR_OPEN_PATH} className="btn btn-primary btn-lg status__editor">
               เปิดห้องตัดต่อ
             </a>
             <Link href="/account/billing" className="btn btn-secondary btn-lg">
