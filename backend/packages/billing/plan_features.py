@@ -291,9 +291,10 @@ def features_payload(user: Any) -> dict[str, Any]:
         "footage_sec": None if unlimited else lim.footage_sec,
         "speech_footage_sec": None if unlimited else SPEECH_FOOTAGE_SEC,
         # The pricing page's APPROXIMATE cut count, not a quota: the meter is
-        # a percentage and this is never subtracted from. Served so a
-        # signed-in plan screen quotes the same number as the website instead
-        # of keeping its own copy. Never a token count.
+        # a percentage and this is never subtracted from. Never a token count.
+        # No client displays it since 2026-10-01 (owner): a count is pinned to
+        # one mode and raw-clip length, so the website's /pricing calculator
+        # is the only place counts appear. Kept for older clients.
         "approx_cuts": None if unlimited else plan_cuts(plan),
         # The same count at ความละเอียด "high" — None on a plan that cannot
         # pick it (and on an unlimited account, which advertises nothing).

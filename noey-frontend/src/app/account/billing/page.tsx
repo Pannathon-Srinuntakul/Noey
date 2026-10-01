@@ -5,17 +5,15 @@ import { formatShortDate, toDate } from "@/lib/format";
 import { MSG } from "@/lib/messages";
 import { BETA_PRICE_NOTE_SHORT, isBetaActive } from "@/lib/beta";
 import {
-  APPROX_CUTS_PER_MONTH,
-  CLIPS_BASIS_SHORT,
+  CLIPS_CALCULATOR_HREF,
+  CLIPS_CALCULATOR_LINK,
+  CLIPS_DEPEND_NOTE,
   COMPARISON_ROWS,
-  CUTS_APPROX_PREFIX,
-  CUTS_APPROX_SHORT,
   FOOTAGE_PER_PROJECT,
   FREE_CLIPS_CAPTION,
   PAID_TIERS,
   PLAN_COPY,
   TIERS,
-  clipsHighLine,
   displayPrice,
   isBetaPriced,
   isPaidTier,
@@ -35,9 +33,6 @@ export const metadata: Metadata = privatePageMetadata("แพลนและก�
 
 /** A plan's place in the ladder, as /pricing's cards number it (P0 … P6). */
 const reelOf = (tier: Tier) => `P${TIERS.indexOf(tier)}`;
-
-/** A plan's monthly clips as /pricing's cards print them ("ตัดได้ราว 30 คลิป / เดือน"). */
-const clipsSpec = (tier: PaidTier) => `${CUTS_APPROX_PREFIX} ${APPROX_CUTS_PER_MONTH[tier]} คลิป / เดือน`;
 
 /** A plan's storage, from the comparison table's own row (the only place it is stated per plan). */
 const STORAGE_ROW = COMPARISON_ROWS.find((row) => row.label === "พื้นที่เก็บงานบนบัญชี");
@@ -88,19 +83,18 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
   else if (subscriptionLapsed(billing?.status)) statusLine = "การชำระเงินของแพลนล่าสุดไม่สำเร็จ บัญชีจึงกลับมาใช้แพลนฟรี เลือกแพลนใหม่ได้จากปุ่ม “เลือกแพลน”";
 
   // Every row of the plan picker states the same three things, so the plans
-  // can be compared down the list.
+  // can be compared down the list. No clip count: a count is pinned to one
+  // mode and length, so it lives on /pricing's calculator only (owner,
+  // 2026-10-01); the plan card points there.
   const options: UpgradeOption[] = PAID_TIERS.map((tier) => ({
     tier,
     reel: reelOf(tier),
     name: PLAN_COPY[tier].name,
     price: displayPrice(table, tier),
     fullPrice: strikePrice(table, tier),
-    // Pro and up also state their ระดับละเอียด count, as a fact of its own (a
-    // plan bought for that setting states both — lib/plans.ts).
     specs: [
-      clipsSpec(tier),
-      clipsHighLine(tier),
       `ฟุตเทจตัดฉากเด่น ${FOOTAGE_PER_PROJECT[tier]}ต่อโปรเจกต์`,
+      `ทำงาน AI พร้อมกันได้ ${PLAN_COPY[tier].concurrentJobs} งาน`,
       storageOf(tier) ? `เก็บได้ ${storageOf(tier)}` : null,
     ].filter((spec): spec is string => !!spec),
     recommended: !!PLAN_COPY[tier].recommended,
@@ -113,14 +107,8 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
     ? {
         reel: reelOf(planTier),
         beta: live && isBetaActive() && strikePrice(table, planTier) !== null,
-        usage: {
-          prefix: planTier === "free" ? CUTS_APPROX_SHORT : CUTS_APPROX_PREFIX,
-          count: APPROX_CUTS_PER_MONTH[planTier],
-          unit: planTier === "free" ? "คลิป" : "คลิป / เดือน",
-          caption: planTier === "free" ? FREE_CLIPS_CAPTION : null,
-        },
-        high: clipsHighLine(planTier),
-        basis: CLIPS_BASIS_SHORT,
+        caption: planTier === "free" ? FREE_CLIPS_CAPTION : null,
+        clips: { note: CLIPS_DEPEND_NOTE, link: CLIPS_CALCULATOR_LINK, href: CLIPS_CALCULATOR_HREF },
         features: PLAN_COPY[planTier].features,
       }
     : null;

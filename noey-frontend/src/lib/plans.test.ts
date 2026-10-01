@@ -8,6 +8,7 @@ import {
   COMPARISON_ROWS,
   EXTRA_TIERS,
   FOOTAGE_PER_PROJECT,
+  FREE_CLIPS_CAPTION,
   FULL_PRICES_THB,
   MAIN_TIERS,
   PAID_TIERS,
@@ -216,7 +217,7 @@ describe("planDisplayName", () => {
 });
 
 describe("what a plan sells", () => {
-  it("is an APPROXIMATE cut count per month, one map behind every surface", () => {
+  it("is an APPROXIMATE cut count per month, one map behind /pricing's counts", () => {
     // Owner, 2026-09-29: the cost of a cut is dominated by a fixed per-run
     // cost, not by the footage, so minutes were the wrong unit to sell.
     // Owner, 2026-10-01: HONEST counts — budget ÷ a 5-minute cut from the
@@ -228,8 +229,14 @@ describe("what a plan sells", () => {
     expect(clipsHeadline("pro")).toBe("ตัดได้ราว 30 คลิป/เดือน");
     const row = COMPARISON_ROWS.find((r) => r.label === "จำนวนคลิปต่อเดือน (โดยประมาณ)");
     expect(row?.values).toEqual(["ราว 2 คลิป ครั้งเดียว", ...TIERS.slice(1).map((tier) => clipsListItem(tier))]);
+  });
+
+  it("states no clip count in plan copy — /pricing's calculator is the only place counts appear", () => {
+    // Owner, 2026-10-01: anywhere without the calculator a count is pinned to
+    // a 5-minute ตัดฉากเด่น clip, which confused people.
     for (const tier of TIERS) {
-      expect(PLAN_COPY[tier].accountFeatures[0], `${tier} leads with its clip count`).toContain(clipsHeadline(tier));
+      const text = JSON.stringify(PLAN_COPY[tier]);
+      expect(text, `${tier} quotes a count`).not.toMatch(/คลิป\s*\/\s*เดือน|ราว \d+ คลิป/);
     }
   });
 
@@ -243,10 +250,6 @@ describe("what a plan sells", () => {
     expect(clipsHighLine("starter")).toBeNull();
     expect(clipsHeadlineFull("pro")).toBe("ตัดได้ราว 30 คลิป/เดือน · ระดับละเอียดราว 20 คลิป");
     expect(clipsHeadlineFull("lite")).toBe(clipsHeadline("lite"));
-    for (const tier of ["pro", "studio", "agency", "max"] as const) {
-      expect(PLAN_COPY[tier].accountFeatures[0]).toBe(clipsHeadlineFull(tier));
-      expect(PLAN_COPY[tier].dialogSummary).toContain(clipsHeadlineFull(tier));
-    }
     const row = COMPARISON_ROWS.find((r) => r.label === `จำนวนคลิปต่อเดือน ระดับ${PRECISION_NAMES.high} (โดยประมาณ)`);
     expect(row?.values).toEqual(["—", "—", "—", "ราว 20 คลิป", "ราว 44 คลิป", "ราว 97 คลิป", "ราว 179 คลิป"]);
     expect(clipsHighListItem("lite")).toBeNull();
@@ -267,13 +270,6 @@ describe("what a plan sells", () => {
     // The compact list form keeps the hedge too: an agent may quote one item.
     for (const tier of TIERS) expect(clipsListItem(tier), tier).toMatch(/^ราว \d+ คลิป$/);
     expect(clipsLadderSentence(["lite", "pro"])).toBe("Lite ราว 4 คลิป · Pro ราว 30 คลิป (ระดับละเอียดราว 20 คลิป)");
-    for (const tier of TIERS) {
-      const text = [...PLAN_COPY[tier].accountFeatures, PLAN_COPY[tier].dialogSummary].join("\n");
-      const bare = new RegExp(`(?<!ราว )${APPROX_CUTS_PER_MONTH[tier]} คลิป`);
-      expect(text, `${tier} states a bare count`).not.toMatch(bare);
-      const high = APPROX_HIGH_CUTS_PER_MONTH[tier];
-      if (high) expect(text, `${tier} states a bare high count`).not.toMatch(new RegExp(`(?<!ราว )${high} คลิป`));
-    }
   });
 
   it("states what the count is estimated on, including that a run is priced before it starts", () => {
@@ -317,7 +313,7 @@ describe("what a plan sells", () => {
       "30 นาที",
     ]);
     for (const tier of TIERS) {
-      const text = [...PLAN_COPY[tier].features, ...PLAN_COPY[tier].accountFeatures].join("\n");
+      const text = PLAN_COPY[tier].features.join("\n");
       expect(text, `${tier} names its footage cap`).toContain(`ฟุตเทจรวมโหมดตัดฉากเด่น ${FOOTAGE_PER_PROJECT[tier]}`);
       expect(text, `${tier} puts 2 hours on a card`).not.toContain("2 ชั่วโมง");
     }
@@ -332,7 +328,7 @@ describe("what a plan sells", () => {
   it("never advertise the finer precision setting below Pro", () => {
     for (const tier of ["free", "lite", "starter"] as const) {
       expect(hasHighPrecision(tier), tier).toBe(false);
-      const text = [...PLAN_COPY[tier].features, ...PLAN_COPY[tier].accountFeatures, PLAN_COPY[tier].dialogSummary].join("\n");
+      const text = PLAN_COPY[tier].features.join("\n");
       expect(text, `${tier} must not offer the finer setting`).not.toContain(PRECISION_NAMES.high);
       expect(text, `${tier} says ${PRECISION_NAMES.standard}`).toContain(PRECISION_NAMES.standard);
     }
@@ -367,7 +363,8 @@ describe("what a plan sells", () => {
       PLAN_COPY.free.pricingBlurb,
       PLAN_COPY.free.homeBlurb,
       ...PLAN_COPY.free.features,
-      ...PLAN_COPY.free.accountFeatures,
+      // The billing card's caption for the free plan.
+      FREE_CLIPS_CAPTION,
     ].join("\n");
     expect(text).toContain("ครั้งเดียว");
     expect(text).toContain("ไม่รีเซ็ต");

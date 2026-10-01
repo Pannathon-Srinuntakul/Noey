@@ -61,18 +61,13 @@ describe("legal documents", () => {
 });
 
 describe("plan wording (Website v2)", () => {
-  it("leads every plan with its clip count, the unit the product is sold in", () => {
+  it("keeps the clip count off the plan bullets; /pricing's card headline carries it", () => {
     // Owner, 2026-09-29: clips per month replaced minutes of footage as the
-    // headline. The basis of the estimate lives in CLIPS_FOOTNOTE, printed
-    // under every count, so the bullet itself carries only the number.
-    // The card's headline carries the count, so the bullets must not repeat
-    // it; the account card, which has no headline, states it first.
+    // headline. 2026-10-01: the count appears on /pricing only, where the
+    // calculator sets its mode and length; the bullets never repeat it.
     for (const tier of TIERS) {
-      expect(PLAN_COPY[tier].accountFeatures[0]).toContain(clipsHeadline(tier));
       expect(PLAN_COPY[tier].features.join("\n"), `${tier} repeats its count`).not.toContain(clipsHeadline(tier));
     }
-    // Free carries its own caption: the credit never comes back.
-    expect(PLAN_COPY.free.accountFeatures[0]).toContain("ทดลองใช้ครั้งเดียว");
   });
 
   it("shortens limit windows for the table", () => {

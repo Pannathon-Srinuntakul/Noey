@@ -882,8 +882,9 @@
   align-self: center;
 }
 
-/* The plan's clips, as /pricing's card states them: the approximate count,
-   then its basis. */
+/* What the plan's clips depend on, with the way to /pricing's calculator: a
+   count is pinned to one mode and raw-clip length, so the card quotes none
+   (owner, 2026-10-01). The free plan's one-off nature sits above it. */
 .plan-usage {
   display: grid;
   gap: 2px;
@@ -891,35 +892,19 @@
   border-top: 1px dashed var(--line-2);
 }
 
-.plan-usage__line {
+.plan-usage__caption {
   margin: 0;
   font-size: var(--fs-14);
   line-height: 1.6;
-  color: var(--ink-3);
-}
-
-.plan-usage__count {
-  font-size: var(--fs-20);
-  font-weight: 600;
-  line-height: 1.2;
-  color: var(--gold-ink);
+  color: var(--ink-2);
 }
 
 .plan-usage__basis {
   margin: 0;
-  font-size: var(--fs-12);
-  font-weight: 400;
-  line-height: 1.6;
-  color: var(--ink-3);
-}
-
-/* Pro and up: the count at ระดับละเอียด, under the ordinary one (as /pricing's cards). */
-.plan-usage__high {
-  margin: 0;
   font-size: var(--fs-13);
   font-weight: 400;
   line-height: 1.6;
-  color: var(--ink-2);
+  color: var(--ink-3);
 }
 
 /* ── This billing cycle, as a clip on a lane (BillingPanel) ─────────────── */

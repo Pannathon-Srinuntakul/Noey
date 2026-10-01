@@ -137,6 +137,16 @@ describe("machine-readable files", () => {
     expect(text.length).toBeGreaterThan(100);
   });
 
+  it("llms.txt quotes no clip count and points to the calculator; pricing.md keeps them with their basis", () => {
+    // Owner, 2026-10-01: a count off /pricing is pinned to one mode and length.
+    const text = buildLlmsTxt(table);
+    expect(text).not.toMatch(/ราว \d+ คลิป/);
+    expect(text).toContain("https://noeystudio.com/pricing#pricing-plans-title");
+    const md = buildPricingMarkdown(table, "2026-09-21");
+    expect(md).toContain("ตัวคำนวณ");
+    expect(md).toContain("คลิปดิบ 5 นาที");
+  });
+
   it("pricing.md lists every plan with the table's prices and the update date", () => {
     const md = buildPricingMarkdown(table, "2026-09-21");
     for (const name of ["ฟรี", "Lite", "Starter", "Pro", "Studio", "Agency", "Max"]) expect(md).toContain(`## ${name}`);

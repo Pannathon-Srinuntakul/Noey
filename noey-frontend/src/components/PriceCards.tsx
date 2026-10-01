@@ -3,22 +3,17 @@ import { BETA_BADGE, BETA_DISCOUNT_PERCENT, BETA_STRIKE_LABEL, isBetaActive } fr
 import {
   APPROX_CUTS_PER_MONTH,
   APPROX_HIGH_CUTS_PER_MONTH,
-  CLIPS_FOOTNOTE,
   CUTS_APPROX_SHORT,
-  CLIPS_BASIS_SHORT,
   CUTS_NO_FINE,
   CUTS_OVER_FOOTAGE,
   CUTS_SHORT_OF_BUDGET,
   EXTRA_TIERS,
   FOOTAGE_PER_PROJECT,
-  FREE_CLIPS_CAPTION,
   MAIN_TIERS,
   PAID_TIERS,
   PLAN_COPY,
   PRECISION_NAMES,
   TIERS,
-  clipsHeadline,
-  clipsHighLine,
   displayPrice,
   strikePrice,
   type PriceTable,
@@ -54,7 +49,9 @@ const REEL: Record<Tier, string> = { free: "P0", lite: "P1", starter: "P2", pro:
 
 /**
  * The plan cards. `variant="home"` is the home page strip (the four main
- * plans as cards, then Lite / Agency / Max as a short list). `variant="full"`
+ * plans as cards, then Lite / Agency / Max as a short list), with no clip
+ * counts: a count is pinned to one mode and raw-clip length, so it appears on
+ * /pricing's calculator only (owner, 2026-10-01). `variant="full"
  * is /pricing: all seven plans, cheapest first, on one horizontal rail that
  * snaps card by card (PlanRail adds the controls and the clips-per-month
  * picker); Lite, Agency and Max carry the "แพลนเพิ่มเติม" tag, explained by
@@ -109,14 +106,11 @@ export function PriceCards({
         <div className="price-more__grid">
           {EXTRA_TIERS.map((tier) => {
             const price = displayPrice(table, tier);
-            const high = clipsHighLine(tier);
             return (
               <div key={tier} className="price-more__item">
                 <div className="price-more__name">
                   <span className="price-more__plan">{PLAN_COPY[tier].name}</span>
-                  <span className="num price-more__mult">{clipsHeadline(tier)}</span>
                 </div>
-                {high ? <p className="num price-more__high">{keepThaiProse(high)}</p> : null}
                 <div className="num price-more__price">
                   {price ? (
                     <>
@@ -132,8 +126,6 @@ export function PriceCards({
             );
           })}
         </div>
-        {/* Said once, for every plan above: each card carries only the short basis. */}
-        <p className="clip-note clip-note--group">{keepThaiProse(CLIPS_FOOTNOTE)}</p>
       </div>
     </>
   );
@@ -151,13 +143,12 @@ function PriceCard({ tier, table, size, fit = false }: { tier: Tier; table: Pric
   // Only a plan whose price is actually discounted carries the badge.
   const beta = isBetaActive() && strikePrice(table, tier) !== null;
 
-  // The headline: an APPROXIMATE cut count, never a token count and never
-  // minutes of footage. The "ราว" is part of the claim, not decoration — a
-  // heavy user gets fewer — so it sits with the number, not in a footnote.
-  // Free is one trial credit, so it carries its own caption instead of /เดือน.
-  // The count and its words are marked (pricing/CutsCount) so /pricing's
-  // calculator can reprice them for another mode or length; the server HTML
-  // states the default, and so does the basis under it.
+  // /pricing's headline: an APPROXIMATE cut count, never a token count and
+  // never minutes of footage. The "ราว" is part of the claim, not decoration —
+  // a heavy user gets fewer — so it sits with the number, not in a footnote.
+  // Free is one trial credit, so it says "คลิป" instead of "คลิป / เดือน".
+  // The count and its words are marked (pricing/CutsCount) so the calculator
+  // can reprice them for another mode or length. The home strip shows none.
   const free = tier === "free";
   const cuts = APPROX_CUTS_PER_MONTH[tier];
   // Pro and up: the same count at ระดับละเอียด, rounded down like the first.
@@ -203,44 +194,43 @@ function PriceCard({ tier, table, size, fit = false }: { tier: Tier; table: Pric
           <span className="tag">&nbsp;</span>
         </p>
       ) : null}
-      <p className="plan__usage">
-        {/* The headline: the setting the calculator has picked (ระดับปกติ
-            until it says otherwise); the second line, Pro and up: the other
-            setting, quieter. Both rounded down. */}
-        <CutsCount
-          tier={tier}
-          slot="primary"
-          over={<span className="usage-over">{`${CUTS_OVER_FOOTAGE} (${FOOTAGE_PER_PROJECT[tier]})`}</span>}
-          short={<span className="usage-over">{CUTS_SHORT_OF_BUDGET}</span>}
-          none={<span className="usage-over">{CUTS_NO_FINE}</span>}
-        >
-          <span className="usage-approx">
-            <CutsWord word={free ? "hedge" : "prefix"} />
-          </span>{" "}
-          <span className="usage-count">
-            <CutsNumber className="num usage-mult" value={cuts} />{" "}
-            <span className="usage-caption">
-              <CutsWord word={free ? "unit" : "unit-month"} />
-            </span>
-          </span>
-          <span className="usage-setting" data-cuts-setting-tag="" hidden>
-            {`ระดับ${PRECISION_NAMES.high}`}
-          </span>
-        </CutsCount>
-        {/* /pricing says the free plan's one-off nature once, in its blurb. */}
-        {free && !detailed ? <span className="usage-caption">{keepThaiProse(` · ${FREE_CLIPS_CAPTION}`)}</span> : null}
-        {highCuts ? (
-          <CutsCount tier={tier} precision="high" slot="secondary" className="usage-high">
-            ระดับ<span data-cuts-setting-word="">{PRECISION_NAMES.high}</span>
+      {detailed ? (
+        <p className="plan__usage">
+          {/* The headline: the setting the calculator has picked (ระดับปกติ
+              until it says otherwise); the second line, Pro and up: the other
+              setting, quieter. Both rounded down. */}
+          <CutsCount
+            tier={tier}
+            slot="primary"
+            over={<span className="usage-over">{`${CUTS_OVER_FOOTAGE} (${FOOTAGE_PER_PROJECT[tier]})`}</span>}
+            short={<span className="usage-over">{CUTS_SHORT_OF_BUDGET}</span>}
+            none={<span className="usage-over">{CUTS_NO_FINE}</span>}
+          >
+            <span className="usage-approx">
+              <CutsWord word={free ? "hedge" : "prefix"} />
+            </span>{" "}
             <span className="usage-count">
-              {`${CUTS_APPROX_SHORT} `}
-              <CutsNumber value={highCuts} /> คลิป
+              <CutsNumber className="num usage-mult" value={cuts} />{" "}
+              <span className="usage-caption">
+                <CutsWord word={free ? "unit" : "unit-month"} />
+              </span>
+            </span>
+            <span className="usage-setting" data-cuts-setting-tag="" hidden>
+              {`ระดับ${PRECISION_NAMES.high}`}
             </span>
           </CutsCount>
-        ) : null}
-      </p>
-      {/* On /pricing the basis is said once, beside the calculator's answer. */}
-      {detailed ? null : <p className="clip-note">{keepThaiProse(CLIPS_BASIS_SHORT)}</p>}
+          {/* /pricing says the free plan's one-off nature once, in its blurb. */}
+          {highCuts ? (
+            <CutsCount tier={tier} precision="high" slot="secondary" className="usage-high">
+              ระดับ<span data-cuts-setting-word="">{PRECISION_NAMES.high}</span>
+              <span className="usage-count">
+                {`${CUTS_APPROX_SHORT} `}
+                <CutsNumber value={highCuts} /> คลิป
+              </span>
+            </CutsCount>
+          ) : null}
+        </p>
+      ) : null}
       <p className="plan__blurb">{keepThaiProse(detailed ? copy.pricingBlurb : copy.homeBlurb)}</p>
       {detailed ? (
         <ul className="plan__features">

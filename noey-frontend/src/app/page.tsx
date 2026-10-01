@@ -32,6 +32,7 @@ import {
   websiteNode,
 } from "@/lib/jsonld";
 import { MEDIA } from "@/lib/media";
+import { CLIPS_CALCULATOR_HREF } from "@/lib/plans";
 import { pageMetadata } from "@/lib/seo";
 import { getPriceTable } from "@/lib/server/prices";
 import { PAGES } from "@/lib/site";
@@ -415,7 +416,7 @@ export default async function HomePage() {
           <BetaPriceNote table={table} />
           <PriceCards table={table} variant="home" />
           <p className="section-more">
-            <MoreLink href="/pricing">ดูทั้ง 7 แพลน รวม Lite, Agency และ Max</MoreLink>
+            <MoreLink href={CLIPS_CALCULATOR_HREF}>ดูทั้ง 7 แพลน และคำนวณจำนวนคลิปของคุณ</MoreLink>
           </p>
         </div>
       </section>

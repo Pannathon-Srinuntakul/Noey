@@ -23,50 +23,14 @@ export type PlanKey = (typeof PLAN_ORDER)[number]
 export const FREE_TRIAL_NOTE = 'แผนฟรีเป็นเครดิตทดลองใช้ครั้งเดียว ไม่รีเซ็ตรายเดือน'
 
 /**
- * Roughly how many cuts a month each plan buys — a MARKETING CLAIM, and only
- * that.
- *
- * It is not a quota and nothing counts down from it. The quota is the
- * percentage the meters show (`usageLimits.meterCopy`), because a cut's cost
- * varies more than fourfold with its length and quality: a countable figure
- * would drop by four on one upload and read as broken. Named `APPROX` so
- * nobody later wires it to a meter — and `usageLimits.ts` deliberately has no
- * access to it.
- *
- * `GET /usage/me` sends the same figure as `features.approx_cuts`, with the
- * same rule attached. Free's is the whole one-time credit, not a monthly one.
- *
- * Never shown without `APPROX_CUTS_NOTE`.
+ * No clip count in the editor (owner, 2026-10-01). A count is pinned to one
+ * mode and one raw-clip length; here it was always a 5-minute ตัดฉากเด่น clip
+ * with no way to change either, and that confused people. The website's
+ * pricing page has a calculator for both and is the only place counts appear.
+ * The quota itself is the percentage the meters show (`usageLimits.meterCopy`).
  */
-export const PLAN_APPROX_CUTS: Record<PlanKey, number> = {
-  free: 2,
-  lite: 4,
-  starter: 10,
-  pro: 30,
-  studio: 64,
-  agency: 140,
-  max: 259
-}
-
-/**
- * The same count at ระดับละเอียด, for the plans that may pick it (Pro and up;
- * `features.approx_cuts_high` on `GET /usage/me`). Both maps are HONEST
- * (owner, 2026-10-01): the plan's monthly budget ÷ what a 5-minute raw clip
- * costs under the fitted production model — 185,070 at ระดับปกติ, 267,420 at
- * ระดับละเอียด — ROUNDED DOWN. The backend derives the same figures
- * (`limits.plan_cuts` / `plan_cuts_high`) and the website states them.
- */
-export const PLAN_APPROX_HIGH_CUTS: Partial<Record<PlanKey, number>> = {
-  pro: 20,
-  studio: 44,
-  agency: 97,
-  max: 179
-}
-
-/** What the advertised cut count is counted from, and the fact that it is not
- * a quota. Without both, the count is a promise we break on the first
- * 20-minute clip. */
-export const APPROX_CUTS_NOTE = `คิดจากโหมดตัดฉากเด่น คลิปดิบ 5 นาที ปัดลง · คลิปที่ยาวกว่าหรือ${precisionLevelName('high')}ใช้โควตามากกว่า · ไม่ใช่โควตา ระบบไม่ได้นับถอยหลังจากจำนวนนี้`
+export const QUOTA_NOTE =
+  'แผนที่ใหญ่ขึ้นได้โควตารายเดือนมากขึ้น ตัดได้กี่คลิปขึ้นกับโหมดและความยาวคลิปดิบ ดูจำนวนโดยประมาณได้ที่หน้าราคาบนเว็บไซต์ · ระบบบอกก่อนเริ่มทุกงานว่าใช้โควตาเท่าไหร่'
 
 /** The footage figure in each row is a ตัดฉากเด่น cap (owner, 2026-10-01). The
  * two speech modes take two hours on every plan — packages/billing/limits.py
@@ -75,59 +39,35 @@ export const APPROX_CUTS_NOTE = `คิดจากโหมดตัดฉา�
 export const FOOTAGE_NOTE =
   'ฟุตเทจในตารางคือเพดานของโหมดตัดฉากเด่น · ตัดช่วงเงียบและตัดไฮไลต์จากคลิปยาวรับได้ถึง 2 ชั่วโมงทุกแผน ถ้าโควตาของแผนพอสำหรับงานนั้น'
 
-/** A plan's advertised cut count; null for an admin-set or unknown plan,
- * which advertises none and must therefore show none. */
-export function planApproxCuts(plan: string | null | undefined): number | null {
-  const n = PLAN_APPROX_CUTS[(plan ?? '') as PlanKey]
-  return n > 0 ? n : null
-}
-
-/** The ระดับละเอียด count; null below Pro and for an admin-set or unknown plan. */
-export function planApproxHighCuts(plan: string | null | undefined): number | null {
-  const n = PLAN_APPROX_HIGH_CUTS[(plan ?? '') as PlanKey]
-  return n && n > 0 ? n : null
-}
-
-/** "ตัดได้ราว 30 คลิป/เดือน · ระดับละเอียดราว 20 คลิป" — both counts where the
- * plan has both, the ordinary one alone otherwise. Paid plans only. */
-function cutsText(plan: PlanKey): string {
-  const high = PLAN_APPROX_HIGH_CUTS[plan]
-  const main = `ตัดได้ราว ${PLAN_APPROX_CUTS[plan]} คลิป/เดือน`
-  return high ? `${main} · ${precisionLevelName('high')}ราว ${high} คลิป` : main
-}
+/** Pro and up may pick the finer setting; the three cheapest plans may not. */
+const FINE = `เลือก${precisionLevelName('high')}ได้`
 
 /**
- * Design §5 rows: name and the one-line summary under it — the approximate
- * cut count first, then the footage cap per project, then the quality tier
- * the plan may pick. From Pro up the ระดับละเอียด count stands in for that
- * last item: it names the finer setting AND says what it buys (owner,
- * 2026-10-01).
- *
- * "ราว" is load-bearing: the count is a claim about a typical clip, not an
- * allowance. Its basis is `APPROX_CUTS_NOTE`, printed once under the table
- * rather than seven times inside it, and the figures are pinned against
- * `PLAN_APPROX_CUTS` by a test so copy and number cannot drift apart.
+ * Design §5 rows: name and the one-line summary under it — the footage cap
+ * per project (ตัดฉากเด่น, see `FOOTAGE_NOTE`), the quality tier the plan may
+ * pick, then, from Pro up, how many AI jobs run at once, and storage. The
+ * facts mirror the pricing page and `packages/billing/limits.py`.
  */
 export const PLAN_ROWS: { key: PlanKey; name: string; sub: string }[] = [
   {
     key: 'free',
     name: 'ฟรี',
-    sub: `ราว ${PLAN_APPROX_CUTS.free} คลิป · ทดลองใช้ครั้งเดียว ไม่รีเซ็ต · ฟุตเทจ 10 นาที · ${precisionLevelName('standard')}`
+    sub: `ทดลองใช้ครั้งเดียว ไม่รีเซ็ต · ฟุตเทจ 10 นาที · ${precisionLevelName('standard')} · 1 GB`
   },
   {
     key: 'lite',
     name: 'Lite',
-    sub: `${cutsText('lite')} · ฟุตเทจ 10 นาที · ${precisionLevelName('standard')}`
+    sub: `ฟุตเทจ 10 นาที · ${precisionLevelName('standard')} · 3 GB`
   },
   {
     key: 'starter',
     name: 'Starter',
-    sub: `${cutsText('starter')} · ฟุตเทจ 20 นาที · ${precisionLevelName('standard')}`
+    sub: `ฟุตเทจ 20 นาที · ${precisionLevelName('standard')} · 5 GB`
   },
-  { key: 'pro', name: 'Pro', sub: `${cutsText('pro')} · ฟุตเทจ 30 นาที` },
-  { key: 'studio', name: 'Studio', sub: `${cutsText('studio')} · ฟุตเทจ 30 นาที` },
-  { key: 'agency', name: 'Agency', sub: `${cutsText('agency')} · ฟุตเทจ 30 นาที` },
-  { key: 'max', name: 'Max', sub: `${cutsText('max')} · ฟุตเทจ 30 นาที` }
+  { key: 'pro', name: 'Pro', sub: `ฟุตเทจ 30 นาที · ${FINE} · ทำงานพร้อมกัน 2 งาน · 10 GB` },
+  { key: 'studio', name: 'Studio', sub: `ฟุตเทจ 30 นาที · ${FINE} · ทำงานพร้อมกัน 3 งาน · 30 GB` },
+  { key: 'agency', name: 'Agency', sub: `ฟุตเทจ 30 นาที · ${FINE} · ทำงานพร้อมกัน 4 งาน · 60 GB` },
+  { key: 'max', name: 'Max', sub: `ฟุตเทจ 30 นาที · ${FINE} · ทำงานพร้อมกัน 5 งาน · 100 GB` }
 ]
 
 export function planRank(plan: string | null | undefined): number {
