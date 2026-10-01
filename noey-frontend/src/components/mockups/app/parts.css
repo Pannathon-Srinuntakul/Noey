@@ -326,7 +326,7 @@
 /* The card's gold edge is drawn here, at screen resolution, not inside the
    scaled window: scaled, the 1px line went faint and uneven, and the
    window's rounded clip cut it away at every corner. The window fills the
-   card exactly (412 × 346, the card's own size), so this edge is the card's. */
+   card exactly (412 × 356, the card's own size), so this edge is the card's. */
 .amusage {
   display: block;
   overflow: hidden;

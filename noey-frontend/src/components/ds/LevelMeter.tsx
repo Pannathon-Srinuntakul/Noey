@@ -1,5 +1,5 @@
 import type { CSSProperties } from "react";
-import { limitTone } from "@/lib/usage-limits";
+import { limitTone, overPct } from "@/lib/usage-limits";
 import "../../styles/parts/level.css";
 
 /**
@@ -20,24 +20,39 @@ const ROWS = [28, 20, 14] as const;
  *
  * Pass `labelledBy` to expose it as a progress bar; without it the meter is
  * decorative (the percentage is printed next to it anyway).
+ *
+ * Past 100% (a quota window can end at e.g. 106% — the step in flight is
+ * charged in full and the excess counts toward the next round) every segment
+ * is lit and a clip light comes on at the meter's end, as an audio meter's
+ * does when the signal goes over: "+6%". The meter keeps its height, so a
+ * page drawn over a skeleton does not move.
  */
 export function LevelMeter({
   value,
   labelledBy,
   className,
 }: {
-  /** 0–100. */
+  /** 0–100; a quota window may pass 100 (the clip light then shows by how much). */
   value: number;
   labelledBy?: string;
   className?: string;
 }) {
   const pct = Math.max(0, Math.min(100, value));
+  const over = overPct(value);
   const tone = limitTone(pct);
   const a11y = labelledBy
-    ? { role: "progressbar" as const, "aria-labelledby": labelledBy, "aria-valuemin": 0, "aria-valuemax": 100, "aria-valuenow": Math.round(pct) }
+    ? {
+        role: "progressbar" as const,
+        "aria-labelledby": labelledBy,
+        "aria-valuemin": 0,
+        "aria-valuemax": 100,
+        "aria-valuenow": Math.round(pct),
+        // The true reading when it is past the bar's end.
+        ...(over > 0 ? { "aria-valuetext": `${100 + over}%` } : null),
+      }
     : { "aria-hidden": true as const };
-  return (
-    <div className={["lvl", `lvl--${tone}`, className].filter(Boolean).join(" ")} data-reveal="level" {...a11y}>
+  const meter = (
+    <div className={["lvl", `lvl--${tone}`, over > 0 ? "lvl--over" : null, className].filter(Boolean).join(" ")} data-reveal="level" {...a11y}>
       {ROWS.map((segments) => {
         const lit = Math.round((pct / 100) * segments);
         const hot = Math.floor(segments * 0.8);
@@ -55,6 +70,13 @@ export function LevelMeter({
           </span>
         );
       })}
+    </div>
+  );
+  if (over === 0) return meter;
+  return (
+    <div className="lvl-line">
+      {meter}
+      <span className="lvl__clip num" aria-hidden="true">{`+${over}%`}</span>
     </div>
   );
 }

@@ -20,7 +20,16 @@ import {
   displayPrice,
   CLIPS_CALCULATOR_HREF,
   CLIPS_FOOTNOTE,
+  CUT_RESULT_CAP_NOTE,
+  DOWNGRADE_NOTE,
+  NO_QUOTA_NOTE,
+  OVERAGE_NOTE,
+  START_CHECK_NOTE,
+  TRIAL_OVERAGE_NOTE,
+  UPGRADE_NOTE,
   VOLUME_VALUE_NOTE,
+  WEEKLY_LIMIT_NOTE,
+  WEEKLY_PACE_NOTE,
   clipsHeadlineFull,
   clipsLadderSentence,
   footageLadderSentence,
@@ -83,6 +92,13 @@ export function buildPricingMarkdown(table: PriceTable, updatedIso: string): str
   lines.push(`- วิธีนับ: ${CLIPS_FOOTNOTE}`);
   lines.push(`- ${CLIPS_COUNT_DEPENDS} หน้าราคามีตัวคำนวณให้เลือกโหมดและความยาวคลิปดิบเอง: ${absoluteUrl(CLIPS_CALCULATOR_HREF)}`);
   lines.push(`- ความคุ้ม: ${VOLUME_VALUE_NOTE}`);
+  lines.push(`- โควตารายสัปดาห์: ${WEEKLY_LIMIT_NOTE}`);
+  lines.push(`- จำนวนคลิปต่อเดือนกับโควตารายสัปดาห์: ${WEEKLY_PACE_NOTE}`);
+  lines.push(`- ก่อนเริ่มงาน: ${START_CHECK_NOTE}`);
+  lines.push(`- ใช้เกินโควตา: ${OVERAGE_NOTE} ${TRIAL_OVERAGE_NOTE}`);
+  lines.push(`- ไม่ใช้โควตา: ${NO_QUOTA_NOTE}`);
+  lines.push(`- ความยาวผลลัพธ์: ${CUT_RESULT_CAP_NOTE}`);
+  lines.push(`- เปลี่ยนแพลน: ${UPGRADE_NOTE} ${DOWNGRADE_NOTE}`);
   lines.push(`- สมัครใช้งาน: ${absoluteUrl(PAGES.signup.path)}`);
   lines.push("");
 
@@ -246,12 +262,16 @@ export function buildLlmsTxt(table: PriceTable, posts: readonly BlogPostSummary[
     "- ใช้ได้เฉพาะบนคอมพิวเตอร์ผ่าน Chrome หรือ Edge เวอร์ชันใหม่ หรือ Safari 26 ขึ้นไป ยังใช้บนมือถือไม่ได้",
     `- จำนวนคลิปที่ AI ตัดให้ต่อเดือน: ขึ้นกับแพลน โหมด และความยาวคลิปดิบ ดูจำนวนโดยประมาณได้ที่ตัวคำนวณของหน้าราคา ${absoluteUrl(CLIPS_CALCULATOR_HREF)}`,
     `- ความยาวฟุตเทจรวมต่อโปรเจกต์ โหมดตัดฉากเด่น: ${footageLadderSentence()} · ${SPEECH_FOOTAGE_NOTE}`,
+    `- ความยาวผลลัพธ์: ${CUT_RESULT_CAP_NOTE}`,
+    `- โควตารายสัปดาห์: ${WEEKLY_LIMIT_NOTE}`,
     "- ความละเอียดการวิเคราะห์: แพลนฟรี Lite และ Starter วิเคราะห์ที่ระดับปกติ ส่วน Pro ขึ้นไปเลือกระดับละเอียดได้ ซึ่งตัดถี่ขึ้นและจุดตัดแม่นขึ้น แต่ใช้โควตามากกว่า",
     "- แพลนฟรีคือเครดิตทดลองก้อนเดียวเมื่อสมัคร ไม่รีเซ็ตรายเดือน ใช้หมดแล้วต้องอัปเกรด",
     "- การแปลงไฟล์อัตโนมัติเมื่อเบราว์เซอร์เปิดไฟล์ไม่ได้ มีตั้งแต่แพลน Starter ขึ้นไป เพลงประกอบมีตั้งแต่แพลน Lite ขึ้นไป",
     "- งาน AI ที่ทำพร้อมกันได้: ฟรีถึง Starter 1 งาน · Pro 2 · Studio 3 · Agency 4 · Max 5",
     "- โควตาแสดงเป็นเปอร์เซ็นต์ของรอบ ไม่ใช่ตัวเลขหน่วยภายใน การแก้ไทม์ไลน์และการเรนเดอร์ซ้ำไม่กินโควตา",
-    "- ระบบบอกก่อนเริ่มทุกครั้งว่างานนั้นใช้โควตาเท่าไหร่ จึงไม่มีการหักเกินโดยไม่รู้ตัว",
+    `- ${START_CHECK_NOTE}`,
+    `- ${OVERAGE_NOTE} ${TRIAL_OVERAGE_NOTE} ยกเลิกแพลนแล้ว ส่วนที่ใช้เกินที่ค้างอยู่ยังอยู่กับบัญชีจนกว่าจะสมัครใหม่`,
+    `- ${UPGRADE_NOTE} ${DOWNGRADE_NOTE}`,
     "- ไม่มีตัวเลขความเร็วหรือความแม่นที่วัดแล้วประกาศไว้ ณ ตอนนี้ หน้าเว็บจึงไม่อ้างตัวเลขเหล่านั้น",
     "",
     "## หน้าหลัก",

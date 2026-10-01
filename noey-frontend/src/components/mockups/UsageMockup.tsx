@@ -10,7 +10,7 @@ import "./app/parts.css";
 export function UsageMockup() {
   return (
     <div className="amusage" aria-hidden="true">
-      <AppScreen width={412} height={282}>
+      <AppScreen width={412} height={356}>
         <UsageCard />
       </AppScreen>
     </div>

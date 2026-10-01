@@ -11,8 +11,12 @@
  * Stateless on purpose: the signed-in "scenario" travels inside the unsigned
  * JWT payload (`scn` claim). Signing in with <scenario>@x.test picks it
  * (free, unverified, pro, studio, cancel, pastdue, lapsed, googleonly,
- * googlelinked, wallet, unlimited, billingoff, nodata, spent); the password
- * "wrong" is refused. `mintSession()` gives the crawler the same tokens.
+ * googlelinked, wallet, unlimited, billingoff, nodata, spent, and the quota
+ * meter states lite, weekly, weekidle, weekbind, overweek, overmonth,
+ * trialover); the password "wrong" is refused. `mintSession()` gives the
+ * crawler the same tokens. MOCK_QUOTA=<state> gives every other scenario that
+ * quota state too (e.g. MOCK_QUOTA=weekbind: the Pro account the loading
+ * check signs in with shows two meters); unset, nothing changes.
  *
  * Token-driven outcomes: /auth/verify-email token ok | change | used | taken
  * | slow (anything else fails); /auth/reset-password token ok (anything else
@@ -46,7 +50,48 @@ export const SCENARIOS = {
   billingoff: { plan: "free", name: "นอย", verified: true, billingOff: true },
   nodata: { plan: "free", name: "", verified: true, broken: true },
   spent: { plan: "free", name: "นอย", verified: true, spent: true },
+  // Quota meter states (QUOTA_SHAPES below), one sign-in each.
+  lite: { plan: "lite", name: "นอย", verified: true, status: "active", quota: "monthly" },
+  weekly: { plan: "pro", name: "นอย", verified: true, status: "active", quota: "weekly" },
+  weekidle: { plan: "pro", name: "นอย", verified: true, status: "active", quota: "weekidle" },
+  weekbind: { plan: "studio", name: "ทีมสตูดิโอ", verified: true, status: "active", quota: "weekbind" },
+  overweek: { plan: "pro", name: "นอย", verified: true, status: "active", quota: "overweek" },
+  overmonth: { plan: "starter", name: "นอย", verified: true, status: "active", quota: "overmonth" },
+  trialover: { plan: "free", name: "นอย", verified: true, quota: "trialover" },
 };
+
+/**
+ * What GET /usage/me `limits` reports for each quota state (backend
+ * limits.py: Lite/Starter a monthly window, Pro and up monthly + weekly, the
+ * weekly one 40% of the month and rolling 7 days from first use; Free a
+ * `lifetime` credit that never resets). A window may pass 100% — the excess
+ * carries into its next period (docs/token-billing-design.md §24–§25).
+ *
+ * A scenario picks one with its `quota` field; MOCK_QUOTA=<name> applies one
+ * to every scenario that has none (unset: each scenario's original shape).
+ */
+const QUOTA_SHAPES = {
+  monthly: () => [{ key: "monthly", used_pct: 63, resets_at: inDays(12), active: true }],
+  weekly: () => [
+    { key: "monthly", used_pct: 38, resets_at: inDays(12), active: true },
+    { key: "weekly", used_pct: 22, resets_at: inDays(4.4), active: true },
+  ],
+  weekidle: () => [
+    { key: "monthly", used_pct: 31, resets_at: inDays(12), active: true },
+    { key: "weekly", used_pct: 0, resets_at: null, active: false },
+  ],
+  weekbind: () => [
+    { key: "monthly", used_pct: 46, resets_at: inDays(12), active: true },
+    { key: "weekly", used_pct: 93, resets_at: inDays(2.2), active: true },
+  ],
+  overweek: () => [
+    { key: "monthly", used_pct: 58, resets_at: inDays(12), active: true },
+    { key: "weekly", used_pct: 106, resets_at: inDays(3.1), active: true },
+  ],
+  overmonth: () => [{ key: "monthly", used_pct: 106, resets_at: inDays(5), active: true }],
+  trialover: () => [{ key: "lifetime", used_pct: 112, resets_at: null, active: true, resets: false }],
+};
+const QUOTA_DEFAULT = process.env.MOCK_QUOTA && QUOTA_SHAPES[process.env.MOCK_QUOTA] ? process.env.MOCK_QUOTA : null;
 
 const b64 = (value) => Buffer.from(JSON.stringify(value)).toString("base64url");
 const jwt = (payload) => `${b64({ alg: "HS256", typ: "JWT" })}.${b64(payload)}.bW9jaw`;
@@ -92,11 +137,14 @@ function me(s) {
 }
 
 function usage(s) {
-  const limits = [];
-  if (s.plan === "free") limits.push({ key: "lifetime", used_pct: s.spent ? 100 : 46, resets_at: null, active: true, resets: false });
-  // One window per paid account since 2026-09-30 (backend limits.py rule 1):
-  // the monthly one, reset on the billing date.
-  else limits.push({ key: "monthly", used_pct: s.plan === "lite" || s.plan === "starter" ? 63 : 84, resets_at: inDays(12), active: true });
+  const shape = s.quota ?? QUOTA_DEFAULT;
+  // Without a quota state, the scenario's original shape: the trial credit,
+  // or one monthly window reset on the billing date.
+  const limits = shape
+    ? QUOTA_SHAPES[shape]()
+    : s.plan === "free"
+      ? [{ key: "lifetime", used_pct: s.spent ? 100 : 46, resets_at: null, active: true, resets: false }]
+      : [{ key: "monthly", used_pct: s.plan === "lite" || s.plan === "starter" ? 63 : 84, resets_at: inDays(12), active: true }];
   return {
     plan: s.plan,
     unlimited: !!s.unlimited,

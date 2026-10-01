@@ -5,10 +5,26 @@ import { ResetClock } from "@/components/account/ResetClock";
 import { LevelMeter } from "@/components/ds/LevelMeter";
 import { keepThaiProse } from "@/components/ds/ThaiProse";
 import { formatBytes } from "@/lib/format";
-import { isTier, PLAN_COPY } from "@/lib/plans";
+import { isTier, PLAN_COPY, TRIAL_OVERAGE_NOTE } from "@/lib/plans";
 import { privatePageMetadata } from "@/lib/seo";
 import { loadAccountData } from "@/lib/server/account-data";
-import { clampPct, limitLabel, limitTone, neverResets, planLimitNote, resetInText, sortLimits, spentCreditText } from "@/lib/usage-limits";
+import {
+  PAUSED_RESUME_NOTE,
+  PAUSED_RESUME_TRIAL_NOTE,
+  bindingKey,
+  bindingNote,
+  bindingTag,
+  clampPct,
+  limitLabel,
+  limitTone,
+  neverResets,
+  overageText,
+  pctText,
+  planLimitNote,
+  resetInText,
+  sortLimits,
+  spentCreditText,
+} from "@/lib/usage-limits";
 
 export const metadata: Metadata = privatePageMetadata("โควตาและลิมิต");
 
@@ -24,8 +40,12 @@ const TASK_LABELS: Record<string, string> = {
 /*
  * Only real numbers from GET /usage/me (and /videos/storage) are rendered, and
  * never a token count — one percentage per window the plan actually enforces
- * (Free: Trial credit, a one-off `lifetime` window; every paid plan: Monthly),
- * with when it starts over. A window that carries
+ * (Free: Trial credit, a one-off `lifetime` window; Lite and Starter: Monthly;
+ * Pro and up: Monthly and Weekly, the week 40% of the month — the one with the
+ * least room is marked, since a new job must fit both), with when it starts
+ * over. A window may pass 100%: the number says so (106%), the meter's clip
+ * light comes on and the editor's own line says where the excess goes. A
+ * window that carries
  * `resets: false` never starts over, so it gets the spent-credit line and an
  * upgrade link instead of a countdown. The design's per-type counts
  * ("6 โปรเจกต์") are not something the backend records, so the task table shows
@@ -48,6 +68,21 @@ export default async function QuotaPage() {
   const storagePct = storage && storage.quota_bytes > 0 ? Math.min(100, (storage.used_bytes / storage.quota_bytes) * 100) : null;
   const walletBaht = usage.wallet ? usage.wallet.balance_satang / 100 : null;
   const pendingName = usage.pending_plan && isTier(usage.pending_plan.plan) ? PLAN_COPY[usage.pending_plan.plan].name : null;
+  // Two windows (Pro and up): the one the next job has to fit, marked.
+  const binding = usage.unlimited ? null : bindingKey(limits);
+  // A window at or past its line: say how a paused job carries on.
+  const full = usage.unlimited ? undefined : limits.find((limit) => limit.used_pct >= 100);
+  const bindingLimit = limits.find((limit) => limit.key === binding);
+  const bindingPct = bindingLimit?.used_pct ?? 0;
+  // A week not started yet (0%, no date): the rule is said, nothing is marked.
+  const bindingIdle = !!bindingLimit && !bindingLimit.active && bindingPct <= 0;
+  // The trial credit has no next round: a paused job goes on after subscribing,
+  // and what it used past the credit counts toward the first paid round.
+  const resumeNote = full
+    ? neverResets(full)
+      ? `${PAUSED_RESUME_TRIAL_NOTE}${overageText(full) ? ` ${TRIAL_OVERAGE_NOTE}` : ""}`
+      : PAUSED_RESUME_NOTE
+    : null;
 
   return (
     <section className="account-grid acct-quota" aria-label="โควตาและลิมิต">
@@ -62,22 +97,30 @@ export default async function QuotaPage() {
             const pct = clampPct(limit.used_pct);
             const tone = limitTone(pct);
             const labelId = `limit-${limit.key}`;
+            const over = overageText(limit);
+            const binds = binding === limit.key && !bindingIdle;
             return (
-              <div key={limit.key} className="acct-quota__limit">
+              <div key={limit.key} className="acct-quota__limit" data-binding={binds ? "" : undefined}>
                 <div className="meter-row">
-                  <span id={labelId}>{limitLabel(limit)}</span>
-                  <span className={tone === "ok" ? "num" : `num num--${tone}`}>ใช้ไป {Math.round(pct)}%</span>
+                  <span className="acct-quota__name">
+                    <span id={labelId}>{limitLabel(limit)}</span>
+                    {binds ? <span className="tag tag-outline acct-quota__bind">{bindingTag(limit.used_pct)}</span> : null}
+                  </span>
+                  <span className={tone === "ok" ? "num" : `num num--${tone}`}>ใช้ไป {pctText(limit.used_pct)}</span>
                 </div>
-                {/* An audio level meter (a real progress bar for assistive tech). */}
-                <LevelMeter value={pct} labelledBy={labelId} />
+                {/* An audio level meter (a real progress bar for assistive tech); past 100% its clip light comes on. */}
+                <LevelMeter value={limit.used_pct} labelledBy={labelId} />
+                {over ? <p className="meter-note meter-note--over">{keepThaiProse(over)}</p> : null}
                 {neverResets(limit) ? (
                   <p className="meter-note">
                     {keepThaiProse(spentCreditText(pct))} <Link href="/pricing">ดูแพลนทั้งหมด</Link>
                   </p>
                 ) : (
                   <p className="meter-note">
-                    {resetInText(limit.active ? limit.resets_at : null)}
-                    {limit.active ? <ResetClock at={limit.resets_at} /> : null}
+                    {/* A monthly window has its billing date even before its
+                        first job; a weekly one has none until it starts. */}
+                    {resetInText(limit.resets_at, undefined, limit.key)}
+                    {limit.resets_at ? <ResetClock at={limit.resets_at} /> : null}
                   </p>
                 )}
                 {/* Near or at the limit (80%+): where more comes from, quietly. */}
@@ -90,6 +133,8 @@ export default async function QuotaPage() {
             );
           })
         )}
+        {binding ? <p className="meter-note acct-quota__rule">{keepThaiProse(bindingNote(binding, bindingPct, bindingIdle) ?? "")}</p> : null}
+        {resumeNote ? <p className="meter-note acct-quota__rule">{keepThaiProse(resumeNote)}</p> : null}
 
         {storage ? (
           <div className="acct-quota__limit acct-quota__limit--storage">

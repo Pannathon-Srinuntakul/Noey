@@ -36,11 +36,19 @@ import {
   CUTS_SHORT_OF_BUDGET,
   CUTS_NO_FINE,
   CLIP_MINUTES,
+  CUT_RESULT_CAP_NOTE,
+  DOWNGRADE_NOTE,
+  OVERAGE_NOTE,
   PAID_TIERS,
   PLAN_COPY,
   PRECISION_NAMES,
   SPEECH_FOOTAGE_NOTE,
+  START_CHECK_NOTE,
+  TRIAL_OVERAGE_NOTE,
+  UPGRADE_NOTE,
   VOLUME_VALUE_NOTE,
+  WEEKLY_SHARE_PERCENT,
+  WEEKLY_WINDOW_DAYS,
   clipsHeadline,
   displayPrice,
   fitTier,
@@ -148,24 +156,46 @@ function PriceList({ table }: { table: PriceTable }) {
 }
 
 /**
- * The rules of the quota, one per row of the example card. The windows keep
- * their English names (lib/usage-limits.ts); under each, quietly, the name
- * the editor's own quota card gives it (web/src/lib/usageLimits.ts) — the
- * card drawn just above says "โควตารายเดือน", not "Monthly limit". One window
- * per account since 2026-09-30 (backend limits.py rule 1): the weekly and
- * 5-hour sub-windows no longer exist.
+ * The rules of the quota, one per row of the example card, in two groups:
+ * what each plan's quota is, then what happens while it is used. The windows
+ * keep their English names (lib/usage-limits.ts); under each, quietly, the
+ * name the editor's own quota card gives it (web/src/lib/usageLimits.ts) —
+ * the card drawn just above says "โควตารายเดือน", not "Monthly limit".
+ * Owner, 2026-10-01 (backend limits.py rule 1): Pro and up enforce a weekly
+ * window beside the monthly one; a started job may end past 100% and the
+ * excess counts toward the next round.
  */
-const QUOTA_RULES: ReadonlyArray<{ key: string; editor?: string; text: string }> = [
-  { key: "Monthly limit", editor: "โควตารายเดือน", text: "ทุกแพลนรายเดือน ได้โควตาใหม่ทุกรอบบิล ใช้หนักวันไหนก็ได้ ไม่มีเพดานรายสัปดาห์หรือรายชั่วโมง" },
-  { key: "แพลนใหญ่", text: `${VOLUME_VALUE_NOTE} ตัวเลขบนการ์ดคิดให้แล้ว` },
-  { key: "Trial credit", editor: "เครดิตทดลองใช้", text: `แพลนฟรี ได้เครดิตทดลองก้อนเดียวตอนสมัคร ตัดได้ ${clipsHeadline("free")} (${CLIPS_BASIS_SHORT}) ไม่รีเซ็ตรายเดือน` },
-  { key: "บอกก่อนเริ่ม", text: "ระบบบอกก่อนเริ่มทุกครั้งว่างานนี้ใช้โควตาเท่าไหร่ จึงไม่มีการหักเกินโดยไม่รู้ตัว" },
-  { key: "ไม่กินโควตา", text: "การแก้ไทม์ไลน์ การสลับช็อต และการเรนเดอร์ซ้ำ ทำได้ไม่จำกัด" },
-  { key: "งานหนัก", text: "ฟุตเทจยาวและโหมดพากย์ใหม่ใช้ปริมาณมากกว่างานปกติ เพราะต้องถอดเสียงและวางแผนมากขึ้น" },
-  { key: "ฟุตเทจต่อโปรเจกต์", text: `โหมดตัดฉากเด่นมีเพดานต่อแพลน — ${footageLadderSentence()} · ${SPEECH_FOOTAGE_NOTE} ภายในนั้นโควตาของแพลนเป็นตัวกำหนด` },
+const QUOTA_RULES: ReadonlyArray<{ id: string; title: string; rules: ReadonlyArray<{ key: string; editor?: string; text: string }> }> = [
   {
-    key: "ความละเอียด",
-    text: "แพลนฟรี Lite และ Starter วิเคราะห์ที่ระดับปกติ ซึ่งให้ผลดีอยู่แล้ว ตั้งแต่ Pro ขึ้นไปเลือกระดับละเอียดได้ ซึ่งตัดถี่ขึ้นและจุดตัดแม่นขึ้น แลกกับการใช้โควตามากกว่า",
+    id: "limits",
+    title: "เพดานของแต่ละแพลน",
+    rules: [
+      { key: "Monthly limit", editor: "โควตารายเดือน", text: "ทุกแพลนรายเดือน ได้โควตาใหม่ทุกรอบบิล Lite และ Starter มีเพดานนี้อย่างเดียว ใช้หนักวันไหนก็ได้ภายในรอบบิล" },
+      {
+        key: "Weekly limit",
+        editor: "โควตารายสัปดาห์",
+        text: `Pro, Studio, Agency และ Max มีเพดานรายสัปดาห์เพิ่ม เท่ากับ ${WEEKLY_SHARE_PERCENT}% ของโควตารายเดือน นับ ${WEEKLY_WINDOW_DAYS} วันตั้งแต่งานแรกที่ใช้ เพดานไหนเต็มก่อน งานใหม่จะรอจนเพดานนั้นเริ่มรอบใหม่ ใช้ครบทั้งเดือนได้ในสามสัปดาห์`,
+      },
+      { key: "Trial credit", editor: "เครดิตทดลองใช้", text: `แพลนฟรี ได้เครดิตทดลองก้อนเดียวตอนสมัคร ตัดได้ ${clipsHeadline("free")} (${CLIPS_BASIS_SHORT}) ไม่รีเซ็ตรายเดือน ${TRIAL_OVERAGE_NOTE}` },
+      { key: "แพลนใหญ่", text: `${VOLUME_VALUE_NOTE} ตัวเลขบนการ์ดคิดให้แล้ว` },
+      { key: "ฟุตเทจต่อโปรเจกต์", text: `โหมดตัดฉากเด่นมีเพดานต่อแพลน — ${footageLadderSentence()} · ${SPEECH_FOOTAGE_NOTE} ภายในนั้นโควตาของแพลนเป็นตัวกำหนด` },
+      { key: "ความยาวผลลัพธ์", text: CUT_RESULT_CAP_NOTE },
+      {
+        key: "ความละเอียด",
+        text: "แพลนฟรี Lite และ Starter วิเคราะห์ที่ระดับปกติ ซึ่งให้ผลดีอยู่แล้ว ตั้งแต่ Pro ขึ้นไปเลือกระดับละเอียดได้ ซึ่งตัดถี่ขึ้นและจุดตัดแม่นขึ้น แลกกับการใช้โควตามากกว่า",
+      },
+    ],
+  },
+  {
+    id: "use",
+    title: "ระหว่างใช้งาน",
+    rules: [
+      { key: "บอกก่อนเริ่ม", text: START_CHECK_NOTE },
+      { key: "ใช้เกิน 100%", text: OVERAGE_NOTE },
+      { key: "ไม่กินโควตา", text: "การแก้ไทม์ไลน์ การสลับช็อต การเรนเดอร์ซ้ำ และการส่งออกไฟล์ ทำได้ไม่จำกัด ไม่ใช้โควตา" },
+      { key: "งานหนัก", text: "ฟุตเทจยาวและโหมดพากย์ใหม่ใช้ปริมาณมากกว่างานปกติ เพราะต้องถอดเสียงและวางแผนมากขึ้น" },
+      { key: "เปลี่ยนแพลน", text: `${UPGRADE_NOTE} ${DOWNGRADE_NOTE}` },
+    ],
   },
 ];
 
@@ -241,17 +271,25 @@ export default async function PricingPage() {
             {/* The editor's own quota card with sample numbers, not anyone's real usage — labelled as such. */}
             <span className="mock-tag quota-card__tag">ตัวอย่างการแสดงผล</span>
             <UsageMockup />
-            <ul className="rule-list">
-              {QUOTA_RULES.map((rule) => (
-                <li key={rule.key}>
-                  <span className="num rule-list__key">
-                    {rule.key}
-                    {rule.editor ? <span className="rule-list__editor">{rule.editor}</span> : null}
-                  </span>
-                  <span>{keepThaiProse(rule.text)}</span>
-                </li>
-              ))}
-            </ul>
+            {QUOTA_RULES.map((group, index) => (
+              <div key={group.id} className="rule-group">
+                <h3 className="rule-group__title" id={`quota-rules-${group.id}`}>
+                  <span className="trk tc" aria-hidden="true">{`Q${index + 1}`}</span>
+                  {group.title}
+                </h3>
+                <ul className="rule-list" aria-labelledby={`quota-rules-${group.id}`}>
+                  {group.rules.map((rule) => (
+                    <li key={rule.key}>
+                      <span className="num rule-list__key">
+                        {rule.key}
+                        {rule.editor ? <span className="rule-list__editor">{rule.editor}</span> : null}
+                      </span>
+                      <span>{keepThaiProse(rule.text)}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
           </div>
         </div>
       </section>

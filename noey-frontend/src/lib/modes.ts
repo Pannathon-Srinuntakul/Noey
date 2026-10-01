@@ -54,7 +54,9 @@ export const MODES: readonly ModeIntro[] = [
       "เขียนสคริปต์ขายภาษาไทยให้ หรือใช้สคริปต์ที่คุณพิมพ์เอง แล้วเรียงช็อตตามสคริปต์ ยาวตามที่เลือก",
       "ได้คลิปภาพพร้อมสคริปต์ คัดลอกไปพากย์ด้วยเสียงตัวเอง หรือไม่พากย์แล้วใส่เพลงแทน",
     ],
-    result: ["ได้ 1 คลิป", "พากย์ใหม่ ไม่ใช้เสียงในคลิปเดิม"],
+    // The result's cap is plans.ts MAX_CUT_RESULT_MINUTES (owner, 2026-10-01);
+    // spelled out here because plans.ts imports this file (plans.test.ts pins it).
+    result: ["ได้ 1 คลิป ยาวไม่เกิน 5 นาที", "พากย์ใหม่ ไม่ใช้เสียงในคลิปเดิม"],
   },
   {
     id: "speech_highlights",

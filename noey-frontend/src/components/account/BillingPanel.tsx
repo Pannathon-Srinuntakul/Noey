@@ -11,7 +11,7 @@ import {
 import { BETA_BADGE, BETA_DISCOUNT_PERCENT } from "@/lib/beta";
 import type { ActionState } from "@/lib/messages";
 import { PendingButton } from "../ui/PendingButton";
-import type { PaidTier } from "@/lib/plans";
+import { DOWNGRADE_NOTE_SHORT, PAID_TIERS, UPGRADE_NOTE, type PaidTier } from "@/lib/plans";
 import { Dialog } from "../ui/Dialog";
 import { keepThai } from "../ds/ThaiText";
 
@@ -73,6 +73,40 @@ export interface BillingPanelProps {
   cardLabel: string | null;
   /** One line about the beta price and what follows it; null once the beta ends. */
   betaNote: string | null;
+  /** The paid plan held now (null on Free or when it cannot be told): decides upgrade vs downgrade. */
+  currentTier: PaidTier | null;
+}
+
+/**
+ * What the picked plan change will do, said in the dialog's footer before the
+ * button that sends the visitor to the payment page (owner, 2026-10-01;
+ * docs/token-billing-design.md §25.5): an upgrade starts a new billing cycle
+ * today with the quota from 0% and charges only the difference; a downgrade
+ * waits for the end of the cycle and refunds nothing; a first plan starts its
+ * cycle on the day it is paid.
+ */
+export function planChangeSummary(
+  selected: PaidTier,
+  currentTier: PaidTier | null,
+  live: boolean,
+  periodEndLabel: string | null,
+): { kind: "start" | "upgrade" | "downgrade"; label: string; text: string } | null {
+  if (!live || !currentTier) {
+    return {
+      kind: "start",
+      label: "เริ่มแพลน",
+      text: "แพลนเริ่มทันทีหลังชำระเงิน รอบบิลเริ่มวันนั้น และโควตาเริ่มนับจาก 0% ส่วนที่ใช้เกินเครดิตทดลอง (ถ้ามี) จะนับรวมในรอบแรกนี้",
+    };
+  }
+  const from = PAID_TIERS.indexOf(currentTier);
+  const to = PAID_TIERS.indexOf(selected);
+  if (to === from) return null;
+  if (to > from) return { kind: "upgrade", label: "อัปเกรด", text: `${UPGRADE_NOTE} ยอดที่ตัดจริงแสดงในหน้าชำระเงินก่อนยืนยัน` };
+  return {
+    kind: "downgrade",
+    label: "ลดแพลน",
+    text: periodEndLabel ? `${DOWNGRADE_NOTE_SHORT} (${periodEndLabel}) ใช้แพลนเดิมได้จนถึงวันนั้น ไม่ตัดบัตรตอนนี้ และไม่มีการคืนเงิน` : `${DOWNGRADE_NOTE_SHORT} ใช้แพลนเดิมได้จนถึงวันนั้น ไม่ตัดบัตรตอนนี้ และไม่มีการคืนเงิน`,
+  };
 }
 
 /** The cancel dialog's opening words (the period's end follows them). */
@@ -145,6 +179,7 @@ export function BillingPanel(props: BillingPanelProps) {
     cycle,
     cardLabel,
     betaNote,
+    currentTier,
   } = props;
 
   // Arriving from a plan button (/account/billing?plan=pro) opens the dialog with that plan picked.
@@ -163,6 +198,7 @@ export function BillingPanel(props: BillingPanelProps) {
   const [portalState, portalAction, portalPending] = useActionState<ActionState | undefined>(openPortalAction, undefined);
 
   const selectedOption = options.find((option) => option.tier === selected);
+  const change = selectedOption && !selectedOption.current ? planChangeSummary(selected, currentTier, hasLiveSubscription, periodEndLabel) : null;
   // The plan held, priced as /pricing prices it (the same table).
   const currentOption = hasLiveSubscription ? options.find((option) => option.current && option.price !== null) : undefined;
   const canSubmit = billingEnabled && !!selectedOption && !selectedOption.current && selectedOption.price !== null && payAgreed;
@@ -345,7 +381,7 @@ export function BillingPanel(props: BillingPanelProps) {
             <p style={{ margin: 0 }}>
               {keepThai(
                 hasLiveSubscription
-                  ? "เลือกแพลนที่ต้องการ อัปเกรดแล้วโควตาใหม่มีผลทันที ส่วนการลดแพลนมีผลในรอบบิลถัดไป"
+                  ? "เลือกแพลนที่ต้องการ อัปเกรดแล้วเริ่มรอบบิลใหม่วันนี้ โควตาเริ่มนับจาก 0% และจ่ายแค่ส่วนต่าง ส่วนการลดแพลนมีผลในรอบบิลถัดไป"
                   : "เลือกแพลนที่ต้องการ โควตาใหม่มีผลทันทีหลังชำระเงิน",
               )}
             </p>
@@ -401,6 +437,16 @@ export function BillingPanel(props: BillingPanelProps) {
           <Message state={planState} />
           {/* The consent sits in the sticky footer, beside the button it unlocks. */}
           <div className="dialog-actions">
+            {/* What this change does, above the consent, for the plan picked
+                now: always in view, whatever the list's scroll. */}
+            <p className="plan-change" data-kind={change?.kind} aria-live="polite">
+              {change ? (
+                <>
+                  <span className="tag tag-outline plan-change__kind">{change.label}</span>
+                  <span className="plan-change__text">{keepThai(change.text)}</span>
+                </>
+              ) : null}
+            </p>
             <label className="agree agree--flush dialog-actions__consent">
               <input
                 type="checkbox"
