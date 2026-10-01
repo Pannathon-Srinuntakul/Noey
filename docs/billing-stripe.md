@@ -190,6 +190,17 @@ it and the API logs `stripe_access_denied` with that message.
 | Subscription schedules | Write | release a scheduled downgrade when the customer cancels |
 | Prices | Read | resolve lookup keys; `/billing/plans` |
 | PaymentMethods | Read | the expanded default payment method (brand/last4) |
+| PaymentIntents | Read | wallet top-up: the paid intent and its latest charge (`topup.py`) |
+| Charges | Read | refund / dispute reversal of a top-up (`webhooks.py`) |
+| Invoices | Read | plan-switch proration preview (`plan_switch.py`, `invoices.create_preview`) |
+
+Measured on the live key 2026-10-01: without **Invoices Read** the plan-switch
+preview is refused (`invoice_read`), and without **Charges Read** a refunded or
+disputed top-up cannot be reversed. Keep **Prices Write** (and Products Write)
+on the runtime key until the beta ends: the admin price editor and
+`stripe_seed.py --reprice` create prices with it, and `end_beta_pricing.py`
+needs the full price to hold the lookup key first. Webhook Endpoints Write is
+only for creating the endpoint once — drop it afterwards.
 
 **Seed key (one-off, can be a separate key or a secret key you then delete):**
 Products **Write**, Prices **Write**, Customer portal **Write**.
