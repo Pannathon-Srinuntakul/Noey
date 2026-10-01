@@ -231,8 +231,8 @@ export interface BlogPostingInput {
   image: JsonLdImage;
   section?: string;
   keywords?: readonly string[];
-  /** @id of the Blog the post belongs to. */
-  blogId?: string;
+  /** The Blog the post belongs to (named in full: the post's page does not carry the Blog node). */
+  blog?: { id: string; name: string; path: string };
 }
 
 /**
@@ -254,7 +254,9 @@ export function blogPostingNode(input: BlogPostingInput): JsonLdNode {
     dateModified: input.dateModified,
     author: { "@type": "Organization", "@id": ORGANIZATION_ID, name: SITE_NAME, url: absoluteUrl("/") },
     publisher: { "@id": ORGANIZATION_ID },
-    isPartOf: { "@id": input.blogId ?? WEBSITE_ID },
+    isPartOf: input.blog
+      ? { "@type": "Blog", "@id": input.blog.id, name: input.blog.name, url: absoluteUrl(input.blog.path) }
+      : { "@id": WEBSITE_ID },
     ...(input.section ? { articleSection: input.section } : {}),
     ...(input.keywords?.length ? { keywords: input.keywords.join(", ") } : {}),
   };
@@ -288,7 +290,7 @@ export function blogNode(input: { path: string; name: string; description: strin
       datePublished: post.datePublished,
       dateModified: post.dateModified,
       ...(post.image ? { image: imageObject(post.image) } : {}),
-      author: { "@type": "Organization", "@id": ORGANIZATION_ID, name: SITE_NAME },
+      author: { "@type": "Organization", "@id": ORGANIZATION_ID, name: SITE_NAME, url: absoluteUrl("/") },
     })),
   };
 }

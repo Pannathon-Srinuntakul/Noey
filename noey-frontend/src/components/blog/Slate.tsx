@@ -26,7 +26,8 @@ export function Slate({
   slug: string;
   title: string;
   category: string;
-  minutes: number;
+  /** Unknown for a related post (the API does not send it): then no length is printed. */
+  minutes?: number;
   size?: "card" | "hero" | "feature";
 }) {
   const random = seeded(slugSeed(slug));
@@ -63,18 +64,20 @@ export function Slate({
         </div>
         <p className="slate__title">{keepThaiProse(title)}</p>
         <div className="slate__track">
-          <span className="slate__ruler" />
-          <span className="slate__lane">
-            {clips.map((clip, index) => (
-              <i
-                key={index}
-                className={`slate__clip slate__clip--${clip.tone}`}
-                style={{ left: `${clip.left.toFixed(2)}%`, width: `${clip.width.toFixed(2)}%` }}
-              />
-            ))}
+          <span className="slate__timeline">
+            <span className="slate__ruler" />
+            <span className="slate__lane">
+              {clips.map((clip, index) => (
+                <i
+                  key={index}
+                  className={`slate__clip slate__clip--${clip.tone}`}
+                  style={{ left: `${clip.left.toFixed(2)}%`, width: `${clip.width.toFixed(2)}%` }}
+                />
+              ))}
+            </span>
+            <span className="slate__head" style={{ left: `${head.toFixed(2)}%` }} />
           </span>
-          <span className="slate__head" style={{ left: `${head.toFixed(2)}%` }} />
-          <span className="tc slate__tc">{formatTimecode(minutes * 60)}</span>
+          {minutes ? <span className="tc slate__tc">{formatTimecode(minutes * 60)}</span> : null}
         </div>
       </div>
     </div>

@@ -60,6 +60,11 @@ const LEANS_ON_NEXT = new Set([
   "ฐาน",
   // ICU returns "เป็นการ" as one word, so "การ" alone never sees it.
   "เป็นการ",
+  // "From / until": a span's start stays with what it starts from
+  // ("ตั้งแต่ / ก่อนถ่าย", "จนถึง / ก่อนเรนเดอร์" — the blog's long copy).
+  "ตั้งแต่",
+  "จนถึง",
+  "จน",
 ]);
 
 const LEANS_ON_PREVIOUS = new Set(["ใด", "ไป", "มา", "อยู่", "ไว้"]);

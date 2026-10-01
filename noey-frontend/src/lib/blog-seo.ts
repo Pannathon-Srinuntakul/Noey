@@ -144,7 +144,7 @@ export function postJsonLd(post: BlogPost, trail: readonly Crumb[]): JsonLdNode 
       image: postImage(post),
       section: post.category.name,
       keywords: post.tags.map((tag) => tag.name),
-      blogId: BLOG_ID,
+      blog: { id: BLOG_ID, name: `${BLOG_COPY.label} · ${SITE_NAME}`, path: BLOG_PATH },
     }),
     ...(post.faq.length ? [faqPageNode(post.faq, path)] : []),
     breadcrumbNode(trail),

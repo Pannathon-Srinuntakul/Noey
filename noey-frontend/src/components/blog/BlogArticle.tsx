@@ -64,7 +64,7 @@ export function BlogArticle({ post }: { post: BlogPost }) {
   ];
 
   return (
-    <main id="main" className="article-page blog-article">
+    <main id="main" className={["article-page blog-article", post.title.length > 90 ? "blog-article--long-title" : null].filter(Boolean).join(" ")}>
       <PageHero
         crumb={<Breadcrumb trail={trail} />}
         title={post.title}

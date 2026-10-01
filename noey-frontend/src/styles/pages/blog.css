@@ -500,7 +500,15 @@
   text-wrap: balance;
 }
 
+/* The track, and the take's length beside it (never over the title). */
 .slate__track {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 2.4cqi;
+}
+
+.slate__timeline {
   position: relative;
   height: 8.5cqi;
   min-height: 20px;
@@ -564,12 +572,10 @@
 }
 
 .slate__tc {
-  position: absolute;
-  right: 0;
-  top: -1.2cqi;
-  translate: 0 -100%;
+  padding-bottom: 0.6cqi;
   color: var(--ink-3);
   font-size: max(9px, 2cqi);
+  line-height: 1;
 }
 
 /* A card's slate is small: the title takes the room, the track stays thin. */
@@ -771,6 +777,27 @@
 
 /* ── The post page ──────────────────────────────────────────────────────── */
 
+/* A title written as a whole sentence (the contract allows 200 characters)
+   steps down a size, so the opening answer still shows on the first screen. */
+.blog-article--long-title .phero__copy h1 {
+  font-size: clamp(1.625rem, 1.2rem + 1.7vw, 2.625rem);
+  line-height: 1.4;
+}
+
+/* The trail's last crumb is the title the H1 prints in full: one line here. */
+.blog-article .crumbs li:last-child {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.blog-article .crumbs [aria-current="page"] {
+  display: block;
+  max-width: min(46ch, calc(100vw - 2 * var(--gutter)));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .blog-article .phero__aside {
   align-self: center;
   min-width: 0;
@@ -871,6 +898,15 @@
 
 .blog-prose blockquote > :last-child {
   margin-bottom: 0;
+}
+
+/* Code keeps the site's one font (the browser's default is a monospace
+   one without Thai); the background and the frame mark it as code. */
+.blog-prose code,
+.blog-prose pre,
+.blog-prose kbd,
+.blog-prose samp {
+  font-family: var(--font-body);
 }
 
 .blog-prose :not(pre) > code {

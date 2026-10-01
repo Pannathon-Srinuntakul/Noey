@@ -25,12 +25,11 @@ const MAX_RATIO = 21 / 9;
  * one, fetched first.
  */
 export function PostCover({ post, variant, sizes }: { post: CoverPost; variant: "card" | "feature" | "hero"; sizes: string }) {
-  const minutes = post.readingMinutes ?? 1;
   const cover = post.cover;
   if (!cover) {
     return (
       <div className={`cover cover--${variant} cover--slate`}>
-        <Slate slug={post.slug} title={post.title} category={post.category.name} minutes={minutes} size={variant} />
+        <Slate slug={post.slug} title={post.title} category={post.category.name} minutes={post.readingMinutes} size={variant} />
       </div>
     );
   }

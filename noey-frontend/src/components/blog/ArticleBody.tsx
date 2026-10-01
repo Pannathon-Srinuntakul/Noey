@@ -97,7 +97,13 @@ function MarkdownTable(props: ComponentProps<"table">) {
   );
 }
 
+/** Code wider than the column scrolls inside its frame, and a keyboard can scroll it too. */
+function MarkdownPre(props: ComponentProps<"pre">) {
+  return <pre {...props} tabIndex={0} />;
+}
+
 const COMPONENTS: Partial<Components> = {
+  pre: MarkdownPre as Components["pre"],
   a: MarkdownLink as Components["a"],
   img: MarkdownImage as unknown as Components["img"],
   table: MarkdownTable as Components["table"],
