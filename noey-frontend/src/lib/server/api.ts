@@ -95,7 +95,7 @@ export interface MeOut {
 export interface UsageMe {
   plan: string;
   unlimited: boolean;
-  /** The plan's ENFORCED windows (Free: monthly; Lite/Starter: weekly; Pro+: weekly + five_hour). */
+  /** The plan's ENFORCED windows (Free: the one-off trial credit, `lifetime`; every paid plan: `monthly`). */
   limits?: UsageLimit[];
   /** Set when the fullest window has no headroom left. */
   blocked?: { key: string; resets_at: string | null } | null;

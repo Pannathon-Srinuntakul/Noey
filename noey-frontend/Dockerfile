@@ -36,10 +36,11 @@ ENV NEXT_PUBLIC_SITE_URL=$NEXT_PUBLIC_SITE_URL \
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-# public/ holds only the email logo (public/email/, referenced by the backend's
-# transactional mail as {SITE_URL}/email/logo-96.png). The run stage copies it;
-# `mkdir -p` keeps the build working should it ever be empty again (git does
-# not keep empty folders).
+# public/ holds the mock-ups' footage (public/footage) and the email logo
+# (public/email/, referenced by the backend's transactional mail as
+# {SITE_URL}/email/logo-96.png). The run stage copies it; `mkdir -p` keeps the
+# build working should it ever be empty again (git does not keep empty
+# folders, and the copy would fail with "/app/public: not found").
 RUN mkdir -p public && npm run build
 
 FROM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS run

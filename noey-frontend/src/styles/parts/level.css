@@ -1,0 +1,141 @@
+/* Level meters: quota bars drawn as audio levels. Imported by LevelMeter,
+   so only the account pages load it. */
+
+/* ── Level meter (quota bars as audio levels) ───────────────────────────── */
+
+/* The box is a container: it shows the one row of segments its width holds
+   at a readable size (28 from 460px, 20 from 320px, 14 below), so a narrow
+   meter is a short row of blocks, never a dotted line. */
+.lvl {
+  container-type: inline-size;
+  height: 14px;
+  padding: 3px;
+  border-radius: 6px;
+  background: var(--well);
+  border: 1px solid var(--line);
+}
+
+.lvl__row {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 3px;
+  height: 100%;
+}
+
+.lvl__row--20,
+.lvl__row--14 {
+  display: none;
+}
+
+@container (max-width: 459px) {
+  .lvl__row--28 {
+    display: none;
+  }
+
+  .lvl__row--20 {
+    display: grid;
+  }
+}
+
+@container (max-width: 319px) {
+  .lvl__row--20 {
+    display: none;
+  }
+
+  .lvl__row--14 {
+    display: grid;
+  }
+}
+
+.lvl i {
+  position: relative;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--color-text) 8%, transparent);
+}
+
+/* Where the last fifth starts (the 80% warning level), a tick through the
+   meter's edge. Unlit, the zone itself stays the plain unlit grey in the
+   light theme — a pale red there read as a tint gone wrong. */
+.lvl i[data-edge]::before {
+  content: "";
+  position: absolute;
+  top: -6px;
+  bottom: -6px;
+  left: -2px;
+  width: 1px;
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--color-danger) 55%, transparent);
+}
+
+.lvl i[data-on] {
+  background: var(--gold);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--color-accent) 40%, transparent);
+}
+
+/* Lit inside the red zone: past 80% the level runs hot. */
+.lvl i[data-on][data-hot] {
+  background: color-mix(in srgb, var(--color-danger) 75%, var(--color-accent));
+  box-shadow: 0 0 6px color-mix(in srgb, var(--color-danger) 35%, transparent);
+}
+
+.lvl--full i[data-on][data-hot] {
+  background: var(--danger);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--color-danger) 40%, transparent);
+}
+
+/* Dark: the gold–red mix reads as peach on a dark well, so hot segments go
+   full red with a stronger glow. The unlit zone stays the plain well in both
+   themes (the 80% tick marks it): tinted, it warned on a 37% meter. */
+html[data-theme="dark"] .lvl i[data-on][data-hot] {
+  background: var(--danger);
+  box-shadow: 0 0 9px color-mix(in srgb, var(--color-danger) 55%, transparent);
+}
+
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]) .lvl i[data-on][data-hot] {
+    background: var(--danger);
+    box-shadow: 0 0 9px color-mix(in srgb, var(--color-danger) 55%, transparent);
+  }
+}
+
+.lvl[data-reveal-state="wait"] i[data-on] {
+  opacity: 0.12;
+}
+
+.lvl:is([data-reveal-state="now"], [data-reveal-state="in"]) i[data-on] {
+  animation: lvl-on 260ms var(--ease-out) both;
+  animation-delay: calc(var(--i) * 30ms + 120ms);
+}
+
+@keyframes lvl-on {
+  from {
+    opacity: 0.12;
+    transform: scaleY(0.4);
+  }
+}
+
+.meter-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 8px;
+  font-size: var(--fs-14);
+}
+
+.meter-row .num {
+  font-weight: 600;
+  color: var(--gold-ink);
+}
+
+.meter-note {
+  margin: 8px 0 20px;
+  font-size: var(--fs-13);
+  line-height: 1.6;
+  color: var(--ink-3);
+}
+
+.meter-note:last-child {
+  margin-bottom: 0;
+}

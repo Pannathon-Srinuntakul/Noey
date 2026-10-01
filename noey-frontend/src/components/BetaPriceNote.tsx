@@ -1,5 +1,6 @@
 import { BETA_BADGE, BETA_PRICE_AFTER_SHORT, BETA_PRICE_LINE } from "@/lib/beta";
 import { isBetaPriced, type PriceTable } from "@/lib/plans";
+import { keepThaiProse } from "./ds/ThaiProse";
 
 /**
  * The strip that sits above every price grid: what the discount is, when it
@@ -19,7 +20,7 @@ export function BetaPriceNote({ table, compact = false }: { table: PriceTable; c
       <span>
         <strong className="beta-note__lead">{BETA_PRICE_LINE}</strong>
         {" \u00b7 "}
-        {BETA_PRICE_AFTER_SHORT}
+        {keepThaiProse(BETA_PRICE_AFTER_SHORT)}
       </span>
     </p>
   );

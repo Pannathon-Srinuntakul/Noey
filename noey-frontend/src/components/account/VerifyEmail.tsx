@@ -8,8 +8,8 @@ import type { ActionState } from "@/lib/messages";
 export function ResendVerificationButton({ variant = "secondary" }: { variant?: "secondary" | "primary" }) {
   const [state, action, pending] = useActionState<ActionState | undefined>(resendVerificationAction, undefined);
   return (
-    <form action={action} style={{ margin: 0 }}>
-      <button type="submit" className={`btn btn-${variant}`} style={{ fontSize: 14 }} disabled={pending || !!state?.ok} aria-busy={pending || undefined}>
+    <form action={action} className="inline-form">
+      <button type="submit" className={`btn btn-${variant} btn-sm`} disabled={pending || !!state?.ok} aria-busy={pending || undefined}>
         {pending ? "กำลังส่ง…" : "ส่งลิงก์ยืนยันอีกครั้ง"}
       </button>
       <div aria-live="polite">
@@ -32,7 +32,7 @@ export function VerifyEmailBanner({ email }: { email: string }) {
         ยืนยันอีเมลเพื่อเริ่มใช้งาน AI — เราส่งลิงก์ไปที่ <strong>{email}</strong> แล้ว
       </p>
       <p className="verify-banner__hint">ไม่เจออีเมล ลองดูในโฟลเดอร์สแปม หรือขอลิงก์ใหม่</p>
-      <div style={{ marginTop: 10 }}>
+      <div className="verify-banner__action">
         <ResendVerificationButton />
       </div>
     </div>

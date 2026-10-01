@@ -1,0 +1,509 @@
+/*
+ * Status card (StatusCard): the one card every utility page is built on —
+ * verify email, reset password, checkout, account deleted. The page frame it
+ * sits in (.status-page) stays in components.css because the 404 uses it too.
+ */
+
+.status {
+  --tone: var(--gold);
+  --tone-soft: var(--gold-soft);
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: 14px;
+  width: min(100%, 620px);
+  margin-inline: auto;
+  padding: clamp(28px, 5vw, 48px) clamp(20px, 5vw, 48px);
+  border: 1px solid var(--line);
+  border-radius: var(--r-xl);
+  background: color-mix(in srgb, var(--panel) 86%, transparent);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  box-shadow: var(--shadow-3), var(--rim);
+  text-align: center;
+  overflow: hidden;
+}
+
+/* Done: one language for every finished state — the render bar and the
+   card's top line in the brand's gold, green only in the tick. */
+.status--success {
+  --tone: var(--gold);
+  --tone-soft: var(--gold-soft);
+}
+
+.status--danger {
+  --tone: var(--danger);
+  --tone-soft: var(--danger-soft);
+}
+
+.status::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 3px;
+  background: linear-gradient(90deg, transparent, var(--tone), transparent);
+}
+
+.status__emblem {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: 16px;
+  padding-top: 6px;
+  margin-bottom: 6px;
+}
+
+.status__halo {
+  position: absolute;
+  top: -30px;
+  width: 150px;
+  height: 150px;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, var(--tone-soft), transparent);
+}
+
+/* Day theme: a faint warm glow (a grey or green one read as a smudge). */
+html:not([data-theme="dark"]) .status__halo {
+  background: radial-gradient(closest-side, var(--gold-softer), transparent);
+}
+
+/* The mark stays the brand's gold in every state (the header shows the same
+   mark): the state's colour is carried by the bar, the tick, the glow and
+   the line along the card's top. */
+.status__mark {
+  position: relative;
+  color: var(--gold);
+}
+
+/* The render bar under the mark: full = done, cut = failed, running = waiting. */
+.status__bar {
+  position: relative;
+  display: block;
+  width: 168px;
+  height: 6px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--color-text) 9%, transparent);
+  overflow: hidden;
+}
+
+.status__fill {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--tone);
+  transform-origin: left center;
+}
+
+.status__gap {
+  display: none;
+}
+
+/* The bar and, when done, its tick: one 168px unit centred under the mark.
+   The tick takes its own room at the end, clear of the bar. */
+.status__meter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 168px;
+}
+
+.status__meter .status__bar {
+  flex: 1;
+  width: auto;
+}
+
+/* "Render complete": the bar fills, then the tick lands after its end. */
+.status__tick {
+  flex: none;
+  color: var(--success);
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.status__tick circle {
+  fill: var(--success-soft);
+}
+
+.status__tick path {
+  stroke-dasharray: 1;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .status--success .status__tick {
+    animation: tick-pop 420ms var(--ease-spring) 1.1s both;
+  }
+
+  .status--success .status__tick path {
+    animation: draw-stroke 360ms var(--ease-out) 1.3s both;
+  }
+}
+
+/* Quiet: an ending that is neither a success to celebrate nor an error. */
+.status--quiet {
+  --tone: var(--ink-3);
+  --tone-soft: color-mix(in srgb, var(--color-text) 6%, transparent);
+}
+
+.status--quiet .status__fill {
+  display: none;
+}
+
+/* Quiet: an empty track drawn as one (a hairline round it), the playhead
+   parked at its end. */
+.status--quiet .status__bar {
+  overflow: visible;
+  background: color-mix(in srgb, var(--color-text) 5%, transparent);
+  box-shadow: inset 0 0 0 1px var(--line-2);
+}
+
+.status--quiet .status__bar::after {
+  content: "";
+  position: absolute;
+  top: -5px;
+  bottom: -5px;
+  right: 0;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--ink-3);
+}
+
+
+/* Failed: the bar is cut on the logo's diagonal and the far piece has dropped. */
+.status--danger .status__bar {
+  overflow: visible;
+  background: none;
+}
+
+.status--danger .status__fill {
+  right: 54%;
+  border-radius: 6px 0 0 6px;
+  clip-path: polygon(0 0, 100% 0, calc(100% - 5px) 100%, 0 100%);
+}
+
+/* The dropped piece hangs below the bar: the emblem keeps room for it. */
+.status--danger .status__emblem {
+  margin-bottom: 18px;
+}
+
+.status--danger .status__gap {
+  display: block;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(46% + 6px);
+  right: 0;
+  border-radius: 0 6px 6px 0;
+  background: var(--tone);
+  opacity: 0.55;
+  clip-path: polygon(5px 0, 100% 0, 100% 100%, 0 100%);
+  translate: 3px 5px;
+  rotate: 5deg;
+  transform-origin: left top;
+}
+
+.status--pending .status__fill {
+  right: auto;
+  width: 38%;
+  translate: 80% 0;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .status--success .status__fill {
+    animation: render-fill 1.3s var(--ease-out) both;
+  }
+
+  .status--pending .status__fill {
+    animation: render-run 1.4s var(--ease-in-out) infinite;
+  }
+}
+
+/* Information / waiting on you: the bar is empty and the playhead is parked at its start. */
+.status--info .status__bar {
+  overflow: visible;
+}
+
+.status--info .status__fill {
+  right: auto;
+  top: -4px;
+  bottom: -4px;
+  width: 2px;
+  border-radius: 1px;
+}
+
+.status--info .status__fill::before {
+  content: "";
+  position: absolute;
+  top: -5px;
+  left: -4px;
+  border: 5px solid transparent;
+  border-top: 6px solid var(--tone);
+  border-bottom: 0;
+}
+
+/* The render's readout after the tick ("100%"): decoration, in the editor's
+   timecode type and the legible gold. */
+.status__readout {
+  flex: none;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--gold-ink);
+}
+
+.status__meter:has(.status__readout) {
+  width: 250px;
+}
+
+/* The card's title strip: a recording light, the state, a rule, a timecode. */
+.status__strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  align-self: stretch;
+  justify-self: stretch;
+  margin: calc(clamp(28px, 5vw, 48px) * -1) calc(clamp(20px, 5vw, 48px) * -1) 6px;
+  padding: 11px clamp(20px, 5vw, 48px);
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--color-text) 3%, transparent);
+  color: var(--ink-3);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+}
+
+/* The state word, in the state's legible ink (red when it failed). */
+.status__rec + .tc {
+  color: var(--tone-ink, var(--gold-ink));
+  font-weight: 600;
+}
+
+.status--danger {
+  --tone-ink: var(--danger);
+}
+
+.status--quiet {
+  --tone-ink: var(--ink-2);
+}
+
+.status__rec {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--tone);
+  box-shadow: 0 0 0 3px var(--tone-soft);
+}
+
+.status__rule {
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, var(--line-2), transparent);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .status--pending .status__rec {
+    animation: status-rec 1.4s ease-in-out infinite;
+  }
+}
+
+@keyframes status-rec {
+  50% {
+    opacity: 0.3;
+  }
+}
+
+/* Celebrate (checkout): "render complete" in the brand's gold. */
+.status--celebrate {
+  --tone: var(--gold);
+  --tone-soft: var(--gold-soft);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .status--celebrate .status__fill {
+    animation: render-fill 1.3s var(--ease-out) both;
+  }
+
+  .status--celebrate .status__tick {
+    animation: tick-pop 420ms var(--ease-spring) 1.1s both;
+  }
+
+  .status--celebrate .status__tick path {
+    animation: draw-stroke 360ms var(--ease-out) 1.3s both;
+  }
+
+  .status--celebrate .status__readout {
+    animation: fade-in 300ms var(--ease-out) 1.25s both;
+  }
+}
+
+/* The task, at the strip's end: Thai, so no tracking. */
+.status__task {
+  flex: none;
+  font-size: var(--fs-12);
+  font-weight: 500;
+  letter-spacing: 0;
+  color: var(--ink-2);
+}
+
+.status__title {
+  font-size: clamp(1.625rem, 1.2rem + 1.8vw, 2.5rem);
+  line-height: 1.32;
+  font-weight: 600;
+  max-width: 16em;
+}
+
+.status__body {
+  max-width: 34em;
+  font-size: var(--fs-16);
+  line-height: 1.8;
+  color: var(--ink-2);
+  /* Centred lines of even length: no word left alone on the last line. */
+  text-wrap: balance;
+}
+
+.status__body p {
+  margin: 0;
+  /* Set on the paragraphs themselves: they carry the site-wide "pretty". */
+  text-wrap: balance;
+}
+
+.status__body p + p {
+  margin-top: 10px;
+}
+
+.status__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.status__actions form {
+  margin: 0;
+}
+
+/* A state inside a page whose title stays put (checkout). */
+.status__body h2 {
+  margin-bottom: 6px;
+  font-size: var(--fs-h4);
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--ink);
+}
+
+
+@media (prefers-reduced-motion: no-preference) {
+  .status .mark-draw path {
+    animation: draw-stroke 900ms var(--ease-out) both;
+  }
+
+  .status .mark-draw path:nth-child(2) {
+    animation-delay: 120ms;
+  }
+
+  .status .mark-draw path:nth-child(3) {
+    animation-delay: 240ms;
+  }
+
+  .status .mark-draw path:nth-child(4) {
+    animation-delay: 360ms;
+  }
+}
+
+@keyframes tick-pop {
+  from {
+    opacity: 0;
+    scale: 0.4;
+  }
+}
+
+@keyframes render-fill {
+  from {
+    transform: scaleX(0.04);
+  }
+}
+
+@keyframes render-run {
+  0% {
+    translate: -100% 0;
+  }
+  100% {
+    translate: 270% 0;
+  }
+}
+
+@keyframes draw-stroke {
+  from {
+    stroke-dashoffset: 1;
+  }
+}
+
+/* A card that reads from the left, emblem included (the mark over the start
+   of its bar, the glow behind the mark): the account-deleted card at every
+   width, and any card with more than one paragraph on a phone. */
+.status--start {
+  justify-items: start;
+  text-align: start;
+}
+
+.status--start .status__emblem {
+  justify-items: start;
+}
+
+.status--start .status__halo {
+  left: -52px;
+}
+
+.status--start .status__body p {
+  text-wrap: pretty;
+}
+
+.status--start .status__actions {
+  justify-content: flex-start;
+}
+
+/* Phones: copy of more than one paragraph reads left to right (a centred
+   block that long is hard to follow); a short message stays centred under its
+   title. The actions stack full width. */
+@media (max-width: 560px) {
+  .status:has(.status__body > p + p) {
+    justify-items: start;
+    text-align: start;
+  }
+
+  .status:has(.status__body > p + p) .status__emblem {
+    justify-items: start;
+  }
+
+  .status:has(.status__body > p + p) .status__halo {
+    left: -52px;
+  }
+
+  .status__body:has(> p + p) p {
+    text-wrap: pretty;
+  }
+
+  .status__actions {
+    flex-direction: column;
+    align-items: stretch;
+    width: 100%;
+  }
+
+  .status__actions .btn,
+  .status__actions form {
+    width: 100%;
+  }
+}
+
+/* The quiet ending reads from the left (account deleted): its empty track
+   runs the card's width with the playhead parked at the end, so the left
+   alignment reads as the track's start, not a leftover. */
+.status--quiet.status--start .status__emblem {
+  justify-self: stretch;
+}
+
+.status--quiet.status--start .status__meter {
+  width: 100%;
+}

@@ -1,0 +1,111 @@
+{
+  "signup: new account": {
+    "at": "/account",
+    "cookies": [
+      "noey_at",
+      "noey_name",
+      "noey_rt",
+      "noey_si"
+    ]
+  },
+  "signup: email already used": {
+    "at": "/signup",
+    "said": [
+      "อีเมลนี้มีบัญชีอยู่แล้ว",
+      "อีเมลนี้มีบัญชีอยู่แล้ว เข้าสู่ระบบด้วยอีเมลนี้ได้เลย"
+    ]
+  },
+  "signup: submit waits for the terms tick": {
+    "disabled": true
+  },
+  "login: right password": {
+    "at": "/account",
+    "cookies": [
+      "noey_at",
+      "noey_name",
+      "noey_rt",
+      "noey_si"
+    ]
+  },
+  "login: back to ?next": {
+    "at": "/account/billing"
+  },
+  "login: wrong password": {
+    "at": "/login",
+    "said": [
+      "อีเมลหรือรหัสผ่านไม่ถูกต้อง"
+    ]
+  },
+  "login: forgot-password dialog": {
+    "said": [
+      "ถ้ามีบัญชีที่ใช้อีเมลนี้ เราส่งลิงก์ตั้งรหัสผ่านใหม่ให้แล้ว"
+    ]
+  },
+  "google: sign-in start": {
+    "at": "/login?google=error",
+    "leftFor": []
+  },
+  "reset password: valid link": {
+    "at": "/account?notice=password-reset"
+  },
+  "account: sign out": {
+    "at": "/",
+    "cookies": []
+  },
+  "account: open the editor": {
+    "href": "/api/editor/open",
+    "status": 303,
+    "redirectsTo": "localhost:5199/",
+    "leftFor": []
+  },
+  "account: signed-out visit goes to login": {
+    "at": "/login?next=%2Faccount%2Fquota"
+  },
+  "billing: upgrade to checkout": {
+    "at": "/account/billing?plan=pro",
+    "stuck": [
+      "ระบบขัดข้องชั่วคราว ลองใหม่อีกครั้งในอีกสักครู่"
+    ]
+  },
+  "profile: change the name": {
+    "said": [
+      "บันทึกชื่อแล้ว"
+    ]
+  },
+  "profile: delete-account dialog": {
+    "title": "ลบบัญชีถาวร",
+    "confirmDisabled": true
+  },
+  "contact: sent": {
+    "said": [
+      "ส่งข้อความแล้ว ขอบคุณที่ทักมา เราจะตอบกลับทางอีเมลที่ให้ไว้"
+    ]
+  },
+  "contact: mail down (503)": {
+    "said": [
+      "ตอนนี้ส่งข้อความผ่านฟอร์มไม่ได้ อีเมลหาเราโดยตรงที่ hello@noeystudio.com"
+    ],
+    "mailto": "mailto:hello@noeystudio.com"
+  },
+  "contact: too many (429)": {
+    "said": [
+      "ส่งถี่เกินไป ลองใหม่อีกครั้งภายหลัง"
+    ]
+  },
+  "theme: toggle and remember": {
+    "flipped": true,
+    "stored": true,
+    "kept": true
+  },
+  "beta notice: first visit, then dismissed": {
+    "title": "ช่วงเบต้า มีสามเรื่องที่อยากให้รู้เบต้า",
+    "closed": true,
+    "staysClosed": true
+  },
+  "beta strip: reopens the notice": {
+    "open": true
+  },
+  "old /examples redirects to /scope": {
+    "at": "/scope"
+  }
+}

@@ -142,8 +142,8 @@ describe("machine-readable files", () => {
     for (const name of ["ฟรี", "Lite", "Starter", "Pro", "Studio", "Agency", "Max"]) expect(md).toContain(`## ${name}`);
     // The beta price is the one charged; the full price follows it in brackets.
     expect(md).toContain("3,499 บาท/เดือน (ราคาเบต้า ราคาปกติ 6,990 บาท ถึง 2026-12-31)");
-    expect(md).toContain("- จำนวนคลิป: ตัดได้ราว 30 คลิป/เดือน · ระดับละเอียดราว 20 คลิป (คิดจากคลิปดิบ 5 นาที");
-    expect(md).toContain("- จำนวนคลิป: ตัดได้ราว 10 คลิป/เดือน (คิดจากคลิปดิบ 5 นาที");
+    expect(md).toContain("- จำนวนคลิป: ตัดได้ราว 30 คลิป/เดือน · ระดับละเอียดราว 20 คลิป (คิดจากโหมดตัดฉากเด่น คลิปดิบ 5 นาที");
+    expect(md).toContain("- จำนวนคลิป: ตัดได้ราว 10 คลิป/เดือน (คิดจากโหมดตัดฉากเด่น คลิปดิบ 5 นาที");
     expect(md).toContain("อัปเดตล่าสุด: 2026-09-21");
     expect(md).toContain("| ราคา (บาท/เดือน) | 0 | 99 | 199 | 499 | 999 | 1,999 | 3,499 |");
   });

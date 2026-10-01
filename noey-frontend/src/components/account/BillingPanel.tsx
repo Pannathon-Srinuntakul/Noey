@@ -1,33 +1,60 @@
 "use client";
 
 import Link from "next/link";
-import { useActionState, useState } from "react";
+import { useActionState, useState, type CSSProperties } from "react";
 import {
   cancelPlanAction,
   choosePlanAction,
   openPortalAction,
   resumePlanAction,
 } from "@/app/actions/billing";
+import { BETA_BADGE, BETA_DISCOUNT_PERCENT } from "@/lib/beta";
 import type { ActionState } from "@/lib/messages";
 import type { PaidTier } from "@/lib/plans";
 import { Dialog } from "../ui/Dialog";
+import { keepThai } from "../ds/ThaiText";
 
 export interface UpgradeOption {
   tier: PaidTier;
+  /** The plan's place in the ladder, as /pricing numbers it ("P3"). */
+  reel: string;
   name: string;
   /** Formatted price, or null when the backend does not list this tier. */
   price: string | null;
   /** Full price to strike through beside it during the beta; null otherwise. */
   fullPrice: string | null;
-  summary: string;
+  /** The same facts on every row (clips, footage, storage), so plans compare down the list. */
+  specs: readonly string[];
   current: boolean;
   /** Shows the "แนะนำ" tag (Pro). */
   recommended: boolean;
 }
 
+/** The plan card's parts, as /pricing's card prints them (plans.ts). */
+export interface PlanCardParts {
+  reel: string;
+  /** The "เบต้า −50%" chip beside the struck price (a discounted plan, during the beta). */
+  beta: boolean;
+  usage: { prefix: string; count: number; unit: string; caption: string | null };
+  /** Pro and up: the count at ระดับละเอียด ("ระดับละเอียดราว 20 คลิป"), as /pricing's cards state it. */
+  high: string | null;
+  basis: string;
+  features: readonly string[];
+}
+
+/** This billing cycle: its two ends and where today is in it (0–1). */
+export interface BillingCycle {
+  startLabel: string;
+  endLabel: string;
+  progress: number;
+  daysLeft: number;
+}
+
 export interface BillingPanelProps {
   planName: string;
-  planFeatures: readonly string[];
+  plan: PlanCardParts | null;
+  /** On the free plan (no subscription): its price is 0 บาท, as on /pricing. */
+  freePlan: boolean;
   statusLine: string | null;
   statusWarn: boolean;
   options: UpgradeOption[];
@@ -37,10 +64,14 @@ export interface BillingPanelProps {
   cancelScheduled: boolean;
   billingEnabled: boolean;
   periodEndLabel: string | null;
+  cycle: BillingCycle | null;
   cardLabel: string | null;
   /** One line about the beta price and what follows it; null once the beta ends. */
   betaNote: string | null;
 }
+
+/** The cancel dialog's opening words (the period's end follows them). */
+const CANCEL_LEAD = "ยังใช้งานได้จนจบรอบบิลที่จ่ายไปแล้ว";
 
 function Message({ state }: { state: ActionState | undefined }) {
   if (state?.error) {
@@ -61,6 +92,32 @@ function Message({ state }: { state: ActionState | undefined }) {
 }
 
 /**
+ * The beta terms over the plan picker, as the strip above /pricing's cards
+ * draws them: the badge, the price line in bold, then what follows it — one
+ * run of text beside the badge (the note is a flex row: loose pieces of text
+ * would each become a column of their own).
+ */
+function BetaNoteLine({ text }: { text: string }) {
+  const at = text.indexOf(" · ");
+  return (
+    <p className="beta-note beta-note--compact">
+      <span className="tag tag-accent beta-note__badge">{BETA_BADGE}</span>
+      <span>
+        {at > 0 ? (
+          <>
+            <strong className="beta-note__lead">{text.slice(0, at)}</strong>
+            <span className="beta-note__sep">{" \u00b7 "}</span>
+            {keepThai(text.slice(at + 3))}
+          </>
+        ) : (
+          keepThai(text)
+        )}
+      </span>
+    </p>
+  );
+}
+
+/**
  * The design's "แพลนและการชำระเงิน" tab: current-plan card with the upgrade
  * and cancel dialogs, and the payment card whose buttons open the Stripe
  * Customer Portal. When billing is not configured every pay button is
@@ -69,7 +126,8 @@ function Message({ state }: { state: ActionState | undefined }) {
 export function BillingPanel(props: BillingPanelProps) {
   const {
     planName,
-    planFeatures,
+    plan,
+    freePlan,
     statusLine,
     statusWarn,
     options,
@@ -79,6 +137,7 @@ export function BillingPanel(props: BillingPanelProps) {
     cancelScheduled,
     billingEnabled,
     periodEndLabel,
+    cycle,
     cardLabel,
     betaNote,
   } = props;
@@ -99,40 +158,88 @@ export function BillingPanel(props: BillingPanelProps) {
   const [portalState, portalAction, portalPending] = useActionState<ActionState | undefined>(openPortalAction, undefined);
 
   const selectedOption = options.find((option) => option.tier === selected);
+  // The plan held, priced as /pricing prices it (the same table).
+  const currentOption = hasLiveSubscription ? options.find((option) => option.current && option.price !== null) : undefined;
   const canSubmit = billingEnabled && !!selectedOption && !selectedOption.current && selectedOption.price !== null && payAgreed;
   // Before a first subscription there is no Stripe customer: the card is
   // added during Checkout, so "add card" starts the upgrade flow instead.
   const hasCustomer = hasLiveSubscription || !!cardLabel;
+  // The period's end is printed once: when the plan card's status line
+  // already carries it ("ต่ออายุอัตโนมัติ …", "ยกเลิกแล้ว ใช้ได้ถึง …"), the
+  // payment card does not repeat it.
+  const showPeriodEnd = !!periodEndLabel && !statusLine?.includes(periodEndLabel);
+  // A plain renewal is said once — by the cycle track on the payment card,
+  // which names the date and the days left; the plan card keeps a line only
+  // for a state that needs one (cancelled, a payment problem).
+  const renewalOnTrack = !!cycle && !cancelScheduled && !statusWarn && !!statusLine?.startsWith("ต่ออายุอัตโนมัติ");
 
   return (
-    <section className="account-grid" aria-label="แพลนและการชำระเงิน">
-      <div className="card account-card">
+    <section className="account-grid acct-billing" aria-label="แพลนและการชำระเงิน">
+      <div className="card account-card acct-plan">
         <div className="card-kicker">แพลนปัจจุบัน</div>
-        <div className="plan-name">{planName}</div>
-        {statusLine ? (
-          <p className="plan-status" style={statusWarn ? { color: "var(--color-danger)" } : undefined}>
-            {statusLine}
-          </p>
-        ) : null}
-        {planFeatures.length > 0 ? (
-          <ul className="price-card__features" style={{ marginBottom: 20 }}>
-            {planFeatures.map((feature) => (
-              <li key={feature}>{feature}</li>
-            ))}
-          </ul>
-        ) : null}
+        {/* The plan and its price beside its features when the card is wide. */}
+        <div className="plan-body">
+          <div className="plan-main">
+            <div className="plan-head">
+              {plan ? (
+                <span className="trk tc" aria-hidden="true">
+                  {plan.reel}
+                </span>
+              ) : null}
+              <span className="plan-name">{planName}</span>
+            </div>
+            {currentOption || freePlan ? (
+              <div className="plan-price">
+                {currentOption?.fullPrice ? <s className="num price-strike">{currentOption.fullPrice}</s> : null}
+                <span className="num plan-price__value">{currentOption ? currentOption.price : "0"}</span>
+                <span className="plan-price__unit">{currentOption ? "บาท / เดือน" : "บาท"}</span>
+                {currentOption && plan?.beta ? <span className="tag tag-accent plan-price__beta">{`${BETA_BADGE} −${BETA_DISCOUNT_PERCENT}%`}</span> : null}
+              </div>
+            ) : null}
+            {statusLine && !renewalOnTrack ? <p className={statusWarn ? "plan-status plan-status--warn" : "plan-status"}>{keepThai(statusLine)}</p> : null}
+            {plan ? (
+              <div className="plan-usage">
+                <p className="plan-usage__line">
+                  {plan.usage.prefix} <span className="num plan-usage__count">{plan.usage.count}</span> {plan.usage.unit}
+                  {plan.usage.caption ? <span className="plan-usage__caption">{keepThai(` · ${plan.usage.caption}`)}</span> : null}
+                </p>
+                {plan.high ? <p className="plan-usage__high">{keepThai(plan.high)}</p> : null}
+                <p className="plan-usage__basis">{plan.basis}</p>
+              </div>
+            ) : null}
+          </div>
+          {plan && plan.features.length > 0 ? (
+            <ul className="plan-features">
+              {/* A copy line joins facts with " · "; here each fact is its own
+                  ticked row, so no line ends on a dot. A piece with no words of
+                  its own ("10 GB") stays with the fact it qualifies. */}
+              {plan.features
+                .flatMap((feature) =>
+                  feature.split(" · ").reduce<string[]>((facts, piece) => {
+                    if (facts.length > 0 && !/[\u0E00-\u0E7F]/.test(piece)) facts[facts.length - 1] += ` · ${piece}`;
+                    else facts.push(piece);
+                    return facts;
+                  }, []),
+                )
+                .map((fact) => (
+                  <li key={fact}>{keepThai(fact)}</li>
+                ))}
+            </ul>
+          ) : null}
+        </div>
         <div className="button-row">
-          <button type="button" className="btn btn-primary" style={{ fontSize: 14 }} onClick={() => setUpgradeOpen(true)} disabled={!billingEnabled}>
+          <button type="button" className="btn btn-primary" onClick={() => setUpgradeOpen(true)} disabled={!billingEnabled}>
             {hasLiveSubscription ? "เปลี่ยนแพลน" : "เลือกแพลน"}
           </button>
+          {/* Cancelling is there, but quieter than changing plan. */}
           {hasLiveSubscription && !cancelScheduled ? (
-            <button type="button" className="btn btn-ghost" style={{ fontSize: 14 }} onClick={() => setCancelOpen(true)} disabled={!billingEnabled}>
+            <button type="button" className="btn btn-ghost" onClick={() => setCancelOpen(true)} disabled={!billingEnabled}>
               ยกเลิกแพลน
             </button>
           ) : null}
           {hasLiveSubscription && cancelScheduled ? (
             <form action={resumeAction}>
-              <button type="submit" className="btn btn-ghost" style={{ fontSize: 14 }} disabled={!billingEnabled || resumePending}>
+              <button type="submit" className="btn btn-secondary" disabled={!billingEnabled || resumePending}>
                 {resumePending ? "กำลังดำเนินการ…" : "ใช้แพลนนี้ต่อ"}
               </button>
             </form>
@@ -146,21 +253,48 @@ export function BillingPanel(props: BillingPanelProps) {
         </div>
       </div>
 
-      <div className="card account-card">
+      <div className="card account-card acct-pay">
         <div className="card-kicker">การชำระเงิน</div>
-        <dl className="kv" style={{ marginTop: 12 }}>
+        {cycle ? (
+          // The cycle as a clip on a lane: gold up to today, the playhead on
+          // today, its two dates at its ends (the period end is the renewal,
+          // or the last day of a cancelled plan).
+          <div
+            className="acct-cycle"
+            role="img"
+            aria-label={`รอบบิลนี้ ${cycle.startLabel} ถึง ${cycle.endLabel} ${cancelScheduled ? "ใช้ได้อีก" : "ต่ออายุในอีก"} ${cycle.daysLeft} วัน`}
+          >
+            <div className="acct-cycle__top">
+              <span className="acct-cycle__title">รอบบิลนี้</span>
+              <span className="acct-cycle__left">{`${cancelScheduled ? "ใช้ได้อีก" : "ต่ออายุในอีก"} ${cycle.daysLeft} วัน`}</span>
+            </div>
+            <div className="acct-cycle__lane" style={{ "--cycle": cycle.progress } as CSSProperties}>
+              <span className="acct-cycle__fill" />
+              <span className="acct-cycle__head">
+                <span className="acct-cycle__today">วันนี้</span>
+              </span>
+            </div>
+            <div className="acct-cycle__ends">
+              <span>{cycle.startLabel}</span>
+              <span>{cancelScheduled ? `ใช้ได้ถึง ${cycle.endLabel}` : cycle.endLabel}</span>
+            </div>
+          </div>
+        ) : null}
+        <dl className="kv">
           <div>
             <dt>วิธีชำระเงิน</dt>
             <dd>{cardLabel ?? "ยังไม่ได้ผูกบัตร"}</dd>
           </div>
-          <div>
-            <dt>{cancelScheduled ? "ใช้แพลนได้ถึง" : "รอบบิลถัดไป"}</dt>
-            <dd>{periodEndLabel ?? "—"}</dd>
-          </div>
+          {showPeriodEnd ? (
+            <div>
+              <dt>{cancelScheduled ? "ใช้แพลนได้ถึง" : "รอบบิลถัดไป"}</dt>
+              <dd>{periodEndLabel}</dd>
+            </div>
+          ) : null}
           <div>
             <dt>ใบเสร็จย้อนหลัง</dt>
             <dd>
-              <form action={portalAction} style={{ margin: 0 }}>
+              <form action={portalAction} className="inline-form">
                 <button type="submit" className="link-button" disabled={!billingEnabled || portalPending}>
                   {portalPending ? "กำลังเปิด…" : "ดูรายการ"}
                 </button>
@@ -168,17 +302,18 @@ export function BillingPanel(props: BillingPanelProps) {
             </dd>
           </div>
         </dl>
+        {/* Before a first subscription: where the card comes from. */}
+        {!hasCustomer ? <p className="meter-note acct-pay__note">{keepThai("บัตรจะผูกกับบัญชีตอนชำระเงินครั้งแรก")}</p> : null}
         {hasCustomer ? (
-          <form action={portalAction} style={{ margin: 0 }}>
-            <button type="submit" className="btn btn-secondary btn-block" style={{ fontSize: 14, marginTop: 20 }} disabled={!billingEnabled || portalPending}>
+          <form action={portalAction} className="inline-form">
+            <button type="submit" className="btn btn-secondary acct-pay__btn" disabled={!billingEnabled || portalPending}>
               {cardLabel ? "เปลี่ยนบัตร" : "เพิ่มบัตรเครดิต"}
             </button>
           </form>
         ) : (
           <button
             type="button"
-            className="btn btn-secondary btn-block"
-            style={{ fontSize: 14, marginTop: 20 }}
+            className="btn btn-secondary acct-pay__btn"
             disabled={!billingEnabled}
             onClick={() => setUpgradeOpen(true)}
           >
@@ -195,18 +330,24 @@ export function BillingPanel(props: BillingPanelProps) {
         onClose={() => setUpgradeOpen(false)}
         title={hasLiveSubscription ? "เปลี่ยนแพลน" : "เลือกแพลน"}
         description={
-          <p style={{ margin: 0 }}>
-            {hasLiveSubscription
-              ? "เลือกแพลนที่ต้องการ อัปเกรดแล้วโควตาใหม่มีผลทันที ส่วนการลดแพลนมีผลในรอบบิลถัดไป"
-              : "เลือกแพลนที่ต้องการ โควตาใหม่มีผลทันทีหลังชำระเงิน"}
-          </p>
+          <>
+            <p style={{ margin: 0 }}>
+              {keepThai(
+                hasLiveSubscription
+                  ? "เลือกแพลนที่ต้องการ อัปเกรดแล้วโควตาใหม่มีผลทันที ส่วนการลดแพลนมีผลในรอบบิลถัดไป"
+                  : "เลือกแพลนที่ต้องการ โควตาใหม่มีผลทันทีหลังชำระเงิน",
+              )}
+            </p>
+            {/* Up here, not under the list: below it the note scrolled out of view. */}
+            {betaNote ? <BetaNoteLine text={betaNote} /> : null}
+          </>
         }
       >
         <form action={planAction}>
-          <fieldset className="plan-options" style={{ border: 0, padding: 0, margin: 0 }}>
+          <fieldset className="plan-options">
             <legend className="sr-only">แพลน</legend>
             {options.map((option) => (
-              <label key={option.tier} className="radio plan-option">
+              <label key={option.tier} className={option.current ? "radio plan-option plan-option--current" : "radio plan-option"}>
                 <input
                   type="radio"
                   name="plan"
@@ -218,40 +359,51 @@ export function BillingPanel(props: BillingPanelProps) {
                 <span className="dot" />
                 <span className="plan-option__text">
                   <span className="plan-option__name">
-                    {option.name} ·{" "}
+                    <span className="trk tc" aria-hidden="true">
+                      {option.reel}
+                    </span>
+                    <span className="plan-option__plan">{option.name}</span>
                     {option.price === null ? (
-                      "ยังไม่เปิดขาย"
+                      <span className="plan-option__price">ยังไม่เปิดขาย</span>
                     ) : (
-                      <>
+                      <span className="plan-option__price">
                         {option.fullPrice ? <s className="price-strike">{option.fullPrice}</s> : null}
-                        {`${option.price} บาท/เดือน`}
-                      </>
+                        {`${option.price} บาท / เดือน`}
+                      </span>
                     )}
-                    {option.current ? " · แพลนปัจจุบัน" : ""}
-                    {option.recommended ? <span className="tag tag-outline plan-option__tag">แนะนำ</span> : null}
+                    {option.current ? <span className="tag tag-neutral plan-option__tag">แพลนปัจจุบัน</span> : null}
+                    {/* "แนะนำ" suggests a move; on the plan already held it says nothing. */}
+                    {option.recommended && !option.current ? <span className="tag tag-outline plan-option__tag">แนะนำ</span> : null}
                   </span>
-                  <span className="plan-option__meta">{option.summary}</span>
+                  {/* Each fact whole on its line; no "·" left at a line's end. */}
+                  <span className="plan-option__specs">
+                    {option.specs.map((spec) => (
+                      <span key={spec} className="plan-option__spec">
+                        {spec}
+                      </span>
+                    ))}
+                  </span>
                 </span>
               </label>
             ))}
           </fieldset>
-          <label className="agree agree--flush">
-            <input
-              type="checkbox"
-              name="pay_agree"
-              value="yes"
-              className="agree__box"
-              checked={payAgreed}
-              onChange={(event) => setPayAgreed(event.target.checked)}
-            />
-            <span className="agree__text">
-              ฉันเข้าใจว่าระบบจะเรียกเก็บเงินทุกเดือนโดยอัตโนมัติจนกว่าจะยกเลิก และยอมรับ <Link href="/terms">เงื่อนไขการใช้งาน</Link>{" "}
-              เรื่องค่าบริการและการคืนเงิน
-            </span>
-          </label>
-          {betaNote ? <p className="beta-note beta-note--compact">{betaNote}</p> : null}
           <Message state={planState} />
+          {/* The consent sits in the sticky footer, beside the button it unlocks. */}
           <div className="dialog-actions">
+            <label className="agree agree--flush dialog-actions__consent">
+              <input
+                type="checkbox"
+                name="pay_agree"
+                value="yes"
+                className="agree__box"
+                checked={payAgreed}
+                onChange={(event) => setPayAgreed(event.target.checked)}
+              />
+              <span className="agree__text">
+                {keepThai("ฉันเข้าใจว่าระบบจะเรียกเก็บเงินทุกเดือนโดยอัตโนมัติจนกว่าจะยกเลิก และยอมรับ ")}
+                <Link href="/terms">เงื่อนไขการใช้งาน</Link> {keepThai("เรื่องค่าบริการและการคืนเงิน")}
+              </span>
+            </label>
             <button type="button" className="btn btn-secondary" onClick={() => setUpgradeOpen(false)}>
               ยกเลิก
             </button>
@@ -269,14 +421,24 @@ export function BillingPanel(props: BillingPanelProps) {
         maxWidth={460}
         description={
           <p style={{ margin: 0 }}>
-            ยังใช้งานได้จนจบรอบบิลที่จ่ายไปแล้ว{periodEndLabel ? ` (ถึง ${periodEndLabel})` : ""} หลังจากนั้นบัญชีจะกลับไปเป็นแพลนฟรี
-            โปรเจกต์ที่เกินโควตาแพลนฟรีจะเปิดอ่านได้แต่แก้ต่อไม่ได้จนกว่าจะลบให้เหลือตามจำนวน
+            {/* The date in one piece with the words it closes: "ที่จ่ายไปแล้ว (ถึง 13 ต.ค. 2026)". */}
+            {periodEndLabel ? (
+              <>
+                {keepThai(CANCEL_LEAD.slice(0, CANCEL_LEAD.indexOf("ที่จ่าย")))}
+                <span className="kt">{`${CANCEL_LEAD.slice(CANCEL_LEAD.indexOf("ที่จ่าย"))} (ถึง ${periodEndLabel})`}</span>
+              </>
+            ) : (
+              keepThai(CANCEL_LEAD)
+            )}
+            {keepThai(
+              " หลังจากนั้นบัญชีจะกลับไปเป็นแพลนฟรี โปรเจกต์ที่เกินโควตาแพลนฟรีจะเปิดอ่านได้แต่แก้ต่อไม่ได้จนกว่าจะลบให้เหลือตามจำนวน",
+            )}
           </p>
         }
       >
         <form action={cancelAction}>
           {cancelState?.error ? <Message state={cancelState} /> : null}
-          <div className="dialog-actions" style={{ marginTop: 4 }}>
+          <div className="dialog-actions dialog-actions--tight">
             <button type="button" className="btn btn-secondary" onClick={() => setCancelOpen(false)}>
               ใช้ต่อ
             </button>

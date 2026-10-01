@@ -1,11 +1,13 @@
 import Image from "next/image";
 import type { MediaEntry } from "@/lib/media";
-import { NoeyMark } from "./NoeyMark";
+import { StepMockup } from "./mockups/client";
 
 /**
  * Replaces the prototype's <image-slot>. The box reserves its aspect ratio up
- * front (zero CLS) and wears the design's `.plate` frame; until the owner
- * supplies media it shows a quiet branded placeholder.
+ * front (zero CLS). Until the owner supplies media (`src` in lib/media.ts) it
+ * shows the coded illustration of that step, labelled "ภาพจำลอง"; the moment
+ * a file is set, the real image or video takes its place — nothing else
+ * changes.
  */
 export function MediaSlot({
   media,
@@ -20,22 +22,13 @@ export function MediaSlot({
   /** Mark the LCP image (hero) for eager loading. */
   priority?: boolean;
 }) {
-  const classes = ["media-slot", "plate", className].filter(Boolean).join(" ");
+  const classes = ["media-slot", className].filter(Boolean).join(" ");
   const style = { aspectRatio: media.ratio };
 
   if (media.src && media.kind === "video") {
     return (
       <div className={classes} style={style}>
-        <video
-          src={media.src}
-          poster={media.poster}
-          aria-label={media.alt}
-          muted
-          loop
-          playsInline
-          controls
-          preload="metadata"
-        />
+        <video src={media.src} poster={media.poster} aria-label={media.alt} muted loop playsInline controls preload="metadata" />
       </div>
     );
   }
@@ -49,11 +42,8 @@ export function MediaSlot({
   }
 
   return (
-    <div className={classes} style={style} data-media-slot="empty">
-      <div className="media-slot__placeholder" aria-hidden="true">
-        <NoeyMark size={40} />
-        <span className="media-slot__label">{media.placeholderLabel}</span>
-      </div>
+    <div className={[classes, "media-slot--mock"].join(" ")} data-media-slot="mock">
+      <StepMockup kind={media.mock} label={media.mockLabel} ratio={media.ratio} />
     </div>
   );
 }

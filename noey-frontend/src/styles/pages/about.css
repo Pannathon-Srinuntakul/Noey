@@ -1,0 +1,521 @@
+/*
+ * /about — the story as chapters on a vertical timeline (a timecode per
+ * chapter, a rail that fills as you read), the contact form held beside it,
+ * and the five principles drawn as locked tracks.
+ */
+
+.about-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(340px, 420px);
+  gap: clamp(40px, 6vw, 96px);
+  align-items: start;
+  padding-bottom: calc(var(--section-y) * 0.4);
+}
+
+/* Below ~1100px the story would be squeezed to ~28 characters a line beside
+   the form: the form follows the story instead. */
+@media (max-width: 1099px) {
+  .about-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ── Chapters ───────────────────────────────────────────────────────────── */
+
+.chapters {
+  position: relative;
+  view-timeline-name: --story;
+}
+
+/* The rail, and the part of it you have read. */
+.chapters::before,
+.chapters::after {
+  content: "";
+  position: absolute;
+  left: 7px;
+  top: 14px;
+  bottom: 14px;
+  width: 1px;
+  background: var(--line-2);
+}
+
+.chapters::after {
+  left: 6px;
+  width: 3px;
+  border-radius: 3px;
+  background: linear-gradient(180deg, var(--gold), var(--gold-deep));
+  transform-origin: top;
+  scale: 1 0;
+}
+
+/* Tied to the scroll position, not to time: a reading-progress indicator,
+   so it runs under reduced motion too. */
+@supports (animation-timeline: --story) {
+  .chapters::after {
+    animation: story-read linear both;
+    animation-timeline: --story;
+    animation-range: entry 40% exit 60%;
+  }
+}
+
+@keyframes story-read {
+  to {
+    scale: 1 1;
+  }
+}
+
+.chapter {
+  display: grid;
+  grid-template-columns: 148px minmax(0, 1fr);
+  gap: 20px;
+  padding-block: clamp(20px, 2.6vw, 34px);
+}
+
+.chapter:first-child {
+  padding-top: 0;
+}
+
+.chapter__mark {
+  position: relative;
+  display: grid;
+  justify-items: start;
+  align-content: start;
+  gap: 8px;
+  padding: 6px 0 0 32px;
+}
+
+/* Lit by default (no JS, reduced motion); dark only while the chapter waits below the fold. */
+.chapter__dot {
+  position: absolute;
+  left: 2px;
+  top: 9px;
+  width: 12px;
+  height: 12px;
+  rotate: 45deg;
+  border: 2px solid var(--gold);
+  border-radius: 3px;
+  background: var(--gold);
+  box-shadow: 0 0 0 4px var(--gold-soft);
+  transition:
+    background-color var(--dur-3) ease,
+    border-color var(--dur-3) ease,
+    box-shadow var(--dur-3) ease;
+}
+
+.chapter[data-reveal-state="wait"] .chapter__dot {
+  border-color: var(--line-3);
+  background: var(--bg);
+  box-shadow: none;
+}
+
+.chapter__tc {
+  color: var(--ink-3);
+}
+
+/* One measure for the chapter's text, lead included (62ch of the body size). */
+.chapter__text p {
+  max-width: min(100%, 600px);
+  margin: 0 0 1.05em;
+  font-size: var(--fs-17);
+  font-weight: 400;
+  line-height: 1.95;
+  color: var(--ink-2);
+}
+
+/* Each chapter opens on its first paragraph at full ink, as the first does. */
+.chapter__text p:first-child {
+  color: var(--ink);
+}
+
+.chapter__text p:last-child {
+  margin-bottom: 0;
+}
+
+.chapter__text--open p:first-child {
+  font-size: var(--fs-lead);
+  line-height: 1.85;
+  color: var(--ink);
+}
+
+.chapter__text a {
+  color: var(--gold-ink);
+  font-weight: 500;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--color-accent) 55%, transparent);
+  text-underline-offset: 4px;
+}
+
+.chapter__text a:hover {
+  text-decoration-color: currentColor;
+}
+
+@media (max-width: 639px) {
+  .chapter {
+    grid-template-columns: 1fr;
+    gap: 12px;
+    padding-left: 32px;
+  }
+
+  .chapter__mark {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0;
+    margin-left: -32px;
+    padding-left: 32px;
+  }
+
+  .chapter__dot {
+    top: 50%;
+    margin-top: -6px;
+  }
+}
+
+/* ── Contact, held beside the story ─────────────────────────────────────── */
+
+/* Under the story (tablet widths) the card runs the page's width (the rail
+   has ended above it), its form in two columns. */
+@media (min-width: 640px) and (max-width: 1099px) {
+  /* The card runs the content width, name and email side by side. */
+  #contact form.stack {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: 16px;
+  }
+
+  #contact form.stack > :not(:nth-child(-n + 2)) {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (min-width: 1100px) {
+  /* Clear of the ruler that opens the story column. */
+  .about-contact {
+    margin-top: 16px;
+  }
+}
+
+@media (min-width: 1100px) and (min-height: 760px) {
+  .about-contact {
+    position: sticky;
+    top: calc(var(--beta-h) + var(--header-top) + var(--header-h) + 28px);
+  }
+}
+
+.contact-card {
+  --pad: clamp(20px, 2.4vw, 28px);
+  gap: 10px;
+  padding: 0 var(--pad) var(--pad);
+  box-shadow: var(--shadow-2), var(--rim);
+  scroll-margin-top: calc(var(--beta-h) + var(--header-top) + var(--header-h) + 24px);
+}
+
+/* A panel's title strip, as in the editor. */
+.contact-card__bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 calc(var(--pad) * -1) 10px;
+  padding: 11px var(--pad);
+  border-bottom: 1px solid var(--line);
+  border-radius: var(--r-lg) var(--r-lg) 0 0;
+  background: color-mix(in srgb, var(--color-text) 3%, transparent);
+  color: var(--ink-3);
+}
+
+.contact-card__rec {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--gold);
+  box-shadow: 0 0 0 3px var(--gold-soft);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .contact-card__rec {
+    animation: rec-blink 2.4s ease-in-out infinite;
+  }
+}
+
+@keyframes rec-blink {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.contact-card__rule {
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, var(--line-2), transparent);
+}
+
+.contact-card__title {
+  margin-bottom: 8px;
+  font-size: clamp(1.375rem, 1.2rem + 0.6vw, 1.625rem);
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.contact-note {
+  margin: 0;
+  font-size: var(--fs-13);
+  line-height: 1.7;
+  color: var(--ink-3);
+}
+
+/* ── Principles: locked tracks ──────────────────────────────────────────── */
+
+.locked {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.locked__track {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+  box-shadow: var(--rim);
+}
+
+/* A locked track is hatched in an editor: nobody cuts it by accident. The
+   hatching sits on the track's header and behind its audio, never under
+   the words. */
+.locked__head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 20px 16px;
+  border-right: 1px solid var(--line);
+  background:
+    repeating-linear-gradient(135deg, color-mix(in srgb, var(--color-text) 6%, transparent) 0 1px, transparent 1px 9px),
+    color-mix(in srgb, var(--color-text) 3%, transparent);
+  color: var(--gold-ink);
+}
+
+.locked__lock {
+  margin-top: 2px;
+}
+
+/* The audio keeps one width (its bars one size at every width), at the
+   track's far end. */
+.locked__clip {
+  display: grid;
+  grid-template-columns: minmax(0, 68ch) 200px;
+  justify-content: space-between;
+  gap: clamp(20px, 3vw, 48px);
+  align-items: center;
+  padding: 18px clamp(18px, 2vw, 26px);
+}
+
+.locked__copy {
+  display: grid;
+  gap: 6px;
+}
+
+/* The locked audio under each principle: present, muted, not to be cut —
+   on its own hatched strip. */
+.locked__wave {
+  height: 34px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--color-text) 6%, transparent) 0 1px, transparent 1px 9px);
+  opacity: 0.7;
+}
+
+.locked__title {
+  font-size: var(--fs-17);
+  font-weight: 600;
+  line-height: 1.55;
+  color: var(--ink);
+}
+
+.locked__text {
+  font-size: var(--fs-15);
+  line-height: 1.85;
+  color: var(--ink-2);
+}
+
+.locked__text a {
+  color: var(--gold-ink);
+  font-weight: 500;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--color-accent) 55%, transparent);
+  text-underline-offset: 4px;
+}
+
+.locked__text a:hover {
+  text-decoration-color: currentColor;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .locked[data-reveal-state="in"] .locked__lock {
+    animation: lock-shut 520ms var(--ease-out) both;
+  }
+
+  .locked[data-reveal-state="in"] > :nth-child(2) .locked__lock {
+    animation-delay: 70ms;
+  }
+
+  .locked[data-reveal-state="in"] > :nth-child(3) .locked__lock {
+    animation-delay: 140ms;
+  }
+
+  .locked[data-reveal-state="in"] > :nth-child(4) .locked__lock {
+    animation-delay: 210ms;
+  }
+
+  .locked[data-reveal-state="in"] > :nth-child(5) .locked__lock {
+    animation-delay: 280ms;
+  }
+}
+
+@keyframes lock-shut {
+  0% {
+    translate: 0 -4px;
+    rotate: -14deg;
+  }
+  60% {
+    translate: 0 1px;
+    rotate: 0deg;
+  }
+  100% {
+    translate: 0 0;
+  }
+}
+
+@media (max-width: 899px) {
+  .locked__clip {
+    grid-template-columns: 1fr;
+  }
+
+  .locked__wave {
+    display: none;
+  }
+}
+
+/* Phones: the track header narrows to a slim column (the label over the
+   lock), as an editor's track header does — not a strip of empty panel over
+   the clip. */
+@media (max-width: 639px) {
+  .locked__track {
+    grid-template-columns: 52px minmax(0, 1fr);
+  }
+
+  .locked__head {
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 16px 6px;
+  }
+}
+
+.about-faq {
+  padding-top: calc(var(--section-y) * 0.4);
+}
+
+/* The story, the principles and the FAQ run on without a band between them:
+   a full section's padding on both sides read as a hole. */
+.principles {
+  padding-block: calc(var(--section-y) * 0.5);
+}
+
+/* The headings sit close to what they head. */
+.principles .sec-head,
+.about-faq .sec-head {
+  margin-bottom: clamp(22px, 3vw, 34px);
+}
+
+/* Sent: the confirmation moves to the top of the form (first thing the eye
+   meets, not below the send button), and the strip's light turns to done. */
+#contact .stack > [aria-live]:has(.form-success) {
+  order: -1;
+}
+
+#contact .form-success {
+  width: 100%;
+  padding: 14px 16px 14px 18px;
+  border: 1px solid color-mix(in srgb, var(--color-success) 55%, transparent);
+  border-left: 4px solid var(--success);
+  border-radius: var(--r-md);
+  background: var(--success-soft);
+  color: var(--ink);
+  font-size: var(--fs-15);
+  line-height: 1.7;
+  text-wrap: pretty;
+}
+
+/* "ส่งข้อความแล้ว" on a line of its own, over the thanks. */
+#contact .form-success strong {
+  display: block;
+  font-weight: 600;
+}
+
+/* Sent: the message's render bar, full, with its tick and readout. */
+.contact-sent__meter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+/* Done as the status cards say it: the bar in gold, green only in the tick. */
+.contact-sent__bar {
+  flex: 1;
+  height: 6px;
+  border-radius: 6px;
+  background: var(--gold);
+}
+
+.contact-sent__tick {
+  flex: none;
+  color: var(--success);
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.contact-sent__tick circle {
+  fill: var(--success-soft);
+}
+
+.contact-sent__meter .tc {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--gold-ink);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .contact-sent__bar {
+    transform-origin: left center;
+    animation: sent-fill 1s var(--ease-out) both;
+  }
+}
+
+@keyframes sent-fill {
+  from {
+    transform: scaleX(0.04);
+  }
+}
+
+#contact .form-error {
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--color-danger) 40%, transparent);
+  border-radius: var(--r-md);
+  background: var(--danger-soft);
+  font-size: var(--fs-14);
+  line-height: 1.7;
+}
+
+.contact-card:has(.form-success) .contact-card__rec {
+  background: var(--success);
+  box-shadow: 0 0 0 3px var(--success-soft);
+  animation: none;
+}

@@ -1,0 +1,74 @@
+/* Working sheet only (see app/kitchen-sink/page.tsx). */
+
+.ks .h-1 {
+  margin-bottom: 10px;
+}
+
+.ks-rows {
+  display: grid;
+  gap: 56px;
+  padding-block: 48px 96px;
+}
+
+.ks-row__title {
+  font-size: var(--fs-14);
+  font-weight: 500;
+  color: var(--gold-ink);
+  margin-bottom: 14px;
+}
+
+.ks-row__panes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+@media (max-width: 900px) {
+  .ks-row__panes {
+    grid-template-columns: 1fr;
+  }
+}
+
+.ks-pane {
+  min-width: 0;
+  padding: 28px;
+  border-radius: var(--r-lg);
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--ink);
+  overflow: hidden;
+}
+
+.ks-swatches {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 8px;
+}
+
+.ks-swatch {
+  display: grid;
+  align-items: end;
+  height: 64px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  font-size: 11px;
+}
+
+.ks-swatch code {
+  background: var(--bg);
+  color: var(--ink);
+  padding: 1px 4px;
+  border-radius: 4px;
+  width: fit-content;
+}
+
+.ks-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 14px;
+}
+
+.ks-grid--2 {
+  grid-template-columns: 1fr;
+}

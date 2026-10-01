@@ -8,6 +8,7 @@ import { privatePageMetadata } from "@/lib/seo";
 import { googleSignInEnabled } from "@/lib/server/google";
 import { getMe, resolvePageOutcome } from "@/lib/server/session";
 import { sanitizeDisplayName } from "@/lib/session";
+import { keepThaiProse } from "@/components/ds/ThaiProse";
 
 export const metadata: Metadata = privatePageMetadata("ข้อมูลส่วนตัว");
 
@@ -15,7 +16,7 @@ export default async function ProfilePage({ searchParams }: { searchParams: Prom
   const me = resolvePageOutcome(await getMe(), "/account/profile");
   if (!me?.ok) {
     return (
-      <div className="notice" style={{ marginTop: 32 }} role="status">
+      <div className="notice" role="status">
         <p>ยังดึงข้อมูลบัญชีไม่ได้ในตอนนี้ ลองรีเฟรชหน้านี้อีกครั้งในอีกสักครู่</p>
       </div>
     );
@@ -34,11 +35,11 @@ export default async function ProfilePage({ searchParams }: { searchParams: Prom
   const flowNotice = googleMessage(googleCode);
 
   return (
-    <section className="account-grid" aria-label="ข้อมูลส่วนตัว">
+    <section className="account-grid acct-profile" aria-label="ข้อมูลส่วนตัว">
       <div className="card account-card">
-        <div className="card-kicker">ข้อมูลส่วนตัว</div>
+        <h2 className="card-kicker">ข้อมูลส่วนตัว</h2>
         <ProfileForm name={sanitizeDisplayName(me.data.display_name)} />
-        <div className="card-section" style={{ marginTop: 20 }}>
+        <div className="card-section">
           <h3>อีเมลที่ใช้เข้าสู่ระบบ</h3>
           {hasPassword ? (
             <EmailForm email={me.data.email} />
@@ -50,10 +51,12 @@ export default async function ProfilePage({ searchParams }: { searchParams: Prom
         </div>
       </div>
       <div className="card account-card">
-        <div className="card-kicker">ความปลอดภัย</div>
+        <h2 className="card-kicker">ความปลอดภัย</h2>
+        {/* The block's own name, as the email and Google blocks have theirs. */}
+        {hasPassword ? <h3 className="acct-subhead">รหัสผ่าน</h3> : null}
         {hasPassword ? <PasswordForm /> : <SetPasswordByEmail email={me.data.email} />}
         {googleEnabled || googleLinked ? (
-          <div className="card-section" id="google" style={{ marginTop: 20 }}>
+          <div className="card-section" id="google">
             <h3>บัญชี Google</h3>
             <GoogleLinkPanel
               linked={googleLinked}
@@ -63,18 +66,21 @@ export default async function ProfilePage({ searchParams }: { searchParams: Prom
             />
           </div>
         ) : null}
-        <div className="card-section danger-zone" id="delete-account" style={{ marginTop: 16 }}>
+      </div>
+      {/* The one block drawn in the danger colour, on its own at the end of the tab. */}
+      <div className="card account-card danger-zone acct-danger" id="delete-account">
+        <div className="acct-danger__copy">
           <h3>ลบบัญชี</h3>
-          <p>ลบบัญชีและโปรเจกต์ทั้งหมดบนเซิร์ฟเวอร์อย่างถาวร กู้คืนไม่ได้ ก่อนยืนยันจะแสดงรายละเอียดว่าอะไรถูกลบและอะไรเก็บไว้</p>
-          <div style={{ marginTop: 12 }}>
-            <DeleteAccount
-              hasPassword={hasPassword}
-              googleLinked={googleLinked}
-              googleVerified={googleVerified}
-              openOnLoad={deleteStep !== null}
-              notice={deleteStep === "retry" ? flowNotice : null}
-            />
-          </div>
+          <p>{keepThaiProse("ลบบัญชีและโปรเจกต์ทั้งหมดบนเซิร์ฟเวอร์อย่างถาวร กู้คืนไม่ได้ ก่อนยืนยันจะแสดงรายละเอียดว่าอะไรถูกลบและอะไรเก็บไว้")}</p>
+        </div>
+        <div className="danger-zone__action">
+          <DeleteAccount
+            hasPassword={hasPassword}
+            googleLinked={googleLinked}
+            googleVerified={googleVerified}
+            openOnLoad={deleteStep !== null}
+            notice={deleteStep === "retry" ? flowNotice : null}
+          />
         </div>
       </div>
     </section>

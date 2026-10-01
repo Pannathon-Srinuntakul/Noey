@@ -5,6 +5,9 @@ import { useEffect, useRef, useState } from "react";
 import { LIVE_SUBSCRIPTION_STATUSES } from "@/lib/billing";
 import { EDITOR_OPEN_PATH } from "@/lib/editor-handoff";
 import { planDisplayName } from "@/lib/plans";
+import { StatusCard } from "../ds/StatusCard";
+import { ComputerOnly } from "../ComputerOnly";
+import { keepThai } from "@/components/ds/ThaiText";
 
 type BillingSnapshot = { plan: string; status: string | null };
 
@@ -22,9 +25,16 @@ function isPaidAndLive(snapshot: BillingSnapshot | null): snapshot is BillingSna
   return !!snapshot && snapshot.plan !== "free" && !!snapshot.status && LIVE.has(snapshot.status);
 }
 
+const TITLE = "ขอบคุณที่อัปเกรดแพลน";
+const EYEBROW = "การชำระเงิน";
+
 /**
  * Stripe redirects here before its webhook necessarily reached the backend,
  * so poll GET /billing/me briefly until the new plan shows up.
+ *
+ * Every state sits on the status card under the page's title: a running
+ * render bar while waiting, "render complete" (full bar and a tick) once the
+ * plan is confirmed.
  */
 export function CheckoutStatus({ initial }: { initial: BillingSnapshot | null }) {
   const [view, setView] = useState<View>(isPaidAndLive(initial) ? { kind: "confirmed", plan: initial.plan } : { kind: "waiting" });
@@ -70,65 +80,84 @@ export function CheckoutStatus({ initial }: { initial: BillingSnapshot | null })
 
   if (view.kind === "confirmed") {
     return (
-      <div className="card status-card" role="status">
-        <div className="card-kicker">การชำระเงิน</div>
-        <h2>อัปเกรดเป็นแพลน {planDisplayName(view.plan)} แล้ว</h2>
-        <p>โควตาใหม่พร้อมใช้ในห้องตัดต่อ ใบเสร็จจะส่งไปที่อีเมลของบัญชีนี้</p>
-        <div className="button-row">
-          <a href={EDITOR_OPEN_PATH} className="btn btn-primary btn-lg">
-            เปิดห้องตัดต่อ
-          </a>
-          <Link href="/account/billing" className="btn btn-secondary btn-lg">
-            ดูแพลนและการชำระเงิน
-          </Link>
-        </div>
-      </div>
+      <StatusCard
+        tone="celebrate"
+        eyebrow={EYEBROW}
+        title={TITLE}
+        role="status"
+        readout={`${planDisplayName(view.plan).toUpperCase()} · 100%`}
+        footer={<ComputerOnly />}
+        actions={
+          <>
+            <a href={EDITOR_OPEN_PATH} className="btn btn-primary btn-lg status__editor">
+              เปิดห้องตัดต่อ
+            </a>
+            <Link href="/account/billing" className="btn btn-secondary btn-lg">
+              ดูแพลนและการชำระเงิน
+            </Link>
+          </>
+        }
+      >
+        <h2>แพลน {planDisplayName(view.plan)} เริ่มใช้งานแล้ว</h2>
+        <p>{keepThai("โควตาใหม่พร้อมใช้ในห้องตัดต่อ ใบเสร็จจะส่งไปที่อีเมลของบัญชีนี้")}</p>
+      </StatusCard>
     );
   }
 
   if (view.kind === "signed-out") {
     return (
-      <div className="card status-card">
+      <StatusCard
+        tone="info"
+        eyebrow={EYEBROW}
+        title={TITLE}
+        actions={
+          <Link href="/login?next=%2Faccount%2Fbilling" className="btn btn-primary btn-lg">
+            เข้าสู่ระบบ
+          </Link>
+        }
+      >
         <h2>เซสชันหมดอายุ</h2>
-        <p>การชำระเงินไม่หายไปไหน เข้าสู่ระบบอีกครั้งเพื่อดูแพลนของคุณ</p>
-        <Link href="/login?next=%2Faccount%2Fbilling" className="btn btn-primary btn-lg">
-          เข้าสู่ระบบ
-        </Link>
-      </div>
+        <p>{keepThai("การชำระเงินไม่หายไปไหน เข้าสู่ระบบอีกครั้งเพื่อดูแพลนของคุณ")}</p>
+      </StatusCard>
     );
   }
 
   if (view.kind === "slow") {
     return (
-      <div className="card status-card" role="status">
-        <div className="card-kicker">การชำระเงิน</div>
+      <StatusCard
+        tone="info"
+        eyebrow={EYEBROW}
+        title={TITLE}
+        role="status"
+        actions={
+          <>
+            <button
+              type="button"
+              className="btn btn-primary btn-lg"
+              onClick={() => {
+                startedAt.current = Date.now();
+                setAttempt((n) => n + 1);
+                setView({ kind: "waiting" });
+              }}
+            >
+              เช็กสถานะอีกครั้ง
+            </button>
+            <Link href="/account/billing" className="btn btn-secondary btn-lg">
+              ไปหน้าแพลนและการชำระเงิน
+            </Link>
+          </>
+        }
+      >
         <h2>ยังไม่เห็นแพลนใหม่ในบัญชี</h2>
-        <p>ถ้าชำระเงินเสร็จแล้ว ระบบอาจใช้เวลาอีกสักครู่ในการยืนยัน ไม่ต้องจ่ายซ้ำ ลองเช็กอีกครั้ง หรือดูสถานะได้ที่หน้าแพลนและการชำระเงิน</p>
-        <div className="button-row">
-          <button
-            type="button"
-            className="btn btn-primary btn-lg"
-            onClick={() => {
-              startedAt.current = Date.now();
-              setAttempt((n) => n + 1);
-              setView({ kind: "waiting" });
-            }}
-          >
-            เช็กสถานะอีกครั้ง
-          </button>
-          <Link href="/account/billing" className="btn btn-secondary btn-lg">
-            ไปหน้าแพลนและการชำระเงิน
-          </Link>
-        </div>
-      </div>
+        <p>{keepThai("ถ้าชำระเงินเสร็จแล้ว ระบบอาจใช้เวลาอีกสักครู่ในการยืนยัน ไม่ต้องจ่ายซ้ำ ลองเช็กอีกครั้ง หรือดูสถานะได้ที่หน้าแพลนและการชำระเงิน")}</p>
+      </StatusCard>
     );
   }
 
   return (
-    <div className="card status-card" role="status" aria-busy="true">
-      <div className="card-kicker">การชำระเงิน</div>
+    <StatusCard tone="pending" eyebrow={EYEBROW} title={TITLE} role="status" busy>
       <h2>กำลังยืนยันการชำระเงิน…</h2>
-      <p>ใช้เวลาไม่กี่วินาที ไม่ต้องปิดหน้านี้และไม่ต้องกดจ่ายซ้ำ</p>
-    </div>
+      <p>{keepThai("ใช้เวลาไม่กี่วินาที ไม่ต้องปิดหน้านี้และไม่ต้องกดจ่ายซ้ำ")}</p>
+    </StatusCard>
   );
 }

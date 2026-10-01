@@ -1,0 +1,746 @@
+/*
+ * Plans: the plan cards (PriceCards — the home strip and the /pricing rail)
+ * and the plan comparison table (PlanComparisonTable — /pricing and the help
+ * guide). One stylesheet, imported by both components, so /pricing ships
+ * one file for both.
+ */
+
+/* ── Plan cards ─────────────────────────────────────────────────────────── */
+
+.price-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+  align-items: stretch;
+}
+
+@media (max-width: 1100px) {
+  .price-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 560px) {
+  .price-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.plan {
+  --plan-edge: var(--line);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  height: 100%;
+  padding: clamp(20px, 2.2vw, 26px);
+  border: 1px solid var(--plan-edge);
+  border-radius: var(--r-lg);
+  background: var(--panel);
+  box-shadow: var(--rim);
+  transition:
+    border-color var(--dur-2) ease,
+    box-shadow var(--dur-3) var(--ease-out),
+    translate var(--dur-3) var(--ease-out);
+}
+
+.plan:hover {
+  --plan-edge: color-mix(in srgb, var(--color-accent) 60%, transparent);
+}
+
+.plan--recommended {
+  --plan-edge: var(--gold);
+  background: linear-gradient(180deg, var(--gold-soft), transparent 45%), var(--panel);
+  box-shadow:
+    var(--rim),
+    0 24px 60px -30px var(--gold-glow);
+}
+
+/* /pricing has ONE answer: the plan the calculator fits carries the gold
+   edge, the tint, the badge and the one gold action (PlanRail moves
+   [data-fit]; the HTML marks the default's). Pro's "แนะนำ" steps back to a
+   quiet tag while another plan fits. The home strip keeps Pro as before. */
+.plan--full.plan--recommended:not([data-fit]) {
+  --plan-edge: var(--line);
+  background: var(--panel);
+  box-shadow: var(--rim);
+}
+
+.plan--full .plan__tag--rec {
+  border-color: var(--line-2);
+  color: var(--ink-2);
+}
+
+.plan--full[data-fit] .plan__tag--rec {
+  border-color: var(--gold);
+  color: var(--gold-ink);
+}
+
+.plan--full[data-fit] {
+  --plan-edge: var(--gold);
+  background:
+    linear-gradient(180deg, var(--gold-soft), transparent 45%),
+    var(--panel);
+  box-shadow:
+    0 0 0 3px var(--gold-soft),
+    0 30px 70px -30px var(--gold-glow);
+  translate: 0 -6px;
+}
+
+/* The badge sits on the card's top edge, like a marker on a clip. */
+.plan__fit-tag {
+  position: absolute;
+  top: -12px;
+  left: clamp(20px, 2.2vw, 26px);
+  display: none;
+  background: var(--gold);
+  color: var(--on-gold);
+  font-weight: 600;
+  box-shadow: 0 6px 16px -8px var(--gold-glow);
+}
+
+.plan--full[data-fit] .plan__fit-tag {
+  display: inline-flex;
+}
+
+.plan--full[data-fit] .plan__foot .btn-secondary {
+  --btn-bg: var(--gold);
+  --btn-ink: var(--on-gold);
+  --btn-line: var(--gold);
+  --btn-handle: color-mix(in srgb, var(--on-gold) 55%, transparent);
+  font-weight: 600;
+  box-shadow:
+    var(--rim),
+    0 8px 24px -12px var(--gold-glow);
+}
+
+.plan--full[data-fit] .plan__foot .btn-secondary:hover {
+  --btn-bg: color-mix(in srgb, var(--color-accent) 88%, var(--color-text));
+  --btn-line: var(--gold);
+}
+
+.plan__head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.plan__name {
+  font-size: var(--fs-18);
+  font-weight: 600;
+  line-height: 1.4;
+  margin-right: auto;
+}
+
+.plan__tag {
+  flex: none;
+}
+
+.plan__amount {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 8px;
+  margin-top: 4px;
+}
+
+.plan__value {
+  font-size: clamp(2.25rem, 1.8rem + 1.2vw, 2.875rem);
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+}
+
+.plan__unit {
+  font-size: var(--fs-14);
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+
+.plan__amount .price-strike {
+  font-size: var(--fs-18);
+}
+
+/* One chip under the price: the strip above the cards says the terms in
+   full, the struck price beside the number shows what returns after. */
+.plan__beta {
+  margin: 0;
+  line-height: 1;
+}
+
+.plan__beta--blank {
+  visibility: hidden;
+}
+
+/* Running text, not a flex row: a caption that wraps (the free plan's "ราว 2
+   คลิป · ทดลองใช้ครั้งเดียว ไม่รีเซ็ต" in a narrow column) starts its next line
+   at the left edge instead of hanging under the caption's first word. */
+.plan__usage {
+  margin-top: 6px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--line-2);
+  font-size: var(--fs-13);
+  line-height: 1.6;
+  color: var(--ink-3);
+}
+
+/* The number and its unit never part. */
+.usage-count {
+  white-space: nowrap;
+}
+
+.usage-approx {
+  font-size: var(--fs-13);
+  color: var(--ink-3);
+}
+
+.usage-mult {
+  font-size: var(--fs-20);
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--gold-ink);
+}
+
+.usage-caption {
+  font-size: var(--fs-13);
+  color: var(--ink-3);
+}
+
+/* Pro and up: the ระดับละเอียด count on its own line under the headline
+   (owner, 2026-10-01). Quieter than the headline, but a real number, not a
+   footnote — a plan bought for that setting must say what it buys there. */
+/* Past the plan's footage ceiling, /pricing's calculator shows this in place of a count. */
+.usage-over {
+  font-size: var(--fs-14);
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+/* The calculator hides a count's text, a whole count or a table row with
+   [hidden]; a class's own display must not bring it back. */
+[data-cuts-tier][hidden],
+[data-cuts-when][hidden],
+[data-cuts-row][hidden] {
+  display: none !important;
+}
+
+/* On a card the ระดับละเอียด line keeps its height while hidden, so a card in
+   view does not jump when the mode changes. */
+.plan__usage .usage-high[hidden] {
+  display: block !important;
+  visibility: hidden;
+}
+
+.usage-high {
+  display: block;
+  margin-top: 2px;
+  font-size: var(--fs-13);
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+
+/* With ระดับละเอียด picked, the headline is that count and the second line
+   the ordinary one, dimmed: the card and the readout never disagree. */
+.usage-high[data-cuts-precision="standard"] {
+  color: var(--ink-3);
+}
+
+.usage-setting {
+  margin-left: 8px;
+  padding: 1px 8px;
+  border: 1px solid var(--gold);
+  border-radius: 999px;
+  font-size: var(--fs-12);
+  color: var(--gold-ink);
+  white-space: nowrap;
+}
+
+.usage-setting[hidden] {
+  display: none;
+}
+
+.clip-note {
+  margin: -4px 0 0;
+  font-size: var(--fs-12);
+  line-height: 1.6;
+  color: var(--ink-3);
+}
+
+.clip-note--grid,
+.clip-note--group {
+  margin: 18px 0 0;
+  font-size: var(--fs-13);
+}
+
+.plan__blurb {
+  margin: 0;
+  font-size: var(--fs-15);
+  line-height: 1.7;
+  color: var(--ink-2);
+}
+
+.plan__features {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+  font-size: var(--fs-14);
+  line-height: 1.6;
+  color: var(--ink-2);
+}
+
+.plan__features li {
+  position: relative;
+  padding-left: 22px;
+}
+
+.plan__features li::before {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 0.62em;
+  width: 10px;
+  height: 6px;
+  border-left: 1.5px solid var(--gold);
+  border-bottom: 1.5px solid var(--gold);
+  rotate: -45deg;
+}
+
+.plan__foot {
+  margin-top: auto;
+  padding-top: 10px;
+}
+
+.price-more {
+  margin-top: 28px;
+  padding: 22px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: color-mix(in srgb, var(--panel) 55%, transparent);
+}
+
+.price-more__head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px 16px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.price-more__title {
+  margin: 0;
+  font-size: var(--fs-17);
+  font-weight: 600;
+}
+
+.price-more__note {
+  margin: 0;
+  font-size: var(--fs-14);
+  color: var(--ink-3);
+}
+
+.price-more__grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+@media (max-width: 760px) {
+  .price-more__grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.price-more__item {
+  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.price-more__plan {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* The count sits under the name on every card: a longer name ("Agency")
+   would push it to a second line on its own and drop that card's price
+   below the others'. */
+.price-more__name {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  font-size: var(--fs-16);
+  font-weight: 600;
+}
+
+.price-more__mult {
+  font-size: var(--fs-13);
+  font-weight: 400;
+  color: var(--gold-ink);
+}
+
+.price-more__high {
+  margin: 0;
+  font-size: var(--fs-13);
+  color: var(--ink-2);
+}
+
+.price-more__price {
+  margin-top: 4px;
+  font-size: var(--fs-16);
+}
+
+.price-more__price .price-strike {
+  font-size: 0.85em;
+  margin-right: 6px;
+}
+
+.price-more__blurb {
+  margin: 4px 0 0;
+  font-size: var(--fs-14);
+  color: var(--ink-3);
+}
+
+/* ── Comparison table (sticky header + first column, row/column hover) ──── */
+
+/* position: relative keeps absolutely positioned descendants (the price
+   strike's screen-reader label) inside the scroller instead of widening the
+   page on phones. */
+.cmp__scroll {
+  position: relative;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--panel);
+}
+
+/* Frame-wide, the plan columns equal (the first row sets the widths): the
+   table never runs past its rounded frame, and no plan column is narrower
+   than its neighbours. */
+.cmp__table {
+  width: 100%;
+  table-layout: fixed;
+  font-size: var(--fs-14);
+}
+
+.cmp__corner {
+  width: 210px;
+}
+
+/* The recommended plan's column, faintly tinted top to bottom. */
+.cmp__table .cmp__rec,
+.cmp__table thead .cmp__plan--recommended {
+  background-color: color-mix(in srgb, var(--color-accent) 6%, var(--panel));
+}
+
+.cmp__table th,
+.cmp__table td {
+  padding: 13px 14px;
+  border-bottom: 1px solid var(--line);
+  transition: background-color var(--dur-1) ease;
+}
+
+.cmp__table thead th {
+  position: sticky;
+  top: calc(var(--beta-h) + var(--header-top) + var(--header-h) + 22px);
+  z-index: 2;
+  background: color-mix(in srgb, var(--panel) 94%, transparent);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  font-size: var(--fs-15);
+  font-weight: 600;
+  color: var(--ink);
+  /* The header's rule is a shadow, not a border: a sticky cell's border stays
+     behind in a collapsed table, leaving the row without its line. */
+  border-bottom: 0;
+  box-shadow: inset 0 -1px 0 var(--line-2);
+}
+
+.cmp__table thead th:first-child {
+  border-top-left-radius: var(--r-lg);
+}
+
+.cmp__table thead th:last-child {
+  border-top-right-radius: var(--r-lg);
+}
+
+.cmp__plan--recommended {
+  color: var(--gold-ink) !important;
+  box-shadow: inset 0 -2px 0 var(--gold);
+}
+
+/* /pricing's calculator marks the plan that fits, down its whole column, and
+   the recommended column's tint gives way to it (one answer per page). */
+.cmp--live .cmp__table .cmp__rec:not([data-fit]),
+.cmp--live .cmp__table thead .cmp__plan--recommended:not([data-fit]) {
+  background-color: transparent;
+}
+
+.cmp--live .cmp__table thead .cmp__plan--recommended:not([data-fit]) {
+  color: var(--ink) !important;
+  box-shadow: inset 0 -1px 0 var(--line-2);
+}
+
+.cmp--live .cmp__table thead th.cmp__plan--recommended:not([data-fit]) {
+  background: color-mix(in srgb, var(--panel) 94%, transparent);
+}
+.cmp__table [data-plan-col][data-fit] {
+  background-color: color-mix(in srgb, var(--color-accent) 13%, var(--panel));
+}
+
+.cmp__table thead [data-plan-col][data-fit] {
+  color: var(--gold-ink);
+  box-shadow: inset 0 -3px 0 var(--gold);
+}
+
+.cmp__table tbody th[scope="row"] {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  min-width: 190px;
+  max-width: 260px;
+  background: var(--panel);
+  font-weight: 400;
+  line-height: 1.55;
+  border-right: 1px solid var(--line);
+}
+
+.cmp__corner {
+  left: 0;
+  z-index: 3 !important;
+  text-align: left;
+  border-right: 1px solid var(--line);
+}
+
+.cmp__price td {
+  font-size: var(--fs-16);
+  font-weight: 600;
+}
+
+.cmp__none {
+  color: var(--ink-3);
+}
+
+.cmp__table tbody tr:last-child > * {
+  border-bottom: 0;
+}
+
+/* The sticky cells paint over the frame's rounded corners unless they round too. */
+.cmp__table tbody tr:last-child > th[scope="row"] {
+  border-bottom-left-radius: var(--r-lg);
+}
+
+.cmp__table tbody tr:last-child > td:last-child {
+  border-bottom-right-radius: var(--r-lg);
+}
+
+/* Plan columns never shrink to a word per line. */
+.cmp__table td {
+  min-width: 88px;
+}
+
+/* Row under the pointer. */
+.cmp__table tbody tr:hover > * {
+  background-color: var(--gold-softer);
+}
+
+.cmp__table tbody tr:hover > th[scope="row"] {
+  background-color: color-mix(in srgb, var(--color-accent) 9%, var(--panel));
+}
+
+/* Column under the pointer (one rule per plan column). */
+.cmp__table:has(td:nth-child(2):hover) :is(td, th):nth-child(2),
+.cmp__table:has(td:nth-child(3):hover) :is(td, th):nth-child(3),
+.cmp__table:has(td:nth-child(4):hover) :is(td, th):nth-child(4),
+.cmp__table:has(td:nth-child(5):hover) :is(td, th):nth-child(5),
+.cmp__table:has(td:nth-child(6):hover) :is(td, th):nth-child(6),
+.cmp__table:has(td:nth-child(7):hover) :is(td, th):nth-child(7),
+.cmp__table:has(td:nth-child(8):hover) :is(td, th):nth-child(8) {
+  background-color: var(--gold-softer);
+}
+
+.cmp__table:has(td:nth-child(2):hover) thead th:nth-child(2),
+.cmp__table:has(td:nth-child(3):hover) thead th:nth-child(3),
+.cmp__table:has(td:nth-child(4):hover) thead th:nth-child(4),
+.cmp__table:has(td:nth-child(5):hover) thead th:nth-child(5),
+.cmp__table:has(td:nth-child(6):hover) thead th:nth-child(6),
+.cmp__table:has(td:nth-child(7):hover) thead th:nth-child(7),
+.cmp__table:has(td:nth-child(8):hover) thead th:nth-child(8) {
+  color: var(--gold-ink);
+  box-shadow: inset 0 -2px 0 var(--gold);
+}
+
+.table-note {
+  margin: 12px 0 0;
+  font-size: var(--fs-13);
+  line-height: 1.6;
+  color: var(--ink-3);
+}
+
+/* In a narrow column (the help guide) the table packs tighter so it fits
+   its frame without scrolling on wide screens. */
+.cmp {
+  container-type: inline-size;
+}
+
+@container (max-width: 860px) {
+  .cmp__table th,
+  .cmp__table td {
+    padding: 12px 10px;
+  }
+
+  .cmp__corner {
+    width: 170px;
+  }
+
+  .cmp__table td {
+    min-width: 74px;
+  }
+
+  .cmp__table tbody th[scope="row"] {
+    min-width: 140px;
+  }
+}
+
+@container (max-width: 720px) {
+  .cmp__table th,
+  .cmp__table td {
+    padding: 11px 8px;
+  }
+
+  .cmp__corner {
+    width: 140px;
+  }
+
+  .cmp__table td {
+    min-width: 68px;
+  }
+
+  .cmp__table tbody th[scope="row"] {
+    min-width: 124px;
+  }
+}
+
+.cmp__hint {
+  display: none;
+}
+
+@media (max-width: 1099px) {
+  .cmp__hint {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 6px;
+    margin: 0 0 10px;
+    font-size: var(--fs-13);
+    color: var(--ink-3);
+  }
+
+  /* The plans scroll sideways under a fixed label column, and the right edge
+     fades while there are more. Every row shows: no inner vertical scroll. */
+  .cmp__scroll {
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+  }
+
+  .cmp__table {
+    min-width: 760px;
+  }
+
+  .cmp__corner {
+    width: 150px;
+  }
+
+  .cmp__table thead th {
+    top: 0;
+  }
+
+  .cmp__table tbody th[scope="row"] {
+    min-width: 118px;
+    max-width: 150px;
+    font-size: var(--fs-13);
+  }
+
+  /* A phone: the labels get the width to keep their phrases whole
+     ("จำนวนคลิปต่อเดือน", "สลับช็อต และเรนเดอร์ซ้ำ"), not one word a line. */
+  @media (max-width: 480px) {
+    .cmp__table tbody th[scope="row"] {
+      min-width: 136px;
+      max-width: 136px;
+    }
+
+    .cmp__corner {
+      width: 136px;
+    }
+  }
+
+  @supports (animation-timeline: scroll()) {
+    .cmp__scroll {
+      -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - var(--cmp-fade)), transparent);
+      mask-image: linear-gradient(90deg, #000 calc(100% - var(--cmp-fade)), transparent);
+      animation: cmp-fade linear both;
+      animation-timeline: scroll(self inline);
+    }
+  }
+}
+
+/* 0 unless the table scrolls: a scroll timeline is only active on a box that
+   can scroll, so a table that fits never fades at its edge. */
+@property --cmp-fade {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+
+@keyframes cmp-fade {
+  0%,
+  92% {
+    --cmp-fade: 56px;
+  }
+  100% {
+    --cmp-fade: 0px;
+  }
+}
+
+.cmp__price .price-strike {
+  display: block;
+  font-size: 0.78em;
+  font-weight: 400;
+  line-height: 1.2;
+}
+.cmp__yes {
+  /* Inline, so the cell's centring reaches it (svg is display: block site-wide). */
+  display: inline-block;
+  color: var(--gold-ink);
+  vertical-align: middle;
+}
+
+/* In a guide's column the table scrolls at every width (it is wider than the
+   column even on a desktop): the hint and the edge fade go with it. */
+.article__extra .cmp__hint {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  margin: 0 0 10px;
+  font-size: var(--fs-13);
+  color: var(--ink-3);
+}
+
+.article__extra .cmp__scroll {
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+
+@supports (animation-timeline: scroll()) {
+  .article__extra .cmp__scroll {
+    -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - var(--cmp-fade)), transparent);
+    mask-image: linear-gradient(90deg, #000 calc(100% - var(--cmp-fade)), transparent);
+    animation: cmp-fade linear both;
+    animation-timeline: scroll(self inline);
+  }
+}

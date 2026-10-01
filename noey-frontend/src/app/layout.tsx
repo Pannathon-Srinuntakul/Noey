@@ -1,14 +1,20 @@
 import type { Metadata, Viewport } from "next";
 import { Noto_Sans_Thai } from "next/font/google";
+import { BetaBanner } from "@/components/beta/BetaBanner";
 import { BetaNotice } from "@/components/beta/BetaNotice";
 import { SiteFooter } from "@/components/SiteFooter";
 import { SiteHeader } from "@/components/header/SiteHeader";
+import { Atmosphere } from "@/components/shell/Atmosphere";
+import { MotionRuntime } from "@/components/shell/MotionRuntime";
+import { RouteTransition } from "@/components/shell/RouteTransition";
+import { betaNoticeCopy, shouldShowBetaBanner } from "@/lib/beta";
 import { PREPAINT_SCRIPT } from "@/lib/prepaint";
 import { catalogIsBetaPriced } from "@/lib/server/prices";
 import { SITE_VERIFICATION } from "@/lib/server/config";
 import { LOCALE, PAGES, SITE_NAME, SITE_URL } from "@/lib/site";
 import "./globals.css";
-import "./site.css";
+import "../styles/shell.css";
+import "../styles/components.css";
 
 // Self-hosted by next/font (no request to Google at runtime). Noto Sans Thai
 // is a variable font: one file per subset covers every weight the design uses
@@ -44,10 +50,13 @@ export const viewport: Viewport = {
 
 export default async function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   const betaPriced = await catalogIsBetaPriced();
+  // The beta strip is decided here, on the server, so it is part of the first
+  // paint (no layout shift); BetaNotice re-checks the date in the browser.
+  const betaStrip = shouldShowBetaBanner();
   return (
     // data-theme / data-auth are written by the pre-paint script before React
     // hydrates, hence suppressHydrationWarning on <html> only.
-    <html lang="th" className={notoSansThai.variable} suppressHydrationWarning>
+    <html lang="th" className={notoSansThai.variable} data-beta-banner={betaStrip ? "" : undefined} suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: PREPAINT_SCRIPT }} />
         <meta httpEquiv="content-language" content="th" />
@@ -60,13 +69,16 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
         <a className="skip-link" href="#main">
           ข้ามไปที่เนื้อหา
         </a>
-        {/* The beta disclosure: the modal on a first visit, then the pinned
-            strip. Both stop rendering by themselves once the beta ends, and
+        {/* The beta disclosure: the pinned strip, and the modal on a first
+            visit. Both stop rendering by themselves once the beta ends, and
             neither mentions a discount the live catalog is not charging. */}
+        {betaStrip ? <BetaBanner text={betaNoticeCopy(betaPriced).banner} /> : null}
         <BetaNotice betaPriced={betaPriced} />
         <SiteHeader />
-        {children}
+        <RouteTransition>{children}</RouteTransition>
         <SiteFooter />
+        <Atmosphere />
+        <MotionRuntime />
       </body>
     </html>
   );

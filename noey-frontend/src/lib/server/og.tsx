@@ -58,6 +58,30 @@ function Mark({ size, color, strokeWidth = 13 }: { size: number; color: string; 
   );
 }
 
+/**
+ * The site's timeline motif at the foot of the card: a ruler, one track of
+ * clips cut on the logo's diagonal, and the playhead. Shapes only (satori
+ * draws SVG text without the bundled fonts).
+ */
+function Timeline() {
+  const width = 1040;
+  const ticks = Array.from({ length: width / 20 + 1 }, (_, index) => index * 20);
+  return (
+    <svg width={width} height={70} viewBox={`0 0 ${width} 70`} fill="none">
+      <line x1="0" y1="14" x2={width} y2="14" stroke={BRAND.mutedOnDark} strokeOpacity="0.35" strokeWidth="1" />
+      {ticks.map((x) => (
+        <line key={x} x1={x} y1={x % 100 === 0 ? 2 : 8} x2={x} y2="14" stroke={BRAND.mutedOnDark} strokeOpacity="0.35" strokeWidth="1" />
+      ))}
+      <rect x="0" y="24" width={width} height="42" rx="8" fill={BRAND.ink} />
+      <polygon points="6,28 300,28 300,62 6,62" fill={BRAND.gold} fillOpacity="0.85" />
+      <polygon points="306,28 562,28 570,62 306,62" fill={BRAND.gold} fillOpacity="0.6" />
+      <polygon points="604,28 1034,28 1034,62 612,62" fill={BRAND.gold} fillOpacity="0.75" />
+      <line x1="704" y1="6" x2="704" y2="70" stroke={BRAND.offWhite} strokeWidth="2" />
+      <path d="M697 0 H711 V6 L704 12 L697 6 Z" fill={BRAND.offWhite} />
+    </svg>
+  );
+}
+
 export async function renderOgImage(copy: OgCopy): Promise<ImageResponse> {
   const fonts = await loadFonts();
   const host = new URL(SITE_URL).host;
@@ -81,27 +105,29 @@ export async function renderOgImage(copy: OgCopy): Promise<ImageResponse> {
           <div style={{ fontSize: 38, fontWeight: 500, letterSpacing: "-0.01em" }}>Noey Studio</div>
         </div>
         <div style={{ display: "flex", flexDirection: "column" }}>
-          <div style={{ fontSize: 26, fontWeight: 500, color: BRAND.gold, letterSpacing: "0.01em", marginBottom: 20 }}>
+          <div style={{ fontSize: 26, fontWeight: 500, color: BRAND.gold, marginBottom: 20 }}>
             {copy.eyebrow}
           </div>
-          <div style={{ fontSize: 66, fontWeight: 300, lineHeight: 1.35, maxWidth: 1020 }}>{copy.title}</div>
+          <div style={{ fontSize: 64, fontWeight: 500, lineHeight: 1.3, maxWidth: 1020 }}>{copy.title}</div>
           <div style={{ fontSize: 29, fontWeight: 300, lineHeight: 1.5, color: BRAND.mutedOnDark, marginTop: 22, maxWidth: 1000 }}>
             {copy.subtitle}
           </div>
         </div>
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            borderTop: "1px solid #35322d",
-            paddingTop: 20,
-            fontSize: 24,
-            fontWeight: 300,
-            color: BRAND.mutedOnDark,
-          }}
-        >
-          <div>{host}</div>
-          <div>ตัดคลิปด้วย AI</div>
+        <div style={{ display: "flex", flexDirection: "column" }}>
+          <Timeline />
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              paddingTop: 18,
+              fontSize: 24,
+              fontWeight: 300,
+              color: BRAND.mutedOnDark,
+            }}
+          >
+            <div>{host}</div>
+            <div>ตัดคลิปด้วย AI</div>
+          </div>
         </div>
       </div>
     ),

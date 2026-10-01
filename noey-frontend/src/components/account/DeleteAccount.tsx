@@ -5,6 +5,7 @@ import { deleteAccountAction, type DeleteAccountState } from "@/app/actions/acco
 import { formatBahtFromSatang } from "@/lib/google-auth";
 import { GoogleButton } from "../auth/GoogleButton";
 import { Dialog } from "../ui/Dialog";
+import { keepThai } from "../ds/ThaiText";
 
 /** What goes and what stays — kept in step with backend packages/auth/account_deletion.py. */
 function WhatHappens() {
@@ -12,21 +13,22 @@ function WhatHappens() {
     <div className="delete-summary">
       <h3>สิ่งที่จะถูกลบทันทีและกู้คืนไม่ได้</h3>
       <ul className="ruled-list">
-        <li>โปรเจกต์ทั้งหมดบนเซิร์ฟเวอร์ ทั้งไฟล์วิดีโอที่อัปโหลด ไฟล์ที่ตัดเสร็จแล้ว สคริปต์ และสไตล์ที่บันทึกไว้</li>
-        <li>ชื่อ อีเมล รหัสผ่าน และการเชื่อมต่อบัญชี Google (ถ้ามี) — อีเมลนี้จะใช้สมัครใหม่ได้</li>
-        <li>แพลนรายเดือนที่ยังใช้อยู่จะถูกยกเลิกทันที ไม่มีการคืนเงินตามสัดส่วนของรอบบิลที่เหลือ</li>
-        <li>ยอดเงินคงเหลือในกระเป๋า (ถ้ามี) จะหายไปทั้งหมด</li>
+        <li>{keepThai("โปรเจกต์ทั้งหมดบนเซิร์ฟเวอร์ ทั้งไฟล์วิดีโอที่อัปโหลด ไฟล์ที่ตัดเสร็จแล้ว สคริปต์ และสไตล์ที่บันทึกไว้")}</li>
+        <li>{keepThai("ชื่อ อีเมล รหัสผ่าน และการเชื่อมต่อบัญชี Google (ถ้ามี) — อีเมลนี้จะใช้สมัครใหม่ได้")}</li>
+        <li>{keepThai("แพลนรายเดือนที่ยังใช้อยู่จะถูกยกเลิกทันที ไม่มีการคืนเงินตามสัดส่วนของรอบบิลที่เหลือ")}</li>
+        <li>{keepThai("ยอดเงินคงเหลือในกระเป๋า (ถ้ามี) จะหายไปทั้งหมด")}</li>
       </ul>
       <h3>สิ่งที่เก็บไว้ตามกฎหมายบัญชีและภาษี</h3>
       <ul className="ruled-list">
         <li>
-          ประวัติการชำระเงิน ใบแจ้งหนี้ และตัวเลขการใช้งานที่ใช้คิดค่าบริการ เก็บไว้ 5 ปีตามประมวลรัษฎากรและ พ.ร.บ.การบัญชี
-          โดยไม่ผูกกับชื่อหรืออีเมลของคุณอีกต่อไป
+          {keepThai(
+            "ประวัติการชำระเงิน ใบแจ้งหนี้ และตัวเลขการใช้งานที่ใช้คิดค่าบริการ เก็บไว้ 5 ปีตามประมวลรัษฎากรและ พ.ร.บ.การบัญชี โดยไม่ผูกกับชื่อหรืออีเมลของคุณอีกต่อไป",
+          )}
         </li>
-        <li>บันทึกความปลอดภัยของระบบ และสำเนาสำรองข้อมูลที่จะหมดอายุไปเองตามรอบ</li>
+        <li>{keepThai("บันทึกความปลอดภัยของระบบ และสำเนาสำรองข้อมูลที่จะหมดอายุไปเองตามรอบ")}</li>
       </ul>
       <p className="fine">
-        ไฟล์ที่อยู่ในเครื่องของคุณเอง (ในเบราว์เซอร์ของห้องตัดต่อ หรือในแอปบนคอมพิวเตอร์) ระบบลบให้ไม่ได้ ลบเองได้จากเครื่องนั้น
+        {keepThai("ไฟล์ที่อยู่ในเครื่องของคุณเอง (ในเบราว์เซอร์ของห้องตัดต่อ) ระบบลบให้ไม่ได้ ลบเองได้จากเครื่องนั้น")}
       </p>
     </div>
   );
@@ -45,7 +47,7 @@ function Understand({ checked, onChange, error }: { checked: boolean; onChange: 
           onChange={(event) => onChange(event.target.checked)}
           aria-describedby={error ? "d-understand-error" : undefined}
         />
-        <span className="agree__text">ฉันเข้าใจว่าบัญชีและโปรเจกต์จะถูกลบถาวร และกู้คืนไม่ได้</span>
+        <span className="agree__text">{keepThai("ฉันเข้าใจว่าบัญชีและโปรเจกต์จะถูกลบถาวร และกู้คืนไม่ได้")}</span>
       </label>
       {error ? (
         <p className="field-error" id="d-understand-error">
@@ -95,7 +97,7 @@ export function DeleteAccount({
 
   return (
     <>
-      <button type="button" className="btn btn-danger" style={{ fontSize: 14 }} onClick={() => setOpen(true)}>
+      <button type="button" className="btn btn-danger" onClick={() => setOpen(true)}>
         ลบบัญชี…
       </button>
       <Dialog
@@ -103,6 +105,7 @@ export function DeleteAccount({
         onClose={() => setOpen(false)}
         title="ลบบัญชีถาวร"
         maxWidth={560}
+        className="dialog--danger"
         description={<p style={{ margin: 0 }}>อ่านให้ครบก่อนยืนยัน การลบบัญชีย้อนกลับไม่ได้</p>}
       >
         <WhatHappens />

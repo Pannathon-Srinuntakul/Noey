@@ -6,6 +6,7 @@ import { isPaidTier } from "@/lib/plans";
 import { SearchParam } from "../forms/SearchParam";
 import { TURNSTILE_SITE_KEY, TurnstileWidget } from "../forms/TurnstileWidget";
 import { GoogleButton } from "./GoogleButton";
+import "../../styles/parts/google.css";
 
 const CAPTCHA_CODES = new Set(["captcha_required", "captcha_failed"]);
 
@@ -23,49 +24,71 @@ const CAPTCHA_CODES = new Set(["captcha_required", "captcha_failed"]);
  */
 export function GoogleSignInForm({ from, agreed = true, enabled = true }: { from: GoogleFrom; agreed?: boolean; enabled?: boolean }) {
   const label = from === "signup" ? "สมัครด้วย Google" : "เข้าสู่ระบบด้วย Google";
-  return (
-    <SearchParam
-      name="google"
-      render={(code) => {
-        const message = googleMessage(code);
-        const needsCaptcha = !!code && CAPTCHA_CODES.has(code);
-        // Switched off since this page was built: still explain where the visitor came back from.
-        if (!enabled) {
+
+  // Switched off since this page was built: still explain where the visitor came back from.
+  if (!enabled) {
+    return (
+      <SearchParam
+        name="google"
+        render={(code) => {
+          const message = googleMessage(code);
           return message ? (
             <p className="form-error" role="alert" style={{ marginBottom: 16 }}>
               {message.text}
             </p>
           ) : null;
-        }
-        return (
-          <form method="post" action="/api/auth/google/start" className="google-signin">
-            <input type="hidden" name="intent" value="signin" />
-            <input type="hidden" name="from" value={from} />
-            {from === "signup" ? (
-              <>
-                <input type="hidden" name="agree" value={agreed ? "yes" : ""} />
-                <SearchParam name="plan" render={(plan) => <input type="hidden" name="plan" value={isPaidTier(plan) ? plan : ""} />} />
-              </>
-            ) : (
-              <SearchParam name="next" render={(next) => <input type="hidden" name="next" value={next ?? ""} />} />
-            )}
-            {message ? (
-              <p className={message.ok ? "form-success" : "form-error"} role={message.ok ? "status" : "alert"}>
-                {message.text}
-              </p>
-            ) : null}
-            {needsCaptcha ? <TurnstileWidget siteKey={TURNSTILE_SITE_KEY} /> : null}
-            <GoogleButton label={label} block disabled={!agreed} aria-describedby={from === "login" ? "google-new-account-note" : undefined} />
-            {from === "login" ? (
-              <p className="fine google-signin__note" id="google-new-account-note">
-                ถ้ายังไม่มีบัญชี ระบบจะสร้างบัญชีใหม่ให้ ซึ่งถือว่าคุณยอมรับ <Link href="/terms">เงื่อนไขการใช้งาน</Link> และ{" "}
-                <Link href="/privacy">นโยบายความเป็นส่วนตัว</Link>
-              </p>
-            ) : null}
-          </form>
-        );
-      }}
-    />
+        }}
+      />
+    );
+  }
+
+  // Only the parts that read the query string sit in SearchParam's client-side
+  // subtree; the button and the note are plain server HTML, so they paint with
+  // the page instead of being swapped in after hydration.
+  return (
+    <form method="post" action="/api/auth/google/start" className="google-signin">
+      <input type="hidden" name="intent" value="signin" />
+      <input type="hidden" name="from" value={from} />
+      {from === "signup" ? (
+        <>
+          <input type="hidden" name="agree" value={agreed ? "yes" : ""} />
+          <SearchParam name="plan" render={(plan) => <input type="hidden" name="plan" value={isPaidTier(plan) ? plan : ""} />} />
+        </>
+      ) : (
+        <SearchParam name="next" render={(next) => <input type="hidden" name="next" value={next ?? ""} />} />
+      )}
+      <SearchParam
+        name="google"
+        render={(code) => {
+          const message = googleMessage(code);
+          const needsCaptcha = !!code && CAPTCHA_CODES.has(code);
+          return (
+            <>
+              {message ? (
+                <p className={message.ok ? "form-success" : "form-error"} role={message.ok ? "status" : "alert"}>
+                  {message.text}
+                </p>
+              ) : null}
+              {needsCaptcha ? <TurnstileWidget siteKey={TURNSTILE_SITE_KEY} /> : null}
+            </>
+          );
+        }}
+      />
+      <GoogleButton label={label} block disabled={!agreed} aria-describedby={from === "login" ? "google-new-account-note" : undefined} />
+      {from === "login" ? (
+        <p className="fine google-signin__note" id="google-new-account-note">
+          {/* Read in passing: not prefetched while the form loads (as on SignupForm). */}
+          ถ้ายังไม่มีบัญชี ระบบจะสร้างบัญชีใหม่ให้ ซึ่งถือว่าคุณยอมรับ{" "}
+          <Link href="/terms" prefetch={false}>
+            เงื่อนไขการใช้งาน
+          </Link>{" "}
+          และ{" "}
+          <Link href="/privacy" prefetch={false}>
+            นโยบายความเป็นส่วนตัว
+          </Link>
+        </p>
+      ) : null}
+    </form>
   );
 }
 

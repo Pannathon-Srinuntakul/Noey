@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { CONTACT_LIMITS, HONEYPOT_FIELD, type ContactFieldErrors } from "@/lib/contact";
 import { MSG } from "@/lib/messages";
+import { keepThai } from "../ds/ThaiText";
 import { SearchParam } from "./SearchParam";
 import { TURNSTILE_SITE_KEY, TurnstileWidget } from "./TurnstileWidget";
 
@@ -10,6 +11,8 @@ type Outcome = "sent" | "invalid" | "rate-limited" | "unavailable" | "captcha" |
 type Status = { kind: "idle" } | { kind: "sending" } | { kind: "done"; outcome: Outcome; errors?: ContactFieldErrors };
 
 const FAILED = "ส่งข้อความไม่สำเร็จ ลองอีกครั้ง หรืออีเมลหาเราโดยตรงตามที่อยู่ด้านล่าง";
+/** Its first words ("ส่งข้อความแล้ว") are set on a line of their own. */
+const SENT = "ส่งข้อความแล้ว ขอบคุณที่ทักมา เราจะตอบกลับทางอีเมลที่ให้ไว้";
 
 function isOutcome(value: unknown): value is Outcome {
   return ["sent", "invalid", "rate-limited", "unavailable", "captcha", "error"].includes(String(value));
@@ -20,7 +23,7 @@ function OutcomeMessage({ outcome, contactEmail }: { outcome: Outcome; contactEm
     case "sent":
       return (
         <p className="form-success" role="status">
-          ส่งข้อความแล้ว ขอบคุณที่ทักมา เราจะตอบกลับทางอีเมลที่ให้ไว้
+          <strong>{SENT.slice(0, SENT.indexOf(" "))}</strong> {keepThai(SENT.slice(SENT.indexOf(" ") + 1))}
         </p>
       );
     case "invalid":
@@ -87,6 +90,33 @@ export function ContactForm({ contactEmail }: { contactEmail: string }) {
 
   const fieldErrors = status.kind === "done" ? (status.errors ?? {}) : {};
   const sending = status.kind === "sending";
+  const sent = status.kind === "done" && status.outcome === "sent";
+  const confirmation = useRef<HTMLDivElement>(null);
+
+  // The form gives way to the confirmation: move focus there, not to the page top.
+  useEffect(() => {
+    if (sent) confirmation.current?.focus();
+  }, [sent]);
+
+  if (sent) {
+    // Sent: an empty form under a gold button would invite sending it again.
+    return (
+      <div ref={confirmation} className="contact-sent" tabIndex={-1}>
+        <span className="contact-sent__meter" aria-hidden="true">
+          <span className="contact-sent__bar" />
+          <svg className="contact-sent__tick" viewBox="0 0 20 20" width="20" height="20" fill="none">
+            <circle cx="10" cy="10" r="9" />
+            <path d="M6 10.4 8.7 13 14 7.4" />
+          </svg>
+          <span className="tc">SENT</span>
+        </span>
+        <OutcomeMessage outcome="sent" contactEmail={contactEmail} />
+        <button type="button" className="btn btn-secondary" onClick={() => setStatus({ kind: "idle" })}>
+          ส่งอีกข้อความ
+        </button>
+      </div>
+    );
+  }
 
   return (
     <form action="/api/contact" method="post" onSubmit={onSubmit} className="stack" noValidate>
@@ -97,6 +127,7 @@ export function ContactForm({ contactEmail }: { contactEmail: string }) {
           name="name"
           className="input"
           type="text"
+          placeholder="ชื่อที่ให้เราเรียก"
           autoComplete="name"
           required
           maxLength={CONTACT_LIMITS.nameMax}

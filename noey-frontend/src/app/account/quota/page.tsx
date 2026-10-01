@@ -1,6 +1,9 @@
 import type { Metadata } from "next";
+import type { CSSProperties } from "react";
 import Link from "next/link";
 import { ResetClock } from "@/components/account/ResetClock";
+import { LevelMeter } from "@/components/ds/LevelMeter";
+import { keepThaiProse } from "@/components/ds/ThaiProse";
 import { formatBytes } from "@/lib/format";
 import { isTier, PLAN_COPY } from "@/lib/plans";
 import { privatePageMetadata } from "@/lib/seo";
@@ -17,7 +20,6 @@ const TASK_LABELS: Record<string, string> = {
   other: "งานอื่น ๆ",
 };
 
-const TONE_COLOR = { full: "var(--color-danger, #a33a34)", near: "var(--color-accent)", ok: undefined } as const;
 
 /*
  * Only real numbers from GET /usage/me (and /videos/storage) are rendered, and
@@ -34,7 +36,7 @@ export default async function QuotaPage() {
 
   if (!usage) {
     return (
-      <div className="notice" style={{ marginTop: 32 }} role="status">
+      <div className="notice" role="status">
         <p>ยังดึงข้อมูลโควตาไม่ได้ในตอนนี้ ลองรีเฟรชหน้านี้อีกครั้งในอีกสักครู่</p>
       </div>
     );
@@ -48,39 +50,29 @@ export default async function QuotaPage() {
   const pendingName = usage.pending_plan && isTier(usage.pending_plan.plan) ? PLAN_COPY[usage.pending_plan.plan].name : null;
 
   return (
-    <section className="account-grid" aria-label="โควตาและลิมิต">
+    <section className="account-grid acct-quota" aria-label="โควตาและลิมิต">
       <div className="card account-card">
         <div className="card-kicker">รอบปัจจุบัน</div>
         {usage.unlimited ? (
-          <p style={{ margin: "14px 0 22px", fontSize: 15 }}>บัญชีนี้ไม่จำกัดโควตางาน AI</p>
+          <p className="acct-quota__empty">บัญชีนี้ไม่จำกัดโควตางาน AI</p>
         ) : limits.length === 0 ? (
-          <p style={{ margin: "14px 0 22px", fontSize: 15 }}>ยังไม่มีข้อมูลโควตาของแพลนนี้</p>
+          <p className="acct-quota__empty">ยังไม่มีข้อมูลโควตาของแพลนนี้</p>
         ) : (
-          limits.map((limit, i) => {
+          limits.map((limit) => {
             const pct = clampPct(limit.used_pct);
-            const color = TONE_COLOR[limitTone(pct)];
+            const tone = limitTone(pct);
             const labelId = `limit-${limit.key}`;
             return (
-              <div key={limit.key}>
-                <div className="meter-row" style={i === 0 ? { marginTop: 14 } : undefined}>
+              <div key={limit.key} className="acct-quota__limit">
+                <div className="meter-row">
                   <span id={labelId}>{limitLabel(limit)}</span>
-                  <span className="num" style={color ? { color } : undefined}>
-                    ใช้ไป {Math.round(pct)}%
-                  </span>
+                  <span className={tone === "ok" ? "num" : `num num--${tone}`}>ใช้ไป {Math.round(pct)}%</span>
                 </div>
-                <div
-                  className="meter"
-                  role="progressbar"
-                  aria-labelledby={labelId}
-                  aria-valuemin={0}
-                  aria-valuemax={100}
-                  aria-valuenow={Math.round(pct)}
-                >
-                  <div className="meter__fill" style={{ width: `${pct}%`, ...(color ? { background: color } : {}) }} />
-                </div>
+                {/* An audio level meter (a real progress bar for assistive tech). */}
+                <LevelMeter value={pct} labelledBy={labelId} />
                 {neverResets(limit) ? (
                   <p className="meter-note">
-                    {spentCreditText(pct)} <Link href="/pricing">ดูแพลนทั้งหมด</Link>
+                    {keepThaiProse(spentCreditText(pct))} <Link href="/pricing">ดูแพลนทั้งหมด</Link>
                   </p>
                 ) : (
                   <p className="meter-note">
@@ -88,75 +80,84 @@ export default async function QuotaPage() {
                     {limit.active ? <ResetClock at={limit.resets_at} /> : null}
                   </p>
                 )}
+                {/* Near or at the limit (80%+): where more comes from, quietly. */}
+                {tone !== "ok" && !neverResets(limit) ? (
+                  <p className="acct-quota__more">
+                    ต้องการโควตาเพิ่ม <Link href="/account/billing">ดูแพลนและการชำระเงิน</Link>
+                  </p>
+                ) : null}
               </div>
             );
           })
         )}
 
         {storage ? (
-          <>
+          <div className="acct-quota__limit acct-quota__limit--storage">
             <div className="meter-row">
               <span id="storage-label">พื้นที่เก็บงาน</span>
               <span className="num">
                 {formatBytes(storage.used_bytes)} / {storage.quota_bytes > 0 ? formatBytes(storage.quota_bytes) : "ไม่จำกัด"}
               </span>
             </div>
-            {storagePct !== null ? (
-              <div
-                className="meter"
-                role="progressbar"
-                aria-labelledby="storage-label"
-                aria-valuemin={0}
-                aria-valuemax={100}
-                aria-valuenow={Math.round(storagePct)}
-              >
-                <div className="meter__fill" style={{ width: `${storagePct}%` }} />
-              </div>
-            ) : null}
-            <p className="meter-note">เก็บไว้ {storage.project_count} โปรเจกต์บนบัญชี</p>
-          </>
+            {storagePct !== null ? <LevelMeter value={storagePct} labelledBy="storage-label" /> : null}
+            <p className="meter-note">{keepThaiProse(`เก็บไว้ ${storage.project_count} โปรเจกต์บนบัญชี`)}</p>
+          </div>
         ) : null}
 
-        {usage.concurrency && usage.concurrency.max > 0 ? (
-          <p className="meter-note">ทำงาน AI พร้อมกันได้ {usage.concurrency.max} งาน</p>
-        ) : null}
         {walletBaht !== null ? (
           <p className="meter-note">
-            ยอดเงินเติมคงเหลือ ฿{walletBaht.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ·
-            ใช้ต่อได้เมื่อโควตาของแพลนหมด
+            {keepThaiProse(
+              `ยอดเงินเติมคงเหลือ ฿${walletBaht.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} · ใช้ต่อได้เมื่อโควตาของแพลนหมด`,
+            )}
           </p>
         ) : null}
-        {pendingName ? <p className="meter-note">เปลี่ยนเป็นแพลน {pendingName} เมื่อจบรอบบิลนี้</p> : null}
-        {note ? <p className="meter-note">{note}</p> : null}
+        {pendingName ? <p className="meter-note">{keepThaiProse(`เปลี่ยนเป็นแพลน ${pendingName} เมื่อจบรอบบิลนี้`)}</p> : null}
+        {note ? <p className="meter-note">{keepThaiProse(note)}</p> : null}
       </div>
 
       <div className="card account-card">
         <div className="card-kicker">งานที่ใช้โควตาในรอบนี้</div>
         {tasks.length > 0 ? (
-          <table className="table" style={{ marginTop: 14 }}>
-            <thead>
-              <tr>
-                <th scope="col">งาน</th>
-                <th scope="col" className="r">
-                  สัดส่วน
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {tasks.map((task) => (
-                <tr key={task.task}>
-                  <td>{TASK_LABELS[task.task] ?? task.task}</td>
-                  <td className="r num">{Math.round(task.pct)}%</td>
-                </tr>
+          <>
+            {/* The round's mix as one strip, its parts keyed to the rows below. */}
+            <div className="acct-mix" aria-hidden="true">
+              {tasks.map((task, index) => (
+                <span key={task.task} data-k={Math.min(index, 3)} style={{ flexGrow: Math.max(0.5, task.pct) } as CSSProperties} />
               ))}
-            </tbody>
-          </table>
+            </div>
+            <table className="table acct-tasks">
+              <thead>
+                <tr>
+                  <th scope="col">งาน</th>
+                  <th scope="col" className="r">
+                    สัดส่วน
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {tasks.map((task, index) => (
+                  <tr key={task.task}>
+                    <td>
+                      <span className="acct-mix__key" aria-hidden="true" data-k={Math.min(index, 3)} />
+                      {keepThaiProse(TASK_LABELS[task.task] ?? task.task)}
+                    </td>
+                    <td className="r num">{Math.round(task.pct)}%</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </>
         ) : (
-          <p style={{ margin: "14px 0 0", fontSize: 15, color: "var(--color-neutral-800)" }}>ยังไม่มีงานที่ใช้โควตาในรอบนี้</p>
+          <p className="acct-quota__empty">ยังไม่มีงานที่ใช้โควตาในรอบนี้</p>
         )}
-        <p className="meter-note" style={{ marginTop: 16 }}>
-          การแก้ไทม์ไลน์ การสลับช็อต และการเรนเดอร์ซ้ำ ไม่นับโควตา
-        </p>
+        {/* How many jobs may run at once sits with the jobs (this card), not
+            with the windows: the two cards then end level. */}
+        <div className="acct-tasks__foot">
+          {usage.concurrency && usage.concurrency.max > 0 ? (
+            <p className="meter-note">{keepThaiProse(`ทำงาน AI พร้อมกันได้ ${usage.concurrency.max} งาน`)}</p>
+          ) : null}
+          <p className="meter-note acct-tasks__note">{keepThaiProse("การแก้ไทม์ไลน์ การสลับช็อต และการเรนเดอร์ซ้ำ ไม่นับโควตา")}</p>
+        </div>
       </div>
     </section>
   );

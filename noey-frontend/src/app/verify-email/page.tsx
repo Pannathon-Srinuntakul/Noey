@@ -1,11 +1,14 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { ResendVerificationButton } from "@/components/account/VerifyEmail";
+import { ComputerOnly } from "@/components/ComputerOnly";
+import { StatusCard, type StatusTone } from "@/components/ds/StatusCard";
 import { MSG } from "@/lib/messages";
 import { tokenPageMetadata } from "@/lib/seo";
 import { apiRequest } from "@/lib/server/api";
 import { getMe, readSessionTokens } from "@/lib/server/session";
 import { EDITOR_OPEN_PATH } from "@/lib/editor-handoff";
+import { keepThaiProse } from "@/components/ds/ThaiProse";
 
 // Opened from the verification email: rendered per request and never cached,
 // noindex, disallowed in robots.txt, Referrer-Policy: no-referrer. The token
@@ -50,15 +53,19 @@ export default async function VerifyEmailPage({ searchParams }: { searchParams: 
     if (me.kind === "ok" && me.result.ok && me.result.data.email_verified === true) view = { kind: "already" };
   }
 
-  const accountLink = signedIn ? (
-    <Link href="/account" className="btn btn-secondary btn-lg">
-      บัญชีของฉัน
-    </Link>
-  ) : (
-    <Link href="/login?next=%2Faccount" className="btn btn-secondary btn-lg">
-      เข้าสู่ระบบ
-    </Link>
-  );
+  // The way back to the account: the main action when it is the only one,
+  // secondary beside "เปิดห้องตัดต่อ".
+  const accountLinkAs = (tone: "primary" | "secondary") =>
+    signedIn ? (
+      <Link href="/account" className={`btn btn-${tone} btn-lg`}>
+        บัญชีของฉัน
+      </Link>
+    ) : (
+      <Link href="/login?next=%2Faccount" className={`btn btn-${tone} btn-lg`}>
+        เข้าสู่ระบบ
+      </Link>
+    );
+  const accountLink = accountLinkAs("primary");
 
   let title: string;
   let body: React.ReactNode;
@@ -66,13 +73,17 @@ export default async function VerifyEmailPage({ searchParams }: { searchParams: 
   switch (view.kind) {
     case "verified":
       title = "ยืนยันอีเมลเรียบร้อย";
-      body = <>อีเมล {view.email ? <strong>{view.email}</strong> : null} ยืนยันแล้ว เริ่มใช้งาน AI ในห้องตัดต่อได้เลย</>;
+      body = (
+        <>
+          อีเมล {view.email ? <strong>{view.email}</strong> : null} {keepThaiProse("ยืนยันแล้ว เริ่มใช้งาน AI ในห้องตัดต่อได้เลย")}
+        </>
+      );
       actions = (
         <>
-          <a href={EDITOR_OPEN_PATH} className="btn btn-primary btn-lg">
+          <a href={EDITOR_OPEN_PATH} className="btn btn-primary btn-lg status__editor">
             เปิดห้องตัดต่อ
           </a>
-          {accountLink}
+          {accountLinkAs("secondary")}
         </>
       );
       break;
@@ -116,13 +127,22 @@ export default async function VerifyEmailPage({ searchParams }: { searchParams: 
   }
 
   const success = view.kind === "verified" || view.kind === "changed" || view.kind === "already";
+  // The emblem's render bar: full for done, cut for a failure, running while it is only a matter of waiting.
+  const tone: StatusTone = success ? "success" : view.kind === "rate-limited" ? "pending" : "danger";
   return (
-    <main id="main" className="container page">
-      <p className="eyebrow">ยืนยันอีเมล</p>
-      <h1 className="page-title">{title}</h1>
-      <div className="card status-card" role={success ? "status" : "alert"}>
-        <p>{body}</p>
-        <div className="button-row">{actions}</div>
+    <main id="main" className="status-page page-top">
+      <div className="wrap">
+        {/* After a confirmation the next step is the editor, which runs on a computer only. */}
+        <StatusCard
+          tone={tone}
+          eyebrow="ยืนยันอีเมล"
+          title={title}
+          role={success ? "status" : "alert"}
+          actions={actions}
+          footer={success ? <ComputerOnly /> : undefined}
+        >
+          <p>{typeof body === "string" ? keepThaiProse(body) : body}</p>
+        </StatusCard>
       </div>
     </main>
   );

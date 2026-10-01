@@ -1,0 +1,187 @@
+/*
+ * /changelog — the changes as a timeline: a rail down the left, a diamond cue
+ * per change with its date and kind, months as the rail's chapters.
+ */
+
+.changelog {
+  padding-bottom: var(--section-y);
+}
+
+/* A reading column, left-aligned under the hero's title. */
+.changelog__month,
+.changelog__feed {
+  max-width: 780px;
+}
+
+.changelog__month + .changelog__month {
+  margin-top: clamp(32px, 4vw, 48px);
+}
+
+.changelog__month-title {
+  margin: 0 0 18px;
+  font-size: var(--fs-h4);
+  font-weight: 600;
+  color: var(--gold-ink);
+}
+
+.changelog__list {
+  position: relative;
+  display: grid;
+  gap: 14px;
+  margin: 0;
+  padding: 0 0 0 32px;
+  list-style: none;
+}
+
+/* The rail. */
+.changelog__list::before {
+  content: "";
+  position: absolute;
+  left: 7px;
+  top: 10px;
+  bottom: 10px;
+  width: 1px;
+  background: var(--line-2);
+}
+
+.change {
+  position: relative;
+}
+
+.change__body {
+  padding: clamp(18px, 2.2vw, 24px);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: color-mix(in srgb, var(--panel) 86%, transparent);
+  box-shadow: var(--rim);
+  scroll-margin-top: calc(var(--beta-h) + var(--header-top) + var(--header-h) + 24px);
+}
+
+.change__body:target {
+  border-color: color-mix(in srgb, var(--color-accent) 55%, transparent);
+}
+
+.change__cue {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-bottom: 10px;
+}
+
+/* The cue on the rail, level with the date. */
+.change__dot {
+  position: absolute;
+  left: -30px;
+  top: calc(clamp(18px, 2.2vw, 24px) + 6px);
+  width: 11px;
+  height: 11px;
+  rotate: 45deg;
+  border: 2px solid var(--gold);
+  border-radius: 2px;
+  background: var(--bg);
+}
+
+/* Only the newest change gets the filled cue. */
+.changelog__month:first-child .change:first-child .change__dot {
+  background: var(--gold);
+  box-shadow: 0 0 0 4px var(--gold-soft);
+}
+
+.change__date {
+  font-size: var(--fs-13);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-2);
+}
+
+.change__kind {
+  display: inline-block;
+  padding: 2px 9px;
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  font-size: var(--fs-12);
+  font-weight: 500;
+  line-height: 1.6;
+  color: var(--ink-2);
+}
+
+.change__kind--feature {
+  border-color: color-mix(in srgb, var(--color-accent) 45%, transparent);
+  background: var(--gold-softer);
+  color: var(--gold-ink);
+}
+
+.change__kind--pricing {
+  border-color: color-mix(in srgb, var(--color-accent) 30%, transparent);
+  color: var(--gold-ink);
+}
+
+.change__title {
+  margin: 0 0 8px;
+  font-size: var(--fs-h4);
+  font-weight: 600;
+  line-height: 1.45;
+}
+
+.change__anchor {
+  color: inherit;
+  text-decoration: none;
+}
+
+.change__anchor:hover {
+  color: var(--gold-ink);
+}
+
+.change__text {
+  margin: 0 0 8px;
+  font-size: var(--fs-16);
+  font-weight: 400;
+  line-height: 1.8;
+  color: var(--ink-2);
+}
+
+.change__plans {
+  margin: 4px 0 0;
+  font-size: var(--fs-13);
+  font-weight: 400;
+  color: var(--ink-3);
+}
+
+.change__more {
+  margin: 10px 0 0;
+  font-size: var(--fs-14);
+}
+
+.change__more a {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--gold-ink);
+  font-weight: 500;
+}
+
+.changelog__feed {
+  margin: clamp(28px, 4vw, 40px) 0 0;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+  font-size: var(--fs-14);
+}
+
+.changelog__feed a {
+  color: var(--gold-ink);
+}
+
+@media (max-width: 560px) {
+  .changelog__list {
+    padding-left: 24px;
+  }
+
+  .changelog__list::before {
+    left: 5px;
+  }
+
+  .change__dot {
+    left: -24px;
+  }
+}

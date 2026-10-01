@@ -62,6 +62,7 @@ export type PageKey =
   | "login"
   | "terms"
   | "privacy"
+  | "changelog"
   | GuideKey;
 
 /**
@@ -126,7 +127,7 @@ export const PAGES: Record<PageKey, PageEntry> = {
     path: "/scope",
     title: "AI ตัดคลิปได้แค่ไหน ทำอะไรได้บ้าง | Noey Studio",
     description:
-      "Noey Studio ถอดเสียง คัดช็อต เรียงลำดับ และใส่ซับไทยเป็นร่างแรกให้ คุณเกลาจังหวะต่อในไทม์ไลน์ ดูว่างานแบบไหนเหมาะ และอะไรที่ระบบยังทำไม่ได้",
+      "Noey Studio ถอดเสียง คัดช็อต เรียงลำดับ และใส่ซับไทยเป็นดราฟต์แรกให้ คุณเกลาจังหวะต่อในไทม์ไลน์ ดูว่างานแบบไหนเหมาะ และอะไรที่ระบบยังทำไม่ได้",
     label: "ทำอะไรได้บ้าง",
     updated: "2026-09-23", published: "2026-09-21",
     indexable: true,
@@ -140,6 +141,16 @@ export const PAGES: Record<PageKey, PageEntry> = {
       "เทียบราคาทุกแพลนของ Noey Studio เครดิตทดลองฟรีเมื่อสมัคร และแพลนรายเดือน Lite ถึง Max ดูปริมาณการใช้งาน ความยาวฟุตเทจ และพื้นที่เก็บงาน",
     label: "ราคา",
     updated: "2026-10-01", published: "2026-09-21",
+    indexable: true,
+  },
+  changelog: {
+    path: "/changelog",
+    title: "มีอะไรใหม่ | Noey Studio",
+    description:
+      "ฟีเจอร์ใหม่ การปรับปรุง และการเปลี่ยนแปลงราคาของ Noey Studio เรียงจากล่าสุด พร้อมวันที่และแพลนที่ใช้ได้",
+    label: "มีอะไรใหม่",
+    // Move with the newest entry in lib/changelog.ts (unit-tested).
+    updated: "2026-10-01", published: "2026-10-01",
     indexable: true,
   },
   about: {

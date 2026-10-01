@@ -51,6 +51,10 @@ const nextConfig: NextConfig = {
   async headers() {
     return [
       { source: "/:path*", headers: securityHeaders },
+      // The mock-ups' footage: every URL carries ?v=<content hash> (sample.ts,
+      // written by scripts/render-footage/encode.mjs), so a file never changes
+      // under its URL.
+      { source: "/footage/:path*", headers: [{ key: "Cache-Control", value: "public, max-age=31536000, immutable" }] },
       // Static pages only: /account/* and /checkout/* get a per-request nonce
       // policy from src/proxy.ts instead (both headers would both be enforced).
       ...(isProduction

@@ -1,0 +1,364 @@
+/*
+ * Frames and motion for the smaller mock-ups: the how-it-works steps
+ * (StepMockup), the feature strips (MicroDemos) and the bento pictures
+ * (FeatureVisual). Motion runs only with motion allowed and pauses off
+ * screen (data-paused from MotionRuntime on the nearest [data-play]); every
+ * piece's settled state is its plain markup.
+ */
+
+/* ─── How-it-works steps ────────────────────────────────────────────────── */
+.amstep {
+  container: amstep / inline-size;
+  position: relative;
+  width: 100%;
+  margin: 0;
+  /* Room for the label above the frame (like the hero's). */
+  padding-top: 38px;
+}
+
+.amstep__frame {
+  position: relative;
+  aspect-ratio: var(--ratio, 4 / 3);
+  overflow: hidden;
+  border: 1px solid var(--line-2);
+  border-radius: 10px;
+  background: var(--bg);
+  box-shadow: var(--shadow-2), var(--rim);
+}
+
+.amstep__frame .am-view {
+  width: 100%;
+  height: 100%;
+  aspect-ratio: auto;
+}
+
+
+/* The label sits above the frame at the right, as over the hero's editor:
+   inside, it would cover the app's own title strip. */
+.amstep__tag {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 2;
+}
+
+/* ─── Feature strips ────────────────────────────────────────────────────── */
+.ammini {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  align-items: center;
+  overflow: hidden;
+  container-type: size;
+}
+
+/* The whole strip, as large as its box allows (height-fitted in a card's
+   short strip, width-fitted in a wider frame such as a guide's). */
+.ammini .am-view {
+  width: min(100cqw, 100cqh * var(--am-cw) / var(--am-ch));
+  flex: none;
+  border-radius: 4px;
+}
+
+/* A strip is cut from a lane that runs on: where the cut crosses a clip, the
+   lane fades out instead of ending in half a word. */
+.ammini--subs .am-view,
+.ammini--music .am-view,
+.ammini--convert .am-view,
+.ammini--frame .am-view {
+  -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 44px), transparent);
+  mask-image: linear-gradient(90deg, #000 calc(100% - 44px), transparent);
+}
+
+.ammini--trim .am-view,
+.ammini--swap .am-view {
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 28px, #000 calc(100% - 28px), transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 28px, #000 calc(100% - 28px), transparent);
+}
+
+/* ─── Bento pictures ────────────────────────────────────────────────────── */
+.fv--app {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  container-type: size;
+  background: var(--bg);
+}
+
+/* As large as the box allows at the crop's own aspect. */
+.fv--app .am-view {
+  width: min(100cqw, 100cqh * var(--am-cw) / var(--am-ch));
+  flex: none;
+}
+
+/* The radius of the frames it sits in (a card, a guide's picture frame):
+   a smaller one let the frame's rounded clip cut the window's corners. */
+.fv--browser {
+  position: relative;
+  margin: clamp(14px, 2.4vw, 28px);
+  overflow: hidden;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-2), var(--rim);
+}
+
+.fv__address {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 30px;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+  letter-spacing: 0.01em;
+  color: var(--ink-3);
+}
+
+/* ─── Motion ────────────────────────────────────────────────────────────── */
+@property --am-v {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 0.3;
+}
+
+@property --am-pct {
+  syntax: "<integer>";
+  inherits: true;
+  initial-value: 30;
+}
+
+.am-volume {
+  counter-reset: am-pct var(--am-pct);
+}
+
+.am-volume::after {
+  content: counter(am-pct) "%";
+}
+
+.am-range--drag {
+  --v: var(--am-v);
+}
+
+.am-readout {
+  opacity: 0;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  [data-play]:not([data-paused]) .am-sweep,
+  [data-play]:not([data-paused]) .am-run {
+    animation: am-sweep var(--run, 14.58s) linear infinite;
+  }
+
+  .ammini--music .am-view {
+    animation: am-volume 4.4s linear infinite;
+  }
+
+  .am-trim {
+    animation: am-trim 4.4s cubic-bezier(0.2, 0, 0, 1) infinite;
+  }
+
+  .am-readout {
+    animation: am-readout 4.4s linear infinite;
+  }
+
+  [data-am="shot"] > .am-swap__a {
+    visibility: visible;
+    animation: am-hide-half 5s step-end infinite;
+  }
+
+  [data-am="shot"] > .am-swap__b {
+    animation: am-show-half 5s step-end infinite;
+  }
+
+  [data-am="tick"] > .am-swap__a {
+    visibility: visible;
+    animation: am-hide-late 4s step-end infinite;
+  }
+
+  [data-am="tick"] > .am-swap__b {
+    animation: am-show-late 4s step-end infinite;
+  }
+
+  .am-steps .am-count__n,
+  .am-steps .am-count__n:last-child {
+    visibility: hidden;
+    animation: am-slot 5s step-end calc(var(--k) * 1s) infinite;
+  }
+
+  .am-cycle [data-am-line] {
+    animation: am-line 14.5s step-end calc(var(--k) * 2.9s) infinite;
+  }
+
+  [data-paused] .ammini *,
+  [data-paused] .ammini,
+  [data-paused] .fv * {
+    animation-play-state: paused !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .am-cycle [data-am-line="1"] {
+    background: color-mix(in srgb, var(--gold) 12%, transparent);
+    font-weight: 600;
+    color: var(--gold-ink);
+  }
+}
+
+@keyframes am-sweep {
+  from {
+    transform: translateX(var(--x0));
+  }
+  to {
+    transform: translateX(var(--x1));
+  }
+}
+
+@keyframes am-volume {
+  0%,
+  15% {
+    --am-v: 0.3;
+    --am-pct: 30;
+    animation-timing-function: steps(5, jump-end);
+  }
+  45%,
+  65% {
+    --am-v: 0.55;
+    --am-pct: 55;
+    animation-timing-function: steps(5, jump-end);
+  }
+  95%,
+  100% {
+    --am-v: 0.3;
+    --am-pct: 30;
+  }
+}
+
+@keyframes am-trim {
+  0%,
+  22% {
+    width: var(--w0);
+  }
+  52%,
+  80% {
+    width: var(--w1);
+  }
+  96%,
+  100% {
+    width: var(--w0);
+  }
+}
+
+@keyframes am-readout {
+  0%,
+  22% {
+    opacity: 0;
+  }
+  25%,
+  78% {
+    opacity: 1;
+  }
+  82%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes am-hide-half {
+  50% {
+    visibility: hidden;
+  }
+}
+
+@keyframes am-show-half {
+  0% {
+    visibility: hidden;
+  }
+  50% {
+    visibility: visible;
+  }
+}
+
+@keyframes am-hide-late {
+  30% {
+    visibility: hidden;
+  }
+}
+
+@keyframes am-show-late {
+  0% {
+    visibility: hidden;
+  }
+  30% {
+    visibility: visible;
+  }
+}
+
+@keyframes am-slot {
+  0% {
+    visibility: visible;
+  }
+  20%,
+  100% {
+    visibility: hidden;
+  }
+}
+
+@keyframes am-line {
+  0% {
+    background: color-mix(in srgb, var(--gold) 12%, transparent);
+    font-weight: 600;
+    color: var(--gold-ink);
+  }
+  20%,
+  100% {
+    background: transparent;
+    font-weight: 400;
+    color: color-mix(in srgb, var(--ink) 50%, var(--ink-2));
+  }
+}
+
+/* ─── The quota card on the pricing page ─────────────────────────────────── */
+/* The card's gold edge is drawn here, at screen resolution, not inside the
+   scaled window: scaled, the 1px line went faint and uneven, and the
+   window's rounded clip cut it away at every corner. The window fills the
+   card exactly (412 × 346, the card's own size), so this edge is the card's. */
+.amusage {
+  display: block;
+  overflow: hidden;
+  border: 1px solid var(--gold);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: var(--rim);
+}
+
+.amusage .am-view,
+.amusage .am {
+  background: transparent;
+}
+
+.amusage .am-view {
+  width: 100%;
+}
+
+.amusage .am section {
+  border-color: transparent;
+}
+
+/* A phone: the card is laid out at 320px — its rows are fluid, so it reflows
+   the way the app's narrow settings page does — instead of a 412px card
+   shrunk to three quarters, with its 13px lines at about 10px. 320 is the
+   narrowest width at which nothing in it wraps (measured). */
+@media (max-width: 560px) {
+  .amusage .am-view {
+    --am-w: 320 !important;
+  }
+
+  .amusage .am {
+    width: 320px !important;
+  }
+}

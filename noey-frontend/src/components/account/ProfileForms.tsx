@@ -1,9 +1,13 @@
 "use client";
 
-import { useActionState, useEffect, useRef } from "react";
+import { useActionState, useEffect, useRef, useState } from "react";
 import { changeEmailAction, changePasswordAction, updateProfileAction } from "@/app/actions/account";
 import { notifyAuthChanged } from "@/lib/client/auth-hint";
 import type { ActionState } from "@/lib/messages";
+import { keepThai } from "../ds/ThaiText";
+
+/** A form turns its submit gold once something in it was edited (account.css). */
+const markDirty = (event: React.FormEvent<HTMLFormElement>) => event.currentTarget.setAttribute("data-dirty", "");
 
 function Feedback({ state }: { state: ActionState | undefined }) {
   return (
@@ -33,7 +37,7 @@ export function ProfileForm({ name }: { name: string }) {
   }, [state]);
 
   return (
-    <form action={action} className="stack" style={{ marginTop: 14 }}>
+    <form action={action} className="stack acct-form acct-form--edit acct-form--inline" onInput={markDirty}>
       <div className="field">
         <label htmlFor="a-name">ชื่อ</label>
         <input
@@ -50,7 +54,7 @@ export function ProfileForm({ name }: { name: string }) {
         />
         {errors.name ? <p className="field-error" id="a-name-error">{errors.name}</p> : null}
       </div>
-      <button type="submit" className="btn btn-primary" style={{ fontSize: 14, alignSelf: "flex-start" }} disabled={pending}>
+      <button type="submit" className="btn btn-primary acct-form__submit" disabled={pending}>
         {pending ? "กำลังบันทึก…" : "บันทึกการแก้ไข"}
       </button>
       <Feedback state={state} />
@@ -66,7 +70,7 @@ export function EmailForm({ email }: { email: string }) {
   const [state, action, pending] = useActionState<ActionState | undefined, FormData>(changeEmailAction, undefined);
   const errors = state?.fieldErrors ?? {};
   return (
-    <form action={action} className="stack" style={{ marginTop: 16 }}>
+    <form action={action} className="stack acct-form acct-form--edit" onInput={markDirty}>
       <input type="hidden" name="current_email" value={email} />
       <div className="field">
         <label htmlFor="a-email">อีเมล</label>
@@ -84,24 +88,34 @@ export function EmailForm({ email }: { email: string }) {
         {errors.new_email ? (
           <p className="field-error" id="a-email-error">{errors.new_email}</p>
         ) : (
-          <p className="field-hint" id="a-email-hint">เปลี่ยนอีเมลแล้ว เราจะส่งลิงก์ยืนยันไปที่อีเมลใหม่ก่อนใช้งานจริง</p>
+          <p className="field-hint" id="a-email-hint">
+            {keepThai("เปลี่ยนอีเมลแล้ว เราจะส่งลิงก์ยืนยันไปที่อีเมลใหม่ก่อนใช้งานจริง")}
+          </p>
         )}
       </div>
       <div className="field">
-        <label htmlFor="a-email-pass">รหัสผ่านปัจจุบัน</label>
+        {/* Its own name and autocomplete section: the password form below asks
+            for the same password, and the two must not read (or fill) as one. */}
+        <label htmlFor="a-email-pass">ยืนยันด้วยรหัสผ่าน</label>
         <input
           id="a-email-pass"
           name="current_password"
           className="input"
           type="password"
-          autoComplete="current-password"
+          autoComplete="section-email current-password"
           required
           aria-invalid={errors.current_password ? true : undefined}
-          aria-describedby={errors.current_password ? "a-email-pass-error" : undefined}
+          aria-describedby={errors.current_password ? "a-email-pass-error" : "a-email-pass-hint"}
         />
-        {errors.current_password ? <p className="field-error" id="a-email-pass-error">{errors.current_password}</p> : null}
+        {errors.current_password ? (
+          <p className="field-error" id="a-email-pass-error">{errors.current_password}</p>
+        ) : (
+          <p className="field-hint" id="a-email-pass-hint">
+            {keepThai("ใส่รหัสผ่านเพื่อยืนยันการเปลี่ยนอีเมล")}
+          </p>
+        )}
       </div>
-      <button type="submit" className="btn btn-secondary" style={{ fontSize: 14, alignSelf: "flex-start" }} disabled={pending}>
+      <button type="submit" className="btn btn-primary acct-form__submit" disabled={pending}>
         {pending ? "กำลังส่ง…" : "เปลี่ยนอีเมล"}
       </button>
       <Feedback state={state} />
@@ -111,21 +125,22 @@ export function EmailForm({ email }: { email: string }) {
 
 export function PasswordForm() {
   const [state, action, pending] = useActionState<ActionState | undefined, FormData>(changePasswordAction, undefined);
+  const [length, setLength] = useState(0);
   const formRef = useRef<HTMLFormElement>(null);
   const errors = state?.fieldErrors ?? {};
 
   return (
-    <form ref={formRef} action={action} className="stack" style={{ marginTop: 14 }}>
+    <form ref={formRef} action={action} className="stack acct-form acct-form--edit" onInput={markDirty}>
       {/* Lets password managers attach the change to the right account. */}
       <input type="text" name="username" autoComplete="username" hidden readOnly />
       <div className="field">
-        <label htmlFor="a-old">รหัสผ่านเดิม</label>
+        <label htmlFor="a-old">รหัสผ่านปัจจุบัน</label>
         <input
           id="a-old"
           name="current_password"
           className="input"
           type="password"
-          autoComplete="current-password"
+          autoComplete="section-password current-password"
           required
           aria-invalid={errors.current_password ? true : undefined}
           aria-describedby={errors.current_password ? "a-old-error" : undefined}
@@ -139,16 +154,30 @@ export function PasswordForm() {
           name="new_password"
           className="input"
           type="password"
-          placeholder="อย่างน้อย 8 ตัวอักษร"
-          autoComplete="new-password"
+          autoComplete="section-password new-password"
           minLength={8}
           required
+          onInput={(event) => setLength(event.currentTarget.value.length)}
           aria-invalid={errors.new_password ? true : undefined}
-          aria-describedby={errors.new_password ? "a-new-error" : undefined}
+          aria-describedby={errors.new_password ? "a-new-error" : "a-new-hint"}
         />
-        {errors.new_password ? <p className="field-error" id="a-new-error">{errors.new_password}</p> : null}
+        {/* A level meter for the one rule there is: eight segments, one per
+            character up to the minimum, gold once it is met. Decoration. */}
+        <span className={length >= 8 ? "pw-meter pw-meter--ok" : "pw-meter"} aria-hidden="true">
+          {Array.from({ length: 8 }, (_, index) => (
+            <i key={index} data-lit={index < length ? "" : undefined} />
+          ))}
+        </span>
+        {/* The rule stays in sight while typing (a placeholder goes away). */}
+        {errors.new_password ? (
+          <p className="field-error" id="a-new-error">{errors.new_password}</p>
+        ) : (
+          <p className="field-hint" id="a-new-hint">
+            อย่างน้อย 8 ตัวอักษร
+          </p>
+        )}
       </div>
-      <button type="submit" className="btn btn-primary" style={{ fontSize: 14, alignSelf: "flex-start" }} disabled={pending}>
+      <button type="submit" className="btn btn-primary acct-form__submit" disabled={pending}>
         {pending ? "กำลังเปลี่ยน…" : "เปลี่ยนรหัสผ่าน"}
       </button>
       <Feedback state={state} />

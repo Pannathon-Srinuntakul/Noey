@@ -1,0 +1,1487 @@
+/*
+ * The account area, drawn as one editor panel: the greeting above it, panel
+ * tabs along its top edge, and each tab's cards as sub-panels with a title
+ * strip. Quota bars are audio level meters (LevelMeter). Logic lives in the
+ * pages and components; this file only lays them out.
+ */
+
+.acct-page {
+  padding-bottom: clamp(64px, 8vw, 112px);
+}
+
+.acct-page.page-top {
+  padding-top: calc(var(--beta-h) + var(--header-top) + var(--header-h) + clamp(32px, 5vw, 64px));
+}
+
+.acct-page__head {
+  display: grid;
+  gap: 10px;
+  max-width: 760px;
+  margin-bottom: clamp(24px, 3vw, 36px);
+}
+
+.acct-page__eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  font-size: var(--fs-13);
+  font-weight: 500;
+  color: var(--gold-ink);
+}
+
+.acct-page__eyebrow::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  rotate: 45deg;
+  border-radius: 2px;
+  background: var(--gold);
+}
+
+.acct-page__title {
+  font-size: clamp(1.875rem, 1.4rem + 1.8vw, 2.75rem);
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.012em;
+}
+
+.acct-page__lead {
+  max-width: 44em;
+  margin: 0;
+  font-size: var(--fs-16);
+  line-height: 1.8;
+  color: var(--ink-2);
+}
+
+.verify-banner {
+  margin-bottom: 20px;
+}
+
+.verify-banner__hint {
+  font-size: var(--fs-13);
+  color: var(--ink-3);
+}
+
+.verify-banner__action {
+  margin-top: 10px;
+}
+
+/* ── The panel and its tabs ─────────────────────────────────────────────── */
+
+.acct-page__panel {
+  --acct-body: color-mix(in srgb, var(--panel) 45%, var(--bg));
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--acct-body);
+  box-shadow: var(--shadow-2), var(--rim);
+  overflow: clip;
+}
+
+.tabs {
+  position: relative;
+  display: flex;
+  gap: 4px;
+  /* The first tab's edge lines up with the cards' edge below. */
+  padding: 8px clamp(16px, 2.4vw, 28px) 0;
+  scroll-padding-inline: clamp(16px, 2.4vw, 28px);
+  scroll-snap-type: x proximity;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--color-text) 4%, transparent);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.tabs::-webkit-scrollbar {
+  display: none;
+}
+
+/* Narrower than the four tabs, the strip scrolls sideways (the current tab is
+   scrolled into view); the fading edge says there are more. Phones get the
+   four-up control below instead. */
+@media (max-width: 760px) and (min-width: 481px) {
+  .tabs {
+    -webkit-mask-image: linear-gradient(90deg, var(--ink) 86%, transparent);
+    mask-image: linear-gradient(90deg, var(--ink) 86%, transparent);
+  }
+}
+
+.tabs a {
+  position: relative;
+  scroll-snap-align: start;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  margin-bottom: -1px;
+  padding: 10px 16px 12px;
+  border: 1px solid transparent;
+  border-bottom: 0;
+  border-radius: 10px 10px 0 0;
+  font-size: var(--fs-14);
+  font-weight: 500;
+  line-height: 1.5;
+  color: var(--ink-2);
+  text-decoration: none;
+  white-space: nowrap;
+  transition:
+    color var(--dur-2) ease,
+    background-color var(--dur-2) ease;
+}
+
+.tabs a:hover {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--color-text) 5%, transparent);
+}
+
+.tabs a[aria-current="page"] {
+  border-color: var(--line);
+  background: var(--acct-body);
+  color: var(--ink);
+}
+
+/* The selected tab carries a gold edge, like the active panel in the editor. */
+.tabs a[aria-current="page"]::before {
+  content: "";
+  position: absolute;
+  top: -1px;
+  left: 12px;
+  right: 12px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--gold);
+}
+
+.tabs__icon {
+  flex: none;
+  color: var(--ink-3);
+}
+
+/* A tab's short name, for the phone control. */
+.tabs__short {
+  display: none;
+}
+
+@media (max-width: 560px) {
+  .tabs a {
+    padding: 10px 12px 12px;
+  }
+}
+
+/* Phones: all four tabs at once, an icon over a short name — no strip to
+   scroll, no name cut at the edge. */
+@media (max-width: 480px) {
+  .tabs {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 2px;
+    padding: 6px 6px 0;
+    overflow: visible;
+  }
+
+  .tabs a {
+    flex-direction: column;
+    justify-content: center;
+    gap: 3px;
+    min-height: 56px;
+    padding: 8px 4px 9px;
+    font-size: var(--fs-13);
+    line-height: 1.35;
+    text-align: center;
+  }
+
+  .tabs a[aria-current="page"]::before {
+    left: 10px;
+    right: 10px;
+  }
+
+  .tabs__label {
+    display: none;
+  }
+
+  .tabs__short {
+    display: inline;
+  }
+}
+
+.tabs a[aria-current="page"] .tabs__icon {
+  color: var(--gold-ink);
+}
+
+.acct-page__body {
+  display: grid;
+  gap: 20px;
+  padding: clamp(16px, 2.4vw, 28px);
+}
+
+/* Phones: a panel inside a panel left a narrow column for text — the outer
+   frame's padding gives way to the cards' own. */
+@media (max-width: 560px) {
+  .acct-page__body {
+    gap: 12px;
+    padding: 8px;
+  }
+}
+
+/* ── Cards as sub-panels ────────────────────────────────────────────────── */
+
+.account-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+  gap: 20px;
+}
+
+/* Side by side, the sub-panels are one height. Each is a column whose last
+   part (its actions, its foot note, its last section) sits on the bottom
+   edge, so the two cards end on one line and the shorter one has no empty
+   block under its content. */
+.acct-billing .button-row,
+.acct-billing .account-card > :is(.inline-form, .acct-pay__btn),
+.acct-quota .account-card > .acct-quota__limit + .meter-note,
+.acct-quota .account-card > .acct-tasks__foot,
+.acct-profile .account-card:nth-child(2) > .card-section:last-child {
+  margin-top: auto;
+}
+
+/* Two columns and the danger block under both. With auto-fit, a full-width
+   row keeps an empty third track alive on wide screens. */
+.acct-profile {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+@media (max-width: 759px) {
+  .acct-profile {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.account-card {
+  --pad: clamp(18px, 2.2vw, 26px);
+  gap: 14px;
+  padding: 0 var(--pad) var(--pad);
+  overflow: hidden;
+}
+
+@media (max-width: 560px) {
+  .account-card {
+    --pad: 16px;
+  }
+}
+
+/* The card's kicker becomes the sub-panel's title strip. */
+.account-card > .card-kicker:first-child {
+  margin: 0 calc(var(--pad) * -1) 4px;
+  padding: 11px var(--pad);
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--color-text) 3%, transparent);
+  color: var(--ink-2);
+}
+
+/* Each sub-panel is a track: its strip carries a track label (A1, A2 …). */
+.account-grid {
+  counter-reset: acct-track;
+}
+
+.account-card {
+  counter-increment: acct-track;
+}
+
+.account-card > .card-kicker:first-child::before {
+  content: "A" counter(acct-track);
+  display: inline-grid;
+  place-items: center;
+  min-width: 26px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 5px;
+  background: var(--gold-soft);
+  color: var(--gold-ink);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  font-variant-numeric: tabular-nums;
+}
+
+.account-card h2 {
+  font-size: clamp(1.25rem, 1.1rem + 0.5vw, 1.5rem);
+  font-weight: 600;
+  line-height: 1.45;
+}
+
+/* A panel's title strip can be the card's heading (the profile tab's two
+   cards, whose sections are h3) and keep the strip's own type. */
+.account-card > h2.card-kicker {
+  font-family: inherit;
+  font-size: var(--fs-13);
+  font-weight: 500;
+  line-height: inherit;
+  letter-spacing: inherit;
+  text-wrap: wrap;
+}
+
+.account-card > p {
+  margin: 0;
+  font-size: var(--fs-15);
+  line-height: 1.8;
+  color: var(--ink-2);
+}
+
+.account-card .kv {
+  margin-top: 0;
+}
+
+.inline-form {
+  margin: 0;
+}
+
+.button-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.button-row form {
+  margin: 0;
+}
+
+/* ── ห้องตัดต่อ: the hero card ──────────────────────────────────────────── */
+
+.acct-home {
+  grid-template-columns: minmax(0, 1.75fr) minmax(280px, 1fr);
+}
+
+/* Below 1200px the editor card takes the panel's width and the summary sits
+   under it, its three rows side by side when there is room: beside a
+   narrowed editor card the summary was a column with a hole under it. */
+@media (max-width: 1199px) {
+  .acct-home {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.acct-hero {
+  container-type: inline-size;
+  border-color: color-mix(in srgb, var(--color-accent) 40%, var(--line));
+  background:
+    radial-gradient(120% 90% at 100% 0%, var(--gold-soft), transparent 55%),
+    var(--panel);
+}
+
+.acct-hero__main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(160px, 0.62fr);
+  gap: clamp(20px, 3vw, 40px);
+  align-items: center;
+  padding-block: 6px 4px;
+}
+
+.acct-hero__copy {
+  display: grid;
+  gap: 14px;
+  justify-items: start;
+}
+
+.acct-hero h2 {
+  font-size: clamp(1.5rem, 1.2rem + 1.2vw, 2.125rem);
+  line-height: 1.35;
+}
+
+.acct-hero__copy p {
+  max-width: 40em;
+  margin: 0;
+  font-size: var(--fs-16);
+  line-height: 1.85;
+  color: var(--ink-2);
+}
+
+.acct-hero__open {
+  margin-top: 6px;
+  min-width: 220px;
+}
+
+.acct-hero__art {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: 18px;
+  padding: 18px 0;
+  color: var(--gold);
+}
+
+.acct-hero__glow {
+  position: absolute;
+  inset: -10% 0 auto;
+  height: 90%;
+  background: radial-gradient(closest-side, var(--gold-soft), transparent);
+}
+
+.acct-hero__mark {
+  position: relative;
+  filter: drop-shadow(0 8px 24px var(--gold-glow));
+}
+
+.acct-hero__track {
+  position: relative;
+  width: 100%;
+  height: 40px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--well);
+}
+
+.acct-hero__wave {
+  height: 100%;
+}
+
+/* One bar pitch at every width: a waveform drawn for each width the lane
+   takes (stretched, a single one turned to blocks on a wide lane). */
+.acct-hero__wave--long,
+.acct-hero__wave--mid {
+  display: none;
+}
+
+.acct-hero__head {
+  position: absolute;
+  top: -5px;
+  bottom: -5px;
+  left: 30%;
+  width: 2px;
+  background: var(--gold);
+  box-shadow: 0 0 10px var(--gold-glow);
+}
+
+.acct-hero__head::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -4px;
+  border: 5px solid transparent;
+  border-top: 7px solid var(--gold);
+  border-bottom: 0;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .acct-hero__head {
+    animation: acct-head 9s linear infinite;
+  }
+}
+
+@keyframes acct-head {
+  from {
+    left: 4%;
+  }
+  to {
+    left: 96%;
+  }
+}
+
+/* The mark and its glow only when the card itself has the room (not the
+   viewport); a narrow card keeps the waveform and its playhead as a strip
+   under the copy. */
+@container (max-width: 640px) {
+  .acct-hero__main {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .acct-hero__art {
+    padding: 4px 0 0;
+  }
+
+  .acct-hero__glow,
+  .acct-hero__mark {
+    display: none;
+  }
+
+  .acct-hero__wave--short {
+    display: none;
+  }
+
+  .acct-hero__wave--long {
+    display: block;
+  }
+}
+
+/* A phone-width card: no waveform left alone under the button — the copy
+   and the computer-only note are the card. */
+@container (max-width: 420px) {
+  .acct-hero__art {
+    display: none;
+  }
+}
+
+/* On a phone or a tablet the editor's button steps back to an outline under
+   the computer-only note: it opens an editor this device cannot run. */
+@media (max-width: 767px), (pointer: coarse) {
+  .acct-hero .computer-only {
+    margin: 2px 0 0;
+  }
+
+  .acct-hero .btn.acct-hero__open {
+    --btn-bg: color-mix(in srgb, var(--panel) 70%, transparent);
+    --btn-ink: var(--ink);
+    --btn-line: var(--gold);
+    --btn-handle: var(--gold);
+    font-weight: 500;
+    box-shadow: none;
+  }
+
+  .acct-hero .btn.acct-hero__open:hover {
+    --btn-bg: var(--gold-softer);
+  }
+}
+
+.acct-summary .kv dd {
+  font-weight: 500;
+  color: var(--ink);
+}
+
+/* The numbers in the quota tab's colours: gold, then its warning colours
+   (limitTone: 80% near, 95% full) — the same number printed the same way. */
+.acct-summary .kv dd.num {
+  color: var(--gold-ink);
+}
+
+.acct-summary .kv dd.num--near {
+  color: color-mix(in srgb, var(--color-danger) 70%, var(--color-accent));
+}
+
+.acct-summary .kv dd.num--full {
+  color: var(--danger);
+}
+
+.acct-summary {
+  container-type: inline-size;
+}
+
+.acct-summary__rows > div {
+  position: relative;
+  isolation: isolate;
+  flex-wrap: wrap;
+  row-gap: 10px;
+}
+
+/* The whole row opens its tab (one tab stop: the value's link, stretched
+   over the row), and lights up under the pointer. */
+.acct-summary__rows > div:has(.acct-summary__link)::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: 3px -10px;
+  border-radius: 10px;
+  transition: background-color var(--dur-2) ease;
+}
+
+.acct-summary__rows > div:has(.acct-summary__link:hover)::before {
+  background: color-mix(in srgb, var(--color-text) 5%, transparent);
+}
+
+.acct-summary__rows > div:has(.acct-summary__link:focus-visible)::before {
+  outline: 2px solid var(--gold);
+}
+
+.acct-summary__link::after {
+  content: "";
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+}
+
+.acct-summary__link:focus-visible {
+  outline: none;
+}
+
+/* A summary as wide as the panel: the three rows side by side. */
+@container (min-width: 620px) {
+  .acct-summary__rows {
+    flex-direction: row;
+  }
+
+  .acct-summary__rows > div {
+    flex: 1 1 0;
+    align-content: flex-start;
+    padding: 6px 0;
+    border-bottom: 0;
+  }
+
+  .acct-summary__rows > div + div {
+    margin-left: 22px;
+    padding-left: 22px;
+    border-left: 1px solid var(--line);
+  }
+
+  .acct-summary__rows > div + div:has(.acct-summary__link)::before {
+    inset: 3px -10px 3px 12px;
+  }
+}
+
+.acct-summary__link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: inherit;
+  text-decoration: none;
+}
+
+.acct-summary__link svg {
+  color: var(--ink-3);
+  transition: translate var(--dur-2) var(--ease-out), color var(--dur-2) ease;
+}
+
+.acct-summary__link:hover {
+  color: var(--gold-ink);
+}
+
+.acct-summary__link:hover svg {
+  color: var(--gold-ink);
+  translate: 2px 0;
+}
+
+.acct-summary .acct-summary__meter {
+  flex-basis: 100%;
+  height: 10px;
+  padding: 2px;
+}
+
+/* The plan's renewal under its name: the cell carries a second line, as the
+   two cells beside it carry their meters. */
+.acct-summary .kv dd.acct-summary__sub {
+  flex-basis: 100%;
+  margin: 0;
+  text-align: start;
+  font-size: var(--fs-13);
+  font-weight: 400;
+  line-height: 1.6;
+  color: var(--ink-3);
+}
+
+.acct-summary .kv dd.acct-summary__warn,
+.acct-summary__warn {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: var(--fs-13);
+  font-weight: 400;
+  line-height: 1.6;
+  text-align: start;
+  color: var(--danger);
+}
+
+/* ── โควตาและลิมิต ──────────────────────────────────────────────────────── */
+
+.acct-quota__limit {
+  display: grid;
+  gap: 8px;
+}
+
+/* A rule between two rows, never under the last one. */
+.acct-quota__limit + .acct-quota__limit {
+  padding-top: 14px;
+  border-top: 1px dashed var(--line);
+}
+
+/* Near or at the limit: where more quota comes from, said quietly. */
+.acct-quota__more {
+  margin: 0;
+  font-size: var(--fs-13);
+  font-weight: 400;
+  line-height: 1.6;
+}
+
+.acct-quota__more a {
+  color: var(--gold-ink);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--color-accent) 50%, transparent);
+  text-underline-offset: 3px;
+}
+
+.acct-quota__limit .meter-row {
+  margin-bottom: 0;
+}
+
+.acct-quota__limit .meter-note {
+  margin-top: 0;
+}
+
+.acct-quota__empty {
+  margin: 0;
+  font-size: var(--fs-15);
+  color: var(--ink-2);
+}
+
+.meter-row .num.num--near,
+.num--near {
+  color: color-mix(in srgb, var(--color-danger) 70%, var(--color-accent));
+}
+
+.meter-row .num.num--full,
+.num--full {
+  color: var(--danger);
+}
+
+/* The round's mix: one strip split by task, keyed to the rows by a swatch.
+   Each part is a step the eye tells apart in both themes, however small:
+   solid gold, gold pulled toward the ink (darker in light, paler in dark),
+   gold hatching, then plain grey. */
+.acct-mix {
+  display: flex;
+  gap: 3px;
+  height: 12px;
+  margin: 2px 0 4px;
+}
+
+.acct-mix > span,
+.acct-mix__key {
+  border-radius: 3px;
+  background: var(--line-3);
+}
+
+.acct-mix > [data-k="0"],
+.acct-mix__key[data-k="0"] {
+  background: var(--gold);
+}
+
+.acct-mix > [data-k="1"],
+.acct-mix__key[data-k="1"] {
+  background: color-mix(in srgb, var(--gold) 50%, var(--ink));
+}
+
+.acct-mix > [data-k="2"],
+.acct-mix__key[data-k="2"] {
+  background: repeating-linear-gradient(135deg, var(--gold) 0 2px, transparent 2px 5px);
+  box-shadow: inset 0 0 0 1px var(--gold);
+}
+
+.acct-mix > span {
+  flex-basis: 0;
+  min-width: 6px;
+}
+
+.acct-mix__key {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-inline-end: 10px;
+  vertical-align: -0.05em;
+}
+
+/* The table lines up with the card's edges; the note sits at its foot. */
+.acct-tasks :is(th, td):first-child {
+  padding-left: 0;
+}
+
+.acct-tasks :is(th, td):last-child {
+  padding-right: 0;
+}
+
+.acct-tasks__foot {
+  display: grid;
+  gap: 6px;
+  padding-top: 4px;
+}
+
+.acct-tasks__foot .meter-note {
+  margin: 0;
+  font-size: var(--fs-13);
+  line-height: 1.6;
+  color: var(--ink-3);
+}
+
+/* A note for the whole card (not one meter's): the quiet size. */
+.account-card > .meter-note {
+  margin: 0;
+  font-size: var(--fs-13);
+  line-height: 1.6;
+  color: var(--ink-3);
+}
+
+/* ── แพลนและการชำระเงิน ─────────────────────────────────────────────────── */
+
+/* Two cards side by side only from 1200px; under that each takes the
+   panel's width (beside each other at 1024 the plan card ran 180px past the
+   payment card). */
+.acct-billing {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+@media (max-width: 1199px) {
+  .acct-billing {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* The plan card: its plan, price and clips, then its features — side by side
+   when the card is wide enough for both. */
+.acct-plan {
+  container-type: inline-size;
+}
+
+.plan-body,
+.plan-main {
+  display: grid;
+  gap: 14px;
+}
+
+@container (min-width: 480px) {
+  .plan-body {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+    align-items: start;
+    column-gap: 28px;
+  }
+
+  .plan-body > .plan-features {
+    margin: 4px 0 0;
+    padding-left: 24px;
+    border-left: 1px dashed var(--line-2);
+  }
+}
+
+/* The plan's head: its reel number, as on /pricing's card, then its name. */
+.plan-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.plan-name {
+  font-size: clamp(1.375rem, 1.2rem + 0.6vw, 1.625rem);
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--ink);
+}
+
+/* The plan's price under its name, drawn as /pricing's cards draw it: the
+   number large, the regular price struck through before it during the beta. */
+.plan-price {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 8px;
+  margin: -8px 0 0;
+}
+
+.plan-price__value {
+  font-size: clamp(2.25rem, 1.8rem + 1.2vw, 2.875rem);
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+}
+
+.plan-price__unit {
+  font-size: var(--fs-14);
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+
+.plan-price .price-strike {
+  font-size: var(--fs-18);
+}
+
+.plan-price__beta {
+  align-self: center;
+}
+
+/* The plan's clips, as /pricing's card states them: the approximate count,
+   then its basis. */
+.plan-usage {
+  display: grid;
+  gap: 2px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--line-2);
+}
+
+.plan-usage__line {
+  margin: 0;
+  font-size: var(--fs-14);
+  line-height: 1.6;
+  color: var(--ink-3);
+}
+
+.plan-usage__count {
+  font-size: var(--fs-20);
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--gold-ink);
+}
+
+.plan-usage__basis {
+  margin: 0;
+  font-size: var(--fs-12);
+  font-weight: 400;
+  line-height: 1.6;
+  color: var(--ink-3);
+}
+
+/* Pro and up: the count at ระดับละเอียด, under the ordinary one (as /pricing's cards). */
+.plan-usage__high {
+  margin: 0;
+  font-size: var(--fs-13);
+  font-weight: 400;
+  line-height: 1.6;
+  color: var(--ink-2);
+}
+
+/* ── This billing cycle, as a clip on a lane (BillingPanel) ─────────────── */
+
+.acct-cycle {
+  display: grid;
+  gap: 8px;
+  padding-bottom: 4px;
+}
+
+.acct-cycle__top {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 4px 12px;
+  font-size: var(--fs-14);
+}
+
+.acct-cycle__title {
+  color: var(--ink-2);
+}
+
+.acct-cycle__left {
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.acct-cycle__lane {
+  --cycle: 0;
+  position: relative;
+  height: 16px;
+  margin-top: 22px;
+  border: 1px solid var(--line-2);
+  border-radius: 5px;
+  background: var(--well);
+}
+
+/* A tick at every tenth, drawn over the fill too (a ruler under the whole
+   lane): one tile a tenth wide, repeated — a repeating gradient with
+   percentage stops dropped a tick at some widths. */
+.acct-cycle__lane::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
+  background: linear-gradient(90deg, transparent calc(100% - 1px), color-mix(in srgb, var(--color-text) 16%, transparent) calc(100% - 1px)) 0 0 / 10% 100% repeat-x;
+  pointer-events: none;
+}
+
+.acct-cycle__fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: calc(var(--cycle) * 100%);
+  border-radius: 4px 0 0 4px;
+  background: color-mix(in srgb, var(--gold) 60%, var(--panel));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--gold) 80%, transparent);
+}
+
+/* Today: the playhead, its cap on top and its name over the cap. */
+.acct-cycle__head {
+  position: absolute;
+  z-index: 2;
+  top: -9px;
+  bottom: -5px;
+  left: calc(var(--cycle) * 100%);
+  width: 2px;
+  margin-left: -1px;
+  border-radius: 1px;
+  background: var(--gold);
+  box-shadow: 0 0 8px var(--gold-glow);
+}
+
+.acct-cycle__head::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -4px;
+  border: 5px solid transparent;
+  border-top: 7px solid var(--gold);
+  border-bottom: 0;
+}
+
+/* Its name rides with it, kept inside the lane's ends (at the start it reads
+   to the right of the playhead, at the end to the left). */
+.acct-cycle__today {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 1px;
+  translate: calc(var(--cycle) * -100%) 0;
+  font-size: var(--fs-12);
+  font-weight: 600;
+  line-height: 1;
+  color: var(--gold-ink);
+  white-space: nowrap;
+}
+
+.acct-cycle__ends {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: var(--fs-12);
+  font-weight: 400;
+  color: var(--ink-3);
+}
+
+.plan-status {
+  margin: -4px 0 0;
+  font-size: var(--fs-14);
+  line-height: 1.7;
+  color: var(--ink-2);
+}
+
+.plan-status--warn {
+  color: var(--danger);
+}
+
+.plan-features {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 6px;
+  padding: 0;
+  list-style: none;
+}
+
+.plan-features li {
+  position: relative;
+  padding-left: 26px;
+  font-size: var(--fs-15);
+  line-height: 1.7;
+  color: var(--ink-2);
+}
+
+.plan-features .fact {
+  display: inline-block;
+}
+
+.plan-features li::before {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 0.45em;
+  width: 11px;
+  height: 6px;
+  border-left: 2px solid var(--gold);
+  border-bottom: 2px solid var(--gold);
+  rotate: -45deg;
+}
+
+.acct-pay__note {
+  margin: -4px 0 0;
+  font-size: var(--fs-13);
+  line-height: 1.6;
+  color: var(--ink-3);
+}
+
+.acct-pay__btn {
+  /* Sized to its label like the card's other actions; as a direct child of
+     the card's column it would stretch across it. */
+  align-self: flex-start;
+  justify-self: start;
+}
+
+/* The plan picker in the dialog: each plan is a selectable clip. */
+.plan-options {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.plan-option {
+  width: 100%;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--panel);
+  transition:
+    border-color var(--dur-2) ease,
+    background-color var(--dur-2) ease;
+}
+
+.plan-option:hover {
+  border-color: var(--line-3);
+}
+
+.plan-option:has(input:checked) {
+  border-color: var(--gold);
+  background: var(--gold-softer);
+  box-shadow: inset 3px 0 0 var(--gold);
+}
+
+.plan-option:has(input:disabled) {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+/* The plan you are on stays readable: marked, not faded. */
+.plan-option--current,
+.plan-option--current:has(input:disabled) {
+  opacity: 1;
+  border-style: dashed;
+  background: transparent;
+}
+
+.plan-option .dot {
+  margin-top: 5px;
+}
+
+.plan-option__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.plan-option__name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.plan-option__price {
+  white-space: nowrap;
+}
+
+/* The same three facts on every row, each whole: rows of facts, no "·" left
+   at the end of a line. */
+.plan-option__specs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 16px;
+  font-size: var(--fs-13);
+  line-height: 1.65;
+  color: var(--ink-3);
+}
+
+.plan-option__spec {
+  white-space: nowrap;
+}
+
+/* The beta terms over the picker: on a phone the price line takes a line of
+   its own, so no "·" is left at a line's end. */
+@media (max-width: 480px) {
+  .beta-note--compact .beta-note__lead {
+    display: block;
+  }
+
+  .beta-note--compact .beta-note__sep {
+    display: none;
+  }
+}
+
+.plan-option .price-strike {
+  margin-right: 6px;
+  font-size: 0.86em;
+  font-weight: 400;
+  color: var(--ink-3);
+}
+
+.dialog-actions--tight {
+  margin-top: 4px;
+}
+
+/* ── ข้อมูลส่วนตัว ──────────────────────────────────────────────────────── */
+
+.acct-form {
+  margin-top: 2px;
+}
+
+.acct-form--tight {
+  margin-top: 0;
+}
+
+.acct-form__submit {
+  align-self: flex-start;
+}
+
+/* A one-field form (the name) with its button beside the field when the card
+   has the room: the card is one row shorter. */
+.acct-profile .account-card {
+  container-type: inline-size;
+}
+
+@container (min-width: 380px) {
+  .acct-form--inline {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: end;
+    gap: 12px;
+  }
+
+  .acct-form--inline > :not(.field, .acct-form__submit) {
+    grid-column: 1 / -1;
+  }
+
+  /* Level with the field's box, not its label, and as tall as it. */
+  .acct-form--inline > .acct-form__submit {
+    align-self: end;
+    min-height: 48px;
+  }
+}
+
+.acct-form__line {
+  margin: 0;
+  font-size: var(--fs-14);
+  line-height: 1.75;
+  color: var(--ink-2);
+}
+
+.field-hint--flush {
+  margin: 0;
+}
+
+/* A titled part of a card, set off by a rule. */
+.card-section {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+
+.card-section h3 {
+  font-size: var(--fs-15);
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--ink);
+}
+
+/* The one place on the site drawn in the danger colour. */
+.danger-zone {
+  margin-top: 12px;
+  padding: 16px 18px 18px;
+  border: 1px solid color-mix(in srgb, var(--color-danger) 35%, transparent);
+  border-radius: var(--r-md);
+  background: var(--danger-soft);
+}
+
+.danger-zone > h3 {
+  color: var(--danger);
+}
+
+.danger-zone > p {
+  margin: 0;
+  font-size: var(--fs-14);
+  line-height: 1.75;
+  color: var(--ink-2);
+}
+
+.danger-zone__action {
+  margin-top: 6px;
+}
+
+/* As its own full-width block at the end of the profile tab. */
+.acct-danger {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px 28px;
+  margin-top: 0;
+  padding: clamp(18px, 2.2vw, 24px) clamp(18px, 2.2vw, 26px);
+  border-color: color-mix(in srgb, var(--color-danger) 35%, transparent);
+  background: var(--danger-soft);
+}
+
+.acct-danger h3 {
+  margin-bottom: 4px;
+  font-size: var(--fs-16);
+  font-weight: 600;
+  color: var(--danger);
+}
+
+.acct-danger p {
+  margin: 0;
+  max-width: 820px;
+  font-size: var(--fs-14);
+  line-height: 1.75;
+  color: var(--ink-2);
+}
+
+.acct-danger .danger-zone__action {
+  margin: 0;
+}
+
+@media (max-width: 639px) {
+  .acct-danger {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* What deleting the account removes and keeps (inside its dialog). */
+.delete-summary h3 {
+  margin: 16px 0 8px;
+  font-size: var(--fs-14);
+  font-weight: 600;
+  line-height: 1.6;
+  color: var(--ink);
+}
+
+.delete-summary h3:first-child {
+  color: var(--danger);
+}
+
+.ruled-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ruled-list li {
+  position: relative;
+  padding: 9px 0 9px 20px;
+  border-bottom: 1px solid var(--line);
+  font-size: var(--fs-14);
+  line-height: 1.7;
+  color: var(--ink-2);
+}
+
+.ruled-list li:last-child {
+  border-bottom: 0;
+}
+
+.ruled-list li::before {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 1.05em;
+  width: 7px;
+  height: 7px;
+  rotate: 45deg;
+  border-radius: 1.5px;
+  background: var(--gold);
+}
+
+/* The closing note: an aside to the two lists, set quieter than them, with
+   a rule beside it instead of reading like a third heading. */
+.delete-summary .fine {
+  margin-top: 14px;
+  padding-left: 12px;
+  border-left: 2px solid var(--line-2);
+  font-size: var(--fs-13);
+  font-weight: 400;
+  line-height: 1.75;
+  color: var(--ink-3);
+  text-wrap: pretty;
+}
+
+.delete-summary .ruled-list:first-of-type li::before {
+  background: var(--danger);
+}
+
+/* Settings forms: a submit is drawn as the site's secondary button while its
+   form still has an empty required field, or nothing in it was edited yet
+   (ProfileForms marks data-dirty), and turns gold once there is something to
+   send — the tab is not a row of gold buttons, and has two button styles, not
+   three. */
+form:has(:invalid) .acct-form__submit.btn-primary,
+form.acct-form--edit:not([data-dirty]) .acct-form__submit.btn-primary {
+  --btn-bg: color-mix(in srgb, var(--panel) 70%, transparent);
+  --btn-ink: var(--ink);
+  --btn-line: var(--line-2);
+  --btn-handle: var(--gold);
+  font-weight: 500;
+  box-shadow: none;
+}
+
+form:has(:invalid) .acct-form__submit.btn-primary:hover,
+form.acct-form--edit:not([data-dirty]) .acct-form__submit.btn-primary:hover {
+  --btn-line: var(--gold);
+  --btn-bg: var(--gold-softer);
+}
+
+/* Google's button at the height of the account's other buttons (44px): the
+   same pill and proportions, a little more padding. */
+.acct-page .gsi-button {
+  height: 44px;
+  padding-inline: 16px;
+  border-radius: 22px;
+}
+
+/* The delete dialog's password field is a plain empty field until it has
+   been used: the light theme's field fill is a warm grey that, inside the
+   red-edged dialog, read as an error. It turns red only once a typed value
+   is wrong (:user-invalid) or the server says so (aria-invalid). */
+.dialog--danger .input {
+  background: color-mix(in srgb, var(--color-text) 3%, var(--bg));
+}
+
+.dialog--danger .input:user-invalid {
+  border-color: var(--danger);
+}
+
+/* ── The header's account menu, on an account page ──────────────────────── */
+
+/* The tab being viewed is marked (AccountMenuLinks sets aria-current). Its
+   rules live here: the menu only links to these pages. */
+.acct__menu a[aria-current="page"] {
+  position: relative;
+  background: var(--gold-softer);
+  font-weight: 500;
+}
+
+.acct__menu a[aria-current="page"]::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 9px;
+  bottom: 9px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--gold);
+}
+
+.acct__menu a[aria-current="page"] svg {
+  color: var(--gold-ink);
+}
+
+/* A block's own heading at the top of a card (the password block), set as
+   the card's other block headings. */
+.acct-subhead {
+  font-size: var(--fs-15);
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--ink);
+}
+
+/* The new password's level meter: one segment per character up to the
+   minimum of eight, gold once the rule is met. */
+.pw-meter {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 3px;
+  margin-top: 8px;
+  max-width: 220px;
+}
+
+.pw-meter i {
+  height: 4px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--color-text) 10%, transparent);
+  transition: background-color var(--dur-2) ease;
+}
+
+.pw-meter i[data-lit] {
+  background: var(--ink-3);
+}
+
+.pw-meter--ok i[data-lit] {
+  background: var(--gold);
+}
+
+/* Quota A1 beside a taller A2: the card hugs its rows instead of stretching
+   to A2's height, so no hole opens inside it. */
+.acct-quota .account-card:has(> .acct-quota__limit--storage) {
+  align-self: start;
+}

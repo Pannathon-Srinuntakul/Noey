@@ -1,0 +1,1354 @@
+/*
+ * /pricing. Signature: the plan rail with the clips-per-month picker, prices
+ * that count up as they arrive, level-meter quota bars, and a comparison
+ * table that holds its header and first column.
+ */
+
+.pricing-page .phero__lead {
+  display: grid;
+  gap: 14px;
+}
+
+.pricing-page .phero__lead p {
+  margin: 0;
+}
+
+.pricing-answer {
+  max-width: 62ch;
+  margin: 0;
+  color: var(--ink);
+}
+
+.pricing-answer + .pricing-answer {
+  margin-top: 0.7em;
+}
+
+.pricing-muted {
+  font-size: var(--fs-16);
+  color: var(--ink-3);
+}
+
+/* Wide screens: the title on the left, the one-paragraph answer beside it,
+   so the plans start within the first screen. */
+@media (min-width: 1100px) {
+  .phero--pricing .phero__copy {
+    grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+    grid-template-areas:
+      "crumb crumb"
+      "title lead"
+      "meta lead";
+    column-gap: clamp(40px, 6vw, 96px);
+    align-items: start;
+  }
+
+  .phero--pricing .phero__crumb {
+    grid-area: crumb;
+  }
+
+  .phero--pricing .phero__copy h1 {
+    grid-area: title;
+  }
+
+  .phero--pricing .phero__lead {
+    grid-area: lead;
+    padding-top: 0.6em;
+  }
+
+  .phero--pricing .phero__meta {
+    grid-area: meta;
+  }
+}
+
+/* The comparison section carries the two notes that explain the table. */
+.compare .sec-head__intro {
+  display: grid;
+  gap: 12px;
+}
+
+/* ── Plans: picker + rail ───────────────────────────────────────────────── */
+
+.pricing-plans {
+  padding-bottom: clamp(56px, 7vw, 104px);
+}
+
+.plan-rail {
+  display: grid;
+  gap: 18px;
+}
+
+/* The calculator: the choices (mode, length, setting), the answer, the cost
+   note, the clips picker, its caveats — one grid whose areas move with the
+   width. Phones: one column, the answer right under the picker it answers.
+   From 900px: the answer sits beside the length and the setting. */
+.plan-rail__bar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "modes" "length" "track" "fine" "note" "picker" "answer" "caveats";
+  gap: 16px;
+  padding: clamp(18px, 2.4vw, 26px);
+  border: 1px solid var(--line);
+  border-radius: var(--r-xl);
+  background:
+    radial-gradient(60% 120% at 0% 0%, var(--gold-softer), transparent 70%),
+    var(--panel);
+  box-shadow: var(--rim);
+}
+
+.plan-rail__nav {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-bottom: -8px;
+}
+
+.mode-pick {
+  grid-area: modes;
+}
+
+.cliplen {
+  grid-area: length;
+}
+
+.rail-setup__fine {
+  grid-area: fine;
+}
+
+.rail-answer {
+  grid-area: answer;
+}
+
+.rail-setup__note {
+  grid-area: note;
+}
+
+.picker {
+  grid-area: picker;
+}
+
+.picker__caveats {
+  grid-area: caveats;
+}
+
+@media (min-width: 600px) {
+  .plan-rail__bar {
+    grid-template-columns: minmax(0, 1fr) max-content;
+    grid-template-areas: "modes modes" "length fine" "track track" "note note" "picker picker" "answer answer" "caveats caveats";
+    column-gap: 44px;
+  }
+}
+
+@media (min-width: 900px) {
+  .plan-rail__bar {
+    grid-template-columns: minmax(0, 1fr) max-content max-content;
+    grid-template-areas: "modes modes modes" "length fine answer" "track track track" "note note note" "picker picker picker" "caveats caveats caveats";
+  }
+
+}
+
+/* Before the page's script runs (or without it) the controls are drawn but
+   disabled, and look it: nothing seems live while it is dead. */
+.plan-rail__bar[data-idle] :is(.mode-pick__options, .cliplen__row, .cliptrack, .seg__options, .picker__track) {
+  opacity: 0.55;
+}
+
+/* The three notes differ in length; the box holds the longest, so switching
+   modes moves nothing below it. */
+.rail-setup__note {
+  /* Lines plus the padding and rule below them (border-box). */
+  min-height: calc(2lh + 19px);
+  margin-top: -2px;
+  padding-bottom: 18px;
+  border-bottom: 1px dashed var(--line-2);
+}
+
+@media (max-width: 599px) {
+  .rail-setup__note {
+    min-height: calc(3lh + 19px);
+  }
+}
+
+/* The narrowest phones: the picked mode's footage line and the answer's
+   basis wrap for some modes and not others — hold two lines for both. */
+@media (max-width: 380px) {
+  .mode-pick__current,
+  .rail-answer__basis {
+    min-height: 2lh;
+  }
+}
+
+/* The setting group and the line that stands in for it share one cell, so
+   switching modes moves nothing below. */
+.rail-setup__fine {
+  display: grid;
+}
+
+.rail-setup__layer {
+  grid-area: 1 / 1;
+  display: grid;
+  align-content: start;
+  gap: 10px;
+}
+
+.rail-setup__layer[data-off] {
+  visibility: hidden;
+}
+
+/* The three modes as clips on a track: the editor's icon, the name, the
+   footage each is for. The one picked is the clip selected in the
+   timeline — gold edge and trim handles (components.css .clip). */
+.mode-pick {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.mode-pick > legend,
+.seg > legend {
+  margin: 0 0 10px;
+  padding: 0;
+}
+
+.mode-pick__options {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.mode-pick__option {
+  position: relative;
+  display: flex;
+}
+
+.mode-pick__input,
+.seg__input {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.mode-pick__input:disabled,
+.seg__input:disabled {
+  cursor: default;
+}
+
+/* Name and footage line start on one line across the three, however many
+   lines each footage line takes. */
+.mode-pick__face {
+  --clip-edge: var(--line-2);
+  position: relative;
+  display: flex;
+  flex: 1;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 16px;
+  border: 1px solid var(--clip-edge);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--panel) 80%, transparent);
+  box-shadow: var(--rim);
+  transition:
+    border-color var(--dur-2) ease,
+    background-color var(--dur-2) ease,
+    box-shadow var(--dur-2) ease;
+}
+
+.mode-pick__face::before,
+.mode-pick__face::after {
+  content: "";
+  position: absolute;
+  top: 12px;
+  bottom: 12px;
+  width: 5px;
+  border-radius: 3px;
+  background: var(--gold);
+  opacity: 0;
+  transition:
+    opacity var(--dur-2) ease,
+    translate var(--dur-3) var(--ease-out);
+}
+
+.mode-pick__face::before {
+  left: -3px;
+  translate: 5px 0;
+}
+
+.mode-pick__face::after {
+  right: -3px;
+  translate: -5px 0;
+}
+
+.mode-pick__option:hover .mode-pick__input:not(:disabled) + .mode-pick__face {
+  --clip-edge: var(--line-3);
+}
+
+.mode-pick__input:checked + .mode-pick__face {
+  --clip-edge: var(--gold);
+  background:
+    linear-gradient(180deg, var(--gold-softer), transparent 80%),
+    var(--panel);
+  box-shadow:
+    var(--rim),
+    0 18px 40px -24px var(--gold-glow);
+}
+
+.mode-pick__input:checked + .mode-pick__face::before,
+.mode-pick__input:checked + .mode-pick__face::after {
+  opacity: 1;
+  translate: 0 0;
+}
+
+.mode-pick__input:focus-visible + .mode-pick__face {
+  outline: 2px solid var(--focus);
+  outline-offset: 3px;
+}
+
+.mode-pick__icon {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: var(--gold-soft);
+  color: var(--gold-ink);
+}
+
+.mode-pick__input:checked + .mode-pick__face .mode-pick__icon {
+  background: var(--gold);
+  color: var(--on-gold);
+}
+
+.mode-pick__text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.mode-pick__name {
+  font-size: var(--fs-15);
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--ink);
+}
+
+.mode-pick__fit {
+  font-size: var(--fs-13);
+  line-height: 1.7;
+  color: var(--ink-3);
+}
+
+/* Phones: what the picked mode is for, said once under the chips. */
+.mode-pick__current {
+  display: none;
+  margin: 10px 0 0;
+  font-size: var(--fs-13);
+  line-height: 1.7;
+  color: var(--ink-2);
+}
+
+.mode-pick__current-label {
+  margin-right: 6px;
+  color: var(--ink-3);
+}
+
+/* A segmented control over native radios (the setting). */
+.seg {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.seg__options {
+  display: flex;
+  gap: 2px;
+  width: fit-content;
+  padding: 3px;
+  border: 1px solid var(--line-2);
+  border-radius: 12px;
+  background: var(--well);
+}
+
+.seg__option {
+  position: relative;
+  display: flex;
+}
+
+.seg__text {
+  display: block;
+  min-width: 5.5em;
+  padding: 7px 16px;
+  border-radius: 9px;
+  font-size: var(--fs-14);
+  line-height: 1.45;
+  text-align: center;
+  color: var(--ink-2);
+  transition:
+    background-color var(--dur-2) ease,
+    color var(--dur-2) ease;
+}
+
+.seg__option:hover .seg__input:not(:disabled) + .seg__text {
+  color: var(--ink);
+}
+
+.seg__input:checked + .seg__text {
+  background: var(--panel);
+  color: var(--gold-ink);
+  font-weight: 600;
+  box-shadow:
+    inset 0 0 0 1px var(--gold),
+    var(--rim);
+}
+
+/* Where the mode has no setting: the control's outline, empty, saying so —
+   the same size as the control, so the row keeps its height. */
+.seg__none {
+  display: inline-flex;
+  align-items: center;
+  min-height: 43px;
+  margin: 0;
+  padding: 0 16px;
+  border: 1px dashed var(--line-2);
+  border-radius: 12px;
+  font-size: var(--fs-13);
+  line-height: 1.5;
+  color: var(--ink-3);
+}
+
+.seg__input:focus-visible + .seg__text {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.cliplen {
+  display: grid;
+  gap: 10px;
+}
+
+.cliplen > .picker__label {
+  /* Lines up with the legends beside it. */
+  line-height: 1.5;
+}
+
+.cliplen__row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* ── The raw clip on a track: ruler, lane, the clip as a gold block ─────── */
+/*
+ * Its own row of the calculator, full width. Positions on the scale run from
+ * --x0 (2px in) across --span (the lane less 2px at the start and 14px at
+ * the end), so the 30-minute marker sits inside the lane rather than on its
+ * edge; clipTrack.ts maps pointers with the same insets.
+ */
+.cliptrack {
+  --w: 0.17;
+  --units: 30;
+  --x0: 2px;
+  --span: calc(100% - 16px);
+  grid-area: track;
+  container-type: inline-size;
+  display: grid;
+  grid-template-rows: 16px 28px 20px;
+  row-gap: 4px;
+  min-width: 0;
+  margin-top: -4px;
+  /* A vertical swipe that starts here scrolls the page; the track takes a
+     press only once it moves clearly sideways (or on the handle). */
+  touch-action: pan-y;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: pointer;
+}
+
+.cliptrack[data-disabled] {
+  cursor: default;
+}
+
+.cliptrack[data-dragging] {
+  cursor: ew-resize;
+}
+
+/* Minute ticks (every five on the two-hour scale) across the scale, and its
+   last tick, under the timecodes. */
+.cliptrack__ruler {
+  position: relative;
+  border-bottom: 1px solid var(--line-2);
+  background:
+    repeating-linear-gradient(90deg, var(--line-3) 0 1px, transparent 1px calc(100% / var(--units))) left var(--x0) bottom 0 /
+      var(--span) 4px no-repeat,
+    linear-gradient(var(--line-3), var(--line-3)) right 14px bottom 0 / 1px 4px no-repeat;
+}
+
+.cliptrack__mark {
+  position: absolute;
+  top: 0;
+  left: calc(var(--x0) + var(--at) * var(--span));
+  translate: -50% 0;
+  font-size: var(--fs-11);
+  line-height: 1.2;
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+
+.cliptrack__mark:first-child {
+  translate: 0 0;
+}
+
+.cliptrack__mark:last-child {
+  translate: -100% 0;
+}
+
+/* Timecodes by rank: the ends and the round ones always; the rest where the
+   track has room for them. */
+@container (max-width: 639px) {
+  .cliptrack__mark[data-rank="3"] {
+    visibility: hidden;
+  }
+}
+
+@container (max-width: 359px) {
+  .cliptrack__mark[data-rank="2"] {
+    visibility: hidden;
+  }
+}
+
+.cliptrack__lane {
+  position: relative;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--well);
+}
+
+/* The clip: as long as the minutes set, on the mode's scale; a waveform
+   revealed, not stretched, as it grows. */
+.cliptrack__clip {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  left: var(--x0);
+  width: max(8px, calc(var(--span) * var(--w)));
+  overflow: hidden;
+  border-radius: 6px;
+  background: var(--gold);
+  box-shadow: 0 6px 16px -10px var(--gold-glow);
+  transition: width var(--dur-3) var(--ease-out);
+}
+
+/* The clip's start: a fixed edge. Its end is the handle below. */
+.cliptrack__clip::before {
+  content: "";
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  left: 2px;
+  z-index: 1;
+  width: 3px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--on-gold) 45%, transparent);
+}
+
+.cliptrack__wave {
+  position: absolute;
+  top: 3px;
+  left: 0;
+  width: calc(100% / max(var(--w), 0.02));
+  /* An explicit height: with `auto` the SVG took its viewBox ratio and grew
+     far taller than the clip, which then showed only its top strip. */
+  height: calc(100% - 6px);
+}
+
+.cliptrack__wave path {
+  stroke: color-mix(in srgb, var(--on-gold) 32%, transparent);
+}
+
+/* The trim handle on the clip's end: a 44px target around a bar that sits
+   on the edge; it lights up under the pointer, while dragged and when
+   focused. While dragging, the clip follows the pointer with no easing.
+   Only the handle keeps every touch for itself. */
+.cliptrack__handle {
+  position: absolute;
+  top: 50%;
+  left: calc(var(--x0) + max(8px, var(--span) * var(--w)));
+  z-index: 4;
+  width: 44px;
+  height: 44px;
+  translate: -50% -50%;
+  border-radius: 12px;
+  outline: none;
+  cursor: ew-resize;
+  touch-action: none;
+  transition: left var(--dur-3) var(--ease-out);
+}
+
+.cliptrack[data-disabled] .cliptrack__handle {
+  cursor: default;
+}
+
+.cliptrack__handle::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 6px;
+  height: 26px;
+  translate: -50% -50%;
+  border-radius: 3px;
+  background: var(--gold-ink);
+  box-shadow: 0 0 0 2px var(--panel);
+  transition:
+    width var(--dur-1) ease,
+    height var(--dur-1) ease,
+    box-shadow var(--dur-1) ease;
+}
+
+.cliptrack:not([data-disabled]) .cliptrack__handle:hover::before,
+.cliptrack[data-dragging] .cliptrack__handle::before {
+  width: 8px;
+  height: 32px;
+  background: var(--gold);
+  box-shadow:
+    0 0 0 2px var(--panel),
+    0 0 0 6px var(--gold-soft);
+}
+
+.cliptrack__handle:focus-visible::before {
+  outline: 2px solid var(--focus);
+  outline-offset: 4px;
+}
+
+.cliptrack[data-dragging] :is(.cliptrack__clip, .cliptrack__handle) {
+  transition: none;
+}
+
+.cliptrack__tc {
+  position: absolute;
+  top: 50%;
+  left: 10px;
+  z-index: 2;
+  translate: 0 -50%;
+  font-size: var(--fs-11);
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--on-gold);
+  white-space: nowrap;
+  transform-origin: left center;
+  transition: scale var(--dur-1) ease;
+}
+
+/* A short clip: the timecode just past its end (and past the handle). */
+.cliptrack__tc--out {
+  left: calc(var(--x0) + var(--at) * var(--span) + 22px);
+  color: var(--ink-2);
+}
+
+/* Trimming: the timecode reads out larger, like the editor's trim readout. */
+.cliptrack:is([data-dragging], :has(.cliptrack__handle:hover, .cliptrack__handle:focus-visible)) .cliptrack__tc {
+  scale: 1.12;
+}
+
+.cliptrack:is([data-dragging], :has(.cliptrack__handle:hover, .cliptrack__handle:focus-visible)) .cliptrack__tc--out {
+  color: var(--gold-ink);
+}
+
+/* ตัดฉากเด่น's footage ceilings: dashed markers across the lane, named
+   under it. A ceiling the clip runs past is marked with a small ✕ where it
+   crosses the clip, and its name dims — the name itself is never struck
+   through (a line through Thai cuts the vowels). */
+.cliptrack__cap {
+  position: absolute;
+  top: -4px;
+  bottom: -4px;
+  left: calc(var(--x0) + var(--at) * var(--span));
+  z-index: 3;
+  border-left: 1px dashed var(--gold-ink);
+}
+
+.cliptrack__cap[data-passed] {
+  border-left-color: color-mix(in srgb, var(--on-gold) 40%, transparent);
+}
+
+.cliptrack__cap[data-passed]::before,
+.cliptrack__cap[data-passed]::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: -5px;
+  width: 9px;
+  height: 2px;
+  margin-top: -1px;
+  border-radius: 1px;
+  background: var(--on-gold);
+  rotate: 45deg;
+}
+
+.cliptrack__cap[data-passed]::after {
+  rotate: -45deg;
+}
+
+/* The end just crossed this ceiling: a small visual tick, nothing else. */
+.cliptrack__cap[data-crossed] {
+  animation: cap-tick var(--dur-3) var(--ease-out);
+}
+
+@keyframes cap-tick {
+  from {
+    border-left-color: var(--gold);
+    scale: 1 1.7;
+  }
+}
+
+.cliptrack__caps {
+  position: relative;
+  font-size: var(--fs-12);
+  line-height: 1.6;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+
+.cliptrack__name {
+  position: absolute;
+  top: 0;
+  left: calc(var(--x0) + var(--at) * var(--span));
+  translate: -50% 0;
+}
+
+.cliptrack__name:last-child {
+  translate: -100% 0;
+}
+
+.cliptrack__name[data-passed] {
+  color: var(--ink-3);
+}
+
+.cliptrack__legend {
+  color: var(--ink-3);
+}
+
+.cliplen__input {
+  width: 4.2em;
+  min-height: 40px;
+  padding: 4px 6px;
+  font-size: var(--fs-20);
+  font-weight: 600;
+  text-align: center;
+  color: var(--gold-ink);
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+
+.cliplen__input::-webkit-inner-spin-button,
+.cliplen__input::-webkit-outer-spin-button {
+  margin: 0;
+  -webkit-appearance: none;
+}
+
+.cliplen__unit {
+  margin-left: 4px;
+  font-size: var(--fs-14);
+  color: var(--ink-2);
+}
+
+.picker {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.picker__label {
+  font-size: var(--fs-16);
+  font-weight: 600;
+}
+
+.picker__track {
+  position: relative;
+  min-width: 0;
+  padding-bottom: 30px;
+}
+
+.picker__range {
+  --fill: 50%;
+  display: block;
+  width: 100%;
+  appearance: none;
+  height: 34px;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.picker__range:disabled {
+  cursor: default;
+}
+
+.picker__range::-webkit-slider-runnable-track {
+  height: 8px;
+  border-radius: 8px;
+  background: linear-gradient(90deg, var(--gold) 0 var(--fill), var(--line-2) var(--fill) 100%);
+}
+
+.picker__range::-moz-range-track {
+  height: 8px;
+  border-radius: 8px;
+  background: linear-gradient(90deg, var(--gold) 0 var(--fill), var(--line-2) var(--fill) 100%);
+}
+
+.picker__range::-webkit-slider-thumb {
+  appearance: none;
+  width: 16px;
+  height: 30px;
+  margin-top: -11px;
+  border-radius: 4px;
+  background: var(--gold);
+  border: 2px solid var(--bg);
+  box-shadow: 0 0 0 1px var(--gold), 0 6px 16px -4px var(--gold-glow);
+  clip-path: polygon(0 0, 100% 0, 100% 72%, 50% 100%, 0 72%);
+}
+
+.picker__range::-moz-range-thumb {
+  width: 16px;
+  height: 30px;
+  border-radius: 4px;
+  background: var(--gold);
+  border: 2px solid var(--bg);
+}
+
+.picker__range:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 4px;
+  border-radius: 8px;
+}
+
+/* The answer: the clips asked for, then the plan that covers them (or that
+   none does), then the basis every count on the page is priced on. */
+.rail-answer {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+  min-width: 0;
+}
+
+/* From 900px the answer sits at the right of the choices' row. */
+@media (min-width: 900px) {
+  .rail-answer {
+    justify-self: end;
+    align-self: center;
+    justify-items: end;
+    text-align: right;
+  }
+}
+
+.picker__out {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 10px;
+  max-width: 100%;
+  padding: 12px 20px;
+  border-radius: 14px;
+  background: var(--well);
+  border: 1px solid var(--line);
+  box-shadow: var(--rim);
+}
+
+.picker__num {
+  font-size: 1.75rem;
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--gold-ink);
+}
+
+.picker__unit {
+  font-size: var(--fs-13);
+  color: var(--ink-3);
+}
+
+.picker__arrow {
+  color: var(--ink-3);
+}
+
+.picker__plan {
+  font-size: 1.375rem;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.picker__over {
+  font-size: var(--fs-14);
+  font-weight: 600;
+  line-height: 1.6;
+  color: var(--ink-2);
+}
+
+.rail-answer__basis {
+  margin: 0;
+  font-size: var(--fs-13);
+  line-height: 1.6;
+  color: var(--ink-2);
+}
+
+/* Plan markers under the scrubber, placed where the playhead's centre stops:
+   the thumb is 16px wide, so its centre runs from 8px to 100% − 8px. */
+.picker__ticks {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 38px;
+  height: 22px;
+}
+
+.picker__tick {
+  position: absolute;
+  top: 8px;
+  left: calc(8px + (100% - 16px) * var(--at, 0));
+  translate: -50% 0;
+  font-size: 11.5px;
+  /* ink-2: at 11.5px the lighter ink fell to about 3.5:1 on the light panel. */
+  color: var(--ink-2);
+  white-space: nowrap;
+  transition: color var(--dur-2) ease;
+}
+
+/* A keyframe diamond over each name, lit for the plan that fits. */
+.picker__tick::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: -9px;
+  width: 6px;
+  height: 6px;
+  translate: -50% 0;
+  rotate: 45deg;
+  border-radius: 1px;
+  background: var(--line-3);
+  transition: background-color var(--dur-2) ease;
+}
+
+.picker__tick--on::before {
+  background: var(--gold);
+}
+
+.picker__tick--on {
+  color: var(--gold-ink);
+  font-weight: 600;
+}
+
+/* No count for this choice: the marker steps off the track. */
+.picker__tick--out {
+  visibility: hidden;
+}
+
+.picker__note {
+  margin: 0;
+  font-size: var(--fs-13);
+  line-height: 1.6;
+  color: var(--ink-3);
+}
+
+.picker__caveats {
+  margin-top: -6px;
+}
+
+@media (max-width: 599px) {
+  /* The modes as a row of chips — icon over name — with what the picked one
+     is for said once under them: the calculator stays short on a phone. */
+  .mode-pick__options {
+    gap: 6px;
+  }
+
+  .mode-pick__face {
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 6px;
+    text-align: center;
+  }
+
+  .mode-pick__face::before,
+  .mode-pick__face::after {
+    top: 10px;
+    bottom: 10px;
+  }
+
+  .mode-pick__icon {
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+  }
+
+  .mode-pick__name {
+    font-size: var(--fs-13);
+    line-height: 1.45;
+  }
+
+  .mode-pick__fit {
+    display: none;
+  }
+
+  .mode-pick__current {
+    display: block;
+  }
+
+  .picker__out {
+    width: 100%;
+  }
+}
+
+@media (max-width: 720px) {
+  /* The arrows stay on a phone too: with the rail's fading right edge they
+     say there are more plans to the side. */
+  .plan-rail__nav {
+    margin-bottom: -10px;
+  }
+
+  /* Too close to name them all: Lite, Pro and Max keep their names, the
+     rest keep their markers, and the plan that fits is always named. */
+  .picker__tick {
+    font-size: 0;
+  }
+
+  .picker__tick:is(:nth-child(1), :nth-child(3), :last-child),
+  .picker__tick--on {
+    font-size: 11.5px;
+  }
+}
+
+/* The rail: one row of cards that scrolls sideways and snaps card by card. */
+.plan-rail__track {
+  position: relative;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(270px, 300px);
+  gap: 14px;
+  margin: 0;
+  padding: 12px 4px 22px;
+  list-style: none;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  scroll-padding-inline: 4px;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-2) transparent;
+  -webkit-mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 40px), transparent);
+  mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 40px), transparent);
+}
+
+.plan-rail__slot {
+  scroll-snap-align: start;
+  display: flex;
+}
+
+/* Below the grid width the rail runs to the screen's edges, so a card is cut
+   by the screen, not by the page margin, and the first card lines up. */
+@media (max-width: 999px) {
+  .plan-rail__track {
+    margin-inline: calc(var(--gutter) * -1);
+    padding-inline: var(--gutter);
+    scroll-padding-inline: var(--gutter);
+    /* The monthly plans share one height, so the rail ends where its
+       cards end (each card its own height left up to 130px of empty rail
+       under a short one). The free trial keeps its own: stretched, its short
+       list left a 130px hole above its button. */
+    align-items: stretch;
+  }
+
+  .plan-rail__slot:has(> .plan[data-tier="free"]) {
+    align-self: start;
+  }
+}
+
+/* Wide screens (a 1024px laptop included): every plan in view at once — the
+   free trial as one row on top, the six monthly plans in two rows of three.
+   The picker lights the plan that fits instead of scrolling to it. */
+@media (min-width: 1000px) {
+  .plan-rail__track {
+    grid-auto-flow: row;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-auto-columns: auto;
+    overflow: visible;
+    scroll-snap-type: none;
+    padding: 12px 0 0;
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+
+  .plan-rail__nav {
+    display: none;
+  }
+
+  .plan-rail__slot:has(> .plan[data-tier="free"]) {
+    grid-column: 1 / -1;
+  }
+
+  .plan--full[data-tier="free"] {
+    display: grid;
+    grid-template-columns: minmax(0, 0.7fr) minmax(0, 1fr) minmax(0, 1.7fr) auto;
+    gap: 8px 32px;
+    align-items: start;
+  }
+
+  .plan--full[data-tier="free"] > .plan__head {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .plan--full[data-tier="free"] > .plan__amount {
+    grid-column: 1;
+    grid-row: 2 / 4;
+  }
+
+  .plan--full[data-tier="free"] > .plan__usage {
+    grid-column: 2;
+    grid-row: 1;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  .plan--full[data-tier="free"] > .plan__blurb {
+    grid-column: 2;
+    grid-row: 2 / 4;
+  }
+
+  .plan--full[data-tier="free"] > .plan__features {
+    grid-column: 3;
+    grid-row: 1 / 4;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: 20px;
+    margin: 0;
+  }
+
+  /* Two feature columns only where each gets a readable width; on a small
+     laptop the middle column keeps its phrases whole ("ทดลองใช้ครั้งเดียว",
+     "ใช้หมดแล้วเลือกแพลนต่อ"). */
+  @media (max-width: 1279px) {
+    .plan--full[data-tier="free"] {
+      grid-template-columns: minmax(0, 0.7fr) minmax(260px, 1fr) minmax(0, 1.2fr) auto;
+    }
+
+    .plan--full[data-tier="free"] > .plan__features {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+
+  .plan--full[data-tier="free"] > .plan__foot {
+    grid-column: 4;
+    grid-row: 1 / 4;
+    align-self: center;
+    min-width: 180px;
+    margin: 0;
+    padding: 0;
+  }
+}
+
+.plan-rail__slot > .plan {
+  width: 100%;
+}
+
+.plan--extra {
+  background:
+    repeating-linear-gradient(135deg, color-mix(in srgb, var(--color-text) 2.5%, transparent) 0 1px, transparent 1px 10px),
+    var(--panel);
+}
+
+/* The legend for the "แพลนเพิ่มเติม" tag on three of the cards: the same tag,
+   then what it means. */
+.price-extra {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  margin: 14px 0 0;
+}
+
+.price-extra__tag {
+  flex: none;
+}
+
+.price-extra__note {
+  font-size: var(--fs-14);
+  line-height: 1.6;
+  color: var(--ink-3);
+}
+
+/* Every plan's price and clips under the cards: the cards' text twin, as a
+   short list — one lead line with the basis, then a row per plan. */
+.price-list {
+  margin: 24px 0 0;
+  padding-top: 18px;
+  border-top: 1px dashed var(--line-2);
+}
+
+.price-list__lead {
+  max-width: var(--prose-max);
+  margin: 0 0 10px;
+  font-size: var(--fs-15);
+  line-height: 1.75;
+  color: var(--ink-2);
+}
+
+.price-list__basis {
+  color: var(--ink-3);
+}
+
+.price-list__items {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  column-gap: 32px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Every row the same three columns — name | price | count — with the finer
+   count on its own dimmed line under the count, at every width. */
+.price-list__item {
+  display: grid;
+  grid-template-columns: 4.6em 5.8em minmax(0, 1fr);
+  align-items: baseline;
+  column-gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: var(--fs-14);
+  line-height: 1.6;
+  color: var(--ink-2);
+}
+
+.price-list__plan {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.price-list__price {
+  color: var(--ink);
+}
+
+.price-list__cuts {
+  display: grid;
+  min-width: 0;
+}
+
+.price-list__high {
+  display: block;
+  font-size: var(--fs-13);
+  color: var(--ink-3);
+}
+
+/* Three columns only where the count column fits "ระดับละเอียดราว 179 คลิป"
+   on one line; otherwise two, so every row keeps its two lines. */
+@media (max-width: 1279px) {
+  .price-list__items {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 599px) {
+  .price-list__items {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* ── How the quota works ────────────────────────────────────────────────── */
+
+.quota {
+  border-top: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel) 40%, transparent);
+}
+
+.quota__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: clamp(28px, 5vw, 80px);
+  align-items: start;
+}
+
+.quota__grid .sec-head {
+  position: sticky;
+  top: calc(var(--beta-h) + var(--header-top) + var(--header-h) + 48px);
+}
+
+@media (max-width: 960px) {
+  .quota__grid {
+    grid-template-columns: 1fr;
+  }
+
+  .quota__grid .sec-head {
+    position: static;
+  }
+}
+
+.quota-card {
+  position: relative;
+  display: grid;
+  gap: 22px;
+  padding: clamp(22px, 3vw, 34px);
+  border: 1px solid var(--line);
+  border-radius: var(--r-xl);
+  background: var(--panel);
+  box-shadow: var(--shadow-2), var(--rim);
+}
+
+.quota-card__tag {
+  justify-self: start;
+}
+
+.rule-list {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rule-list li {
+  display: grid;
+  grid-template-columns: 148px minmax(0, 1fr);
+  gap: 16px;
+  padding: 12px 4px;
+  border-bottom: 1px solid var(--line);
+  font-size: var(--fs-15);
+  line-height: 1.7;
+  color: var(--ink-2);
+}
+
+.rule-list li:last-child {
+  border-bottom: 0;
+}
+
+.rule-list__key {
+  font-size: var(--fs-14);
+  font-weight: 600;
+  color: var(--gold-ink);
+}
+
+/* The editor's own name for the window, quietly under its English key. */
+.rule-list__editor {
+  display: block;
+  margin-top: 2px;
+  font-size: var(--fs-12);
+  font-weight: 400;
+  line-height: 1.5;
+  color: var(--ink-3);
+}
+
+@media (max-width: 560px) {
+  .rule-list li {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+}
+
+/* ── Compare + FAQ ──────────────────────────────────────────────────────── */
+
+.compare,
+.pricing-faq {
+  border-top: 1px solid var(--line);
+}

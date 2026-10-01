@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Local reference material for the mock-ups (not committed).
+    ".mockup-reference/**",
   ]),
 ]);
 

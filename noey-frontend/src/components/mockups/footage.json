@@ -1,0 +1,21 @@
+{
+  "fps": 24,
+  "shotFrames": 84,
+  "shots": ["pedestal", "texture", "turntable", "rack", "flatlay"],
+  "tilesPerShot": 7,
+  "cut": [
+    { "shot": "pedestal", "from": 0, "frames": 40 },
+    { "shot": "turntable", "from": 0, "frames": 38 },
+    { "shot": "texture", "from": 6, "frames": 48 },
+    { "shot": "flatlay", "from": 4, "frames": 38 },
+    { "shot": "rack", "from": 32, "frames": 52 },
+    { "shot": "turntable", "from": 36, "frames": 48 },
+    { "shot": "pedestal", "from": 40, "frames": 44 },
+    { "shot": "flatlay", "from": 42, "frames": 42 }
+  ],
+  "stills": [
+    { "id": "alt-texture", "shot": "texture", "frame": 72 },
+    { "id": "alt-flatlay", "shot": "flatlay", "frame": 20 },
+    { "id": "alt-rack", "shot": "rack", "frame": 60 }
+  ]
+}

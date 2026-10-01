@@ -16,6 +16,7 @@ export function Dialog({
   maxWidth = 520,
   className,
   titleExtra,
+  strip,
   children,
 }: {
   open: boolean;
@@ -28,6 +29,8 @@ export function Dialog({
   className?: string;
   /** Rendered next to the title, for a badge. */
   titleExtra?: ReactNode;
+  /** A panel title strip across the dialog's top (decoration, hidden from assistive technology). */
+  strip?: ReactNode;
   children?: ReactNode;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
@@ -37,7 +40,13 @@ export function Dialog({
   useEffect(() => {
     const dialog = ref.current;
     if (!dialog) return;
-    if (open && !dialog.open) dialog.showModal();
+    if (open && !dialog.open) {
+      dialog.showModal();
+      // showModal() focuses the first control, the ✕. A dialog whose answer is
+      // the point of it marks that control instead; no focus ring unless the
+      // visitor goes on with the keyboard.
+      dialog.querySelector<HTMLElement>("[data-autofocus]")?.focus({ focusVisible: false } as FocusOptions);
+    }
     if (!open && dialog.open) dialog.close();
   }, [open]);
 
@@ -62,6 +71,16 @@ export function Dialog({
       }}
     >
       <div className="dialog-inner">
+        {strip ? (
+          <div className="dialog-strip" aria-hidden="true">
+            {strip}
+          </div>
+        ) : null}
+        <button type="button" className="dialog-close" aria-label="ปิด" onClick={onClose}>
+          <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+            <path d="M3.5 3.5l9 9M12.5 3.5l-9 9" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+          </svg>
+        </button>
         <h2 className="dialog-title" id={titleId}>
           {title}
           {titleExtra}

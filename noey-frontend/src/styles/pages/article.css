@@ -1,0 +1,608 @@
+/*
+ * Articles: the six guides and the two legal documents share one layout —
+ * the timeline table of contents beside a reading column tuned for Thai
+ * (17px, 1.9 line height, ≤ 68ch), with callouts, term lists and tables
+ * drawn into the same system.
+ */
+
+.article-page .phero__copy h1 {
+  max-width: 20em;
+}
+
+/* The answer-first paragraph, set as the article's callout. */
+.answer {
+  position: relative;
+  margin: 0;
+  padding: 18px 22px 18px 24px;
+  border-radius: var(--r-lg);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 35%, transparent);
+  background: linear-gradient(135deg, var(--gold-soft), transparent 75%), color-mix(in srgb, var(--panel) 80%, transparent);
+  color: var(--ink);
+  font-size: var(--fs-lead);
+  line-height: 1.85;
+}
+
+.answer::before {
+  content: "";
+  position: absolute;
+  left: -1px;
+  top: 16px;
+  bottom: 16px;
+  width: 3px;
+  border-radius: 3px;
+  background: var(--gold);
+}
+
+.article-layout {
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr);
+  gap: clamp(32px, 5vw, 80px);
+  align-items: start;
+  padding-bottom: var(--section-y);
+}
+
+.article-layout__toc {
+  position: sticky;
+  top: calc(var(--beta-h) + var(--header-top) + var(--header-h) + 36px);
+  max-height: calc(100vh - var(--beta-h) - var(--header-top) - var(--header-h) - 60px);
+  overflow-y: auto;
+  scrollbar-width: thin;
+  padding: 4px 4px 12px 0;
+}
+
+/* A small laptop (960–1199px): a narrower rail, so the text keeps the page's
+   left edge under the title (centred under a left-aligned title it had two
+   left edges; flush left without the rail it left a third of the screen
+   empty). The plan table scrolls inside the column there. */
+@media (min-width: 960px) and (max-width: 1199px) {
+  .article-layout {
+    grid-template-columns: 236px minmax(0, 1fr);
+    gap: 40px;
+  }
+}
+
+/* Below 960px (phones, tablets): the contents bar sticks under the header
+   for the whole article and the text gets the full width. (A block layout:
+   in a one-column grid the bar's own row would hold it in place.) */
+@media (max-width: 959px) {
+  .article-layout {
+    display: block;
+  }
+
+  .article-layout__toc {
+    z-index: 5;
+    top: calc(var(--beta-h) + var(--header-top) + var(--header-h) + 8px);
+    max-height: none;
+    margin-bottom: clamp(24px, 5vw, 36px);
+    padding: 0;
+    overflow: visible;
+  }
+}
+
+/* One reading measure for everything in the column — text, lists, the FAQ,
+   the rules between sections — so no line or hairline runs past the text.
+   Only a wide table (.article__extra, the plan limits) takes the whole
+   column. */
+.article {
+  --measure: 660px;
+  min-width: 0;
+}
+
+.article .prose,
+.article__section > :not(.article__extra),
+.article__foot {
+  max-width: var(--measure);
+}
+
+.article__section {
+  position: relative;
+  padding: clamp(28px, 3.4vw, 44px) 0;
+  scroll-margin-top: calc(var(--beta-h) + var(--header-top) + var(--header-h) + 24px);
+}
+
+.article__section::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: min(100%, var(--measure));
+  border-top: 1px solid var(--line);
+}
+
+.article__section:first-child {
+  padding-top: 0;
+}
+
+.article__section:first-child::before {
+  display: none;
+}
+
+.article__cue {
+  margin-bottom: 12px;
+}
+
+.article__h2 {
+  font-size: clamp(1.375rem, 1.1rem + 1.1vw, 1.875rem);
+  font-weight: 600;
+  line-height: 1.4;
+  margin-bottom: 18px;
+  text-wrap: balance;
+}
+
+/* One ruled list in one frame, not a stack of separate boxes. (Beats
+   .prose ul's indent, which would inset the rules on the left only.) */
+.prose ul.article__bullets,
+.article__bullets {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+}
+
+.article__bullets li {
+  position: relative;
+  margin: 0;
+  padding: 14px 16px 14px 44px;
+  line-height: 1.8;
+}
+
+.article__bullets li + li {
+  border-top: 1px solid var(--line);
+}
+
+/* Not supported yet: a hollow marker. */
+.article__bullets li[data-kind="no"]::before {
+  background: none;
+  border: 1.5px solid var(--line-3);
+}
+
+@media (max-width: 640px) {
+  .article__bullets li {
+    padding: 12px 14px 12px 36px;
+  }
+
+  .article__bullets li::before {
+    left: 14px;
+  }
+}
+
+.article__bullets li::before {
+  content: "";
+  position: absolute;
+  left: 18px;
+  top: 1.35em;
+  width: 9px;
+  height: 9px;
+  rotate: 45deg;
+  border-radius: 2px;
+  background: var(--gold);
+}
+
+.article__bullets strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.article__extra {
+  margin-top: 22px;
+}
+
+/* Inside the reading column there is only room for two across. */
+.article .article__related:has(> li:nth-child(4):last-child) {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+@media (max-width: 560px) {
+  .article .article__related:has(> li:nth-child(4):last-child) {
+    grid-template-columns: 1fr;
+  }
+}
+
+.article__foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding-top: 28px;
+  border-top: 1px solid var(--line);
+}
+
+/* Phones: full-width actions, the main one first. */
+@media (max-width: 560px) {
+  .article__foot {
+    flex-direction: column-reverse;
+  }
+
+  .article__foot .btn {
+    width: 100%;
+  }
+
+  .article__bullets li {
+    padding-left: 38px;
+  }
+
+  .article__bullets li::before {
+    left: 14px;
+  }
+}
+
+/* ── Legal: the quietest page on the site ───────────────────────────────── */
+
+.legal-page .wr .wr__w {
+  animation: none !important;
+}
+
+/* Long reads (the guides and the legal pages): body text at full ink and
+   the regular weight (the light weight thins out at reading size). In the
+   dark theme full ink glares over a long read: the body steps down to the
+   second ink (still over 11:1) and the headings keep the full one. */
+.article .prose {
+  font-weight: 400;
+  color: var(--ink);
+}
+
+html[data-theme="dark"] .article .prose {
+  color: var(--ink-2);
+}
+
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]) .article .prose {
+    color: var(--ink-2);
+  }
+}
+
+/* Tablets (720–959px), with the contents in a bar instead of a rail: the
+   column and its bar are centred. A wide table (the plan limits) steps out
+   of the column to the page's width, centred on it. */
+@media (min-width: 720px) and (max-width: 959px) {
+  .article-page .article-layout {
+    max-width: 660px;
+    margin-inline: auto;
+  }
+
+  .article-page .article__extra {
+    --extra-w: min(calc(100vw - 2 * var(--gutter)), 944px);
+    width: var(--extra-w);
+    margin-left: calc((100% - var(--extra-w)) / 2);
+  }
+}
+
+/* The FAQ list closes on its own rule: the next section does not draw a
+   second one 40px below it. */
+#faq + .article__section::before {
+  display: none;
+}
+
+.legal-page .phero__beam {
+  opacity: 0.5;
+}
+
+/* ── Timeline table of contents (TimelineToc) ───────────────────────────
+ * Only the article pages render it, so its rules live with them.
+ */
+
+.toc {
+  font-size: var(--fs-14);
+}
+
+.toc__mobile {
+  display: none;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--panel);
+  box-shadow: var(--shadow-2);
+}
+
+/* Open over the article: the list scrolls inside the bar. */
+.toc__mobile[open] .toc__list {
+  max-height: min(60vh, 520px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* The bar's label, then the section being read (filled in by the script). */
+.toc__mobile-label {
+  flex: none;
+}
+
+.toc__now {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--gold-ink);
+  font-size: var(--fs-13);
+}
+
+.toc__now:empty {
+  display: none;
+}
+
+.toc__mobile summary {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  cursor: pointer;
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.toc__mobile summary::-webkit-details-marker {
+  display: none;
+}
+
+.toc__mobile svg {
+  transition: rotate var(--dur-3) var(--ease-out);
+}
+
+.toc__mobile[open] svg {
+  rotate: 180deg;
+}
+
+.toc__mobile .toc__list {
+  padding: 4px 12px 12px;
+}
+
+.toc__label {
+  margin: 0 0 14px 26px;
+  font-size: var(--fs-13);
+  font-weight: 500;
+  color: var(--gold-ink);
+}
+
+.toc__rail {
+  position: relative;
+  --toc-p: 0;
+}
+
+.toc__line {
+  position: absolute;
+  left: 8px;
+  top: 6px;
+  bottom: 6px;
+  width: 1px;
+  background: var(--line-2);
+}
+
+.toc__playhead {
+  position: absolute;
+  left: 3px;
+  top: calc(6px + var(--toc-p) * (100% - 12px));
+  width: 11px;
+  height: 2px;
+  background: var(--gold);
+  box-shadow: 0 0 10px var(--gold-glow);
+  transition: top 160ms linear;
+}
+
+.toc__playhead::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: -3px;
+  width: 0;
+  height: 0;
+  border-left: 5px solid var(--gold);
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+}
+
+.toc__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 2px;
+}
+
+
+.toc__link {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  padding: 7px 10px 7px 26px;
+  border-radius: 8px;
+  color: var(--ink-2);
+  line-height: 1.55;
+  text-decoration: none;
+  /* Two-line entries split evenly, never a word alone on the second line. */
+  text-wrap: balance;
+  transition:
+    color var(--dur-2) ease,
+    background-color var(--dur-2) ease;
+}
+
+.toc__link::before {
+  content: "";
+  position: absolute;
+  left: 5px;
+  top: 14px;
+  width: 7px;
+  height: 7px;
+  rotate: 45deg;
+  border-radius: 1px;
+  border: 1.5px solid var(--line-3);
+  background: var(--bg);
+  transition:
+    background-color var(--dur-2) ease,
+    border-color var(--dur-2) ease;
+}
+
+.toc__mobile .toc__link {
+  padding-left: 10px;
+}
+
+.toc__mobile .toc__link::before {
+  display: none;
+}
+
+.toc__link[data-passed]::before {
+  background: var(--gold);
+  border-color: var(--gold);
+}
+
+.toc__link:hover {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--color-text) 5%, transparent);
+}
+
+.toc__link[aria-current] {
+  color: var(--ink);
+  font-weight: 500;
+  background: var(--gold-softer);
+}
+
+.toc__link[aria-current] .toc__n {
+  color: var(--gold-ink);
+  font-weight: 600;
+}
+
+.toc__n {
+  margin-top: 0.45em;
+  color: var(--ink-3);
+}
+
+@media (max-width: 959px) {
+  .toc__mobile {
+    display: block;
+  }
+
+  .toc__desk {
+    display: none;
+  }
+}
+/* ── The guide's picture: the part of the editor it is about ────────────── */
+
+/* Level with the title and the answer, not pinned under them. */
+.article-page .phero--split .phero__inner {
+  align-items: center;
+}
+
+.guide-visual {
+  position: relative;
+  display: grid;
+  margin: 0;
+  padding-top: 34px;
+}
+
+.guide-visual__frame {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: color-mix(in srgb, var(--panel) 80%, transparent);
+  box-shadow: var(--shadow-2), var(--rim);
+}
+
+/* The label sits above the frame at the right, as over the home page's
+   pictures (inside, it would cover the app's own title strip). */
+.guide-visual__tag {
+  position: absolute;
+  top: 0;
+  right: 0;
+}
+
+/* The timeline block, as large as the frame allows at its own aspect. */
+.guide-visual--wide .guide-visual__frame {
+  aspect-ratio: 690 / 253;
+}
+
+/* A strip cut from a lane, on a stage of its own: drawn half again as large
+   as the frame's width would hold it, centred, its ends fading (it is a cut
+   from a lane that runs on, as on the home page's strips). */
+/* A strip cut from a lane, drawn whole at the frame's width: the frame hugs
+   it (zoomed past the frame, its clips read as cropped). */
+.guide-visual--strip .guide-visual__frame {
+  display: block;
+  height: auto;
+  padding: 16px 18px;
+}
+
+.guide-visual--strip .ammini {
+  justify-content: center;
+  height: auto;
+  container-type: inline-size;
+}
+
+.guide-visual--strip .ammini .am-view {
+  width: 100%;
+}
+
+/* A whole card or window brings its own frame — and its own corners: the
+   frame neither draws nor clips. */
+.guide-visual--card .guide-visual__frame {
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+}
+
+.guide-visual--card .fv--browser {
+  margin: 0;
+}
+
+@media (max-width: 960px) {
+  .guide-visual {
+    max-width: 560px;
+  }
+}
+
+/* Phones: the "read next" cards are compact rows (six full cards stacked ran
+   a screen and a half before the call to action). */
+@media (max-width: 640px) {
+  .article__related .clip__strip {
+    display: none;
+  }
+
+  .article__related .clip__body {
+    gap: 4px;
+    padding: 14px 16px;
+  }
+
+  .article__related .clip__title {
+    font-size: var(--fs-16);
+  }
+
+  .article__related .clip__body p {
+    font-size: var(--fs-14);
+    line-height: 1.6;
+  }
+
+  .article__related {
+    gap: 8px;
+  }
+}
+
+/* From 960px the plan table keeps to the reading column like everything
+   else in it, and scrolls sideways inside its frame; its plan cells stay on
+   one line ("ไม่จำกัดจำนวน", "ปกติ และละเอียด") instead of wrapping in a
+   breakout that ran past the text. */
+@media (min-width: 960px) {
+  .article .article__extra {
+    max-width: var(--measure);
+  }
+
+  .article .article__extra .cmp__scroll {
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+  }
+
+  .article .article__extra .cmp__table {
+    min-width: 1000px;
+  }
+
+  .article .article__extra .cmp__table thead th {
+    top: 0;
+  }
+
+  .article .article__extra .cmp__table td {
+    white-space: nowrap;
+  }
+}

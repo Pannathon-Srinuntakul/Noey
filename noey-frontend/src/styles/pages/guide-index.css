@@ -1,0 +1,276 @@
+/*
+ * /guide — the media bin. Each guide is a clip in the bin: a thumbnail drawn
+ * from the guide itself (a cue per section, a waveform, its file name and
+ * length), then its question, its opening answer and its section list.
+ * Hovering the thumbnail scrubs it (BinThumb sets --x).
+ */
+
+.bin {
+  padding-bottom: 0;
+}
+
+.bin__bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.bin__count {
+  color: var(--ink-3);
+}
+
+.bin__rule {
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, var(--line-2), transparent);
+}
+
+.bin__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: clamp(14px, 1.6vw, 22px);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+@media (max-width: 860px) {
+  .bin__grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.bin__item {
+  display: flex;
+  min-width: 0;
+}
+
+/* A column, so the topics line can sit at the card's foot (margin-top: auto). */
+.bin__clip {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.bin__body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  gap: 12px;
+}
+
+.bin__title {
+  font-size: clamp(1.1875rem, 1.05rem + 0.5vw, 1.4375rem);
+  line-height: 1.45;
+  text-wrap: balance;
+}
+
+.bin__answer {
+  line-height: 1.8;
+}
+
+.bin__topic {
+  white-space: nowrap;
+}
+
+.clip__body .bin__meta {
+  margin-top: auto;
+  padding-top: 12px;
+  border-top: 1px dashed var(--line-2);
+  font-size: var(--fs-13);
+  line-height: 1.75;
+  color: var(--ink-3);
+}
+
+/* Each card sizes its own title and answer; two side by side end level, the
+   topics line at the foot of both (shared rows left a hole under a one-line
+   title). */
+
+/* Phones: no topics line (cut to two lines it ended mid-word; the guide's
+   own contents list is one tap away). */
+@media (max-width: 640px) {
+  .clip__body .bin__meta {
+    display: none;
+  }
+}
+
+/* ── The thumbnail ──────────────────────────────────────────────────────── */
+
+.bin-thumb {
+  --x: 0%;
+  position: relative;
+  aspect-ratio: 16 / 5;
+  overflow: hidden;
+  border-bottom: 1px solid var(--line);
+  border-radius: 11px 11px 0 0;
+  background:
+    linear-gradient(180deg, transparent 55%, color-mix(in srgb, var(--color-neutral-900) 10%, transparent)),
+    var(--well);
+}
+
+.bin-thumb__glow {
+  position: absolute;
+  top: -50%;
+  left: var(--gx, 40%);
+  width: 70%;
+  height: 130%;
+  background: radial-gradient(closest-side, var(--gold-soft), transparent);
+  pointer-events: none;
+}
+
+.bin-thumb__marks i {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: repeating-linear-gradient(180deg, var(--line-2) 0 3px, transparent 3px 7px);
+}
+
+/* A section cue: a small gold flag at the top of each dashed line. */
+.bin-thumb__marks i::before {
+  content: "";
+  position: absolute;
+  top: 8px;
+  left: -3px;
+  width: 7px;
+  height: 7px;
+  rotate: 45deg;
+  border-radius: 1.5px;
+  background: color-mix(in srgb, var(--color-accent) 70%, transparent);
+}
+
+.bin-thumb__wave {
+  position: absolute;
+  left: 14px;
+  bottom: 30px;
+  width: calc(100% - 28px);
+  height: 36%;
+}
+
+.bin-thumb__wave path {
+  fill: none;
+  stroke: color-mix(in srgb, var(--color-accent) 42%, transparent);
+  stroke-width: 2;
+}
+
+/* On the dark ground the same mix goes olive: lift it. */
+html[data-theme="dark"] .bin-thumb__wave path {
+  stroke: color-mix(in srgb, var(--color-accent) 62%, transparent);
+}
+
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]) .bin-thumb__wave path {
+    stroke: color-mix(in srgb, var(--color-accent) 62%, transparent);
+  }
+}
+
+/* What the playhead has passed reads as "played". */
+.bin-thumb__played {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--x);
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  pointer-events: none;
+}
+
+.bin-thumb__head {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--x);
+  width: 2px;
+  margin-left: -1px;
+  background: var(--gold);
+  opacity: 0;
+  transition: opacity var(--dur-2) ease;
+  pointer-events: none;
+}
+
+.bin-thumb__head::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -5px;
+  border: 6px solid transparent;
+  border-top: 8px solid var(--gold);
+  border-bottom: 0;
+}
+
+.bin-thumb[data-scrub] .bin-thumb__head {
+  opacity: 1;
+}
+
+.bin-thumb__name,
+.bin-thumb__tc {
+  position: absolute;
+  bottom: 9px;
+  padding: 4px 7px;
+  border-radius: 5px;
+  background: var(--glass-strong);
+  color: var(--ink-2);
+  pointer-events: none;
+}
+
+.bin-thumb__name {
+  left: 10px;
+  max-width: calc(100% - 130px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bin-thumb__tc {
+  right: 10px;
+  color: var(--gold-ink);
+}
+
+/* The rest of the bin: the pages outside the guide. */
+.guide-more {
+  padding-top: calc(var(--section-y) * 0.75);
+}
+
+.guide-more .sec-head {
+  margin-bottom: clamp(20px, 2.6vw, 30px);
+}
+
+.guide-more__foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: clamp(28px, 3vw, 40px);
+}
+
+/* Phones: "อ่านต่อนอกคู่มือ" as compact rows and its two buttons stacked full
+   width — the same as the end of every guide. */
+@media (max-width: 640px) {
+  .guide-more .clip__strip {
+    display: none;
+  }
+
+  .guide-more .clip__body {
+    gap: 4px;
+    padding: 14px 16px;
+  }
+
+  .guide-more .clip__title {
+    font-size: var(--fs-16);
+  }
+
+  .guide-more .clip__body p {
+    font-size: var(--fs-14);
+    line-height: 1.6;
+  }
+
+  .guide-more .link-grid {
+    gap: 8px;
+  }
+
+  .guide-more__foot {
+    flex-direction: column-reverse;
+  }
+
+  .guide-more__foot .btn {
+    width: 100%;
+  }
+}

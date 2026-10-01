@@ -1,0 +1,579 @@
+/*
+ * /scope. Signature: the handoff timeline — the system's work, the diagonal
+ * cut where the draft changes hands, then yours, played past a fixed
+ * playhead (desktop, motion allowed) or read top to bottom (everything else).
+ */
+
+/* ── Hero aside: the handoff in miniature ───────────────────────────────── */
+
+/* The hero's map of the timeline below: two tracks offset across the cut. */
+.phero__aside:has(.handoff-key) {
+  align-self: center;
+  container-type: inline-size;
+}
+
+.handoff-key {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  align-items: center;
+  gap: 12px 0;
+  padding: 22px 22px 26px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-xl);
+  background: color-mix(in srgb, var(--panel) 80%, transparent);
+  box-shadow: var(--shadow-2), var(--rim);
+}
+
+.handoff-key__ruler {
+  grid-column: 1 / -1;
+  height: 12px;
+  background:
+    repeating-linear-gradient(90deg, var(--line-2) 0 1px, transparent 1px 25%) 0 100% / 100% 12px no-repeat,
+    repeating-linear-gradient(90deg, var(--line) 0 1px, transparent 1px 5%) 0 100% / 100% 6px no-repeat;
+}
+
+.handoff-key__lane {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 48px;
+  padding: 6px;
+  border-radius: 10px;
+  background: var(--well);
+}
+
+/* The AI track ends, the cut, then your track begins. */
+.handoff-key__lane--ai {
+  grid-column: 1 / 7;
+  grid-row: 2;
+}
+
+.handoff-key__lane--you {
+  grid-column: 8 / -1;
+  grid-row: 3;
+}
+
+.handoff-key__lane i {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  /* Two digits and a margin: the chip never pinches its number. */
+  min-width: 28px;
+  height: 100%;
+  padding: 0 4px;
+  border-radius: 6px;
+  font-style: normal;
+}
+
+.handoff-key__lane i .tc {
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+.handoff-key__lane--ai i .tc {
+  color: var(--on-gold);
+}
+
+.handoff-key__lane--you i .tc {
+  color: var(--gold-ink);
+}
+
+.handoff-key__lane--ai i {
+  background: linear-gradient(180deg, var(--color-accent-400), var(--color-accent-600));
+}
+
+.handoff-key__lane--you i {
+  border: 1.5px solid var(--gold);
+  background: var(--gold-softer);
+}
+
+.handoff-key__lane .trk {
+  flex: none;
+}
+
+.handoff-key__cut {
+  position: relative;
+  grid-column: 7 / 8;
+  grid-row: 2 / 4;
+  justify-self: center;
+  z-index: 1;
+  width: 26px;
+  height: 64px;
+}
+
+.handoff-key__cut::before,
+.handoff-key__cut::after {
+  content: "";
+  position: absolute;
+  width: 5px;
+  height: 30px;
+  border-radius: 4px;
+  background: var(--gold);
+  rotate: 24deg;
+  box-shadow: 0 0 16px var(--gold-glow);
+}
+
+.handoff-key__cut::before {
+  left: 4px;
+  bottom: 2px;
+}
+
+.handoff-key__cut::after {
+  right: 4px;
+  top: 2px;
+}
+
+/* A narrow card cannot hold the tracks side by side — yours alone needs
+   about 170px, five twelfths of the card — so they stack, still offset,
+   with the cut between them. */
+@container (max-width: 459px) {
+  .handoff-key {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+  }
+
+  .handoff-key__lane--ai {
+    grid-column: 1;
+    grid-row: 2;
+    margin-right: 18%;
+  }
+
+  .handoff-key__cut {
+    grid-column: 1;
+    grid-row: 3;
+    height: 36px;
+  }
+
+  .handoff-key__cut::before,
+  .handoff-key__cut::after {
+    height: 17px;
+  }
+
+  .handoff-key__lane--you {
+    grid-column: 1;
+    grid-row: 4;
+    margin-left: 18%;
+  }
+}
+
+/* ── The handoff timeline ───────────────────────────────────────────────── */
+
+.handoff {
+  position: relative;
+  border-top: 1px solid var(--line);
+  background:
+    repeating-linear-gradient(90deg, color-mix(in srgb, var(--color-text) 3%, transparent) 0 1px, transparent 1px 96px),
+    color-mix(in srgb, var(--panel) 40%, transparent);
+}
+
+.handoff-scene__sticky {
+  position: relative;
+  padding-block: var(--section-y);
+}
+
+.handoff__viewport {
+  overflow: hidden;
+}
+
+.handoff__track {
+  width: min(100%, var(--page-max) + var(--gutter) * 2);
+  margin: 0 auto;
+  padding: 0 var(--gutter);
+  display: grid;
+  gap: clamp(32px, 5vw, 56px);
+}
+
+/* The intro and the step cards under it: a full step apart, so the cards
+   read as the list the intro introduces, not as its last lines. */
+.handoff__part {
+  display: grid;
+  gap: clamp(32px, 4vw, 44px);
+}
+
+.handoff__head {
+  margin-bottom: 0;
+}
+
+.handoff__blocks {
+  position: relative;
+  display: grid;
+  gap: 12px;
+  /* A step is one short line: cards as wide as the page would read as bars. */
+  max-width: 880px;
+  margin: 0;
+  padding: 0 0 0 28px;
+  list-style: none;
+}
+
+/* The track the clips sit on. */
+.handoff__blocks::before {
+  content: "";
+  position: absolute;
+  left: 8px;
+  top: 8px;
+  bottom: 8px;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--line-2);
+}
+
+.handoff__block {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 14px;
+  row-gap: 6px;
+  padding: 18px 20px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  box-shadow: var(--rim);
+  transition:
+    border-color var(--dur-3) ease,
+    box-shadow var(--dur-3) var(--ease-out),
+    scale var(--dur-3) var(--ease-out);
+}
+
+.handoff__block::before {
+  content: "";
+  position: absolute;
+  left: -25px;
+  top: 24px;
+  width: 10px;
+  height: 10px;
+  rotate: 45deg;
+  border-radius: 2px;
+  background: var(--bg);
+  border: 2px solid var(--line-3);
+}
+
+.handoff__block--ai {
+  border-color: color-mix(in srgb, var(--color-accent) 45%, transparent);
+  background: linear-gradient(135deg, var(--gold-soft), transparent 70%), var(--panel);
+}
+
+.handoff__block--ai::before {
+  border-color: var(--gold);
+  background: var(--gold);
+}
+
+.handoff__block--you {
+  border-style: dashed;
+  border-color: var(--line-3);
+}
+
+.handoff__n {
+  grid-row: span 2;
+  font-size: var(--fs-14);
+  font-weight: 600;
+  color: var(--gold-ink);
+  margin-top: 0.3em;
+}
+
+.handoff__block h3 {
+  font-size: var(--fs-h4);
+  font-weight: 600;
+  line-height: 1.45;
+}
+
+.handoff__block p {
+  margin: 0;
+  font-size: var(--fs-15);
+  line-height: 1.75;
+  color: var(--ink-2);
+}
+
+/* As wide as the step cards around it: one right edge down the timeline. */
+.handoff__cut {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 18px;
+  max-width: 880px;
+  padding: 18px 20px;
+  border-radius: 16px;
+  border: 1px solid color-mix(in srgb, var(--color-accent) 50%, transparent);
+  background: var(--gold-softer);
+}
+
+.handoff__cut-mark {
+  width: 34px;
+  height: 68px;
+  fill: none;
+  stroke: var(--gold);
+  stroke-width: 7;
+  stroke-linecap: round;
+  filter: drop-shadow(0 0 12px var(--gold-glow));
+}
+
+.handoff__note {
+  margin: 0;
+  font-size: var(--fs-lead);
+  font-weight: 500;
+  line-height: 1.7;
+  color: var(--ink);
+}
+
+.handoff__playhead,
+.handoff__progress {
+  display: none;
+}
+
+/* Desktop with motion: one strip read past a fixed playhead. */
+@media (min-width: 1024px) and (min-height: 640px) and (prefers-reduced-motion: no-preference) {
+  .handoff-scene {
+    height: 440vh;
+  }
+
+  .handoff-scene__sticky {
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    display: grid;
+    align-content: center;
+    padding-block: calc(var(--beta-h) + var(--header-top) + var(--header-h) + 12px) 56px;
+    overflow: hidden;
+  }
+
+  /* Room inside the clip for the cards' shadows, taken back outside it. */
+  .handoff__viewport {
+    position: relative;
+    z-index: 1;
+    padding-block: 48px;
+    margin-block: -48px;
+  }
+
+  .handoff__track {
+    display: flex;
+    align-items: center;
+    gap: 48px;
+    width: max-content;
+    margin: 0;
+    padding: 0 50vw;
+    transform: translate3d(calc(var(--p, 0) * var(--shift, 0px) * -1), 0, 0);
+    will-change: transform;
+  }
+
+  .handoff__part {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+  }
+
+  /* Opaque cards: the playhead runs behind the text, never through it. */
+  .handoff__title {
+    width: min(460px, 36vw);
+    display: grid;
+    align-content: center;
+    padding: 28px 30px;
+    border-radius: var(--r-xl);
+    background: var(--bg);
+    border: 1px solid var(--line);
+    box-shadow: var(--shadow-2);
+  }
+
+  .handoff__blocks {
+    display: flex;
+    gap: 16px;
+    max-width: none;
+    padding: 0;
+    align-items: stretch;
+  }
+
+  /* The track line runs under the clips, horizontally. */
+  .handoff__blocks::before {
+    left: -20px;
+    right: -20px;
+    top: auto;
+    bottom: -26px;
+    width: auto;
+    height: 2px;
+  }
+
+  .handoff__block {
+    width: 330px;
+    align-content: start;
+  }
+
+  .handoff__block::before {
+    left: 24px;
+    top: auto;
+    bottom: -31px;
+  }
+
+  .handoff__cut {
+    width: 300px;
+    grid-template-columns: 1fr;
+    justify-items: center;
+    text-align: center;
+    align-content: center;
+    padding: 26px 22px;
+    background: var(--bg);
+  }
+
+  .handoff__cut-mark {
+    width: 70px;
+    height: 140px;
+  }
+
+  /* Under the playhead now. */
+  .handoff__block[data-live] {
+    scale: 1.03;
+    border-color: var(--gold);
+    box-shadow:
+      var(--rim),
+      0 24px 60px -24px var(--gold-glow);
+  }
+
+  .handoff__cut[data-live] .handoff__cut-mark {
+    animation: cut-flash 700ms var(--ease-out);
+  }
+
+  .handoff__playhead {
+    display: block;
+    position: absolute;
+    left: 50%;
+    top: calc(var(--beta-h) + var(--header-top) + var(--header-h) + 8px);
+    bottom: 40px;
+    width: 2px;
+    translate: -1px 0;
+    background: linear-gradient(180deg, var(--gold), color-mix(in srgb, var(--color-accent) 30%, transparent));
+    box-shadow: 0 0 16px var(--gold-glow);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .handoff__playhead::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 50%;
+    width: 16px;
+    height: 13px;
+    translate: -50% 0;
+    background: var(--gold);
+    clip-path: polygon(0 0, 100% 0, 100% 55%, 50% 100%, 0 55%);
+  }
+
+  .handoff__progress {
+    display: block;
+    position: absolute;
+    left: var(--gutter);
+    right: var(--gutter);
+    bottom: 24px;
+    height: 2px;
+    border-radius: 2px;
+    background: var(--line);
+    overflow: hidden;
+  }
+
+  .handoff__progress span {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, var(--gold) 0 50%, var(--ink-3) 50%);
+    transform-origin: left;
+    transform: scaleX(var(--p, 0));
+  }
+}
+
+@keyframes cut-flash {
+  30% {
+    scale: 1.2;
+    filter: drop-shadow(0 0 26px var(--gold));
+  }
+}
+
+/* ── Fit / misfit, time, FAQ, guides ────────────────────────────────────── */
+
+.scope-fit,
+.scope-time,
+.scope-faq,
+.scope-guides {
+  border-top: 1px solid var(--line);
+}
+
+.scope-time__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 0.9fr);
+  gap: clamp(28px, 5vw, 80px);
+  align-items: center;
+}
+
+.scope-time__grid .sec-head {
+  margin-bottom: 0;
+}
+
+@media (max-width: 900px) {
+  .scope-time__grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.summary {
+  display: grid;
+  gap: 14px;
+  padding: clamp(22px, 3vw, 32px);
+  border: 1px solid var(--line);
+  border-radius: var(--r-xl);
+  background: var(--panel);
+  box-shadow: var(--shadow-2), var(--rim);
+}
+
+.summary__rows {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.summary__row {
+  display: grid;
+  grid-template-columns: 56px auto minmax(0, 1fr);
+  align-items: center;
+  gap: 14px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--well);
+}
+
+.summary__bar {
+  height: 18px;
+  border-radius: 5px;
+}
+
+.summary__row--0 .summary__bar {
+  background: linear-gradient(90deg, var(--color-accent-400), var(--color-accent-600));
+}
+
+.summary__row--1 .summary__bar {
+  border: 1.5px dashed var(--gold);
+}
+
+.summary__row--2 .summary__bar {
+  background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--color-danger) 45%, transparent) 0 2px, transparent 2px 7px);
+  border: 1px solid color-mix(in srgb, var(--color-danger) 40%, transparent);
+}
+
+.summary__label {
+  font-size: var(--fs-14);
+  font-weight: 600;
+  color: var(--gold-ink);
+  white-space: nowrap;
+}
+
+.summary__text {
+  font-size: var(--fs-15);
+  line-height: 1.6;
+}
+
+@media (max-width: 480px) {
+  .summary__row {
+    grid-template-columns: 36px minmax(0, 1fr);
+  }
+
+  .summary__text {
+    grid-column: 2;
+  }
+}
