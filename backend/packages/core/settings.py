@@ -401,6 +401,12 @@ class Settings(BaseSettings):
     #: 450k credit). Resumes are exempt; a balance the user allows can carry
     #: the excess instead.
     billing_max_overage_ratio: float = 0.25
+    #: Absolute ceiling on that same start-time overage, whatever the plan
+    #: (owner, 2026-10-01: a big plan's 25% is millions of tokens; the most we
+    #: could ever absorb from a user who overruns and never returns must stay
+    #: a few baht). 300k tokens ≈ ฿7 today / ฿15 at the 2027 peg. Counts the
+    #: user's runs already in flight, so concurrent starts share it.
+    billing_max_overage_tokens: int = 300_000
     #: Longest style-reference clip accepted (seconds) — cut / effects styles
     #: and the plan-effects reference: every second is billed video input.
     reference_max_sec: int = 1200

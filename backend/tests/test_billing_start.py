@@ -284,12 +284,33 @@ def test_the_overage_a_new_run_may_be_expected_to_take_is_a_setting(monkeypatch)
     assert guard.overage_refusal(rich, 210_001, allow_wallet=True) is None
     assert guard.overage_refusal(rich, 210_001, allow_wallet=False) is not None
     monkeypatch.setenv("BILLING_MAX_OVERAGE_RATIO", "0.5")
+    monkeypatch.setenv("BILLING_MAX_OVERAGE_TOKENS", "1000000")
     get_settings.cache_clear()
     try:
         assert guard.overage_refusal(_window(10_000), 410_000, allow_wallet=False) is None
     finally:
         monkeypatch.delenv("BILLING_MAX_OVERAGE_RATIO")
+        monkeypatch.delenv("BILLING_MAX_OVERAGE_TOKENS")
         get_settings.cache_clear()
+
+
+def test_a_big_plan_overage_is_capped_in_tokens_not_just_by_ratio():
+    # Max (48M): 25 % would allow 12M past what is left; the absolute cap
+    # (300k by default) is what bounds it — a few baht at most.
+    big = _window(10_000, limit=48_000_000)
+    assert guard.overage_refusal(big, 310_000, allow_wallet=False) is None
+    refused = guard.overage_refusal(big, 310_001, allow_wallet=False)
+    assert refused is not None and refused["code"] == "overage_too_large"
+
+
+def test_runs_in_flight_share_the_absolute_overage_cap():
+    from dataclasses import replace
+
+    big = replace(_window(10_000, limit=48_000_000), in_flight=200_000)
+    # 10k left − 200k already expected by running work → nothing left; a new
+    # 300k run would be 300k past, at the cap; 300,001 is past it.
+    assert guard.overage_refusal(big, 300_000, allow_wallet=False) is None
+    assert guard.overage_refusal(big, 300_001, allow_wallet=False) is not None
 
 
 async def test_a_run_too_big_for_the_whole_window_is_refused_up_front(captured, monkeypatch):

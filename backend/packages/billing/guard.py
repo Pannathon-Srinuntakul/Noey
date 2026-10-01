@@ -245,7 +245,11 @@ def overage_refusal(state: Any, estimate_tokens: int, *, allow_wallet: bool) -> 
     # runs already in flight still expect to spend.
     left = max(0, int(state.headroom) - int(getattr(state, "in_flight", 0) or 0))
     over = int(estimate_tokens) - left
-    allowed = math.floor(max(0.0, float(get_settings().billing_max_overage_ratio)) * int(state.limit))
+    cfg = get_settings()
+    allowed = min(
+        math.floor(max(0.0, float(cfg.billing_max_overage_ratio)) * int(state.limit)),
+        max(0, int(cfg.billing_max_overage_tokens)),
+    )
     if over <= allowed:
         return None
     need = wallet.satang_for_tokens(over)
