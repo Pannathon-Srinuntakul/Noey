@@ -24,10 +24,12 @@ from services.api.middleware import BodySizeLimitMiddleware, RequestContextMiddl
 from services.api.routers import (
     account,
     admin,
+    admin_blog,
     auth,
     auth_google,
     auth_handoff,
     billing,
+    blog,
     contact,
     effect_styles,
     jobs,
@@ -122,9 +124,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # warmed here so the first enqueue does not pay the connect, closed on
     # shutdown so uvicorn's graceful stop is not held up by an open socket.
     app.state.arq_pool_ready = await warm_arq_pool()
+    # The blog MCP server's session manager (services/mcp/server.py) — one per
+    # process, serving /mcp until shutdown.
+    from services.mcp import server as mcp_server
+
     try:
-        yield
+        async with mcp_server.run():
+            yield
     finally:
+        from packages.blog import revalidate
+
+        await revalidate.drain()
         await close_arq_pool()
 
 
@@ -274,11 +284,13 @@ def create_app() -> FastAPI:
 
     for r in (
         admin,
+        admin_blog,
         auth,
         auth_google,
         auth_handoff,
         account,
         billing,
+        blog,
         contact,
         effect_styles,
         jobs,
@@ -293,6 +305,12 @@ def create_app() -> FastAPI:
         videos,
     ):
         app.include_router(r.router)
+
+    # The blog MCP server + its OAuth endpoints (plain Starlette routes: /mcp,
+    # /mcp/oauth/*, /.well-known/oauth-*). See docs/blog-mcp.md.
+    from services.mcp import server as mcp_server
+
+    app.router.routes.extend(mcp_server.routes())
 
     return app
 

@@ -50,6 +50,9 @@ dependencies = [
     "boto3>=1.35",
     # error monitoring — packages/core/monitoring.py; inert without SENTRY_DSN.
     "sentry-sdk>=2.71",
+    # the blog MCP server (services/mcp/) — the official SDK: Streamable HTTP
+    # transport + the OAuth 2.1 handlers (packages/blog/oauth.py). 2.x API.
+    "mcp>=2.2",
 ]
 
 [project.optional-dependencies]

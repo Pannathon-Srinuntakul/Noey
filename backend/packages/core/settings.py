@@ -478,6 +478,50 @@ class Settings(BaseSettings):
     #: in Thailand at all (see the tax note in docs/billing-stripe.md).
     billing_automatic_tax: bool = False
 
+    # --- Blog + the blog MCP server (docs/blog-mcp.md, BLOG_CONTRACT.md) ---
+    #: Public origin of THIS API, e.g. `https://api.noeystudio.com`. The blog
+    #: MCP endpoint is `<this>/mcp` and its OAuth issuer is the same URL — both
+    #: are compared byte-for-byte by OAuth clients, so no trailing slash.
+    api_public_url: str = "http://localhost:8000"
+    #: Public origin of the admin dashboard (admin/): the OAuth consent page
+    #: lives there (`/connect`), so only a signed-in admin can approve a client.
+    admin_url: str = "http://localhost:3001"
+    #: Full URL of the site's revalidation route. Unset → `<SITE_URL>/api/revalidate-blog`.
+    blog_revalidate_url: str = ""
+    #: Bearer secret shared with noey-frontend. Unset → revalidation is skipped
+    #: (logged); ISR catches up within 10 minutes.
+    blog_revalidate_secret: str | None = None
+    #: Public base URL of blog images: `<this>/<sha256>.webp`. Unset → this
+    #: API's own `<API_PUBLIC_URL>/blog/media` (reads the bucket's `blog/`
+    #: objects, or DATA_DIR/blog without a bucket; the bucket stays private).
+    blog_media_public_url: str = ""
+    #: Publishes per Bangkok calendar day through MCP. The admin dashboard can
+    #: override it (core.admin_settings `blog_config`).
+    blog_max_publish_per_day: int = 2
+    #: MCP `publish_post` publishes directly; false = it answers "waiting for
+    #: the owner" and the owner publishes from the admin. Admin-overridable.
+    blog_auto_publish: bool = True
+    #: The shortest body `create_post`/`update_post` accept, in words (Thai is
+    #: word-segmented before counting).
+    blog_min_words: int = 600
+    #: MCP tool calls per token per minute (across all tools).
+    blog_mcp_calls_per_min: int = 60
+    #: Access tokens are short; refresh tokens rotate on every use.
+    blog_mcp_access_ttl_sec: int = 60 * 60
+    blog_mcp_refresh_ttl_sec: int = 60 * 60 * 24 * 30
+    #: Also accept http://localhost:<any>/… and http://127.0.0.1:<any>/…
+    #: redirect URIs at client registration (Claude Code, the MCP Inspector,
+    #: local tests). Off in production: only claude.ai/claude.com callbacks.
+    blog_mcp_allow_loopback_redirects: bool = False
+
+    @property
+    def blog_mcp_resource_url(self) -> str:
+        return f"{self.api_public_url.rstrip('/')}/mcp"
+
+    @property
+    def blog_revalidate_target(self) -> str:
+        return self.blog_revalidate_url.strip() or f"{self.site_url.rstrip('/')}/api/revalidate-blog"
+
     # --- Self-service registration bot check (Cloudflare Turnstile) ---
     #: When set, POST /auth/register (and /auth/forgot-password, /contact)
     #: require a `turnstile_token` and verify it server-side. Unset → no check.

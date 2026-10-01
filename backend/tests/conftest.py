@@ -52,6 +52,17 @@ def _no_redis_no_mail(monkeypatch):
     from packages.auth import handoff
 
     monkeypatch.setattr(handoff, "_store", handoff.MemoryHandoffStore())
+    # The blog MCP server's refresh tokens: in memory too (own key prefix), and
+    # blog revalidation never sleeps between retries nor calls a real site.
+    from packages.blog import oauth as blog_oauth
+    from packages.blog import revalidate as blog_revalidate
+
+    monkeypatch.setattr(blog_oauth, "_store", refresh_store.MemoryRefreshStore(prefix=blog_oauth.REFRESH_PREFIX))
+    monkeypatch.setattr(blog_revalidate, "BACKOFF", (0.0, 0.0))
+    monkeypatch.setenv("BLOG_REVALIDATE_SECRET", "")
+    monkeypatch.setenv("BLOG_MEDIA_PUBLIC_URL", "")
+    monkeypatch.setenv("API_PUBLIC_URL", "http://localhost:8000")
+    monkeypatch.setenv("ADMIN_URL", "http://localhost:3001")
     for var in ("GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REDIRECT_URIS"):
         monkeypatch.setenv(var, "")
     monkeypatch.setenv("SENDGRID_API_KEY", "")

@@ -20,6 +20,17 @@ from packages.db.models.admin import (
 from packages.db.models.ai_run import AiRun
 from packages.db.models.auth_token import AuthToken
 from packages.db.models.billing import BillingAccount, StripeEvent
+from packages.db.models.blog import (
+    BlogAuditLog,
+    BlogCategory,
+    BlogImage,
+    BlogOAuthClient,
+    BlogOAuthGrant,
+    BlogOAuthRequest,
+    BlogPost,
+    BlogPostTag,
+    BlogTag,
+)
 from packages.db.models.core_auth import Job, Membership, Tenant, User
 from packages.db.models.effect_style import EffectStyle
 from packages.db.models.fx import FxRate, VendorInvoice
@@ -39,6 +50,15 @@ __all__ = [
     "AiRun",
     "AuthToken",
     "BillingAccount",
+    "BlogAuditLog",
+    "BlogCategory",
+    "BlogImage",
+    "BlogOAuthClient",
+    "BlogOAuthGrant",
+    "BlogOAuthRequest",
+    "BlogPost",
+    "BlogPostTag",
+    "BlogTag",
     "EffectStyle",
     "FxRate",
     "Job",
