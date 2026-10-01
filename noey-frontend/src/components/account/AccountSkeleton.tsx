@@ -1,4 +1,4 @@
-import { LevelMeter } from "../ds/LevelMeter";
+import "../../styles/parts/level.css";
 import { LoadingFrame, RenderLoading, Skel, SkelLines } from "../shell/RenderLoading";
 import { AccountTabs } from "./AccountTabs";
 
@@ -24,6 +24,19 @@ export function accountTabOf(path: string): AccountTab {
  * (`.acct-page__panel:has(.tabs a[aria-current]…)`, account.css), so this
  * stays a server component and the switch needs no script.
  */
+
+/**
+ * A level meter left unlit: level.css's own box, its segments drawn by one
+ * background (`.lvl__blank`) rather than LevelMeter's 62 elements a meter,
+ * which in four skeleton variants outweighed the page they stand for.
+ */
+function EmptyMeter({ className }: { className?: string }) {
+  return (
+    <div className={["lvl", className].filter(Boolean).join(" ")} aria-hidden="true">
+      <span className="lvl__blank" />
+    </div>
+  );
+}
 
 function Kicker({ children }: { children: string }) {
   return <div className="card-kicker">{children}</div>;
@@ -90,7 +103,7 @@ function OverviewSkeleton({ only = false }: { only?: boolean }) {
             <dd>
               <Skel w="4.5em" />
             </dd>
-            <LevelMeter value={0} className="acct-summary__meter" />
+            <EmptyMeter className="acct-summary__meter" />
           </div>
           <div>
             <dt>
@@ -99,7 +112,7 @@ function OverviewSkeleton({ only = false }: { only?: boolean }) {
             <dd>
               <Skel w="6.5em" />
             </dd>
-            <LevelMeter value={0} className="acct-summary__meter" />
+            <EmptyMeter className="acct-summary__meter" />
           </div>
         </dl>
       </div>
@@ -117,7 +130,7 @@ function QuotaSkeleton({ only = false }: { only?: boolean }) {
             <Skel w="7em" />
             <Skel w="4.5em" />
           </div>
-          <LevelMeter value={0} />
+          <EmptyMeter />
           <p className="meter-note">
             <Skel w="17em" />
           </p>
@@ -127,7 +140,7 @@ function QuotaSkeleton({ only = false }: { only?: boolean }) {
             <Skel w="6em" />
             <Skel w="6.5em" />
           </div>
-          <LevelMeter value={0} />
+          <EmptyMeter />
           <p className="meter-note">
             <Skel w="10em" />
           </p>
