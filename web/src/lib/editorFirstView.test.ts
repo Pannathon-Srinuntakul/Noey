@@ -27,12 +27,12 @@ describe('firstViewGate', () => {
   it('does not open on the strip manifests alone', () => {
     // The old gate: status 'ready' (a cached manifest is instant) opened the
     // editor while every visible tile was still on its way.
-    expect(firstViewGate({ filmstrip: ready, tilesSettled: false, previewSettled: true }).open).toBe(
-      false
-    )
-    expect(firstViewGate({ filmstrip: ready, tilesSettled: true, previewSettled: false }).open).toBe(
-      false
-    )
+    expect(
+      firstViewGate({ filmstrip: ready, tilesSettled: false, previewSettled: true }).open
+    ).toBe(false)
+    expect(
+      firstViewGate({ filmstrip: ready, tilesSettled: true, previewSettled: false }).open
+    ).toBe(false)
   })
 
   it('treats a failed or empty filmstrip as settled — an empty lane is not a wait', () => {
