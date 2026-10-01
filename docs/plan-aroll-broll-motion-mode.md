@@ -63,6 +63,36 @@ they have**, and more.
 1. User b-roll → 2. Infographic (numbers, lists, steps, comparisons, prices) → 3. Stock photo/video
 from free libraries (atmosphere / concept) → 4. Animated text card.
 
+## Technical flow — a multi-agent pipeline (owner, 2026-10-02)
+This mode is many model calls by design, each a role with its own prompt and JSON schema. (The
+"one Gemini call" rule of 2026-10-01 is about the ตัดฉากเด่น cut plan only.) Every stage is an arq
+job, persists its output in the project, is billed per call through the existing quota model,
+and is resumable (paused_quota resumes at the next stage / next shot). Fan-out stages run per
+file / per shot in parallel. All calls go through `packages/llm` (provider-agnostic).
+
+| # | Agent (role) | Input → output | Model kind |
+|---|---|---|---|
+| 0 | Ingest (no AI) | files → proxies, audio WAV, thumbnails, durations | — |
+| 1 | Transcriber | A-roll audio → word-timed transcript | existing STT (ElevenLabs) |
+| 2 | B-roll analyst (per file, parallel) | b-roll video/photo → tags, usable ranges, what it shows | video/vision model |
+| 3 | A-roll cleaner | transcript (+ audio cues) → keep-ranges without silences, flubs, retakes, fillers | text model |
+| 4 | Concept writer | cleaned transcript + brief + b-roll index → 2–3 concepts (hook, structure, tone) | strongest text model |
+| 5 | Storyboard director | chosen concept + transcript + b-roll index + brand kit → `storyboard.json` (shots[] with id, A-roll range, line, layout, visual source, caption + emphasis, graphic spec, camera move, transition, SFX, emotion) | strongest multimodal model |
+| 6 | Stock researcher (per shot needing stock, parallel) | shot spec → English queries → stock API search → vision pick → downloaded asset + attribution | text + vision |
+| 7 | Graphic designer (per graphic shot, parallel) | graphic spec + brand kit + timing → template params, or AI-written HTML/CSS/JS/SVG | strongest coding model |
+| 8 | Graphic QA (loop, max N) | sample frames rendered from #7 → checks overflow, overlap, Thai rendering, timing → fixes | vision model |
+| 9 | Sound designer | storyboard + music library + beat grid → SFX cues, music pick, duck points | text model + existing beat analysis |
+| 10 | Reviser | user's per-shot notes → updates only those shots, re-runs 6–9 for them | strongest model |
+| 11 | Renderer (no AI) | storyboard + assets + graphics → MP4 | compositor + code-graphics renderer |
+
+Artifacts per project: `transcript.json`, `broll_index.json`, `concepts.json`, `storyboard.json`,
+`graphics/<shot_id>/` (code + rendered transparent clip or frames), `stock/` (+ attribution
+manifest), `audio_plan.json`, final render.
+
+Graphics rendering: AI code runs sandboxed in Chromium with a controlled clock, stepped frame by
+frame, captured as transparent video/frames; desktop renders locally (Electron offscreen), web
+renders on a server-side headless Chromium service; the compositor layers them over the footage.
+
 ## Building blocks
 | # | Component | Notes |
 |---|---|---|
