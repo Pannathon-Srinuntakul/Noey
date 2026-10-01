@@ -22,8 +22,10 @@ the next long one, which is Stripe's own rule, not an invention.
 
 **The rolling sub-windows** (``five_hour``, ``weekly``) keep the old rule —
 active while ``now < started_at + length``, restarting at the next charge — and
-``lifetime`` never runs out at all. No plan enforces the first two today; they
-are recorded so switching one back on needs no new code.
+``lifetime`` never runs out at all. ``weekly`` is ENFORCED on Pro and up
+beside ``monthly`` (owner, 2026-10-01 — 40 % of the month, rolling 7 days
+from the first charge after the last week ran out; see limits.py rule 1);
+``five_hour`` is recorded only.
 
 The anchor (``usage_accounts.monthly_anchor_day``) is stored, never fetched:
 ``window_used`` / ``window_resets_at`` run on every ``GET /usage/me`` and
@@ -357,21 +359,39 @@ def _overage(account: UsageAccount | None) -> tuple[str | None, int]:
 
 
 def _carry_destination(account: UsageAccount | None, plan: str) -> tuple[str, int] | None:
-    """Which enforced window the overage belongs to on ``plan`` and how much
-    — None when there is none, or while it is DORMANT: a paid window's
+    """Which enforced window the MAIN overage belongs to on ``plan`` and how
+    much — None when there is none, or while it is DORMANT: a paid window's
     overage on an account that is on Free now waits for the next
-    subscription instead of being charged against the trial credit."""
+    subscription instead of being charged against the trial credit. (The
+    weekly window's own overage is ``_weekly_carry``.)"""
     src, tokens = _overage(account)
-    enforced = limits_mod.plan_limits(plan).windows
-    if tokens <= 0 or not src or not enforced:
+    primary = limits_mod.primary_window(plan)
+    if tokens <= 0 or not src or primary is None:
         return None
-    if src in enforced:
+    if src == primary:
         return src, tokens
-    if "lifetime" in enforced:
+    if primary == "lifetime":
         return None  # dormant on Free
     # Free → paid (or a paid window the new plan does not enforce): it opens
-    # the plan's paid window.
-    return enforced[0], tokens
+    # the plan's main paid window.
+    return primary, tokens
+
+
+def _weekly_overage(account: UsageAccount | None) -> int:
+    return int(getattr(account, "weekly_overage_tokens", 0) or 0) if account is not None else 0
+
+
+def _weekly_carry(account: UsageAccount | None, plan: str, now: datetime) -> int:
+    """The weekly overage a VIEW must add to the weekly window right now: only
+    on a plan that enforces it, and only while the week it was charged in has
+    run out and the next has not started (inside a running week the excess
+    is simply part of that week's own usage)."""
+    tokens = _weekly_overage(account)
+    if tokens <= 0 or not limits_mod.enforces_weekly(plan):
+        return 0
+    if window_active(_started(account, "weekly"), "weekly", now):
+        return 0
+    return tokens
 
 
 def carry_target(account: UsageAccount | None, plan: str, now: datetime) -> tuple[str, int] | None:
@@ -394,6 +414,7 @@ def apply_carry(account: UsageAccount, plan: str, now: datetime) -> None:
     has rolled the windows): open the window it belongs to at that amount.
     A dormant overage (``_carry_destination`` None) is left alone.
     Idempotent."""
+    _apply_weekly_carry(account, plan, now)
     src, tokens = _overage(account)
     if tokens <= 0:
         return
@@ -422,9 +443,64 @@ def apply_carry(account: UsageAccount, plan: str, now: datetime) -> None:
     _clear_overage(account)
 
 
+def _apply_weekly_carry(account: UsageAccount, plan: str, now: datetime) -> None:
+    """The weekly half of ``apply_carry``: a week that ended past 100 % opens
+    the next week at the excess (rolling — the new week starts now, at the
+    charge that opened it). The month is NOT charged again: every token in it
+    was already counted there when it was spent. On a plan without a weekly
+    window the excess means nothing and is dropped — it was a pace limit,
+    never a debt."""
+    tokens = _weekly_overage(account)
+    if tokens <= 0:
+        return
+    if not limits_mod.enforces_weekly(plan):
+        account.weekly_overage_tokens = 0
+        return
+    if window_active(_started(account, "weekly"), "weekly", now):
+        return
+    account.weekly_started_at = now
+    account.weekly_used = tokens
+    account.weekly_overage_tokens = 0
+    log.info("overage_carried", user_id=int(account.user_id), window="weekly", source="weekly", tokens=tokens)
+
+
 def _clear_overage(account: UsageAccount) -> None:
     account.overage_tokens = 0
     account.overage_window = None
+
+
+def restart_paid_windows(account: UsageAccount, now: datetime, anchor: datetime | None = None) -> None:
+    """A NEW billing cycle starts now (owner, 2026-10-01): Free → paid, or an
+    upgrade, which Stripe bills as a fresh cycle from today
+    (``billing_cycle_anchor=now``, the unused part of the old plan credited).
+
+    The paid windows restart at 0 and the month is re-anchored on today:
+    ``monthly`` / ``weekly`` / ``five_hour``. What was used before — the trial
+    credit's ordinary usage, or the old plan's month — never counts against
+    the plan just paid for (the bug: 419k of trial usage showed up as 52 % of
+    a fresh Lite month). ``lifetime`` is untouched: a later return to Free
+    must not refill the trial credit.
+
+    Carried OVERAGE still carries: what a window was charged PAST 100 % opens
+    the new period — the main window's (``overage_tokens``; for Free that is
+    usage past the trial credit) the month, the week's the week. The caller
+    holds the account lock. ``anchor`` — the provider's new billing-cycle
+    anchor (its day of the month is the new reset day); ``now`` without one."""
+    day = (anchor or now).astimezone(UTC).day
+    account.monthly_anchor_day = day
+    account.monthly_started_at = period_start(now, day)
+    account.monthly_used = max(0, int(account.overage_tokens or 0))
+    account.weekly_started_at = now
+    account.weekly_used = _weekly_overage(account)
+    account.five_hour_started_at = None
+    account.five_hour_used = 0
+    carried = (int(account.monthly_used or 0), int(account.weekly_used or 0))
+    _clear_overage(account)
+    account.weekly_overage_tokens = 0
+    log.info(
+        "paid_windows_restarted", user_id=int(account.user_id), anchor_day=day,
+        carried_month=carried[0], carried_week=carried[1],
+    )
 
 
 def enforced_windows(plan: str, account: UsageAccount | None, now: datetime) -> list[WindowView]:
@@ -437,6 +513,8 @@ def enforced_windows(plan: str, account: UsageAccount | None, now: datetime) -> 
         used = window_used(account, key, now)
         if carry is not None and carry[0] == key:
             used += carry[1]
+        if key == "weekly":
+            used += _weekly_carry(account, plan, now)
         out.append(
             WindowView(
                 key=key,
@@ -531,7 +609,9 @@ async def quota_snapshot(
 
 @dataclass(frozen=True)
 class StartWindow:
-    """The plan window new work starts against (the one with the least room)."""
+    """The plan window new work starts against: the enforced window with the
+    least room — on Pro and up whichever of ``weekly`` / ``monthly`` is
+    closer to full, since a new run must fit what is left of BOTH."""
 
     window: str
     limit: int
@@ -541,7 +621,7 @@ class StartWindow:
     #: Spendable top-up balance, satang (what could carry new work instead).
     wallet_satang: int
     #: What this user's runs already in flight still expect to spend (Σ their
-    #: estimate less what each has already been charged). The overage check
+    #: estimate less what each has already been charged). The start gate
     #: counts it as spent, so concurrent slots (Pro 2 … Max 5) cannot each
     #: start against the same headroom and take the full allowance at once.
     in_flight: int = 0
@@ -557,9 +637,9 @@ class StartWindow:
 
 async def start_window(session: AsyncSession, user: User, now: datetime | None = None) -> StartWindow | None:
     """What the two pre-start quota checks read (guard.quota_full_refusal,
-    guard.overage_refusal) — None for an unlimited account or a plan with no
-    enforced window. Carried overage included. ``session`` must resolve the
-    core tables."""
+    guard.remaining_refusal) — None for an unlimited account or a plan with
+    no enforced window. Carried overage included. ``session`` must resolve
+    the core tables."""
     if limits_mod.is_unlimited(user):
         return None
     at = now or _now()
@@ -754,13 +834,24 @@ async def apply_charge(
         rest -= covered
     if rest > 0:
         to_windows += rest
-        if tightest is not None:
-            account.overage_tokens = int(account.overage_tokens or 0) + rest
-            account.overage_window = tightest.key
+    # What this charge put past EACH enforced window's own line, carried into
+    # that window's own next period (owner, 2026-10-01): a weekly excess
+    # opens next week, a monthly one next month. One window's excess is not
+    # another's — a call can take the week to 106 % while the month is at
+    # 60 %, and then only the week carries anything.
+    for view in views:
+        excess = to_windows - max(0, view.headroom)
+        if excess <= 0:
+            continue
+        if view.key == "weekly":
+            account.weekly_overage_tokens = _weekly_overage(account) + excess
+        else:
+            account.overage_tokens = int(account.overage_tokens or 0) + excess
+            account.overage_window = view.key
         log.info(
             "run_overage_charged", run_id=run.id, user_id=int(run.user_id), tokens=int(tokens),
-            overage=int(rest), window=tightest.key if tightest is not None else None,
-            carried=int(account.overage_tokens or 0),
+            overage=int(excess), window=view.key,
+            carried=_weekly_overage(account) if view.key == "weekly" else int(account.overage_tokens or 0),
         )
     start_windows(account, now)
     for key in limits_mod.TRACKED_WINDOWS:
@@ -784,6 +875,8 @@ def _refund_windows(account: UsageAccount, run: AiRun, tokens: int, now: datetim
         account.overage_tokens = max(0, int(account.overage_tokens or 0) - tokens)
         if account.overage_tokens == 0:
             account.overage_window = None
+    if _weekly_overage(account) > 0:
+        account.weekly_overage_tokens = max(0, _weekly_overage(account) - tokens)
     run.charged_tokens = max(0, int(run.charged_tokens or 0) - tokens)
     return tokens
 
@@ -1067,5 +1160,8 @@ async def reset_windows(
             # A reset by hand is a clean slate: nothing carries into it.
             before[key]["overage"] = int(account.overage_tokens or 0)
             _clear_overage(account)
+        if key == "weekly" and _weekly_overage(account):
+            before[key]["overage"] = _weekly_overage(account)
+            account.weekly_overage_tokens = 0
     await session.flush()
     return before

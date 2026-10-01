@@ -153,15 +153,15 @@ def check_footage(
 
 
 def check_run_size(user: Any, tokens: int) -> dict[str, Any] | None:
-    """The ONE pre-flight quota check left (owner, 2026-09-26): refuse a run
-    that fits NO enforced window even when that window is completely empty.
-    Nothing else is checked before starting — a run that might fit is started
-    and charged as it goes (packages/billing/runs.py).
+    """Refuse a run that cannot fit an enforced window even when that window
+    is completely empty — about the plan's SIZE, not about what is left.
 
-    Measured against the BIGGEST window, not every one: Pro's 5-hour window is
-    40 % of its weekly one, so an hour of footage outgrows it however empty it
-    is, and a run is allowed to overshoot a window it cannot fit
-    (``runs.windows_for_run``). Only a run past them all is impossible.
+    Measured against the SMALLEST enforced window (owner, 2026-10-01): a new
+    run must fit what is left of EVERY enforced window
+    (``guard.remaining_refusal``), so a run bigger than Pro's whole weekly
+    window could never start, however long the user waited. Saying so here,
+    as a 422, beats a 402 that suggests waiting for a reset. (The 5-hour
+    window that made this the BIGGEST window before is enforced nowhere.)
 
     Waiting for a reset or topping up cannot make this run work, so it is a
     422 (the request's shape), not a 402 (the balance).
@@ -172,7 +172,7 @@ def check_run_size(user: Any, tokens: int) -> dict[str, Any] | None:
     windows = plan_limits(plan).windows
     if not windows:
         return None
-    key = max(windows, key=lambda w: window_limit(plan, w))
+    key = min(windows, key=lambda w: window_limit(plan, w))
     if tokens <= window_limit(plan, key):
         return None
     # "ทั้งรอบ" only makes sense for a window that has rounds; Free's trial

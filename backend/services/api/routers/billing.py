@@ -115,6 +115,9 @@ class PlanPreviewOut(BaseModel):
     effective_at: datetime | None
     mode: Literal["checkout", "stripe_change", "stripe_cancel", "mock", "unavailable"]
     exact: bool
+    #: An upgrade starts a new billing cycle today and the quota restarts at
+    #: 0 (owner, 2026-10-01); the dialog says so. Additive.
+    quota_restarts: bool = False
 
 
 class PlanSwitchOut(BaseModel):

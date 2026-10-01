@@ -22,25 +22,101 @@ def test_video_formula_standard_and_high():
     assert std.tokens == rate_card.tokens_for_llm(lite, 60 * 100 + p.prompt_in, 0, out)
     assert high.tokens == rate_card.tokens_for_llm(lite, 60 * 300 + p.prompt_in, 0, out)
     assert std.ceiling == math.ceil(std.tokens * 1.2)
-    assert std.estimator_version == "e3" and std.rate_version == "v1"
+    assert std.estimator_version == "e4" and std.rate_version == "v1"
 
 
 def test_scout_is_priced_at_its_own_thinking_depth(monkeypatch):
-    """e3 (2026-10-01): Scout thinks at medium (12.4k thinking tokens) and
-    Pro at high (22.9k) — scripts/effort_ab.py, 2026-09-29. The estimate
-    used to price both at Pro's, so "try Scout" changed nothing it said."""
+    """Scout thinks at medium and Pro at high; the estimate prices each at
+    its own depth (e3), from the e4 thinking figures — ~21.5k at high,
+    ~10k at medium — plus the same default-size answer."""
     monkeypatch.setenv("DUB_EFFORT_LITE", "medium")
     monkeypatch.setenv("DUB_EFFORT_PRO", "high")
     get_settings.cache_clear()
     try:
-        assert est.cut_plan_output_for("pro") == est.CUT_PLAN_OUTPUT_TOKENS == 24_000
-        assert est.cut_plan_output_for("lite") == est.CUT_PLAN_OUTPUT_TOKENS_MEDIUM == 15_000
+        answer = est.cut_answer_tokens(est.DEFAULT_CUT_SEGMENTS)
+        assert answer == 60 + 165 * 18 == 3_030
+        assert est.cut_plan_output_for("pro") == est.CUT_PLAN_OUTPUT_TOKENS == 21_500 + answer
+        assert est.cut_plan_output_for("lite") == est.CUT_PLAN_OUTPUT_TOKENS_MEDIUM == 10_000 + answer
         pro = est.estimate_run(mode="dub_first", engine="pro", precision="standard", clip_secs=[331.8])
         scout = est.estimate_run(mode="dub_first", engine="lite", precision="standard", clip_secs=[331.8])
-        assert abs(pro.tokens - 164_756) <= 10  # run b8ad8c25's estimate (footage 331.8x s), unchanged by e3
-        assert pro.tokens - scout.tokens == rate_card.tokens_for_llm(pro.model, 0, 0, 9_000)
+        # Run b8ad8c25's footage: e3 said 164,756 at a flat 24,000 output;
+        # e4's default-size plan writes 530 more (24,530).
+        assert pro.tokens == 167_495 and pro.call_output == 24_530 and pro.expected_items == 18
+        assert pro.tokens - scout.tokens == rate_card.tokens_for_llm(pro.model, 0, 0, 11_500)
     finally:
         get_settings.cache_clear()
+
+
+# ── output sized by what the user asked for (e4) ─────────────────────────────
+
+def test_the_cut_plans_answer_grows_with_the_requested_length():
+    """Owner, 2026-10-01: output is the expensive half, so it follows the
+    request — target length × ~0.6 segments a second, ~165 tokens a segment
+    (alternates included), on top of the engine's thinking."""
+    base = est.estimate_run(mode="highlight", engine="pro", clip_secs=[1800])
+    one_min = est.estimate_run(mode="highlight", engine="pro", clip_secs=[1800], target_sec=60)
+    five_min = est.estimate_run(mode="highlight", engine="pro", clip_secs=[1800], target_sec=300)
+    assert (base.expected_items, one_min.expected_items, five_min.expected_items) == (18, 36, 180)
+    assert base.tokens < one_min.tokens < five_min.tokens
+    assert five_min.call_output - base.call_output == 165 * (180 - 18)
+    # The input is the same footage either way — only the answer moved.
+    assert five_min.tokens - base.tokens == rate_card.tokens_for_llm(base.model, 0, 0, 165 * 162)
+    # A tiny target never prices below the floor.
+    assert est.estimate_run(mode="highlight", clip_secs=[60], target_sec=5).expected_items == est.MIN_CUT_SEGMENTS
+
+
+def test_a_user_script_sizes_the_plan_by_its_lines():
+    """A script is kept verbatim, ~2 segments to each 3-6 s line; a script
+    written as one paragraph is counted in ~65-character lines."""
+    assert est.script_lines("") == 0
+    assert est.script_lines("หนึ่ง\n\nสอง\nสาม") == 3
+    assert est.script_lines("ก" * 650) == 10
+    lines = "\n".join(f"บรรทัด {i}" for i in range(15))
+    run = est.estimate_run(mode="dub_first", clip_secs=[120], script=lines, target_sec=600)
+    # The script decides, even beside a target.
+    assert run.expected_items == 30
+
+
+def test_a_reedit_is_priced_on_the_script_it_echoes_back():
+    small = est.estimate_run(kind="reedit", clip_secs=[60, 30], segments=10)
+    big = est.estimate_run(kind="reedit", clip_secs=[60, 30], segments=120)
+    assert (small.expected_items, big.expected_items) == (10, 120)
+    # (±1: the rate card rounds each call up separately)
+    assert abs(big.tokens - small.tokens - rate_card.tokens_for_llm(small.model, 0, 0, 165 * 110)) <= 1
+
+
+def test_the_longest_result_a_user_may_ask_for_fits_one_answer():
+    """Owner, 2026-10-01: a cut plan stays ONE model call, so the result a
+    user may request of the video-cut modes is capped where the answer still
+    fits one Gemini Flash response (65,536 output tokens, thinking included)
+    — at the estimate's centre AND at the worst measured case."""
+    assert est.MAX_CUT_RESULT_SEC == 300
+    centre = est.estimate_run(mode="highlight", engine="pro", clip_secs=[1800], target_sec=300)
+    assert centre.expected_items == 180
+    assert centre.call_output == 21_500 + 60 + 165 * 180 == 51_260 < centre.max_call_output == 65_536
+    assert est.worst_cut_output(300) == 30_000 + 60 + 190 * 180 == 64_260
+    assert est.worst_cut_output(300) < est.DEFAULT_MODEL_MAX_OUTPUT == 65_536
+    # Ten minutes would not: why the old 600 s bound could not stand.
+    assert est.worst_cut_output(600) > 65_536
+    assert est.estimate_run(mode="highlight", engine="pro", clip_secs=[60], target_sec=600).call_output > 65_536
+
+
+def test_a_speech_selection_fits_one_answer_at_the_pipelines_ceiling():
+    """The speech selector writes one ~200-token pick per span (start/end/
+    title/why/opening/ending — not per-cut shots); the pipeline keeps at most
+    60 highlights, so even a two-hour recording's answer is ~16k with its
+    thinking. No input cap is needed for one response to hold it; each span
+    trim is its own small call (one verdict per ~2.5 s transcript segment)."""
+    two_hours = est.estimate_run(mode="speech_highlights", clip_secs=[7200.0])
+    assert two_hours.expected_items == est.MAX_EXPECTED_PICKS == 60
+    assert two_hours.call_output == 4_000 + 200 * 60 == 16_000
+    assert two_hours.call_output < two_hours.max_call_output
+    scenes = est.estimate_run(mode="speech_scenes", clip_secs=[7200.0])
+    assert scenes.call_output == 4_000 + 35 * 60 < 65_536
+    # The longest span a trim call can be handed (a 2-hour recording with the
+    # minimum 3 picks: 40 min) still answers in ~14k.
+    span = 7200 / est.MIN_EXPECTED_PICKS
+    assert est.TRIM_THINKING_TOKENS + 150 + 13 * math.ceil(span / 2.5) < 65_536
 
 
 # ── the three speech modes (e2) ──────────────────────────────────────────────
@@ -94,45 +170,43 @@ def test_talking_heads_planner_really_has_no_model_call_in_it():
 
 def test_speech_scenes_is_one_selector_call():
     """``speech_select.select_scenes`` makes exactly one ``_select`` call over
-    the whole transcript, then hands the picks to arithmetic."""
+    the whole transcript, then hands the picks to arithmetic. e4: its answer
+    is one ~35-token range per expected pick on top of the selector's
+    thinking."""
     run = _ten_min("speech_scenes")
     p = est.MODE_PROFILES[run.kind]
     assert run.kind == "select_scenes" and p.calls == 1 and p.fanout is None
 
     transcript = math.ceil(15 * TEN_MIN)  # 9,000
+    picks = est.expected_picks_for(TEN_MIN)
+    assert picks == 5  # ceil(600 / 120)
+    out = 4_000 + 35 * picks  # 4,175
     #   selector in   (4,000 prompt + 9,000 transcript) x 1.38 =  17,940
-    #   selector out   4,000 x 8.28                            =  33,120
-    #                                                            -------
-    #                                                             51,060
+    #   selector out   4,175 x 8.28                            =  34,569
     #   speech-to-text 600 x 51.75                             =  31,050
-    assert rate_card.tokens_for_llm(PRO, p.prompt_in + transcript, 0, p.max_output) == 51_060
-    assert run.tokens == 82_110
-    assert run.ceiling == 98_532  # ceil(82,110 x 1.2)
+    assert run.call_output == out
+    assert run.tokens == rate_card.tokens_for_llm(PRO, p.prompt_in + transcript, 0, out) + 31_050 == 83_559
 
 
 def test_speech_highlights_pays_for_one_trim_call_per_expected_clip():
     """``select_highlights`` gathers one ``trim_span_content`` call per
     surviving pick (speech_select.py ~line 1011), so a good recording costs
-    MORE than a poor one. A fixed ``calls=2`` under-counted every real run."""
+    MORE than a poor one. e4: the selector writes ~200 tokens a pick, and
+    each trim one verdict (~13) per ~2.5 s transcript segment of its span."""
     run = _ten_min("speech_highlights")
     p = est.MODE_PROFILES[run.kind]
     assert run.kind == "select_highlights" and p.calls == 1 and p.fanout is not None
 
     transcript = math.ceil(15 * TEN_MIN)  # 9,000
     picks = est.expected_picks_for(TEN_MIN)
-    assert picks == 10  # ceil(600 / 60), inside [3, 24]
-    share = math.ceil(transcript / picks)  # 900 — the spans do not overlap
-    #   selector   in  (4,000 + 9,000) x 1.38  =  17,940
-    #   selector   out  6,000 x 8.28           =  49,680   ->  67,620
-    #   trim, each in  (3,000 +   900) x 1.38  =   5,382
-    #   trim, each out  2,500 x 8.28           =  20,700   ->  26,082 x 10 = 260,820
-    #   speech-to-text  600 x 51.75                                        =  31,050
-    #                                                                        -------
-    #                                                                        359,490
-    assert rate_card.tokens_for_llm(PRO, p.prompt_in + transcript, 0, p.max_output) == 67_620
-    assert rate_card.tokens_for_llm(PRO, p.fanout.prompt_in + share, 0, p.fanout.max_output) == 26_082
-    assert run.tokens == 359_490
-    assert run.ceiling == 431_388  # ceil(359,490 x 1.2)
+    assert picks == 5  # ceil(600 / 120), inside [3, 60]
+    share = math.ceil(transcript / picks)  # 1,800 — the spans do not overlap
+    select_out = 4_000 + 200 * picks  # 5,000
+    trim_out = 2_000 + 150 + 13 * math.ceil(TEN_MIN / picks / 2.5)  # 2,774
+    selector = rate_card.tokens_for_llm(PRO, p.prompt_in + transcript, 0, select_out)
+    trim = rate_card.tokens_for_llm(PRO, p.fanout.prompt_in + share, 0, trim_out)
+    assert run.tokens == selector + trim * picks + rate_card.tokens_for_stt(TEN_MIN) == 238_355
+    assert run.call_output == select_out
 
 
 def test_speech_highlights_grows_with_the_number_of_clips_expected():
@@ -140,13 +214,14 @@ def test_speech_highlights_grows_with_the_number_of_clips_expected():
     more = est.estimate_run(mode="speech_highlights", clip_secs=[TEN_MIN], model=PRO, expected_picks=12)
     none = est.estimate_run(mode="speech_highlights", clip_secs=[TEN_MIN], model=PRO, expected_picks=0)
     assert none.tokens < base.tokens < more.tokens
-    # With no fan-out left it is the selector plus speech-to-text, i.e. the
-    # scenes shape at the highlights selector's bigger output budget.
-    assert none.tokens == 67_620 + rate_card.tokens_for_stt(TEN_MIN)
-    # …and the derived count is bounded at both ends, so neither a 30-second
-    # clip nor a three-hour podcast escapes into a silly number.
+    # With no fan-out left it is the selector plus speech-to-text.
+    assert none.tokens == rate_card.tokens_for_llm(PRO, 4_000 + 9_000, 0, 4_000) + rate_card.tokens_for_stt(TEN_MIN)
+    # …and the derived count is bounded at both ends: a floor, and the
+    # pipeline's own runaway ceiling (60 kept highlights).
     assert est.expected_picks_for(30) == est.MIN_EXPECTED_PICKS
-    assert est.expected_picks_for(3 * 3600) == est.MAX_EXPECTED_PICKS
+    assert est.expected_picks_for(3 * 3600) == est.MAX_EXPECTED_PICKS == 60
+    # The owner's example: an hour-long recording is priced at 30 highlights.
+    assert est.expected_picks_for(3600) == 30
 
 
 def test_the_three_speech_modes_no_longer_cost_the_same():
@@ -159,7 +234,7 @@ def test_the_three_speech_modes_no_longer_cost_the_same():
     e1 = rate_card.tokens_for_llm(PRO, 4_000 + 9_000, 0, 4_000) * 2 + rate_card.tokens_for_stt(TEN_MIN)
     assert e1 == 133_170
     assert round(e1 / talking, 1) == 4.3
-    assert highlights > e1 * 2
+    assert highlights > e1 * 1.5
 
 
 def test_the_legacy_speech_kind_still_prices_a_stored_ticket():
@@ -208,8 +283,15 @@ def test_every_speech_mode_fits_the_footage_its_plan_advertises():
             run = est.estimate_run(mode=mode, clip_secs=[float(limit.footage_sec)], model=PRO)
             for window in limit.windows:
                 assert run.tokens < limits.window_limit(plan, window), (plan, mode, window)
+        # Two hours of speech_highlights against the SMALLEST window (a new
+        # run must fit every enforced window): e4 prices an hour at 30
+        # highlights, so two hours (60, the pipeline's ceiling) is ~2.44M at
+        # the Pro model — past Starter's month and Pro's 40 % week. Studio
+        # and up hold it. (Owner decision pending: the pricing page still
+        # says only Free and Lite stop short of two hours.)
+        smallest = min(limits.window_limit(plan, w) for w in limit.windows)
         longform = est.estimate_run(mode="speech_highlights", clip_secs=[full], model=PRO)
-        assert (longform.tokens <= biggest) == (plan not in ("free", "lite")), plan
+        assert (longform.tokens <= smallest) == (plan in ("studio", "agency", "max")), plan
 
 
 def test_frames_are_priced_per_image():
@@ -326,24 +408,28 @@ def test_plan_limits_table():
     # Free is a one-time trial credit; its "monthly" number IS that credit.
     assert limits.window_limit("free", "lifetime") == limits.PLAN_LIMITS["free"].monthly
     assert limits.plan_limits("mystery") == limits.PLAN_LIMITS["free"]
-    # The window arithmetic is still defined for the windows nothing enforces.
-    assert limits.window_limit("lite", "weekly") == math.floor(800_000 / 4.33)
+    # Weekly = 40 % of the month (owner, 2026-10-01); five_hour keeps the
+    # old arithmetic, still defined for a window nothing enforces.
+    assert limits.window_limit("pro", "weekly") == math.floor(5_600_000 * 0.40) == 2_240_000
     assert limits.window_limit("lite", "five_hour") == math.floor(
         math.floor(800_000 / 4.33) * limits.FIVE_HOUR_SHARE
     )
 
 
-def test_one_window_rule_per_account():
-    """Free spends a lifetime credit, every paid plan spends a month. No plan
-    enforces a 5-hour or weekly sub-window any more (limits.py rule 1): they
-    could not hold one large run, so they only ever blocked the NEXT job."""
+def test_the_window_rules_per_plan():
+    """Free spends a lifetime credit; every paid plan a month; Pro, Studio,
+    Agency and Max a 40 % week beside it (owner, 2026-10-01). Nobody
+    enforces the 5-hour window."""
     assert limits.plan_limits("free").windows == ("lifetime",)
-    for plan in PLANS[1:]:
+    for plan in ("lite", "starter"):
         assert limits.plan_limits(plan).windows == ("monthly",), plan
+    for plan in ("pro", "studio", "agency", "max"):
+        assert limits.plan_limits(plan).windows == ("monthly", "weekly"), plan
+        assert limits.enforces_weekly(plan)
     enforced = {w for p in PLANS for w in limits.plan_limits(p).windows}
-    assert enforced == {"lifetime", "monthly"}
-    # …but every window is still ACCOUNTED for, so switching one back on
-    # would not start the first account that got it from zero.
+    assert enforced == {"lifetime", "monthly", "weekly"}
+    # …but every window is still ACCOUNTED for, so switching one on does not
+    # start the first account that gets it from zero.
     assert set(limits.TRACKED_WINDOWS) == {"five_hour", "weekly", "monthly", "lifetime"}
 
 
@@ -447,12 +533,26 @@ async def test_the_estimate_says_which_start_would_be_refused():
         assert r.status_code == 200, r.text
         return r.json()
 
+    # The strict start gate (owner, 2026-10-01): the run must FIT what is
+    # left — a 60 s Pro cut (~130k) does not fit 50k, so it is refused now.
     small = await ask(50_000, 60)
-    assert (small["fits"], small["full"], small["overage_too_large"]) == ("none", False, False)
-    big = await ask(31_000, 331.8)  # run c3c2e938
-    assert (big["full"], big["overage_too_large"]) == (False, True)
+    assert (small["fits"], small["full"], small["overage_too_large"]) == ("none", False, True)
+    fits = await ask(200_000, 60)
+    assert (fits["fits"], fits["full"], fits["overage_too_large"]) == ("plan", False, False)
     spent = await ask(0, 60)
     assert spent["full"] is True and spent["resets"] is False
+
+
+async def test_the_estimate_sizes_the_answer_by_the_requested_length():
+    uid = await make_user(email("est"), plan="pro")
+    body = dict(BODY, mode="highlight", clips=[{"duration_sec": 1800}])
+    async with client() as c:
+        short = await c.post("/usage/estimate", json=dict(body, target_duration_sec=60),
+                             headers=bearer(await _token(uid)))
+        long = await c.post("/usage/estimate", json=dict(body, target_duration_sec=300),
+                            headers=bearer(await _token(uid)))
+    assert short.status_code == long.status_code == 200
+    assert short.json()["pct"]["monthly"] < long.json()["pct"]["monthly"]
 
 
 async def test_estimate_needs_a_login_and_valid_input():

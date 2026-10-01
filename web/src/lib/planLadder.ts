@@ -239,20 +239,21 @@ export function planChangeBody(
       : ` ถึง ${BETA_PRICE_END_TEXT} · รอบบิลตั้งแต่ ${FULL_PRICE_FROM_TEXT} ตัดบัตร ${priceText(full)} ตามราคาปกติ`
 
   if (p.direction === 'upgrade') {
-    // A first subscription (from Free) pays the full price now — "ตามวันที่เหลือ
-    // ของรอบบิล" is only true when an existing paid period is being prorated.
+    // Owner, 2026-10-01 — "like Claude": an upgrade starts a NEW billing
+    // cycle today and the quota restarts at 0 %. From Free the trial usage
+    // does not count; from a paid plan the unused part of it is credited.
     if (p.due_now_satang > 0 && p.due_now_satang >= p.next_price_satang) {
       const monthly =
         full === null
-          ? 'แล้วตัดทุกเดือนในราคาเดียวกัน'
+          ? 'แล้วตัดทุกเดือนในราคาเดียวกันนับจากวันนี้'
           : `แล้วตัดเดือนละ ${priceText(p.next_price_satang)}${afterBeta}`
-      return `โควตาใหม่มีผลทันทีหลังชำระเงิน ครั้งนี้ตัดบัตร ${priceText(p.due_now_satang)} ${monthly}`
+      return `แผนใหม่เริ่มทันทีหลังชำระเงิน โควตาเริ่มนับใหม่จาก 0% วันนี้ ครั้งนี้ตัดบัตร ${priceText(p.due_now_satang)} ${monthly}`
     }
     const head =
       p.due_now_satang > 0
-        ? `ครั้งนี้ตัดบัตร ${priceText(p.due_now_satang)} ตามวันที่เหลือของรอบบิล `
+        ? `ครั้งนี้ตัดบัตร ${priceText(p.due_now_satang)} (ราคาแผนใหม่ หักส่วนที่ยังไม่ได้ใช้ของแผนเดิม) `
         : ''
-    return `โควตาใหม่มีผลทันทีหลังชำระเงิน ${head}เดือนถัดไป ${priceText(p.next_price_satang)}${afterBeta}`
+    return `แผนใหม่เริ่มทันทีหลังชำระเงิน และเริ่มรอบบิลใหม่วันนี้ — โควตาเริ่มนับใหม่จาก 0% · ${head}เดือนถัดไป ${priceText(p.next_price_satang)}${afterBeta}`
   }
   if (p.tier === 'free') {
     const until = p.effective_at ? `วันที่ ${dateTh(p.effective_at, timeZone)}` : 'สิ้นรอบบิล'

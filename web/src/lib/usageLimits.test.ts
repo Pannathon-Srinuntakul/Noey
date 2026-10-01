@@ -5,6 +5,7 @@ import {
   durationTh,
   estimateBlockLine,
   OVERAGE_TOO_LARGE_LINE,
+  OVERAGE_TOO_LARGE_WEEKLY_LINE,
   overageLine,
   formatBaht,
   formatPack,
@@ -84,8 +85,10 @@ describe('reset times in the viewer timezone', () => {
   })
 
   it('an inactive window starts at the next use', () => {
-    expect(resetLine('weekly', null, NOW)).toBe('เริ่มนับรอบใหม่เมื่อใช้งานครั้งถัดไป')
-    expect(resetLine('weekly', 'garbage', NOW)).toBe('เริ่มนับรอบใหม่เมื่อใช้งานครั้งถัดไป')
+    // The week is rolling (owner, 2026-10-01): 7 days from the next use.
+    expect(resetLine('weekly', null, NOW)).toBe('เริ่มนับ 7 วันเมื่อใช้งานครั้งถัดไป')
+    expect(resetLine('weekly', 'garbage', NOW)).toBe('เริ่มนับ 7 วันเมื่อใช้งานครั้งถัดไป')
+    expect(resetLine('five_hour', null, NOW)).toBe('เริ่มนับรอบใหม่เมื่อใช้งานครั้งถัดไป')
   })
 
   it('whenBack picks the shape by distance', () => {
@@ -326,9 +329,14 @@ describe('estimate lines', () => {
     expect(estimateBlockLine(full, NOW)).toBe(
       'โควตารอบนี้ใช้ครบแล้ว — เริ่มงานใหม่ได้เมื่อรอบใหม่เริ่ม (รอบใหม่อีก 1 ชม.)'
     )
+    // The strict start gate: the estimate is bigger than what is left. The
+    // week binds here (base.binding), so the line speaks of the week.
     const big = { ...base, fits: 'none' as const, overage_too_large: true }
-    expect(estimateBlockLine(big, NOW)).toBe(OVERAGE_TOO_LARGE_LINE)
-    expect(estimateBlockLine(big, NOW)).toContain('Scout')
+    expect(estimateBlockLine(big, NOW)).toBe(OVERAGE_TOO_LARGE_WEEKLY_LINE)
+    const month = { ...big, binding: 'monthly' as const, pct: { monthly: 30 } }
+    expect(estimateBlockLine(month, NOW)).toBe(OVERAGE_TOO_LARGE_LINE)
+    expect(estimateBlockLine(month, NOW)).toContain('Scout')
+    expect(estimateBlockLine(month, NOW)).toContain('ความละเอียดมาตรฐาน')
   })
 
   it('shows a meter past 100 % as an overage that carries', () => {

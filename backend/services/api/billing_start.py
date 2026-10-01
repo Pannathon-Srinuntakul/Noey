@@ -9,15 +9,19 @@ order:
    ``footage_over_limit`` (packages/billing/plan_features.py);
 1. a run too big for an enforced window even when the window is EMPTY → 422
    ``run_too_large`` — about the plan's size, not about what is left (no
-   advertised footage cap can reach it today);
-1b. the window ALREADY at 100 % → 402 ``limit_reached`` with ``full: true``
-   (``guard.quota_full_refusal``), and a run expected to go past what is left
-   by more than ``billing_max_overage_ratio`` of the window → 402
-   ``overage_too_large`` (``guard.overage_refusal``) — each unless the user
-   allowed a balance that carries it, and never for a resume. Within that,
-   an estimate bigger than what is left is only a warning (owner, 2026-10-01:
-   the estimate is advice; the run pauses at 100 % and its in-flight overage
-   carries into the next period);
+   advertised footage cap can reach it today). (A cut plan's answer always
+   fits one model response: the requested result is capped at
+   ``estimate.MAX_CUT_RESULT_SEC`` when the project is created);
+1b. the STRICT START GATE (owner, 2026-10-01): the window ALREADY at 100 % →
+   402 ``limit_reached`` with ``full: true`` (``guard.quota_full_refusal``),
+   and a run whose estimate is bigger than what is left of the binding
+   window — on Pro and up the closer-to-full of weekly / monthly — after the
+   user's runs already in flight → 402 ``overage_too_large``
+   (``guard.remaining_refusal``; the code keeps its old name for shipped
+   clients). Each unless the user allowed a balance that covers the
+   shortfall, and never for a resume. Once started, the estimate is advice
+   again: a run that outgrows it pauses at 100 % and its in-flight overage
+   carries into the next period;
 2. circuit breaker open → 503 ``service_paused`` (admin/unlimited exempt);
 3. a Free account → per-IP / per-device limits → 429 ``free_tier_limited``
    (checked here, but the run is COUNTED against them only after the row is
@@ -96,15 +100,12 @@ async def start_paid_run(
     if too_large is not None:
         raise HTTPException(status_code=422, detail=too_large)
     if not unlimited and not resuming:
-        # Owner, 2026-10-01. The estimate is advice — a run that outgrows what
-        # is left goes ahead, pauses at 100 % and carries its in-flight
-        # overage into the next period — with two refusals for NEW work:
-        # the window is already at 100 %, or the run is expected to go past
-        # what is left (less what runs already in flight still expect to
-        # spend) by more than ``billing_max_overage_ratio`` of it. Checked
-        # here first, so a refusal costs nothing, and again under the account
-        # lock where the run is opened (``_refuse_on_quota``), so two starts
-        # at the same instant cannot both see the same headroom.
+        # Owner, 2026-10-01 — the strict start gate: a NEW run starts only
+        # when its estimate fits what is left of the binding window(s), less
+        # what runs already in flight still expect to spend. Checked here
+        # first, so a refusal costs nothing, and again under the account lock
+        # where the run is opened (``_refuse_on_quota``), so two starts at the
+        # same instant cannot both see the same headroom.
         async with get_sessionmaker()() as session:
             await session.execute(text("SET search_path TO core, public"))
             await _refuse_on_quota(session, user, estimate, allow_wallet=allow_wallet)
@@ -149,13 +150,13 @@ async def start_paid_run(
 
 
 async def _refuse_on_quota(session: Any, user: Any, estimate: Estimate, *, allow_wallet: bool) -> None:
-    """402 when the window is already at 100 %, or when the run is expected to
-    go too far past what is left for new work (guard.quota_full_refusal /
-    guard.overage_refusal)."""
+    """402 when the window is already at 100 %, or when the run's estimate is
+    bigger than what is left for new work (guard.quota_full_refusal /
+    guard.remaining_refusal)."""
     state = await runs.start_window(session, user)
     refusal = guard.quota_full_refusal(
         state, allow_wallet=allow_wallet, need_satang=wallet.satang_for_tokens(estimate.tokens),
-    ) or guard.overage_refusal(state, estimate.tokens, allow_wallet=allow_wallet)
+    ) or guard.remaining_refusal(state, estimate.tokens, allow_wallet=allow_wallet)
     if refusal is not None:
         raise HTTPException(status_code=402, detail=refusal)
 

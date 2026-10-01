@@ -554,7 +554,8 @@ thinking depth, 15,000 output tokens (medium thinking, 12,428 measured) instead 
 stands; a Scout cut reads ~46,575 our-tokens cheaper in advice (9,000 × 5.175).
 
 Worst case per plan for ตัดฉากเด่น, our-tokens at the rate card (flash: input 1.035, output 5.175):
-a new run may be expected to go past what is left by at most `BILLING_MAX_OVERAGE_RATIO` (25 %) of the
+(superseded 2026-10-01 by §4.7's strict start gate — kept as the record of the 25 % rule) a new run
+may be expected to go past what is left by at most `BILLING_MAX_OVERAGE_RATIO` (25 %) of the
 window, runs in flight counted (so the plan's slots share that 25 %, not multiply it); on top of that each
 run in flight can write past its own estimate up to the model's maximum output (65,536 tokens, against an
 estimate of 15,000 at Scout) on the plan's longest footage, and the guard prices real input at 66 / 330
@@ -581,6 +582,45 @@ Not covered by the table: the speech modes run on the dub model (gemini-3.1-pro-
 1.38 / 8.28) with footage up to 2 h; one selector call at its model maximum is ≈ 65,536 × 8.28 ≈ 0.54M
 our-tokens, and speech_highlights runs its span trims in parallel. Same rules apply (start gate, pause
 before the next call, carry); the per-call ceiling is higher.
+
+### 4.7 Strict start gate, weekly window and estimate e4 (owner, 2026-10-01)
+
+docs/token-billing-design.md §25 has the rules; what they do to the money:
+
+- **No start-time overage allowance any more.** A new run starts only when its estimate fits what is
+  left (runs in flight counted). What can still be carried — and, for an account that never returns,
+  absorbed — is only what runs write past their OWN estimates once started. And there is no absorbed
+  retry any more: an answer cut off at the model's maximum stops the run, charged.
+- **Worst carried overage per plan** (ceiling, not expectation): `slots × per-run excess`, the excess
+  being a run that thinks to the model's maximum (65,536) against the cheapest default estimate
+  (Scout, 13,030 output) on the plan's longest footage, input priced at the measured 66 / 330 tok/s:
+
+| plan | slots | per-run excess (our-tokens) | worst carried | ฿ 2027 (฿50/1M) | §4.6 (25 % rule) |
+|---|---|---|---|---|---|
+| Free | 1 | 250,605 | 250,605 | ฿12.53 | ฿17.65 |
+| Lite | 1 | 250,605 | 250,605 | ฿12.53 | ฿22.02 |
+| Starter | 1 | 229,491 | 229,491 | ฿11.47 | ฿35.96 |
+| Pro | 2 | 327,609 | 655,218 | ฿32.76 | ฿101.74 |
+| Studio | 3 | 327,609 | 982,827 | ฿49.14 | ฿197.61 |
+| Agency | 4 | 327,609 | 1,310,436 | ฿65.52 | ฿388.48 |
+| Max | 5 | 327,609 | 1,638,045 | ฿81.90 | ฿679.35 |
+
+  (per-run excess = §4.6's figure + (15,000 − 13,030) × 5.175, the e4 Scout default being 1,970
+  output tokens lower than e3's.)
+- **The weekly window** (Pro and up, 40 % of the month) changes no budget and no margin: a month is
+  still the most an account can spend. It bounds the RATE — at most ~40 % of a month's vendor bill in
+  any 7 days per account — which is what protects the daily vendor cap from one big account.
+- **Estimate e4 sizes the answer** by what the user asked for (design §25.3): a default-size Pro cut
+  is priced at 24,530 output (e3: 24,000), Scout at 13,030 (e3: 15,000); a 5-minute ตัดฉากเด่น result
+  at 51,260 (Pro) — e.g. a 30-minute Standard highlight asking for 5 minutes is 457,781 our-tokens
+  against 319,453 with no target. Evidence: 17 stored edit scripts (241 segments): 145-161 tokens per
+  segment with alternates (median), 0.58 segments per second of result; thinking ~21.5k high / ~10k
+  medium. The 5-minute result cap keeps every cut plan inside one 65,536-token answer even at the worst
+  measured case (64,260).
+- **Upgrades restart the cycle** (Stripe `billing_cycle_anchor=now`, unused time credited, the new plan
+  charged from today): the user pays a full new month less the unused part of the old one and gets a
+  fresh allowance — revenue and allowance stay in step, so the margin per month of allowance is the
+  plan's own (§4). Trial usage no longer leaks into the first paid month.
 
 ## 5. What is NOT in the cost model yet
 

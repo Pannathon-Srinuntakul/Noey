@@ -36,15 +36,19 @@ async def _me(uid: int) -> dict:
     return r.json()
 
 
-async def test_a_fresh_paid_account_sees_one_empty_window():
-    """One window rule per account (limits.py rule 1): a paid plan shows its
-    month and nothing else — no 5-hour or weekly sub-window to explain."""
+async def test_a_fresh_paid_account_sees_its_empty_windows():
+    """limits.py rule 1: Lite/Starter show their month; Pro and up the month
+    AND the 40 % week beside it (owner, 2026-10-01). A week nobody has
+    started yet has no reset time ("7 days from the next use")."""
+    lite = await _me(await make_user(email("usage"), plan="starter"))
+    assert [w["key"] for w in lite["limits"]] == ["monthly"]
     uid = await make_user(email("usage"), plan="studio")
     me = await _me(uid)
     assert me["plan"] == "studio" and me["unlimited"] is False
     assert [(w["key"], w["label"], w["used_pct"], w["active"], w["resets_at"], w["resets"])
             for w in me["limits"]] == [
         ("monthly", "Monthly limit", 0.0, False, None, True),
+        ("weekly", "Weekly limit", 0.0, False, None, True),
     ]
     assert me["blocked"] is None and me["wallet"] is None and me["pending_plan"] is None
     assert me["concurrency"] == {"max": limits.plan_limits("studio").concurrency, "running": 0, "queued": 0}

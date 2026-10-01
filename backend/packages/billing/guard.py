@@ -37,11 +37,10 @@ safety cap (``safety_cap`` — for the single calls a step rests on, the
 MODEL's own maximum output from its metadata, 65,536 on today's Gemini 3.x;
 16k for the inherently small calls), independent of the estimate and of what
 is left. It exists against a runaway, never as a budget. A REQUIRED call that
-still ends there (``finish_reason == "length"``) is retried once by the
-gateway one thinking level down, at our cost; truncated again, it raises
-``OutputTruncated`` (logged at error level), which ends the task as a
-retryable failure (outcome ``safety_cap``) — the first attempt billed like
-any call (no refund, owner 2026-10-01). An optional call is skipped.
+still ends there (``finish_reason == "length"``) raises ``OutputTruncated``
+at once — no retry (owner, 2026-10-01) — logged at error level, which ends
+the task as a retryable failure (outcome ``safety_cap``), the call billed like
+any other (no refund). An optional call is skipped.
 
 Speech-to-text is admitted the same way per file (``before_stt_clip``),
 priced from the WAV's length; a WAV whose length cannot be read is priced from
@@ -86,7 +85,10 @@ LIMIT_STOP_MESSAGE = "หยุดแล้ว: ถึงขีดจำกั�
 #: A required answer ran into the per-call safety cap (``OutputTruncated``).
 #: Not the user's doing and not about their quota — say so, and that a retry
 #: is the fix.
-OUTPUT_TRUNCATED_MESSAGE = "AI ตอบกลับไม่ครบ (คำตอบยาวเกินขีดความปลอดภัยของระบบ) — กดลองใหม่ได้"
+OUTPUT_TRUNCATED_MESSAGE = (
+    "AI ตอบกลับไม่ครบ เพราะคำตอบยาวเกินที่ระบบรับได้ในครั้งเดียว — กดลองใหม่ได้ "
+    "หรือขอความยาวผลลัพธ์ที่สั้นลง"
+)
 SERVICE_PAUSED_MESSAGE = "ระบบหยุดรับงาน AI ชั่วคราว กรุณาลองใหม่ภายหลัง"
 #: A run paused because the plan's window ran out — not an error. The client
 #: adds the reset time in the viewer's own timezone.
@@ -172,19 +174,34 @@ class QuotaExhausted(RunBudgetExceeded):
 
 #: New work refused because the window is ALREADY at 100 % (``quota_full_refusal``).
 QUOTA_FULL_MESSAGE = "โควตารอบนี้ใช้ครบ 100% แล้ว — เริ่มงานใหม่ได้เมื่อรอบใหม่เริ่ม หรือเพิ่มโควตา"
+QUOTA_FULL_WEEKLY_MESSAGE = (
+    "โควตาสัปดาห์นี้ใช้ครบ 100% แล้ว — เริ่มงานใหม่ได้เมื่อสัปดาห์ใหม่เริ่ม หรือเพิ่มโควตา"
+)
 QUOTA_FULL_SPENT_MESSAGE = "เครดิตทดลองใช้หมดแล้ว — อัปเกรดแพลนเพื่อเริ่มงานใหม่"
 
 
-#: A new run expected to go further past what is left than
-#: ``billing_max_overage_ratio`` of the window (``overage_refusal``).
-OVERAGE_TOO_LARGE_MESSAGE = (
-    "งานนี้ใหญ่กว่าโควตาที่เหลือในรอบนี้มากเกินไป — ลองใช้วิดีโอที่สั้นลง เลือกเอนจิน Scout "
-    "อัปเกรดแพลน หรือเติมเงินแล้วใช้ยอดเงินคงเหลือ"
+#: A new run whose estimate is bigger than what is left (``remaining_refusal``,
+#: owner 2026-10-01). The suggestions are the levers that really shrink the
+#: estimate — footage, the Scout engine (medium thinking), Standard precision
+#: (a fifth of High's per-second rate), a shorter requested result — then
+#: more quota.
+REMAINING_TOO_SMALL_MESSAGE = (
+    "งานนี้ใหญ่กว่าโควตาที่เหลือในรอบนี้ — ลองใช้วิดีโอที่สั้นลง ขอผลลัพธ์ที่สั้นลง เลือกเอนจิน Scout "
+    "หรือความละเอียดมาตรฐาน อัปเกรดแพลน หรือเติมเงินแล้วใช้ยอดเงินคงเหลือ"
 )
-OVERAGE_TOO_LARGE_SPENT_MESSAGE = (
-    "งานนี้ใหญ่กว่าเครดิตทดลองที่เหลือมากเกินไป — ลองใช้วิดีโอที่สั้นลง เลือกเอนจิน Scout "
+REMAINING_TOO_SMALL_WEEKLY_MESSAGE = (
+    "งานนี้ใหญ่กว่าโควตาที่เหลือของสัปดาห์นี้ — ลองใช้วิดีโอที่สั้นลง ขอผลลัพธ์ที่สั้นลง เลือกเอนจิน Scout "
+    "หรือความละเอียดมาตรฐาน รอสัปดาห์ใหม่ อัปเกรดแพลน หรือเติมเงินแล้วใช้ยอดเงินคงเหลือ"
+)
+REMAINING_TOO_SMALL_SPENT_MESSAGE = (
+    "งานนี้ใหญ่กว่าเครดิตทดลองที่เหลือ — ลองใช้วิดีโอที่สั้นลง ขอผลลัพธ์ที่สั้นลง เลือกเอนจิน Scout "
     "หรืออัปเกรดแพลน"
 )
+#: The wire code of that refusal. It keeps the name it had when it meant "too
+#: far past what is left" (2026-10-01, 25 % allowance): shipped web and desktop
+#: builds already render it, and the meaning a client acts on — "this new run
+#: is too big for what is left; shrink it, wait, or pay" — did not change.
+REMAINING_REFUSAL_CODE = "overage_too_large"
 
 
 def _window_body(state: Any, code: str, message: str, wallet_satang: int) -> dict[str, Any]:
@@ -221,7 +238,12 @@ def quota_full_refusal(
     spare = int(getattr(state, "wallet_satang", 0) or 0)
     if allow_wallet and spare > 0:
         return None
-    message = QUOTA_FULL_MESSAGE if window_resets(state.window or "") else QUOTA_FULL_SPENT_MESSAGE
+    if not window_resets(state.window or ""):
+        message = QUOTA_FULL_SPENT_MESSAGE
+    elif state.window == "weekly":
+        message = QUOTA_FULL_WEEKLY_MESSAGE
+    else:
+        message = QUOTA_FULL_MESSAGE
     if spare > 0:
         message += WALLET_HINT
     body = _window_body(state, QuotaExhausted.code, message, min(spare, max(0, int(need_satang))))
@@ -229,36 +251,41 @@ def quota_full_refusal(
     return {**body, "full": True}
 
 
-def overage_refusal(state: Any, estimate_tokens: int, *, allow_wallet: bool) -> dict[str, Any] | None:
-    """The 402 body (``overage_too_large``) for a NEW run expected to go past
-    what is left by more than ``billing_max_overage_ratio`` of the window —
-    None when it is within that, or when the user allowed a balance that
-    covers everything past what is left (the balance then pays the excess and
-    nothing is carried). ``state`` is a ``runs.StartWindow``."""
+def remaining_refusal(state: Any, estimate_tokens: int, *, allow_wallet: bool) -> dict[str, Any] | None:
+    """The STRICT START GATE (owner, 2026-10-01): the 402 body for a NEW run
+    whose pre-run estimate is bigger than what is left of the binding window
+    — None when it fits, or when the user allowed a balance that covers the
+    shortfall (the balance then pays what goes past the window). ``state`` is
+    a ``runs.StartWindow``: the enforced window with the least room (on Pro
+    and up the closer-to-full of weekly / monthly — the run must fit both),
+    less what the user's runs already in flight still expect to spend.
+
+    This replaced a 25 % / 300k allowance past what is left: a run is now only
+    STARTED when it is expected to fit. Once running, the estimate is advice
+    again — a run that turns out bigger keeps going call by call, the call in
+    flight completes and is charged in full, the excess carries into the
+    window's next period, and the run pauses before the next call (§24).
+    Resumes never reach this (``billing_start``)."""
     from packages.billing import wallet
     from packages.billing.limits import window_resets
-    from packages.core.settings import get_settings
 
     if state is None:
         return None
-    # What is left for NEW work: the window's headroom less what the user's
-    # runs already in flight still expect to spend.
     left = max(0, int(state.headroom) - int(getattr(state, "in_flight", 0) or 0))
-    over = int(estimate_tokens) - left
-    cfg = get_settings()
-    allowed = min(
-        math.floor(max(0.0, float(cfg.billing_max_overage_ratio)) * int(state.limit)),
-        max(0, int(cfg.billing_max_overage_tokens)),
-    )
-    if over <= allowed:
+    short = int(estimate_tokens) - left
+    if short <= 0:
         return None
-    need = wallet.satang_for_tokens(over)
+    need = wallet.satang_for_tokens(short)
     spare = int(getattr(state, "wallet_satang", 0) or 0)
     if allow_wallet and spare >= need:
         return None
-    resets = window_resets(state.window or "")
-    message = OVERAGE_TOO_LARGE_MESSAGE if resets else OVERAGE_TOO_LARGE_SPENT_MESSAGE
-    return _window_body(state, "overage_too_large", message, need)
+    if not window_resets(state.window or ""):
+        message = REMAINING_TOO_SMALL_SPENT_MESSAGE
+    elif state.window == "weekly":
+        message = REMAINING_TOO_SMALL_WEEKLY_MESSAGE
+    else:
+        message = REMAINING_TOO_SMALL_MESSAGE
+    return _window_body(state, REMAINING_REFUSAL_CODE, message, need)
 
 
 class OutputTruncated(Exception):

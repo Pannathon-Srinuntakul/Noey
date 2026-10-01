@@ -29,8 +29,24 @@ describe('estimateRequestFor', () => {
       clips: [
         { duration_sec: 34.2, has_audio: true },
         { duration_sec: 12, has_audio: true }
-      ]
+      ],
+      // What the user asked for sizes the AI's answer (server estimate e4).
+      target_duration_sec: 30
     })
+  })
+
+  it('caps a ตัดฉากเด่น result at 5 minutes and sends the script', () => {
+    const req = estimateRequestFor({
+      ...WIZARD_INITIAL,
+      uiMode: 'highlight',
+      voiceover: 'own',
+      duration: 'custom',
+      customSec: '900',
+      userScript: 'บรรทัดหนึ่ง\nบรรทัดสอง',
+      files: [file(600)]
+    })
+    expect(req?.target_duration_sec).toBe(300)
+    expect(req?.user_script).toBe('บรรทัดหนึ่ง\nบรรทัดสอง')
   })
 
   it('maps the silence-cut mode to the transcription route', () => {

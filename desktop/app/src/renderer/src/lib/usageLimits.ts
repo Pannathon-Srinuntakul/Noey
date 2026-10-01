@@ -56,9 +56,11 @@ export interface UsageEstimate {
    */
   full?: boolean
   /**
-   * The run is expected to go too far past what is left (more than the
-   * server's allowed overage): a new start is refused unless a balance the
-   * user allows covers the excess.
+   * The run's estimate is bigger than what is left of the binding window
+   * (the strict start gate, owner 2026-10-01 — on Pro and up the closer-to-
+   * full of the week and the month): a new start is refused unless a
+   * balance the user allows covers the shortfall. (The name is older than
+   * the rule; the server keeps it for shipped clients.)
    */
   overage_too_large?: boolean
 }
@@ -71,6 +73,10 @@ export interface EstimateRequest {
   engine?: 'lite' | 'pro'
   precision?: 'standard' | 'high'
   clips: { duration_sec: number; has_audio: boolean }[]
+  /** What the user asked the cut to be — the estimate's answer size follows
+   * it (estimate e4): the requested result length and the voiceover script. */
+  target_duration_sec?: number | null
+  user_script?: string
 }
 
 export type RefusalCode =
@@ -187,7 +193,10 @@ export function resetLine(
   now: Date = new Date(),
   timeZone?: string
 ): string {
-  if (!validIso(resetsAt)) return 'เริ่มนับรอบใหม่เมื่อใช้งานครั้งถัดไป'
+  if (!validIso(resetsAt))
+    return key === 'weekly'
+      ? 'เริ่มนับ 7 วันเมื่อใช้งานครั้งถัดไป'
+      : 'เริ่มนับรอบใหม่เมื่อใช้งานครั้งถัดไป'
   const left = new Date(resetsAt).getTime() - now.getTime()
   if (left <= 0) return 'รอบใหม่เริ่มแล้ว'
   if (key === 'five_hour') return `รอบใหม่ใน ${durationTh(left)}`
@@ -487,8 +496,13 @@ export function estimateBlockLine(est: UsageEstimate, now: Date = new Date()): s
     return `โควตารอบนี้ใช้ครบแล้ว — เริ่มงานใหม่ได้เมื่อรอบใหม่เริ่ม${reset}`
   }
   if (est.overage_too_large) {
-    if (wallet) return `${OVERAGE_TOO_LARGE_LINE} — หรือใช้ยอดเงินคงเหลือ ${wallet} จ่ายส่วนที่เกิน`
-    return spent ? OVERAGE_TOO_LARGE_TRIAL_LINE : OVERAGE_TOO_LARGE_LINE
+    const line = spent
+      ? OVERAGE_TOO_LARGE_TRIAL_LINE
+      : est.binding === 'weekly'
+        ? OVERAGE_TOO_LARGE_WEEKLY_LINE
+        : OVERAGE_TOO_LARGE_LINE
+    if (wallet) return `${line} — หรือใช้ยอดเงินคงเหลือ ${wallet} จ่ายส่วนที่ขาด`
+    return line
   }
   if (est.fits === 'plan') return null
   // Within the allowed overage: a warning, never a block (owner, 2026-10-01).
@@ -498,11 +512,15 @@ export function estimateBlockLine(est: UsageEstimate, now: Date = new Date()): s
   return wallet ? `${warn} — หรือใช้ยอดเงินคงเหลือ ${wallet} จ่ายส่วนที่เกินแทน` : warn
 }
 
-/** A run expected to go too far past what is left (`overage_too_large`). */
+/** A run bigger than what is left (`overage_too_large`, the strict start
+ * gate — owner, 2026-10-01). Same levers as the server's message. */
 export const OVERAGE_TOO_LARGE_LINE =
-  'งานนี้ใหญ่กว่าโควตาที่เหลือในรอบนี้มากเกินไป — ลองใช้วิดีโอที่สั้นลง เลือกเอนจิน Scout อัปเกรดแพลน หรือเติมเงิน'
+  'งานนี้ใหญ่กว่าโควตาที่เหลือในรอบนี้ — ลองใช้วิดีโอที่สั้นลง ขอผลลัพธ์ที่สั้นลง เลือกเอนจิน Scout หรือความละเอียดมาตรฐาน อัปเกรดแพลน หรือเติมเงิน'
+/** The same, when the WEEK is what binds (Pro and up). */
+export const OVERAGE_TOO_LARGE_WEEKLY_LINE =
+  'งานนี้ใหญ่กว่าโควตาที่เหลือของสัปดาห์นี้ — ลองใช้วิดีโอที่สั้นลง ขอผลลัพธ์ที่สั้นลง เลือกเอนจิน Scout หรือความละเอียดมาตรฐาน รอสัปดาห์ใหม่ อัปเกรดแพลน หรือเติมเงิน'
 const OVERAGE_TOO_LARGE_TRIAL_LINE =
-  'งานนี้ใหญ่กว่าเครดิตทดลองที่เหลือมากเกินไป — ลองใช้วิดีโอที่สั้นลง เลือกเอนจิน Scout หรืออัปเกรดแพลน'
+  'งานนี้ใหญ่กว่าเครดิตทดลองที่เหลือ — ลองใช้วิดีโอที่สั้นลง ขอผลลัพธ์ที่สั้นลง เลือกเอนจิน Scout หรืออัปเกรดแพลน'
 
 // ── refusals ─────────────────────────────────────────────────────────────────
 

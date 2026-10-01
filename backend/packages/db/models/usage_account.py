@@ -71,6 +71,16 @@ class UsageAccount(Base):
     overage_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
     #: The window ``overage_tokens`` was charged past (``monthly``/``lifetime``…).
     overage_window: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    #: The same carried excess for the ``weekly`` window, which Pro and up
+    #: enforce BESIDE ``monthly`` (owner, 2026-10-01). Kept apart because one
+    #: call can push both windows past 100 % at once, by different amounts,
+    #: and each carries into its OWN next period: a weekly overage opens the
+    #: next week (the month already counted it, so it is not carried there
+    #: twice). ``overage_tokens`` stays the plan's main window (monthly /
+    #: lifetime). Dropped when the plan no longer enforces a weekly window.
+    weekly_overage_tokens: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default="0"
+    )
 
     #: Σ open reservations held against the plan windows.
     reserved_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")

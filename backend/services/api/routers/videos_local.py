@@ -90,6 +90,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from packages.billing import estimate as estimator
 from packages.billing import guard, plan_features, runs
 from packages.billing import resume as resume_mod
+from packages.billing.limits import VIDEO_CALL_MODES
 from packages.core.errors import format_exception_message, validation_error_fields
 from packages.core.logging import get_logger
 from packages.core.settings import get_settings
@@ -280,6 +281,21 @@ class ResumeIn(BaseModel):
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
+
+async def _stored_segment_count(uid: str, proj: VideoProject) -> int | None:
+    """Segments in the project's stored edit script — what a re-edit echoes
+    back, so what its answer is priced on (estimate e4). None when there is
+    none to read: the estimate then uses its default size."""
+    if not proj.edit_script_path:
+        return None
+    try:
+        path = await resolve_stored_output(uid, proj.edit_script_path)
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001 — pricing advice must never fail the route
+        return None
+    segments = data.get("segments") if isinstance(data, dict) else None
+    return len(segments) if isinstance(segments, list) else None
+
 
 #: Client proxies are 480 px tall (web/src/engine/jobs/extractProxy.ts, the
 #: desktop sidecar's proxy.py), so their SHORT side is at most 480; +2 for the
@@ -767,6 +783,26 @@ async def create_local_project(
     allowed = ("dub_first", "talking_head", "highlight", "speech_highlights", "speech_scenes")
     if body.mode not in allowed:
         raise HTTPException(400, f"local-render รองรับเฉพาะโหมด {', '.join(allowed)}")
+    if (
+        body.mode in VIDEO_CALL_MODES
+        and body.target_duration_sec
+        and body.target_duration_sec > estimator.MAX_CUT_RESULT_SEC
+    ):
+        # One cut plan is ONE model call, and one answer holds at most 65,536
+        # output tokens (thinking included): a longer result cannot come back
+        # whole (packages/billing/estimate.py MAX_CUT_RESULT_SEC, owner
+        # 2026-10-01).
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "result_too_long",
+                "max_sec": estimator.MAX_CUT_RESULT_SEC,
+                "message": (
+                    f"ความยาวผลลัพธ์ของตัดฉากเด่นได้สูงสุด {estimator.MAX_CUT_RESULT_SEC // 60} นาที "
+                    "— เลือกความยาวที่สั้นลง หรือแบ่งเป็นหลายโปรเจกต์"
+                ),
+            },
+        )
     await enforce_new_project(
         session,
         auth.user,
@@ -858,6 +894,8 @@ async def analyze_frames(
     est = estimator.estimate_run(
         kind="analyze_frames", engine=proj.engine, precision=proj.precision,
         frame_count=len(files),
+        # The answer's size follows what the user asked for (e4).
+        target_sec=proj.target_duration_sec, script=proj.user_script,
     )
     run_id = await start_paid_run(
         auth, request, est,
@@ -1028,6 +1066,9 @@ async def analyze_video(
     est = estimator.estimate_run(
         kind="analyze_video", engine=proj.engine, precision=proj.precision,
         clip_secs=[rec["measuredSec"] for rec in staging.records],
+        # The answer's size follows what the user asked for (e4): the
+        # requested result length, or the script it must carry.
+        target_sec=proj.target_duration_sec, script=proj.user_script,
     )
     try:
         run_id = await start_paid_run(
@@ -2174,7 +2215,10 @@ async def _resume_quota(
     ticket it will act on. A next stage that runs on the user's own machine
     costs nothing and gets no estimate at all.
     """
-    est = resume_mod.estimate_for(state, engine=proj.engine, precision=proj.precision)
+    est = resume_mod.estimate_for(
+        state, engine=proj.engine, precision=proj.precision,
+        target_sec=proj.target_duration_sec, script=proj.user_script,
+    )
     source = "ticket"
     if est is None:
         kind = _stage_kind(next_st, proj.mode)
@@ -2303,7 +2347,10 @@ async def resume_project(
     task = str((state or {}).get("task") or "") if paused else ""
 
     if task:
-        est = resume_mod.estimate_for(state, engine=proj.engine, precision=proj.precision)
+        est = resume_mod.estimate_for(
+            state, engine=proj.engine, precision=proj.precision,
+            target_sec=proj.target_duration_sec, script=proj.user_script,
+        )
         if est is None:  # pragma: no cover — is_current() already vouched for it
             raise HTTPException(409, "ข้อมูลการทำต่อไม่ครบ — กรุณาเริ่มขั้นตอนนี้ใหม่")
         job_id = str((state or {}).get("job_id") or local_job_id(uid))
@@ -2624,6 +2671,8 @@ async def reedit_dub_scenes(
             # whatever the project's precision.
             kind="reedit", engine=proj.engine, precision="standard",
             clip_secs=[*proxy_secs, preview_sec],
+            # It echoes the whole existing script back (e4).
+            segments=await _stored_segment_count(uid, proj),
         )
         run_id = await start_paid_run(
             auth, request, est,

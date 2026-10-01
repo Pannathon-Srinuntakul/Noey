@@ -28,9 +28,9 @@ Output cap: for a request that sets no ``max_tokens`` of its own, the guard
 returns the run profile's per-call SAFETY cap (runaway protection only —
 never derived from the estimate or from what is left of the quota, owner
 2026-10-01) and it is sent as ``max_tokens``; a required answer cut off there
-(``finish_reason == "length"``) is retried once a thinking level down at our
-cost, then raises ``guard.OutputTruncated`` — a
-retryable failure (packages/billing/guard.py). An attempt cancelled
+(``finish_reason == "length"``) is NOT retried (owner, 2026-10-01): it
+raises ``guard.OutputTruncated`` at once — the run stops, is charged what it
+used, and the project is left in a retryable error (packages/billing/guard.py). An attempt cancelled
 mid-flight (worker restart, job timeout) is still recorded — with the usage
 streamed so far, else its input estimate — before the cancellation goes on.
 """
@@ -743,68 +743,26 @@ async def _stream_thinking_once(
 
 # ── the one retry after an answer cut off at the output limit ────────────────
 #
-# Owner, 2026-10-01. A required call that ends with ``finish_reason ==
-# "length"`` at the guard's safety cap (for the single calls a step rests on,
-# the model's OWN maximum output) has no usable answer. Before failing the
-# step it is sent ONCE more, one thinking level down (reasoning_effort
-# high → medium → low) and told to be concise. The first attempt is charged
-# as it really cost (no refunds); the retry exists only because of the cap,
-# so it is ours — recorded in full for the books but charged nothing
-# (``metering.absorbed_usage``). A second truncation fails the step as a
-# retryable error (``guard.OutputTruncated``), logged at error level.
-
-CONCISE_RETRY_NOTE = (
-    "IMPORTANT: a previous attempt at this exact request ran out of output space before "
-    "it finished. Think efficiently and keep the answer as compact as the format allows — "
-    "every required field, no padding, no repetition."
-)
+# Owner, 2026-10-01 (revised the same day). A required call that ends with
+# ``finish_reason == "length"`` at the guard's safety cap — for the single
+# calls a step rests on, the model's OWN maximum output (65,536 for Gemini
+# Flash) — has no usable answer. It is NOT retried: an automatic retry at a
+# lower thinking level was tried and removed by the owner. The run stops,
+# is charged what that call really used (no refund), and the task leaves the
+# project in a retryable error with ``guard.OUTPUT_TRUNCATED_MESSAGE``. The
+# requested result length is capped so a cut plan fits one answer
+# (packages/billing/estimate.py MAX_CUT_RESULT_SEC), so this should not fire;
+# when it does it is logged at error level (``llm_output_truncated``).
 
 
-def _concise_retry_extra(extra: dict[str, Any]) -> dict[str, Any] | None:
-    """``extra`` for the retry — or None when there is no lower thinking level
-    to step down to (the retry would just truncate again)."""
-    from packages.llm.config import (
-        lower_effort,
-        model_supports_effort,
-        model_supports_gemini_thinking,
-    )
-
-    if not extra.get("reasoning_effort"):
-        # No level sent: only a model that takes one can be stepped down.
-        model = str(extra.get("model") or model_params().get("model") or "")
-        if not (model_supports_gemini_thinking(model) or model_supports_effort(model)):
-            return None
-    lower = lower_effort(extra.get("reasoning_effort"))
-    if lower is None:
-        return None
-    out = dict(extra)
-    out["reasoning_effort"] = lower
-    system = out.get("system")
-    out["system"] = f"{system}\n\n{CONCISE_RETRY_NOTE}" if system else CONCISE_RETRY_NOTE
-    return out
-
-
-async def _with_truncation_retry(once: Callable[..., Awaitable[Any]], messages: Sequence[Message],
-                                 extra: dict[str, Any]) -> Any:
-    from packages.billing.metering import absorbed_usage
-
+async def _with_truncation_stop(once: Callable[..., Awaitable[Any]], messages: Sequence[Message],
+                                extra: dict[str, Any]) -> Any:
     try:
         return await once(messages, **extra)
     except guard.OutputTruncated:
-        retry = _concise_retry_extra(extra)
-        if retry is None:
-            log.error("llm_truncated_no_lower_effort", model=extra.get("model"),
-                      effort=extra.get("reasoning_effort"))
-            raise
-        log.warning("llm_truncated_retrying", model=extra.get("model"),
-                    from_effort=extra.get("reasoning_effort"), to_effort=retry["reasoning_effort"])
-        with absorbed_usage():
-            try:
-                return await once(messages, **retry)
-            except guard.OutputTruncated:
-                log.error("llm_truncated_twice", model=extra.get("model"),
-                          effort=retry["reasoning_effort"])
-                raise
+        log.error("llm_output_truncated", model=extra.get("model"), effort=extra.get("reasoning_effort"),
+                  hint="answer hit the model's maximum output; run stopped, no retry")
+        raise
 
 
 async def acompletion(
@@ -817,12 +775,11 @@ async def acompletion(
 
     If `tools` are supplied but the configured model can't do tool calling, retries once
     without tools and logs — so a small local model degrades instead of crashing. An
-    answer cut off at the output limit is retried once, one thinking level down
-    (``_with_truncation_retry``).
+    answer cut off at the output limit stops the step (``_with_truncation_stop``).
     """
     if stream:
         return await _acompletion_once(messages, tools=tools, stream=True, **extra)
-    return await _with_truncation_retry(
+    return await _with_truncation_stop(
         lambda msgs, **kw: _acompletion_once(msgs, tools=tools, **kw), messages, dict(extra)
     )
 
@@ -839,9 +796,9 @@ async def acompletion_stream_thinking(
     Identical to acompletion() but uses stream=True internally so callers can see
     the model's reasoning progress via 'scene_match_thinking' log events.
     Returns an assembled response with the same shape as acompletion(). An answer
-    cut off at the output limit is retried once, one thinking level down.
+    cut off at the output limit stops the step (``_with_truncation_stop``).
     """
-    return await _with_truncation_retry(
+    return await _with_truncation_stop(
         lambda msgs, **kw: _stream_thinking_once(msgs, project_uid=project_uid, on_thinking=on_thinking, **kw),
         messages, dict(extra),
     )

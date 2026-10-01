@@ -69,22 +69,28 @@ export const TASK_USE_LABEL: Record<string, string> = {
 /** Plan limits in rate-card tokens — mirrors backend packages/billing/limits.py
  * (volume-discount budgets, owner 2026-10-01). The admin sees the real
  * numbers; users only ever see percentages. Free is a one-time `lifetime`
- * credit; every paid plan enforces `monthly` alone (limits.py rule 1). The
- * weekly / 5-hour helpers below stay for rows that still record them. */
+ * credit; Lite and Starter enforce `monthly`; Pro, Studio, Agency and Max
+ * enforce `monthly` AND a rolling 7-day `weekly` of 40 % of it, whichever is
+ * hit first (limits.py rule 1, owner 2026-10-01). The 5-hour helper stays
+ * for rows that still record that window. */
 export const PLAN_LIMITS: Record<string, { monthly: number; windows: Array<"five_hour" | "weekly" | "monthly" | "lifetime">; concurrency: number; storageGb: number }> = {
   free: { monthly: 450_000, windows: ["lifetime"], concurrency: 1, storageGb: 1 },
   lite: { monthly: 800_000, windows: ["monthly"], concurrency: 1, storageGb: 3 },
   starter: { monthly: 2_000_000, windows: ["monthly"], concurrency: 1, storageGb: 5 },
-  pro: { monthly: 5_600_000, windows: ["monthly"], concurrency: 2, storageGb: 10 },
-  studio: { monthly: 12_000_000, windows: ["monthly"], concurrency: 3, storageGb: 30 },
-  agency: { monthly: 26_000_000, windows: ["monthly"], concurrency: 4, storageGb: 60 },
-  max: { monthly: 48_000_000, windows: ["monthly"], concurrency: 5, storageGb: 100 },
+  pro: { monthly: 5_600_000, windows: ["monthly", "weekly"], concurrency: 2, storageGb: 10 },
+  studio: { monthly: 12_000_000, windows: ["monthly", "weekly"], concurrency: 3, storageGb: 30 },
+  agency: { monthly: 26_000_000, windows: ["monthly", "weekly"], concurrency: 4, storageGb: 60 },
+  max: { monthly: 48_000_000, windows: ["monthly", "weekly"], concurrency: 5, storageGb: 100 },
 };
 
+/** The weekly window's share of the month (limits.py WEEKLY_SHARE). */
+export const WEEKLY_SHARE = 0.4;
+
 export function weeklyLimit(monthly: number): number {
-  return Math.floor(monthly / 4.33);
+  return Math.floor(monthly * WEEKLY_SHARE);
 }
 
+/** The unenforced 5-hour window keeps its old arithmetic (limits.py). */
 export function fiveHourLimit(monthly: number): number {
-  return Math.floor(weeklyLimit(monthly) * 0.4);
+  return Math.floor(Math.floor(monthly / 4.33) * 0.4);
 }

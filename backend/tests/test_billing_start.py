@@ -138,33 +138,39 @@ async def _fill_lifetime(user_id: int, left: int) -> None:
     )
 
 
-async def test_a_nearly_spent_window_does_not_refuse_the_start(captured):
-    """The estimate is ADVICE (owner, 2026-10-01): with far less left than the
-    run is estimated at — but within the allowed overage — the start goes
-    ahead; the run is sent call by call and pauses at 100 %."""
+async def test_a_run_that_does_not_fit_what_is_left_is_refused_at_start(captured):
+    """The STRICT start gate (owner, 2026-10-01): a new run starts only when
+    its estimate fits what is left. 50k of the Free credit left, a 60 s Scout
+    cut estimated at ~80k → refused before anything is stored or opened; the
+    same cut with 100k left starts."""
     uid_user = await make_user(email("start"), plan="free")
     token = await user_token(uid_user)
-    await _fill_lifetime(uid_user, left=50_000)  # a 60 s cut is estimated at ~137k
+    await _fill_lifetime(uid_user, left=50_000)
     async with client() as c:
-        project = await _project(c, token, 10)
+        project = await _project(c, token, 60)
         try:
-            r = await _analyze(c, token, project, seconds=60)
+            refused = await _analyze(c, token, project, seconds=60, declared=60)
+            stored = (data_root() / "video_outputs" / project / "proxy").exists()
+            await _fill_lifetime(uid_user, left=100_000)
+            started = await _analyze(c, token, project, seconds=60, declared=60)
         finally:
             _cleanup(project)
-    assert r.status_code == 202, r.text
+    assert refused.status_code == 402, refused.text
+    detail = refused.json()["detail"]
+    assert detail["code"] == "overage_too_large" and detail["window"] == "lifetime"
+    assert not stored
+    assert started.status_code == 202, started.text
     assert [(k, s) for k, s, *_ in await _open_runs(uid_user)] == [("analyze_video", "queued")]
 
 
-async def test_concurrent_starts_cannot_each_take_the_whole_overage(captured, monkeypatch):
+async def test_concurrent_starts_cannot_each_take_what_is_left(captured):
     """Pro runs two jobs at once. Each new start counts what the runs already
     in flight still expect to spend as gone, and the check is repeated under
     the account lock where the run opens — so two starts fired together
-    cannot both see the same headroom. Ratio shrunk to 1 % (56k of Pro's
-    5.6M) so a 10 s Scout cut (~85k) is enough to show it."""
+    cannot both fit into the same headroom. 100k left: one 10 s Scout cut
+    (~75k) fits, a second does not."""
     import asyncio
 
-    monkeypatch.setenv("BILLING_MAX_OVERAGE_RATIO", "0.01")
-    get_settings.cache_clear()
     uid_user = await make_user(email("start"), plan="pro")
     token = await user_token(uid_user)
     month = limits.window_limit("pro", "monthly")
@@ -182,7 +188,6 @@ async def test_concurrent_starts_cannot_each_take_the_whole_overage(captured, mo
         finally:
             _cleanup(first)
             _cleanup(second)
-    get_settings.cache_clear()
     codes = sorted([a.status_code, b.status_code])
     assert codes == [202, 402], (a.text, b.text)
     refused = a if a.status_code == 402 else b
@@ -190,11 +195,36 @@ async def test_concurrent_starts_cannot_each_take_the_whole_overage(captured, mo
     assert [(k, s) for k, s, *_ in await _open_runs(uid_user)] == [("analyze_video", "queued")]
 
 
+async def test_the_weekly_window_gates_a_start_the_month_would_allow(captured):
+    """Pro and up enforce a 40 % week beside the month; a new run must fit
+    BOTH. Month nearly empty, week with 50k left → refused on ``weekly``,
+    with the weekly wording."""
+    uid_user = await make_user(email("start"), plan="pro")
+    token = await user_token(uid_user)
+    week = limits.window_limit("pro", "weekly")
+    await db(
+        "INSERT INTO core.usage_accounts (user_id, weekly_started_at, weekly_used, monthly_started_at, "
+        "monthly_used, monthly_anchor_day, reserved_tokens) VALUES (:u, now(), :w, date_trunc('day', now()), "
+        ":w, EXTRACT(DAY FROM now()), 0)",
+        u=uid_user, w=week - 50_000,
+    )
+    async with client() as c:
+        project = await _project(c, token, 10)
+        try:
+            r = await _analyze(c, token, project)
+        finally:
+            _cleanup(project)
+    assert r.status_code == 402, r.text
+    detail = r.json()["detail"]
+    assert detail["code"] == "overage_too_large" and detail["window"] == "weekly"
+    assert "สัปดาห์" in detail["message"] and detail["resets"] is True and detail["resets_at"]
+
+
 async def test_a_run_far_bigger_than_what_is_left_is_refused_at_start(captured):
     """Run c3c2e938 (2026-10-01): 31k of the 450k Free credit left, a 5.5-min
-    cut estimated at 164,756 — 133,756 past what is left, more than 25 % of
-    the credit (112,500). Refused BEFORE anything uploads into place or any
-    run opens, and the message says what to do."""
+    cut estimated at ~167k. Refused BEFORE anything uploads into place or any
+    run opens, and the message says what to do. Under the strict gate the
+    Scout version (~108k) does not fit either."""
     uid_user = await make_user(email("start"), plan="free")
     token = await user_token(uid_user)
     await _fill_lifetime(uid_user, left=31_000)
@@ -204,48 +234,54 @@ async def test_a_run_far_bigger_than_what_is_left_is_refused_at_start(captured):
         try:
             refused = await _analyze(c, token, project, seconds=331.8, declared=331.8)
             stored = (data_root() / "video_outputs" / project / "proxy").exists()
-            # The suggestion is real: Scout's estimate (118k, e3) is within it.
             on_scout = await _analyze(c, token, scout, seconds=331.8, declared=331.8)
         finally:
             _cleanup(project)
             _cleanup(scout)
-    assert on_scout.status_code == 202, on_scout.text
-    assert refused.status_code == 402, refused.text
-    detail = refused.json()["detail"]
-    assert detail["code"] == "overage_too_large" and detail["window"] == "lifetime"
-    assert detail["resets"] is False and "Scout" in detail["message"]
-    assert not any("token" in k for k in detail)
-    assert not stored and len(captured) == 1
-    assert [(k, s) for k, s, *_ in await _open_runs(uid_user)] == [("analyze_video", "queued")]
-
-
-async def test_a_full_window_refuses_new_projects_and_new_runs(captured):
-    """At exactly 100 % nothing NEW starts — not a project (its footage would
-    upload only to be refused) and not a run on an existing one — and the
-    refusal is the trial-credit one, with no reset to wait for."""
-    uid_user = await make_user(email("start"), plan="free")
-    token = await user_token(uid_user)
-    async with client() as c:
-        project = await _project(c, token, 10)  # made while there was credit
-        await _fill_lifetime(uid_user, left=0)
-        try:
-            refused_run = await _analyze(c, token, project, seconds=10)
-            stored = (data_root() / "video_outputs" / project / "proxy").exists()
-            refused_project = await c.post(
-                "/videos/local",
-                json={"mode": "dub_first", "clips": [{"id": "c1", "durationSec": 10}], "engine": "lite"},
-                headers=bearer(token),
-            )
-        finally:
-            _cleanup(project)
-    for r in (refused_run, refused_project):
+    for r in (refused, on_scout):
         assert r.status_code == 402, r.text
         detail = r.json()["detail"]
-        assert detail["code"] == "limit_reached" and detail["full"] is True
-        assert detail["window"] == "lifetime" and detail["resets"] is False
-        assert detail["wallet_can_cover"] is False and "อัปเกรด" in detail["message"]
+        assert detail["code"] == "overage_too_large" and detail["window"] == "lifetime"
+        assert detail["resets"] is False and "Scout" in detail["message"]
         assert not any("token" in k for k in detail)
-    assert not stored and captured == [] and await _open_runs(uid_user) == []
+    assert not stored and captured == []
+    assert await _open_runs(uid_user) == []
+
+
+async def test_a_result_longer_than_one_answer_holds_is_refused_at_creation(captured):
+    """Owner, 2026-10-01: the video-cut modes (the wizard's ตัดฉากเด่น) take
+    at most 5 minutes of requested result — one model answer must hold the
+    plan. A clear 422 before anything uploads; the speech modes keep their
+    own bound."""
+    uid_user = await make_user(email("start"), plan="max")
+    token = await user_token(uid_user)
+    async with client() as c:
+        for mode in ("highlight", "dub_first"):
+            r = await c.post(
+                "/videos/local",
+                json={"mode": mode, "clips": [{"id": "c1", "durationSec": 1800}], "engine": "pro",
+                      "target_duration_sec": 301},
+                headers=bearer(token),
+            )
+            assert r.status_code == 422, r.text
+            detail = r.json()["detail"]
+            assert detail["code"] == "result_too_long" and detail["max_sec"] == 300
+            assert "5 นาที" in detail["message"]
+        ok = await c.post(
+            "/videos/local",
+            json={"mode": "highlight", "clips": [{"id": "c1", "durationSec": 1800}], "engine": "pro",
+                  "target_duration_sec": 300},
+            headers=bearer(token),
+        )
+        scenes = await c.post(
+            "/videos/local",
+            json={"mode": "speech_scenes", "clips": [{"id": "c1", "durationSec": 1800}],
+                  "target_duration_sec": 600},
+            headers=bearer(token),
+        )
+    assert ok.status_code == 201 and scenes.status_code == 201
+    _cleanup(ok.json()["uid"])
+    _cleanup(scenes.json()["uid"])
 
 
 def _window(headroom: int, *, limit: int = 800_000, wallet_satang: int = 0):
@@ -271,46 +307,48 @@ def test_a_full_window_lets_a_balance_the_user_allowed_carry_new_work():
     assert broke is not None and broke["wallet_can_cover"] is False
 
 
-def test_the_overage_a_new_run_may_be_expected_to_take_is_a_setting(monkeypatch):
+def test_the_start_gate_is_strict_estimate_against_what_is_left():
     from packages.billing import wallet
 
-    # 25 % of an 800k window = 200k past what is left.
-    assert guard.overage_refusal(_window(10_000), 210_000, allow_wallet=False) is None
-    refused = guard.overage_refusal(_window(10_000), 210_001, allow_wallet=False)
+    # Fits exactly → starts; one token more → refused.
+    assert guard.remaining_refusal(_window(210_000), 210_000, allow_wallet=False) is None
+    refused = guard.remaining_refusal(_window(210_000), 210_001, allow_wallet=False)
     assert refused is not None and refused["code"] == "overage_too_large"
-    assert refused["wallet_satang"] == wallet.satang_for_tokens(200_001)
-    # A balance the user allows and that covers everything past what is left.
+    assert refused["wallet_satang"] == wallet.satang_for_tokens(1)
+    # A balance the user allows and that covers the SHORTFALL lets it start.
     rich = _window(10_000, wallet_satang=wallet.satang_for_tokens(200_001))
-    assert guard.overage_refusal(rich, 210_001, allow_wallet=True) is None
-    assert guard.overage_refusal(rich, 210_001, allow_wallet=False) is not None
-    monkeypatch.setenv("BILLING_MAX_OVERAGE_RATIO", "0.5")
-    monkeypatch.setenv("BILLING_MAX_OVERAGE_TOKENS", "1000000")
-    get_settings.cache_clear()
-    try:
-        assert guard.overage_refusal(_window(10_000), 410_000, allow_wallet=False) is None
-    finally:
-        monkeypatch.delenv("BILLING_MAX_OVERAGE_RATIO")
-        monkeypatch.delenv("BILLING_MAX_OVERAGE_TOKENS")
-        get_settings.cache_clear()
+    assert guard.remaining_refusal(rich, 210_001, allow_wallet=True) is None
+    assert guard.remaining_refusal(rich, 210_001, allow_wallet=False) is not None
+    # Too small a balance does not.
+    poor = _window(10_000, wallet_satang=wallet.satang_for_tokens(1_000))
+    assert guard.remaining_refusal(poor, 210_001, allow_wallet=True) is not None
+    # No allowance past what is left whatever the plan's size (the 25 % /
+    # 300k setting is gone).
+    assert guard.remaining_refusal(_window(10_000, limit=48_000_000), 10_001, allow_wallet=False) is not None
 
 
-def test_a_big_plan_overage_is_capped_in_tokens_not_just_by_ratio():
-    # Max (48M): 25 % would allow 12M past what is left; the absolute cap
-    # (300k by default) is what bounds it — a few baht at most.
-    big = _window(10_000, limit=48_000_000)
-    assert guard.overage_refusal(big, 310_000, allow_wallet=False) is None
-    refused = guard.overage_refusal(big, 310_001, allow_wallet=False)
-    assert refused is not None and refused["code"] == "overage_too_large"
-
-
-def test_runs_in_flight_share_the_absolute_overage_cap():
+def test_runs_in_flight_count_as_spent_at_the_gate():
     from dataclasses import replace
 
-    big = replace(_window(10_000, limit=48_000_000), in_flight=200_000)
-    # 10k left − 200k already expected by running work → nothing left; a new
-    # 300k run would be 300k past, at the cap; 300,001 is past it.
-    assert guard.overage_refusal(big, 300_000, allow_wallet=False) is None
-    assert guard.overage_refusal(big, 300_001, allow_wallet=False) is not None
+    state = replace(_window(300_000, limit=48_000_000), in_flight=200_000)
+    assert guard.remaining_refusal(state, 100_000, allow_wallet=False) is None
+    assert guard.remaining_refusal(state, 100_001, allow_wallet=False) is not None
+
+
+def test_the_gates_speak_of_the_week_when_the_week_binds():
+    from dataclasses import replace
+
+    week = replace(_window(5_000), window="weekly")
+    gate = guard.remaining_refusal(week, 10_000, allow_wallet=False)
+    assert gate is not None and gate["window"] == "weekly" and "สัปดาห์" in gate["message"]
+    full = guard.quota_full_refusal(replace(_window(0), window="weekly"), allow_wallet=False)
+    assert full is not None and "สัปดาห์" in full["message"]
+
+
+def test_the_overage_allowance_settings_are_gone():
+    cfg = get_settings()
+    assert not hasattr(cfg, "billing_max_overage_ratio")
+    assert not hasattr(cfg, "billing_max_overage_tokens")
 
 
 async def test_a_run_too_big_for_the_whole_window_is_refused_up_front(captured, monkeypatch):

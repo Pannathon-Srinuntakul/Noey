@@ -404,17 +404,10 @@ def _length_resp(out: int = 9_000, finish: str = "length"):
     )
 
 
-def _charges_unless_absorbed(tokens: int) -> AsyncMock:
-    """``record_llm_attempt`` as metering behaves: 0 inside ``absorbed_usage``."""
-    from packages.billing import metering
-
-    return AsyncMock(side_effect=lambda *a, **k: 0 if metering._absorbed.get() else tokens)
-
-
-async def test_a_cut_off_answer_is_retried_once_a_level_down_at_our_cost(monkeypatch, quiet_gateway):
-    """Owner, 2026-10-01: truncated at the cap → ONE retry, one thinking level
-    lower and told to be concise; the first attempt is charged as it cost,
-    the retry is ours. Truncated again → a retryable failure."""
+async def test_a_cut_off_answer_stops_the_run_without_a_retry(monkeypatch, quiet_gateway):
+    """Owner, 2026-10-01: an answer cut off at the model's maximum output is
+    NOT retried — one call, charged as it cost (no refund), then a retryable
+    failure for the user to start again."""
     seen: list[dict] = []
 
     async def capture(**kwargs):
@@ -422,41 +415,14 @@ async def test_a_cut_off_answer_is_retried_once_a_level_down_at_our_cost(monkeyp
         return _length_resp()
 
     monkeypatch.setattr(gw.litellm, "acompletion", capture)
-    monkeypatch.setattr(gw, "record_llm_attempt", _charges_unless_absorbed(50_000))
+    monkeypatch.setattr(gw, "record_llm_attempt", AsyncMock(return_value=50_000))
     meter = _meter(ceiling=100_000, output_cap=60_000)
     with guard.meter_scope(meter), pytest.raises(guard.OutputTruncated):
         await gw.acompletion([{"role": "user", "content": "h"}], model="gemini/gemini-3.7-flash",
                              reasoning_effort="high")
-    assert [s["max_tokens"] for s in seen] == [60_000, 60_000]
-    assert [s["reasoning_effort"] for s in seen] == ["high", "medium"]
-    assert gw.CONCISE_RETRY_NOTE in seen[1]["messages"][0]["content"]
-    assert gw.CONCISE_RETRY_NOTE not in str(seen[0]["messages"])
-    assert meter.spent == 50_000  # the first attempt only: no refund, retry absorbed
-
-    # The retry that comes back whole is the answer.
-    answers = iter([_length_resp(), _length_resp(out=1_000, finish="stop")])
-    seen.clear()
-
-    async def second_time_lucky(**kwargs):
-        seen.append(dict(kwargs))
-        return next(answers)
-
-    monkeypatch.setattr(gw.litellm, "acompletion", second_time_lucky)
-    meter = _meter(ceiling=100_000, output_cap=60_000)
-    with guard.meter_scope(meter):
-        resp = await gw.acompletion(
-            [{"role": "user", "content": "h"}], model="gemini/gemini-3.7-flash", reasoning_effort="medium",
-        )
-    assert resp.choices[0].finish_reason == "stop" and seen[1]["reasoning_effort"] == "low"
+    assert len(seen) == 1 and seen[0]["reasoning_effort"] == "high"
     assert meter.spent == 50_000
-
-
-def test_the_retry_steps_down_the_thinking_ladder_and_stops_at_the_bottom():
-    from packages.llm.config import lower_effort
-
-    assert [lower_effort(e) for e in ("high", "medium", "low", None)] == ["medium", "low", None, "low"]
-    assert gw._concise_retry_extra({"model": "gemini/gemini-3.8-flash", "reasoning_effort": "low"}) is None
-    assert gw._concise_retry_extra({"model": "ollama/llama3"}) is None  # takes no thinking level
+    assert not hasattr(gw, "CONCISE_RETRY_NOTE")
 
 
 def test_the_safety_cap_for_a_whole_step_is_the_models_own_maximum():

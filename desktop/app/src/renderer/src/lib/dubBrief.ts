@@ -56,19 +56,37 @@ export function buildDubBrief(
   return parts.join(' · ') || undefined
 }
 
+/**
+ * The longest RESULT the single-call video-cut modes (ตัดฉากเด่น → backend
+ * `dub_first` / `highlight`) may be asked for: 5 minutes (owner, 2026-10-01).
+ * One cut plan is ONE AI answer, and one answer holds at most 65,536 output
+ * tokens with the thinking — 300 s fits even at the worst measured case
+ * (backend `packages/billing/estimate.py` `MAX_CUT_RESULT_SEC`; the server
+ * refuses a longer request with `result_too_long`). Change both together.
+ */
+export const MAX_CUT_RESULT_SEC = 300
+
+/** The server's bound for every other mode (`LocalProjectIn.target_duration_sec`). */
+export const MAX_TARGET_SEC = 600
+
 /** Mirrors web's submit-time target_duration_sec derivation for dub_first.
  * `musicDurationSec` — the attached music's trimmed length (trimOutSec -
- * trimInSec), only used when scriptDuration === 'music'; clamped to the same
- * 15-600s bound the server enforces (`LocalProjectIn.target_duration_sec`). */
+ * trimInSec), only used when scriptDuration === 'music'; clamped to 15 s and
+ * to `maxSec` — the bound the server enforces for the mode
+ * (`MAX_CUT_RESULT_SEC` for the video-cut modes, else `MAX_TARGET_SEC`). */
 export function dubTargetDurationSec(
   scriptDuration: string,
   scriptCustomSec: string,
-  musicDurationSec: number | null = null
+  musicDurationSec: number | null = null,
+  maxSec: number = MAX_TARGET_SEC
 ): number | null {
   if (scriptDuration === 'music' && musicDurationSec) {
-    return Math.round(Math.min(Math.max(musicDurationSec, 15), 600))
+    return Math.round(Math.min(Math.max(musicDurationSec, 15), maxSec))
   }
-  if (scriptDuration === 'custom' && scriptCustomSec) return parseInt(scriptCustomSec, 10)
+  if (scriptDuration === 'custom' && scriptCustomSec) {
+    const n = parseInt(scriptCustomSec, 10)
+    return Number.isFinite(n) ? Math.min(Math.max(n, 15), maxSec) : null
+  }
   if (
     scriptDuration &&
     scriptDuration !== 'auto' &&
