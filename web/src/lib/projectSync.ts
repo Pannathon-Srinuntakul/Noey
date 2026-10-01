@@ -401,6 +401,33 @@ export function restoreMissingProjects(
 let restoreInFlight: Promise<number> | null = null
 
 /**
+ * Settings → ล้างสำเนาในเครื่องนี้: drop this browser's copy, then pull every
+ * project's `project.json` straight back from the server.
+ *
+ * The wipe alone left the projects page EMPTY until a full reload (owner,
+ * 2026-10-01): the list re-read the now-empty store, and the only things that
+ * restore from the server — the boot restore and the focus resync, at most once
+ * a minute — had already run. The copy promises "งานไม่หาย … ดึงกลับมาใหม่ได้",
+ * so the pull-back belongs to the same action.
+ *
+ * Returns once the WIPE is done; `restored` settles when the pull-back has.
+ * A restore already in flight is waited out first: it read the store before
+ * the wipe, so it would skip every project it still believed was local, and
+ * the single-flight guard would hand that stale run to this caller.
+ */
+export async function clearLocalCopy(
+  session: ApiSession,
+  onRestored?: () => void
+): Promise<{ removed: number; restored: Promise<number> }> {
+  const removed = await window.noey.storage.clearAll()
+  const restored = (async () => {
+    if (restoreInFlight) await restoreInFlight.catch(() => 0)
+    return restoreMissingProjects(session, onRestored)
+  })()
+  return { removed, restored }
+}
+
+/**
  * Server projects whose project.json is not there (404): a server row that
  * never got its files, or one whose files were removed. Remembered for this
  * browser so every load and focus does not ask for them again; retried after a

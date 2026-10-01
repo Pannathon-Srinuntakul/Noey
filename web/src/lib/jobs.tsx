@@ -20,6 +20,11 @@ interface JobsApi {
   /** Projects currently mid-render, newest first — drives the running-job bar. */
   runningJobs: ProjectPipeline[]
   reload: () => void
+  /** Settings → ล้างสำเนาในเครื่องนี้: wipe this browser's copy and pull the
+   * projects back from the server. Resolves once the wipe is done; the list
+   * fills in as each project lands (skeletons, not the welcome page, until
+   * the first one does). */
+  clearLocalCopy: () => Promise<void>
   addProject: (project: LocalProject) => void
   removeProject: (uid: string) => void
 }
@@ -141,7 +146,9 @@ export function JobsProvider({
   // The first restore from the server is still running. While it is and the
   // list is empty, the page must not say "no projects yet" — on a fresh
   // browser that welcome screen was the answer for the whole restore.
-  const [restoring, setRestoring] = useState(false)
+  // A COUNT, not a flag: the boot restore and a ล้างสำเนา pull-back can
+  // overlap, and the first to finish must not declare the list complete.
+  const [restoring, setRestoring] = useState(0)
   /** Pipelines live in state (not a ref) so consumers re-render when a host
    * republishes. Each publish replaces one entry wholesale. */
   const [pipelines, setPipelines] = useState<ReadonlyMap<string, ProjectPipeline>>(new Map())
@@ -166,6 +173,15 @@ export function JobsProvider({
           projects: list.map((p) => ({ uid: p.uid, remoteUid: p.remote?.uid ?? null }))
         })
         setProjects(list)
+        // A pipeline whose project left the store (deleted, or the whole
+        // store wiped by ล้างสำเนา) must not keep answering `jobFor` with a
+        // snapshot of a project that is gone. Its host has unmounted with the
+        // row; a restored row mounts a fresh host and publishes anew.
+        const keep = new Set(list.map((p) => p.uid))
+        setPipelines((prev) => {
+          if ([...prev.keys()].every((uid) => keep.has(uid))) return prev
+          return new Map([...prev].filter(([uid]) => keep.has(uid)))
+        })
         setLoading(false)
       })
       .catch(() => setLoading(false))
@@ -182,6 +198,17 @@ export function JobsProvider({
   // token. Kept in a ref so the restore below runs once per mount instead of
   // once per session identity — each re-run raced the previous one.
   const sessionRef = useRef(session)
+
+  // Show each restored project as it lands instead of all of them at the end
+  // — throttled so a burst of four does not re-list four times.
+  const listTimerRef = useRef(0)
+  const listSoon = useCallback((): void => {
+    if (listTimerRef.current) return
+    listTimerRef.current = window.setTimeout(() => {
+      listTimerRef.current = 0
+      reload()
+    }, 400)
+  }, [reload])
   useEffect(() => {
     sessionRef.current = session
   }, [session])
@@ -190,21 +217,11 @@ export function JobsProvider({
     let cancelled = false
     void (async () => {
       const { restoreMissingProjects, backfillUnsyncedProjects } = await import('./projectSync')
-      setRestoring(true)
-      // Show each project as it lands instead of all of them at the end —
-      // throttled so a burst of four does not re-list four times.
-      let listTimer = 0
-      const listSoon = (): void => {
-        if (listTimer) return
-        listTimer = window.setTimeout(() => {
-          listTimer = 0
-          reload()
-        }, 400)
-      }
+      setRestoring((n) => n + 1)
       try {
         await restoreMissingProjects(sessionRef.current, listSoon)
       } finally {
-        setRestoring(false)
+        setRestoring((n) => n - 1)
         // ALWAYS re-read the store, even when this run was superseded or threw
         // half-way. The restore writes each project.json BEFORE it counts it,
         // and its count covers only what THIS run wrote — a run cancelled
@@ -230,7 +247,29 @@ export function JobsProvider({
     return () => {
       cancelled = true
     }
-  }, [reload])
+  }, [reload, listSoon])
+
+  const clearLocalCopy = useCallback(async (): Promise<void> => {
+    const sync = await import('./projectSync')
+    // Counted as restoring BEFORE the wipe: the wipe's own change event
+    // re-lists an empty store, and that render must show skeletons rather
+    // than the first-run welcome page.
+    setRestoring((n) => n + 1)
+    let restored: Promise<number>
+    try {
+      ;({ restored } = await sync.clearLocalCopy(sessionRef.current, listSoon))
+    } catch (err) {
+      setRestoring((n) => n - 1)
+      reload()
+      throw err
+    }
+    void restored
+      .catch(() => 0)
+      .finally(() => {
+        setRestoring((n) => n - 1)
+        reload()
+      })
+  }, [reload, listSoon])
 
   // A project created on ANOTHER machine while this tab sits open: re-check
   // when the tab comes back to the foreground, at most once a minute. This is
@@ -344,14 +383,26 @@ export function JobsProvider({
     () => ({
       session,
       projects,
-      loading: loading || (restoring && projects.length === 0),
+      loading: loading || (restoring > 0 && projects.length === 0),
       jobFor,
       runningJobs,
       reload,
+      clearLocalCopy,
       addProject,
       removeProject
     }),
-    [session, projects, loading, restoring, jobFor, runningJobs, reload, addProject, removeProject]
+    [
+      session,
+      projects,
+      loading,
+      restoring,
+      jobFor,
+      runningJobs,
+      reload,
+      clearLocalCopy,
+      addProject,
+      removeProject
+    ]
   )
 
   return (
