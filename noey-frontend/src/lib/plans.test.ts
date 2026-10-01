@@ -36,7 +36,15 @@ import {
   schemaPrice,
   strikePrice,
   tierFromLookupKey,
+  CUT_RESULT_CAP_NOTE,
+  MAX_CUT_RESULT_MINUTES,
+  WEEKLY_LIMIT_TIERS,
+  WEEKLY_SHARE_PERCENT,
+  WEEKLY_WINDOW_DAYS,
+  hasWeeklyLimit,
+  quotaFeature,
 } from "./plans";
+import { MODES } from "./modes";
 
 /** A moment inside the beta, and the first moment after it. */
 const DURING_BETA = BETA_END_INSTANT_MS - 1;
@@ -285,10 +293,14 @@ describe("what a plan sells", () => {
     }
   });
 
-  it("show limits by their English names — one Monthly limit on every paid plan", () => {
-    // Backend limits.py rule 1 (2026-09-30): no weekly or 5-hour sub-window.
+  it("show limits by their English names — Monthly on every paid plan, Weekly beside it from Pro up", () => {
+    // Backend limits.py rule 1 (2026-10-01): pro/studio/agency/max enforce
+    // ("monthly", "weekly"); lite/starter monthly alone; no 5-hour window.
     expect(PLAN_COPY.free.limits).toEqual(["Trial credit"]);
-    for (const tier of PAID_TIERS) expect(PLAN_COPY[tier].limits, tier).toEqual(["Monthly limit"]);
+    for (const tier of PAID_TIERS) {
+      expect(PLAN_COPY[tier].limits, tier).toEqual(hasWeeklyLimit(tier) ? ["Monthly limit", "Weekly limit"] : ["Monthly limit"]);
+    }
+    expect(WEEKLY_LIMIT_TIERS).toEqual(["pro", "studio", "agency", "max"]);
     expect(TIERS.map((tier) => PLAN_COPY[tier].concurrentJobs)).toEqual([1, 1, 1, 2, 3, 4, 5]);
   });
 
@@ -379,5 +391,29 @@ describe("what a plan sells", () => {
 
   it("split into four main cards and three extra ones, covering every plan once", () => {
     expect([...MAIN_TIERS, ...EXTRA_TIERS].sort()).toEqual([...TIERS].sort());
+  });
+
+  it("states the weekly window and the result cap from the backend's numbers", () => {
+    // limits.py WEEKLY_SHARE = 0.40, WINDOW_SECONDS["weekly"] = 7 days;
+    // estimate.MAX_CUT_RESULT_SEC = 300.
+    expect(WEEKLY_SHARE_PERCENT).toBe(40);
+    expect(WEEKLY_WINDOW_DAYS).toBe(7);
+    expect(MAX_CUT_RESULT_MINUTES).toBe(5);
+    expect(CUT_RESULT_CAP_NOTE).toContain(`${MAX_CUT_RESULT_MINUTES} นาที`);
+    // lib/modes.ts spells the cap out (it cannot import plans.ts): keep them equal.
+    const scene = MODES.find((mode) => mode.id === "dub_first");
+    expect(scene?.result.join(" ")).toContain(`ไม่เกิน ${MAX_CUT_RESULT_MINUTES} นาที`);
+  });
+
+  it("gives every card a quota bullet: the credit, the month alone, or the month and the week", () => {
+    expect(PLAN_COPY.free.features[0]).toBe(quotaFeature("free"));
+    for (const tier of PAID_TIERS) {
+      expect(PLAN_COPY[tier].features[0], tier).toBe(quotaFeature(tier));
+      expect(quotaFeature(tier).includes(`${WEEKLY_SHARE_PERCENT}%`), tier).toBe(hasWeeklyLimit(tier));
+      // The account card splits a feature on " · ".
+      expect(quotaFeature(tier), tier).not.toContain(" · ");
+    }
+    const weekly = COMPARISON_ROWS.find((row) => row.label.startsWith("โควตารายสัปดาห์"));
+    expect(weekly?.values).toEqual(["—", "—", "—", "40% ของรายเดือน", "40% ของรายเดือน", "40% ของรายเดือน", "40% ของรายเดือน"]);
   });
 });

@@ -74,6 +74,6 @@ describe("plan wording (Website v2)", () => {
     expect(limitsShort(["Monthly limit"])).toBe("Monthly limit");
     expect(limitsShort(["Weekly limit", "5-hour limit"])).toBe("Weekly + 5-hour");
     const row = COMPARISON_ROWS.find((r) => r.label === "ขีดจำกัดการใช้งาน");
-    expect(row?.values).toEqual(["Trial credit", "Monthly limit", "Monthly limit", "Monthly limit", "Monthly limit", "Monthly limit", "Monthly limit"]);
+    expect(row?.values).toEqual(["Trial credit", "Monthly limit", "Monthly limit", "Monthly + Weekly", "Monthly + Weekly", "Monthly + Weekly", "Monthly + Weekly"]);
   });
 });

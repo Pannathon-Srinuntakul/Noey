@@ -597,6 +597,96 @@ export const CLIPS_DEPEND_NOTE = "ตัดได้กี่คลิปต่�
 /** The link's own words. */
 export const CLIPS_CALCULATOR_LINK = "ลองคำนวณที่หน้าราคา";
 
+// ─── The weekly limit (Pro and up) ───────────────────────────────────────────
+//
+// Owner, 2026-10-01 (backend `packages/billing/limits.py`, rule 1): Pro,
+// Studio, Agency and Max enforce a WEEKLY window beside the monthly one, sized
+// `WEEKLY_SHARE` (40%) of the month and rolling: it starts at the first job
+// after the previous week ran out and lasts 7 days. Whichever fills first
+// stops new work. Lite and Starter keep the monthly window alone; Free is its
+// one-off trial credit. The weekly window changes no monthly count — a month
+// is still the most a plan spends — it only paces it: 40 + 40 + 20, so a whole
+// month can be used by its third week. Change both sides together.
+
+/** The weekly window's size, as a share of the plan's monthly quota (`WEEKLY_SHARE`). */
+export const WEEKLY_SHARE_PERCENT = 40;
+/** How long one weekly window runs once it starts (`WINDOW_SECONDS["weekly"]`). */
+export const WEEKLY_WINDOW_DAYS = 7;
+/** The plans that enforce it. */
+export const WEEKLY_LIMIT_TIERS: readonly Tier[] = ["pro", "studio", "agency", "max"];
+
+export function hasWeeklyLimit(tier: Tier): boolean {
+  return WEEKLY_LIMIT_TIERS.includes(tier);
+}
+
+/**
+ * A card's quota bullet, the first of its features: what the plan's quota is
+ * and how it is paced. Free: the one-off credit; Lite/Starter: the month only;
+ * Pro and up: the month and the week. No " · " in it — the account's plan card
+ * splits a feature there.
+ */
+export function quotaFeature(tier: Tier): string {
+  if (tier === "free") return "เครดิตทดลองก้อนเดียว ไม่รีเซ็ต";
+  return hasWeeklyLimit(tier)
+    ? `โควตารายเดือน และเพดานรายสัปดาห์ ${WEEKLY_SHARE_PERCENT}% ของเดือน`
+    : "โควตารายเดือน ไม่มีเพดานรายสัปดาห์";
+}
+
+/** The weekly window in one sentence, for every surface that explains the quota. */
+export const WEEKLY_LIMIT_NOTE = `แพลน Pro, Studio, Agency และ Max มีโควตารายสัปดาห์ด้วย เท่ากับ ${WEEKLY_SHARE_PERCENT}% ของโควตารายเดือน นับ ${WEEKLY_WINDOW_DAYS} วันตั้งแต่งานแรกที่ใช้ เพดานไหนเต็มก่อน งานใหม่จะรอจนเพดานนั้นเริ่มรอบใหม่ ส่วน Lite และ Starter มีโควตารายเดือนอย่างเดียว`;
+
+/**
+ * What the weekly window does to a monthly count (/pricing's calculator and
+ * its Markdown twin): nothing to the count, only to how fast it can be spent.
+ */
+export const WEEKLY_PACE_NOTE = `Pro ขึ้นไป ใน ${WEEKLY_WINDOW_DAYS} วันใช้ได้ไม่เกิน ${WEEKLY_SHARE_PERCENT}% ของโควตาเดือน จำนวนคลิปต่อเดือนยังได้ครบ แค่ต้องกระจายใช้ ใช้ครบทั้งเดือนได้ในสามสัปดาห์`;
+
+// ─── What a run does to the quota (owner, 2026-10-01) ────────────────────────
+//
+// docs/token-billing-design.md §24–§25. Before a job starts the system
+// estimates it; a job that does not fit what is left (jobs already running
+// counted) does not start. Once started, the AI step in flight always
+// finishes and its result is kept; what it used past the line counts toward
+// the window's NEXT round (106% → the next round opens at 6%), never billed
+// as money; the next step does not start — the project pauses and resumes
+// where it stopped. Free's excess counts toward the first paid round;
+// cancelling keeps an outstanding excess for a later subscription.
+
+/** The start check, in one sentence. */
+export const START_CHECK_NOTE =
+  "ก่อนเริ่มงาน ระบบประเมินว่างานนี้ใช้โควตาเท่าไหร่ ถ้าไม่พอกับที่เหลือ (นับงานที่กำลังทำอยู่แล้วด้วย) งานจะยังไม่เริ่ม และแนะนำทางเลือก เช่น ใช้คลิปที่สั้นลง ขอผลลัพธ์ที่สั้นลง เลือกเอนจินหรือความละเอียดที่เบากว่า อัปเกรดแพลน หรือเติมเงิน";
+
+/** What happens when a started job crosses the line, in one sentence. */
+export const OVERAGE_NOTE =
+  "งานที่เริ่มแล้ว ขั้นที่ AI กำลังทำอยู่จะทำจนเสร็จและเก็บผลไว้เสมอ ถ้าขั้นนั้นใช้เกินที่เหลือ ส่วนที่เกินจะนับรวมในรอบถัดไป เช่น ใช้ไป 106% รอบถัดไปเริ่มที่ 6% และไม่เรียกเก็บเป็นเงิน ขั้นถัดไปจะยังไม่เริ่ม งานหยุดพักไว้ แล้วทำต่อจากจุดเดิมได้เมื่อรอบใหม่เริ่ม หลังอัปเกรด หรือเติมเงิน";
+
+/** The free trial's excess. */
+export const TRIAL_OVERAGE_NOTE = "ส่วนที่ใช้เกินเครดิตทดลองจะนับรวมในรอบแรกของแพลนที่สมัคร";
+
+/** What never uses quota. */
+export const NO_QUOTA_NOTE = "การแก้ไทม์ไลน์ การเรนเดอร์ซ้ำ และการส่งออกไฟล์ ไม่ใช้โควตา";
+
+/** An upgrade, in one sentence (Stripe proration; the portal starts a new cycle now). */
+export const UPGRADE_NOTE =
+  "อัปเกรดแล้วเริ่มรอบบิลใหม่วันนี้ โควตาเริ่มนับใหม่จาก 0% และจ่ายแค่ส่วนต่าง คือราคาแพลนใหม่หักส่วนที่ยังไม่ได้ใช้ของแพลนเดิม";
+
+/** A downgrade, in one sentence. */
+export const DOWNGRADE_NOTE = "ลดแพลนมีผลเมื่อจบรอบบิลปัจจุบัน ใช้แพลนเดิมได้จนถึงวันนั้น และไม่มีการคืนเงิน";
+/** Its first clause, for the plan dialog, which adds the date. */
+export const DOWNGRADE_NOTE_SHORT = "ลดแพลนมีผลเมื่อจบรอบบิลปัจจุบัน";
+
+// ─── ตัดฉากเด่น's result length ──────────────────────────────────────────────
+//
+// Owner, 2026-10-01 (backend `estimate.MAX_CUT_RESULT_SEC` = 300): one cut plan
+// is one model answer, so the finished clip of ตัดฉากเด่น is at most 5
+// minutes. The raw footage may still be as long as the plan allows.
+
+/** ตัดฉากเด่น's longest result, in minutes. */
+export const MAX_CUT_RESULT_MINUTES = 5;
+
+/** The cap in one sentence, so no page words its own. */
+export const CUT_RESULT_CAP_NOTE = `โหมดตัดฉากเด่นได้คลิปผลลัพธ์ยาวไม่เกิน ${MAX_CUT_RESULT_MINUTES} นาทีต่อโปรเจกต์ ส่วนฟุตเทจดิบยังยาวได้ตามเพดานของแพลน ถ้าอยากได้ผลลัพธ์ยาวกว่านั้น ให้แยกเป็นหลายโปรเจกต์`;
+
 // ─── Footage per project ─────────────────────────────────────────────────────
 //
 // Owner, 2026-09-29, narrowed 2026-10-01: the per-plan ceiling applies to
@@ -686,6 +776,7 @@ export const PLAN_COPY: Record<Tier, PlanCopy> = {
     // Not a recurring 0-baht plan: one credit, spent once, then you upgrade.
     pricingBlurb: "ทดลองใช้ครั้งเดียว ใช้หมดแล้วเลือกแพลนต่อ",
     features: [
+      quotaFeature("free"),
       footageFeature("free"),
       precisionFeature("free"),
       "ครบทุกโหมด รวมโหมดพากย์ใหม่",
@@ -701,6 +792,7 @@ export const PLAN_COPY: Record<Tier, PlanCopy> = {
     homeBlurb: "เริ่มแบบประหยัด ลงคลิปสัปดาห์ละไม่กี่ตัว",
     pricingBlurb: "เริ่มแบบประหยัด ลงคลิปสัปดาห์ละไม่กี่ตัว",
     features: [
+      quotaFeature("lite"),
       footageFeature("lite"),
       precisionFeature("lite"),
       "เพิ่มเพลงประกอบได้",
@@ -716,6 +808,7 @@ export const PLAN_COPY: Record<Tier, PlanCopy> = {
     homeBlurb: "สำหรับคนที่ลงคลิปหลายตัวต่อสัปดาห์",
     pricingBlurb: "สำหรับคนที่ลงคลิปหลายตัวต่อสัปดาห์",
     features: [
+      quotaFeature("starter"),
       footageFeature("starter"),
       precisionFeature("starter"),
       "ฟุตเทจยาวขึ้น พร้อมเพลงประกอบ",
@@ -731,6 +824,7 @@ export const PLAN_COPY: Record<Tier, PlanCopy> = {
     homeBlurb: "ทำคลิปทุกวัน หรือรับงานให้ลูกค้าหลายเจ้า",
     pricingBlurb: "ทำคลิปทุกวัน หรือรับงานให้ลูกค้าหลายเจ้า",
     features: [
+      quotaFeature("pro"),
       footageFeature("pro"),
       precisionFeature("pro"),
       "ทำงาน AI พร้อมกันได้ 2 งาน",
@@ -738,7 +832,7 @@ export const PLAN_COPY: Record<Tier, PlanCopy> = {
     ],
     pricingCta: "เลือกแพลนนี้",
     recommended: true,
-    limits: ["Monthly limit"],
+    limits: ["Monthly limit", "Weekly limit"],
     concurrentJobs: 2,
   },
   studio: {
@@ -747,13 +841,14 @@ export const PLAN_COPY: Record<Tier, PlanCopy> = {
     homeBlurb: "ผลิตคลิปวันละหลายตัว หรือรับงานเป็นทีม",
     pricingBlurb: "ผลิตคลิปวันละหลายตัว หรือรับงานเป็นทีม",
     features: [
+      quotaFeature("studio"),
       footageFeature("studio"),
       precisionFeature("studio"),
       "ทำงาน AI พร้อมกันได้ 3 งาน",
       "คิวประมวลผลลำดับแรก · จำนวนโปรเจกต์ไม่จำกัด ภายใน 30 GB",
     ],
     pricingCta: "เลือกแพลนนี้",
-    limits: ["Monthly limit"],
+    limits: ["Monthly limit", "Weekly limit"],
     concurrentJobs: 3,
   },
   agency: {
@@ -762,13 +857,14 @@ export const PLAN_COPY: Record<Tier, PlanCopy> = {
     homeBlurb: "ดูแลหลายแบรนด์พร้อมกัน",
     pricingBlurb: "สำหรับเอเจนซีที่ดูแลคอนเทนต์หลายแบรนด์",
     features: [
+      quotaFeature("agency"),
       footageFeature("agency"),
       precisionFeature("agency"),
       "ทำงาน AI พร้อมกันได้ 4 งาน",
       "คิวประมวลผลลำดับแรก · จำนวนโปรเจกต์ไม่จำกัด ภายใน 60 GB",
     ],
     pricingCta: "เลือกแพลนนี้",
-    limits: ["Monthly limit"],
+    limits: ["Monthly limit", "Weekly limit"],
     concurrentJobs: 4,
   },
   max: {
@@ -777,13 +873,14 @@ export const PLAN_COPY: Record<Tier, PlanCopy> = {
     homeBlurb: "ทีมผลิตคอนเทนต์เต็มเวลา ใช้งานต่อเนื่องได้ทั้งวัน",
     pricingBlurb: "สำหรับทีมผลิตคอนเทนต์เต็มเวลา ใช้งานต่อเนื่องได้ทั้งวัน",
     features: [
+      quotaFeature("max"),
       footageFeature("max"),
       precisionFeature("max"),
       "ทำงาน AI พร้อมกันได้ 5 งาน",
       "คิวประมวลผลลำดับแรก · จำนวนโปรเจกต์ไม่จำกัด ภายใน 100 GB",
     ],
     pricingCta: "เลือกแพลนนี้",
-    limits: ["Monthly limit"],
+    limits: ["Monthly limit", "Weekly limit"],
     concurrentJobs: 5,
   },
 };
@@ -849,6 +946,11 @@ export const COMPARISON_ROWS: readonly ComparisonRow[] = [
     values: TIERS.map((tier) => limitsShort(PLAN_COPY[tier].limits)) as unknown as Row7,
   },
   {
+    // Pro and up (owner, 2026-10-01): a rolling week beside the month.
+    label: `โควตารายสัปดาห์ (นับ ${WEEKLY_WINDOW_DAYS} วันตั้งแต่งานแรก)`,
+    values: TIERS.map((tier) => (hasWeeklyLimit(tier) ? `${WEEKLY_SHARE_PERCENT}% ของรายเดือน` : "—")) as unknown as Row7,
+  },
+  {
     label: "งาน AI ที่ทำพร้อมกันได้",
     values: TIERS.map((tier) => `${PLAN_COPY[tier].concurrentJobs} งาน`) as unknown as Row7,
     numeric: true,
@@ -863,6 +965,12 @@ export const COMPARISON_ROWS: readonly ComparisonRow[] = [
   {
     label: "ฟุตเทจรวมต่อโปรเจกต์ โหมดตัดช่วงเงียบและตัดไฮไลต์จากคลิปยาว",
     values: TIERS.map(() => SPEECH_FOOTAGE) as unknown as Row7,
+    numeric: true,
+  },
+  {
+    // The same on every plan (estimate.MAX_CUT_RESULT_SEC): the finished clip, not the footage.
+    label: "ความยาวผลลัพธ์ โหมดตัดฉากเด่น",
+    values: TIERS.map(() => `ไม่เกิน ${MAX_CUT_RESULT_MINUTES} นาที`) as unknown as Row7,
     numeric: true,
   },
   {
