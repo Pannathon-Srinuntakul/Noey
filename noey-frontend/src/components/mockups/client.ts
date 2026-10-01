@@ -12,7 +12,9 @@
  * the same: client components are rendered on the server too, so the
  * pictures are there without JavaScript.
  *
- * Import the pictures from here, not from their own modules.
+ * Import the pictures from here where a page draws several (the home page).
+ * A page with one small picture can render it as a server component instead
+ * (the sign-in stage does): its markup then costs less than the code.
  */
 export { EditorMockup } from "./EditorMockup";
 export { StepMockup } from "./StepMockup";

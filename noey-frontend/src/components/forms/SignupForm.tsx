@@ -47,8 +47,17 @@ export function SignupForm({ googleEnabled = false }: { googleEnabled?: boolean 
           form="signup-form"
           aria-describedby={errors.agree ? "s-agree-error" : undefined}
         />
+        {/* The documents are read in passing, not navigated to: no prefetch of
+            them while the form loads (it competes with the form on a phone). */}
         <span className="agree__text">
-          ฉันได้อ่านและยอมรับ <Link href="/terms">เงื่อนไขการใช้งาน</Link> และ <Link href="/privacy">นโยบายความเป็นส่วนตัว</Link>{" "}
+          ฉันได้อ่านและยอมรับ{" "}
+          <Link href="/terms" prefetch={false}>
+            เงื่อนไขการใช้งาน
+          </Link>{" "}
+          และ{" "}
+          <Link href="/privacy" prefetch={false}>
+            นโยบายความเป็นส่วนตัว
+          </Link>{" "}
           {keepThai("รวมถึงการเก็บและประมวลผลไฟล์ที่ฉันนำเข้ามาเพื่อให้บริการ")}
         </span>
       </label>

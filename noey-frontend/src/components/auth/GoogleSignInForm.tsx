@@ -77,8 +77,15 @@ export function GoogleSignInForm({ from, agreed = true, enabled = true }: { from
       <GoogleButton label={label} block disabled={!agreed} aria-describedby={from === "login" ? "google-new-account-note" : undefined} />
       {from === "login" ? (
         <p className="fine google-signin__note" id="google-new-account-note">
-          ถ้ายังไม่มีบัญชี ระบบจะสร้างบัญชีใหม่ให้ ซึ่งถือว่าคุณยอมรับ <Link href="/terms">เงื่อนไขการใช้งาน</Link> และ{" "}
-          <Link href="/privacy">นโยบายความเป็นส่วนตัว</Link>
+          {/* Read in passing: not prefetched while the form loads (as on SignupForm). */}
+          ถ้ายังไม่มีบัญชี ระบบจะสร้างบัญชีใหม่ให้ ซึ่งถือว่าคุณยอมรับ{" "}
+          <Link href="/terms" prefetch={false}>
+            เงื่อนไขการใช้งาน
+          </Link>{" "}
+          และ{" "}
+          <Link href="/privacy" prefetch={false}>
+            นโยบายความเป็นส่วนตัว
+          </Link>
         </p>
       ) : null}
     </form>
