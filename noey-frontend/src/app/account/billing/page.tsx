@@ -1,13 +1,14 @@
 import type { Metadata } from "next";
 import { BillingPanel, type UpgradeOption } from "@/components/account/BillingPanel";
 import { formatCard, hasLiveSubscription, needsPaymentAttention, subscriptionLapsed, subscriptionStatusLabel } from "@/lib/billing";
-import { formatThaiDate } from "@/lib/format";
+import { formatShortDate } from "@/lib/format";
 import { MSG } from "@/lib/messages";
 import { BETA_PRICE_NOTE_SHORT } from "@/lib/beta";
 import { PAID_TIERS, PLAN_COPY, displayPrice, isBetaPriced, isPaidTier, isTier, planDisplayName, strikePrice, tierFromLookupKey, type PaidTier } from "@/lib/plans";
 import { privatePageMetadata } from "@/lib/seo";
 import { loadAccountData } from "@/lib/server/account-data";
 import { getPriceTable } from "@/lib/server/prices";
+import { keepThaiProse } from "@/components/ds/ThaiProse";
 
 export const metadata: Metadata = privatePageMetadata("แพลนและการชำระเงิน");
 
@@ -22,14 +23,16 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
   const live = hasLiveSubscription(billing);
   const planValue = billing?.plan ?? usage?.plan ?? "free";
   const currentTier = live ? (tierFromLookupKey(table, billing?.lookup_key) ?? (isPaidTier(planValue) ? planValue : null)) : null;
-  const periodEndLabel = formatThaiDate(billing?.current_period_end);
+  // Short month, Common Era year: the same calendar as the beta strip and the
+  // plan dialog on this page ("31 ธ.ค. 2026").
+  const periodEndLabel = formatShortDate(billing?.current_period_end);
   const cancelScheduled = !!billing?.cancel_at_period_end;
 
   let statusLine: string | null = null;
   if (live && cancelScheduled) statusLine = periodEndLabel ? `ยกเลิกแล้ว ใช้ได้ถึง ${periodEndLabel} จากนั้นกลับเป็นแพลนฟรี` : "ยกเลิกแล้ว ใช้ได้จนจบรอบบิลนี้";
   else if (needsPaymentAttention(billing?.status)) statusLine = `${subscriptionStatusLabel(billing?.status)} อัปเดตบัตรได้ที่การ์ดการชำระเงิน`;
   else if (live && periodEndLabel) statusLine = `ต่ออายุอัตโนมัติ ${periodEndLabel}`;
-  else if (subscriptionLapsed(billing?.status)) statusLine = "การชำระเงินของแพลนล่าสุดไม่สำเร็จ บัญชีจึงกลับมาใช้แพลนฟรี เลือกแพลนใหม่ได้จากปุ่มอัปเกรดแพลน";
+  else if (subscriptionLapsed(billing?.status)) statusLine = "การชำระเงินของแพลนล่าสุดไม่สำเร็จ บัญชีจึงกลับมาใช้แพลนฟรี เลือกแพลนใหม่ได้จากปุ่ม “เลือกแพลน”";
 
   const options: UpgradeOption[] = PAID_TIERS.map((tier) => ({
     tier,
@@ -63,26 +66,31 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
       {!billingEnabled ? (
         <div className="notice" role="status">
           <p>
-            {billing || billingMissing
-              ? MSG.billingUnavailable
-              : "ดึงข้อมูลการชำระเงินไม่ได้ในตอนนี้ ข้อมูลแพลนด้านล่างอาจยังไม่อัปเดต ลองรีเฟรชหน้านี้อีกครั้งในอีกสักครู่"}
+            {keepThaiProse(
+              billing || billingMissing
+                ? MSG.billingUnavailable
+                : "ดึงข้อมูลการชำระเงินไม่ได้ในตอนนี้ ข้อมูลแพลนด้านล่างอาจยังไม่อัปเดต ลองรีเฟรชหน้านี้อีกครั้งในอีกสักครู่",
+            )}
           </p>
         </div>
       ) : null}
       {planChangeDone ? (
         <div className="notice" role="status">
           <p>
-            ยืนยันการเปลี่ยนแพลนแล้ว การอัปเกรดมีผลทันที ส่วนการลดแพลนมีผลเมื่อจบรอบบิลปัจจุบัน
-            ถ้าแพลนด้านล่างยังไม่เปลี่ยน รีเฟรชหน้านี้อีกครั้งในอีกสักครู่
+            {keepThaiProse(
+              "ยืนยันการเปลี่ยนแพลนแล้ว การอัปเกรดมีผลทันที ส่วนการลดแพลนมีผลเมื่อจบรอบบิลปัจจุบัน ถ้าแพลนด้านล่างยังไม่เปลี่ยน รีเฟรชหน้านี้อีกครั้งในอีกสักครู่",
+            )}
           </p>
         </div>
       ) : null}
       {fromSignup && requested ? (
         <div className="notice" role="status">
           <p>
-            {billingEnabled
-              ? `สมัครบัญชีเรียบร้อยแล้ว ตอนนี้ใช้แพลนฟรีอยู่ กด “อัปเกรดแพลน” เพื่อไปหน้าชำระเงินของแพลน ${PLAN_COPY[requested].name} ได้เลย`
-              : "สมัครบัญชีเรียบร้อยแล้ว ตอนนี้ใช้แพลนฟรีได้ทันที"}
+            {keepThaiProse(
+              billingEnabled
+                ? `สมัครบัญชีเรียบร้อยแล้ว ตอนนี้ใช้แพลนฟรีอยู่ กด “เลือกแพลน” เพื่อไปหน้าชำระเงินของแพลน ${PLAN_COPY[requested].name} ได้เลย`
+                : "สมัครบัญชีเรียบร้อยแล้ว ตอนนี้ใช้แพลนฟรีได้ทันที",
+            )}
           </p>
         </div>
       ) : null}

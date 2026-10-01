@@ -34,6 +34,18 @@ export function formatThaiDate(value: string | number | null | undefined): strin
 }
 
 /**
+ * A date as the account pages print it, beside the beta strip's own dates
+ * ("31 ธ.ค. 2026"): short month, Common Era year — 2026-10-13 -> "13 ต.ค. 2026".
+ * One screen then shows one calendar (the reset times on the quota tab use
+ * the same short month, without a year).
+ */
+export function formatShortDate(value: string | number | null | undefined): string | null {
+  const date = toDate(value);
+  if (!date) return null;
+  return new Intl.DateTimeFormat("th-TH-u-ca-gregory", { day: "numeric", month: "short", year: "numeric", timeZone: TIME_ZONE }).format(date);
+}
+
+/**
  * Bytes for people. Picks the unit rather than assuming GB — the same rule as
  * the backend's `_human_bytes` — so 614 MB reads "614.4 MB", not "0.6 GB".
  */

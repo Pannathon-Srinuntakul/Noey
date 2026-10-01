@@ -16,7 +16,7 @@ import { limitTone } from "@/lib/usage-limits";
 export const metadata: Metadata = privatePageMetadata("บัญชีของฉัน");
 
 /**
- * The "ห้องตัดต่อ" tab. The editor card is the hero of the page — its
+ * The "บัญชีของฉัน" tab. The editor card is the hero of the page — its
  * "เปิดห้องตัดต่อ" is the strongest button on it — with the account summary
  * beside it. The button stays a plain link (no prefetch: it hands off to the
  * editor through a redirect).
@@ -75,8 +75,8 @@ export default async function AccountAppPage({ searchParams }: { searchParams: P
         </div>
         <div className="card account-card acct-summary">
           <div className="card-kicker">สรุปบัญชี</div>
-          {/* Each row opens the tab that holds its detail; the levels are the same
-              meters the quota tab draws, small. */}
+          {/* Each row opens the tab that holds its detail; the levels are the
+              quota tab's own meters (LevelMeter: one rule for both), small. */}
           <dl className="kv acct-summary__rows">
             <div>
               <dt>แพลนปัจจุบัน</dt>
@@ -102,7 +102,7 @@ export default async function AccountAppPage({ searchParams }: { searchParams: P
                   <IconChevronRight size={15} />
                 </Link>
               </dd>
-              {quotaPct !== null ? <LevelMeter value={quotaPct} segments={20} className="acct-summary__meter" /> : null}
+              {quotaPct !== null ? <LevelMeter value={quotaPct} className="acct-summary__meter" /> : null}
             </div>
             {storage ? (
               <div>
@@ -114,7 +114,7 @@ export default async function AccountAppPage({ searchParams }: { searchParams: P
                     <IconChevronRight size={15} />
                   </Link>
                 </dd>
-                {storagePct !== null ? <LevelMeter value={storagePct} segments={20} className="acct-summary__meter" /> : null}
+                {storagePct !== null ? <LevelMeter value={storagePct} className="acct-summary__meter" /> : null}
               </div>
             ) : null}
           </dl>

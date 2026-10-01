@@ -103,8 +103,9 @@ export default async function QuotaPage() {
         ) : null}
         {walletBaht !== null ? (
           <p className="meter-note">
-            ยอดเงินเติมคงเหลือ ฿{walletBaht.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ·
-            ใช้ต่อได้เมื่อโควตาของแพลนหมด
+            {keepThaiProse(
+              `ยอดเงินเติมคงเหลือ ฿${walletBaht.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} · ใช้ต่อได้เมื่อโควตาของแพลนหมด`,
+            )}
           </p>
         ) : null}
         {pendingName ? <p className="meter-note">{keepThaiProse(`เปลี่ยนเป็นแพลน ${pendingName} เมื่อจบรอบบิลนี้`)}</p> : null}
@@ -118,10 +119,7 @@ export default async function QuotaPage() {
             {/* The round's mix as one strip, its parts keyed to the rows below. */}
             <div className="acct-mix" aria-hidden="true">
               {tasks.map((task, index) => (
-                <span
-                  key={task.task}
-                  style={{ flexGrow: Math.max(0.5, task.pct), "--k": index } as CSSProperties}
-                />
+                <span key={task.task} data-k={Math.min(index, 3)} style={{ flexGrow: Math.max(0.5, task.pct) } as CSSProperties} />
               ))}
             </div>
             <table className="table acct-tasks">
@@ -137,7 +135,7 @@ export default async function QuotaPage() {
                 {tasks.map((task, index) => (
                   <tr key={task.task}>
                     <td>
-                      <span className="acct-mix__key" aria-hidden="true" style={{ "--k": index } as CSSProperties} />
+                      <span className="acct-mix__key" aria-hidden="true" data-k={Math.min(index, 3)} />
                       {keepThaiProse(TASK_LABELS[task.task] ?? task.task)}
                     </td>
                     <td className="r num">{Math.round(task.pct)}%</td>

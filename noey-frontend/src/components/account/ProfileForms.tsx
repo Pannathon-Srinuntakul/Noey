@@ -54,7 +54,7 @@ export function ProfileForm({ name }: { name: string }) {
         />
         {errors.name ? <p className="field-error" id="a-name-error">{errors.name}</p> : null}
       </div>
-      <button type="submit" className="btn btn-primary btn-sm acct-form__submit" disabled={pending}>
+      <button type="submit" className="btn btn-primary acct-form__submit" disabled={pending}>
         {pending ? "กำลังบันทึก…" : "บันทึกการแก้ไข"}
       </button>
       <Feedback state={state} />
@@ -103,11 +103,17 @@ export function EmailForm({ email }: { email: string }) {
           autoComplete="current-password"
           required
           aria-invalid={errors.current_password ? true : undefined}
-          aria-describedby={errors.current_password ? "a-email-pass-error" : undefined}
+          aria-describedby={errors.current_password ? "a-email-pass-error" : "a-email-pass-hint"}
         />
-        {errors.current_password ? <p className="field-error" id="a-email-pass-error">{errors.current_password}</p> : null}
+        {errors.current_password ? (
+          <p className="field-error" id="a-email-pass-error">{errors.current_password}</p>
+        ) : (
+          <p className="field-hint" id="a-email-pass-hint">
+            {keepThai("ใส่รหัสผ่านเพื่อยืนยันการเปลี่ยนอีเมล")}
+          </p>
+        )}
       </div>
-      <button type="submit" className="btn btn-primary btn-sm acct-form__submit" disabled={pending}>
+      <button type="submit" className="btn btn-primary acct-form__submit" disabled={pending}>
         {pending ? "กำลังส่ง…" : "เปลี่ยนอีเมล"}
       </button>
       <Feedback state={state} />
@@ -125,7 +131,8 @@ export function PasswordForm() {
       {/* Lets password managers attach the change to the right account. */}
       <input type="text" name="username" autoComplete="username" hidden readOnly />
       <div className="field">
-        <label htmlFor="a-old">รหัสผ่านเดิม</label>
+        {/* The same name as on the email form and the delete dialog. */}
+        <label htmlFor="a-old">รหัสผ่านปัจจุบัน</label>
         <input
           id="a-old"
           name="current_password"
@@ -154,7 +161,7 @@ export function PasswordForm() {
         />
         {errors.new_password ? <p className="field-error" id="a-new-error">{errors.new_password}</p> : null}
       </div>
-      <button type="submit" className="btn btn-primary btn-sm acct-form__submit" disabled={pending}>
+      <button type="submit" className="btn btn-primary acct-form__submit" disabled={pending}>
         {pending ? "กำลังเปลี่ยน…" : "เปลี่ยนรหัสผ่าน"}
       </button>
       <Feedback state={state} />

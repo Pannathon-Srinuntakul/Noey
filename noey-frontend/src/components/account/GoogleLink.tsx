@@ -74,10 +74,10 @@ export function GoogleLinkPanel({
       </p>
       {!hasPassword ? (
         <p className="field-hint field-hint--flush">
-          บัญชีนี้ยังไม่มีรหัสผ่าน ตั้งรหัสผ่านก่อนจึงจะยกเลิกการเชื่อมต่อได้ ไม่อย่างนั้นจะเข้าสู่ระบบไม่ได้อีก
+          {keepThai("บัญชีนี้ยังไม่มีรหัสผ่าน ตั้งรหัสผ่านก่อนจึงจะยกเลิกการเชื่อมต่อได้ ไม่อย่างนั้นจะเข้าสู่ระบบไม่ได้อีก")}
         </p>
       ) : null}
-      <button type="submit" className="btn btn-secondary btn-sm acct-form__submit" disabled={pending || !hasPassword}>
+      <button type="submit" className="btn btn-secondary acct-form__submit" disabled={pending || !hasPassword}>
         {pending ? "กำลังยกเลิก…" : "ยกเลิกการเชื่อมต่อ"}
       </button>
       {noticeView}
@@ -101,7 +101,7 @@ export function SetPasswordByEmail({ email }: { email: string }) {
         <strong>{email}</strong>
       </p>
       <TurnstileWidget siteKey={TURNSTILE_SITE_KEY} resetKey={state} />
-      <button type="submit" className="btn btn-primary btn-sm acct-form__submit" disabled={pending || !!state?.ok}>
+      <button type="submit" className="btn btn-primary acct-form__submit" disabled={pending || !!state?.ok}>
         {pending ? "กำลังส่ง…" : "ส่งลิงก์ตั้งรหัสผ่าน"}
       </button>
       <Feedback state={state} />

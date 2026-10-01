@@ -97,7 +97,7 @@ export function DeleteAccount({
 
   return (
     <>
-      <button type="button" className="btn btn-danger btn-sm" onClick={() => setOpen(true)}>
+      <button type="button" className="btn btn-danger" onClick={() => setOpen(true)}>
         ลบบัญชี…
       </button>
       <Dialog

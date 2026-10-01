@@ -1,13 +1,13 @@
 /* Level meters: quota bars drawn as audio levels. Imported by LevelMeter,
-   so only /pricing and the quota tab load it. */
+   so only the account pages load it. */
 
 /* ── Level meter (quota bars as audio levels) ───────────────────────────── */
 
+/* The box is a container: it shows the one row of segments its width holds
+   at a readable size (28 from 460px, 20 from 320px, 14 below), so a narrow
+   meter is a short row of blocks, never a dotted line. */
 .lvl {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
-  grid-auto-flow: column;
-  gap: 3px;
+  container-type: inline-size;
   height: 14px;
   padding: 3px;
   border-radius: 6px;
@@ -15,14 +15,57 @@
   border: 1px solid var(--line);
 }
 
+.lvl__row {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 3px;
+  height: 100%;
+}
+
+.lvl__row--20,
+.lvl__row--14 {
+  display: none;
+}
+
+@container (max-width: 459px) {
+  .lvl__row--28 {
+    display: none;
+  }
+
+  .lvl__row--20 {
+    display: grid;
+  }
+}
+
+@container (max-width: 319px) {
+  .lvl__row--20 {
+    display: none;
+  }
+
+  .lvl__row--14 {
+    display: grid;
+  }
+}
+
 .lvl i {
+  position: relative;
   border-radius: 2px;
   background: color-mix(in srgb, var(--color-text) 8%, transparent);
 }
 
-/* The last fifth is the red zone of a level meter, visible before it lights. */
-.lvl i[data-hot] {
-  background: color-mix(in srgb, var(--color-danger) 16%, transparent);
+/* Where the last fifth starts (the 80% warning level), a tick through the
+   meter's edge. Unlit, the zone itself stays the plain unlit grey in the
+   light theme — a pale red there read as a tint gone wrong. */
+.lvl i[data-edge]::before {
+  content: "";
+  position: absolute;
+  top: -6px;
+  bottom: -6px;
+  left: -2px;
+  width: 1px;
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--color-danger) 55%, transparent);
 }
 
 .lvl i[data-on] {
@@ -76,27 +119,6 @@ html[data-theme="dark"] .lvl i[data-on][data-hot] {
   from {
     opacity: 0.12;
     transform: scaleY(0.4);
-  }
-}
-
-/* Phones: segments pair up into blocks twice as wide, so the meter reads as
-   a meter, not a row of beads. Every segment stays, so no state is lost. */
-@media (max-width: 480px) {
-  .lvl {
-    column-gap: 0;
-  }
-
-  .lvl i:nth-child(odd) {
-    border-radius: 2px 0 0 2px;
-  }
-
-  .lvl i:nth-child(even):not(:last-child) {
-    margin-right: 3px;
-    border-radius: 0 2px 2px 0;
-  }
-
-  .lvl i:last-child {
-    border-radius: 0 2px 2px 0;
   }
 }
 

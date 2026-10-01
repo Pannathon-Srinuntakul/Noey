@@ -97,8 +97,9 @@
 }
 
 /* Narrower than the four tabs, the strip scrolls sideways (the current tab is
-   scrolled into view); the fading edge says there are more. */
-@media (max-width: 760px) {
+   scrolled into view); the fading edge says there are more. Phones get the
+   four-up control below instead. */
+@media (max-width: 760px) and (min-width: 481px) {
   .tabs {
     -webkit-mask-image: linear-gradient(90deg, var(--ink) 86%, transparent);
     mask-image: linear-gradient(90deg, var(--ink) 86%, transparent);
@@ -156,10 +157,50 @@
   color: var(--ink-3);
 }
 
-/* Phones: the same one-row strip of panel tabs, a little tighter. */
+/* A tab's short name, for the phone control. */
+.tabs__short {
+  display: none;
+}
+
 @media (max-width: 560px) {
   .tabs a {
     padding: 10px 12px 12px;
+  }
+}
+
+/* Phones: all four tabs at once, an icon over a short name — no strip to
+   scroll, no name cut at the edge. */
+@media (max-width: 480px) {
+  .tabs {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 2px;
+    padding: 6px 6px 0;
+    overflow: visible;
+  }
+
+  .tabs a {
+    flex-direction: column;
+    justify-content: center;
+    gap: 3px;
+    min-height: 56px;
+    padding: 8px 4px 9px;
+    font-size: var(--fs-13);
+    line-height: 1.35;
+    text-align: center;
+  }
+
+  .tabs a[aria-current="page"]::before {
+    left: 10px;
+    right: 10px;
+  }
+
+  .tabs__label {
+    display: none;
+  }
+
+  .tabs__short {
+    display: inline;
   }
 }
 
@@ -188,9 +229,18 @@
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
   gap: 20px;
-  /* Each sub-panel is as tall as what it holds: stretched to its neighbour,
-     the shorter one showed a block of empty panel. */
-  align-items: start;
+}
+
+/* Side by side, the sub-panels are one height. Each is a column whose last
+   part (its actions, its foot note, its last section) sits on the bottom
+   edge, so the two cards end on one line and the shorter one has no empty
+   block under its content. */
+.acct-billing .button-row,
+.acct-billing .account-card > :is(.inline-form, .acct-pay__btn),
+.acct-quota .account-card > .acct-quota__limit + .meter-note,
+.acct-quota .account-card > .acct-tasks__note,
+.acct-profile .account-card > .card-section:last-child {
+  margin-top: auto;
 }
 
 /* Two columns and the danger block under both. With auto-fit, a full-width
@@ -440,6 +490,20 @@
   color: var(--ink);
 }
 
+/* The numbers in the quota tab's colours: gold, then its warning colours
+   (limitTone: 80% near, 95% full) — the same number printed the same way. */
+.acct-summary .kv dd.num {
+  color: var(--gold-ink);
+}
+
+.acct-summary .kv dd.num--near {
+  color: color-mix(in srgb, var(--color-danger) 70%, var(--color-accent));
+}
+
+.acct-summary .kv dd.num--full {
+  color: var(--danger);
+}
+
 .acct-summary__rows > div {
   flex-wrap: wrap;
   row-gap: 10px;
@@ -514,19 +578,37 @@
   color: var(--danger);
 }
 
-/* The round's mix: one strip split by task, each part a shade of the gold
-   (the first task full, then lighter), keyed to the rows by a swatch. */
+/* The round's mix: one strip split by task, keyed to the rows by a swatch.
+   Each part is a step the eye tells apart in both themes, however small:
+   solid gold, gold pulled toward the ink (darker in light, paler in dark),
+   gold hatching, then plain grey. */
 .acct-mix {
   display: flex;
   gap: 3px;
-  height: 10px;
+  height: 12px;
   margin: 2px 0 4px;
 }
 
 .acct-mix > span,
 .acct-mix__key {
   border-radius: 3px;
-  background: color-mix(in srgb, var(--gold) calc(100% - var(--k) * 32%), var(--panel-2));
+  background: var(--line-3);
+}
+
+.acct-mix > [data-k="0"],
+.acct-mix__key[data-k="0"] {
+  background: var(--gold);
+}
+
+.acct-mix > [data-k="1"],
+.acct-mix__key[data-k="1"] {
+  background: color-mix(in srgb, var(--gold) 50%, var(--ink));
+}
+
+.acct-mix > [data-k="2"],
+.acct-mix__key[data-k="2"] {
+  background: repeating-linear-gradient(135deg, var(--gold) 0 2px, transparent 2px 5px);
+  box-shadow: inset 0 0 0 1px var(--gold);
 }
 
 .acct-mix > span {
@@ -566,20 +648,38 @@
 /* ── แพลนและการชำระเงิน ─────────────────────────────────────────────────── */
 
 .plan-name {
-  font-size: clamp(1.75rem, 1.4rem + 1.2vw, 2.25rem);
+  font-size: clamp(1.375rem, 1.2rem + 0.6vw, 1.625rem);
   font-weight: 600;
-  line-height: 1.25;
+  line-height: 1.3;
   color: var(--ink);
 }
 
-/* The plan's price under its name, as /pricing prints it. */
+/* The plan's price under its name, drawn as /pricing's cards draw it: the
+   number large, the regular price struck through before it during the beta. */
 .plan-price {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
-  gap: 8px;
-  margin: -6px 0 0;
-  font-size: var(--fs-16);
-  color: var(--ink-2);
+  column-gap: 8px;
+  margin: -8px 0 0;
+}
+
+.plan-price__value {
+  font-size: clamp(2.25rem, 1.8rem + 1.2vw, 2.875rem);
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+}
+
+.plan-price__unit {
+  font-size: var(--fs-14);
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+
+.plan-price .price-strike {
+  font-size: var(--fs-18);
 }
 
 .plan-status {
@@ -625,15 +725,7 @@
   rotate: -45deg;
 }
 
-/* Each billing card ends on its actions. */
-.acct-billing .button-row,
-.acct-billing .account-card > .inline-form:last-of-type,
-.acct-billing .account-card > .acct-pay__btn {
-  margin-top: 8px;
-}
-
 .acct-pay__btn {
-  margin-top: 6px;
   /* Sized to its label like the card's other actions; as a direct child of
      the card's column it would stretch across it. */
   align-self: flex-start;
@@ -886,14 +978,43 @@
   background: var(--danger);
 }
 
-/* Settings forms: a submit stays an outline while its form still has an
-   empty required field, or nothing in it was edited yet (ProfileForms marks
-   data-dirty), and turns gold once there is something to send — the tab is
-   not a row of gold buttons. */
+/* Settings forms: a submit is drawn as the site's secondary button while its
+   form still has an empty required field, or nothing in it was edited yet
+   (ProfileForms marks data-dirty), and turns gold once there is something to
+   send — the tab is not a row of gold buttons, and has two button styles, not
+   three. */
 form:has(:invalid) .acct-form__submit.btn-primary,
 form.acct-form--edit:not([data-dirty]) .acct-form__submit.btn-primary {
-  background: transparent;
-  color: var(--gold-ink);
-  border-color: color-mix(in srgb, var(--gold) 45%, transparent);
+  --btn-bg: color-mix(in srgb, var(--panel) 70%, transparent);
+  --btn-ink: var(--ink);
+  --btn-line: var(--line-2);
+  --btn-handle: var(--gold);
+  font-weight: 500;
   box-shadow: none;
+}
+
+form:has(:invalid) .acct-form__submit.btn-primary:hover,
+form.acct-form--edit:not([data-dirty]) .acct-form__submit.btn-primary:hover {
+  --btn-line: var(--gold);
+  --btn-bg: var(--gold-softer);
+}
+
+/* Google's button at the height of the account's other buttons (44px): the
+   same pill and proportions, a little more padding. */
+.acct-page .gsi-button {
+  height: 44px;
+  padding-inline: 16px;
+  border-radius: 22px;
+}
+
+/* The delete dialog's password field is a plain empty field until it has
+   been used: the light theme's field fill is a warm grey that, inside the
+   red-edged dialog, read as an error. It turns red only once a typed value
+   is wrong (:user-invalid) or the server says so (aria-invalid). */
+.dialog--danger .input {
+  background: color-mix(in srgb, var(--color-text) 3%, var(--bg));
+}
+
+.dialog--danger .input:user-invalid {
+  border-color: var(--danger);
 }

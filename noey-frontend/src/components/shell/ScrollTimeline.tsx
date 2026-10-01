@@ -80,17 +80,38 @@ export function ScrollTimeline() {
       const max = scrollable();
       const top = offset();
       nights = [...document.querySelectorAll<HTMLElement>("main .theme-night, [data-site-footer]")];
+      // Where the page is scrolled when `element` reaches the playhead. On a
+      // pinned sideways track (MotionRuntime's data-scene-track, moved by the
+      // scroll) every heading shares one top: it arrives when the track has
+      // carried it to the middle of the screen.
+      const reach = (element: HTMLElement) => {
+        const track = element.closest<HTMLElement>("[data-scene-track]");
+        const scene = track?.closest<HTMLElement>("[data-scene]");
+        if (track && scene && getComputedStyle(track).transform !== "none") {
+          const shift = Math.max(0, track.scrollWidth - (track.parentElement?.clientWidth ?? window.innerWidth));
+          const length = scene.offsetHeight - window.innerHeight;
+          if (shift > 0 && length > 0) {
+            const now = Number.parseFloat(scene.style.getPropertyValue("--p")) || 0;
+            const left = element.getBoundingClientRect().left + now * shift;
+            const progress = Math.min(1, Math.max(0, (left - window.innerWidth / 2) / shift));
+            return docTop(scene) + progress * length;
+          }
+        }
+        return docTop(element) - top;
+      };
       // The sections' own stamps show the time the ruler reads when their
       // heading reaches the playhead (never past END).
       const stamps = [...document.querySelectorAll<HTMLElement>("main .sec-head__tc, main .chapter__tc")].flatMap((stamp) => {
         const anchor = stamp.closest(".sec-head")?.querySelector<HTMLElement>("h1, h2, h3") ?? stamp.closest<HTMLElement>(".chapter");
         if (!anchor || anchor.offsetParent === null) return [];
-        return [{ stamp, text: formatTimecode(Math.min(max, Math.max(0, docTop(anchor) - top)) / PX_PER_SECOND) }];
+        return [{ stamp, text: formatTimecode(Math.min(max, Math.max(0, reach(anchor))) / PX_PER_SECOND) }];
       });
-      // A status card's own heading (checkout, verification) is not a section.
+      // A status card's own heading (checkout, verification) is not a section,
+      // nor is a card's heading inside the account panel (its tabs are the
+      // account's sections; a lone marker per tab read as a stray).
       const headings = [...document.querySelectorAll<HTMLElement>("main h2")]
-        .filter((heading) => heading.offsetParent !== null && !heading.closest("dialog, details:not([open]), [hidden], .status"))
-        .map((element) => ({ element, at: Math.min(1, Math.max(0, (docTop(element) - top) / max)) }));
+        .filter((heading) => heading.offsetParent !== null && !heading.closest("dialog, details:not([open]), [hidden], .status, .acct-page__panel"))
+        .map((element) => ({ element, at: Math.min(1, Math.max(0, reach(element) / max)) }));
 
       // The footer's end credit shows the page's full length on the same clock.
       const end = document.querySelector<HTMLElement>("[data-end-tc]");
@@ -108,7 +129,7 @@ export function ScrollTimeline() {
         tip.textContent = (element.getAttribute("aria-label") || element.textContent || "").trim();
         node.append(tip);
         node.addEventListener("click", () => {
-          window.scrollTo({ top: Math.max(0, docTop(element) - top), behavior: still ? "auto" : "smooth" });
+          window.scrollTo({ top: Math.max(0, at * max), behavior: still ? "auto" : "smooth" });
         });
         marksLayer.append(node);
         return { element, at, node };

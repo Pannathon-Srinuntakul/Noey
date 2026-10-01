@@ -106,6 +106,10 @@ export function BillingPanel(props: BillingPanelProps) {
   // Before a first subscription there is no Stripe customer: the card is
   // added during Checkout, so "add card" starts the upgrade flow instead.
   const hasCustomer = hasLiveSubscription || !!cardLabel;
+  // The period's end is printed once: when the plan card's status line
+  // already carries it ("ต่ออายุอัตโนมัติ …", "ยกเลิกแล้ว ใช้ได้ถึง …"), the
+  // payment card does not repeat it.
+  const showPeriodEnd = !!periodEndLabel && !statusLine?.includes(periodEndLabel);
 
   return (
     <section className="account-grid acct-billing" aria-label="แพลนและการชำระเงิน">
@@ -113,9 +117,10 @@ export function BillingPanel(props: BillingPanelProps) {
         <div className="card-kicker">แพลนปัจจุบัน</div>
         <div className="plan-name">{planName}</div>
         {currentOption ? (
-          <p className="plan-price num">
-            {currentOption.fullPrice ? <s className="price-strike">{currentOption.fullPrice}</s> : null}
-            {currentOption.price} บาท / เดือน
+          <p className="plan-price">
+            {currentOption.fullPrice ? <s className="num price-strike">{currentOption.fullPrice}</s> : null}
+            <span className="num plan-price__value">{currentOption.price}</span>
+            <span className="plan-price__unit">บาท / เดือน</span>
           </p>
         ) : null}
         {statusLine ? <p className={statusWarn ? "plan-status plan-status--warn" : "plan-status"}>{keepThai(statusLine)}</p> : null}
@@ -141,8 +146,9 @@ export function BillingPanel(props: BillingPanelProps) {
           <button type="button" className="btn btn-primary" onClick={() => setUpgradeOpen(true)} disabled={!billingEnabled}>
             {hasLiveSubscription ? "เปลี่ยนแพลน" : "เลือกแพลน"}
           </button>
+          {/* Cancelling is there, but quieter than changing plan. */}
           {hasLiveSubscription && !cancelScheduled ? (
-            <button type="button" className="btn btn-secondary" onClick={() => setCancelOpen(true)} disabled={!billingEnabled}>
+            <button type="button" className="btn btn-ghost" onClick={() => setCancelOpen(true)} disabled={!billingEnabled}>
               ยกเลิกแพลน
             </button>
           ) : null}
@@ -169,10 +175,12 @@ export function BillingPanel(props: BillingPanelProps) {
             <dt>วิธีชำระเงิน</dt>
             <dd>{cardLabel ?? "ยังไม่ได้ผูกบัตร"}</dd>
           </div>
-          <div>
-            <dt>{cancelScheduled ? "ใช้แพลนได้ถึง" : "รอบบิลถัดไป"}</dt>
-            <dd>{periodEndLabel ?? "—"}</dd>
-          </div>
+          {showPeriodEnd ? (
+            <div>
+              <dt>{cancelScheduled ? "ใช้แพลนได้ถึง" : "รอบบิลถัดไป"}</dt>
+              <dd>{periodEndLabel}</dd>
+            </div>
+          ) : null}
           <div>
             <dt>ใบเสร็จย้อนหลัง</dt>
             <dd>
@@ -212,12 +220,14 @@ export function BillingPanel(props: BillingPanelProps) {
         description={
           <>
             <p style={{ margin: 0 }}>
-              {hasLiveSubscription
-                ? "เลือกแพลนที่ต้องการ อัปเกรดแล้วโควตาใหม่มีผลทันที ส่วนการลดแพลนมีผลในรอบบิลถัดไป"
-                : "เลือกแพลนที่ต้องการ โควตาใหม่มีผลทันทีหลังชำระเงิน"}
+              {keepThai(
+                hasLiveSubscription
+                  ? "เลือกแพลนที่ต้องการ อัปเกรดแล้วโควตาใหม่มีผลทันที ส่วนการลดแพลนมีผลในรอบบิลถัดไป"
+                  : "เลือกแพลนที่ต้องการ โควตาใหม่มีผลทันทีหลังชำระเงิน",
+              )}
             </p>
             {/* Up here, not under the list: below it the note scrolled out of view. */}
-            {betaNote ? <p className="beta-note beta-note--compact">{betaNote}</p> : null}
+            {betaNote ? <p className="beta-note beta-note--compact">{keepThai(betaNote)}</p> : null}
           </>
         }
       >
