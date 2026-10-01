@@ -83,7 +83,7 @@
 .plan-rail__bar {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-areas: "modes" "length" "track" "fine" "note" "picker" "answer" "caveats";
+  grid-template-areas: "modes" "length" "track" "fine" "note" "picker" "answer" "caveats" "weekly";
   gap: 16px;
   padding: clamp(18px, 2.4vw, 26px);
   border: 1px solid var(--line);
@@ -129,10 +129,14 @@
   grid-area: caveats;
 }
 
+.picker__weekly {
+  grid-area: weekly;
+}
+
 @media (min-width: 600px) {
   .plan-rail__bar {
     grid-template-columns: minmax(0, 1fr) max-content;
-    grid-template-areas: "modes modes" "length fine" "track track" "note note" "picker picker" "answer answer" "caveats caveats";
+    grid-template-areas: "modes modes" "length fine" "track track" "note note" "picker picker" "answer answer" "caveats caveats" "weekly weekly";
     column-gap: 44px;
   }
 }
@@ -140,7 +144,7 @@
 @media (min-width: 900px) {
   .plan-rail__bar {
     grid-template-columns: minmax(0, 1fr) max-content max-content;
-    grid-template-areas: "modes modes modes" "length fine answer" "track track track" "note note note" "picker picker picker" "caveats caveats caveats";
+    grid-template-areas: "modes modes modes" "length fine answer" "track track track" "note note note" "picker picker picker" "caveats caveats caveats" "weekly weekly weekly";
   }
 
 }
@@ -953,7 +957,8 @@
   color: var(--ink-3);
 }
 
-.picker__caveats {
+.picker__caveats,
+.picker__weekly {
   margin-top: -6px;
 }
 
@@ -1298,6 +1303,26 @@
 
 .quota-card__tag {
   justify-self: start;
+}
+
+/* The rules in two groups — each opens on a track label, like a lane in the
+   editor: what a plan's quota is, then what happens while it is used. */
+.rule-group {
+  display: grid;
+  gap: 6px;
+}
+
+.rule-group__title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  padding: 0 4px 8px;
+  border-bottom: 1px solid var(--line-2);
+  font-size: var(--fs-15);
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--ink);
 }
 
 .rule-list {

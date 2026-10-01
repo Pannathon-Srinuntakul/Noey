@@ -164,10 +164,13 @@ export function bindingKey(limits: readonly Pick<UsageLimit, "key" | "used_pct">
  * the month, and which one the next job has to fit right now — or, once that
  * one is full, that new work waits for it to start over.
  */
-export function bindingNote(key: string | null, usedPct = 0): string | null {
+export function bindingNote(key: string | null, usedPct = 0, idle = false): string | null {
   if (!key) return null;
   const name = LIMIT_LABELS[key as LimitKey] ?? key;
   const lead = `สองเพดานนับพร้อมกัน Weekly limit เท่ากับ ${WEEKLY_SHARE_PERCENT}% ของ Monthly limit งานใหม่ต้องพอทั้งสองเพดาน`;
+  // A week that has not started is empty: naming it "the one with less room"
+  // beside a 0% meter reads as a mistake, so only the rule is said.
+  if (idle) return lead;
   return usedPct >= 100 ? `${lead} ตอนนี้ ${name} เต็มแล้ว งานใหม่จะเริ่มได้เมื่อเพดานนี้เริ่มรอบใหม่` : `${lead} ตอนนี้ ${name} เหลือน้อยกว่า`;
 }
 

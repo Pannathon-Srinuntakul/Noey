@@ -113,6 +113,7 @@ describe("usage limits", () => {
     expect(bindingNote("weekly")).toContain("40%");
     expect(bindingNote("weekly", 106)).toContain("ตอนนี้ Weekly limit เต็มแล้ว");
     expect(bindingTag(106)).toBe("เต็มแล้ว");
+    expect(bindingNote("weekly", 0, true)).not.toContain("ตอนนี้");
     expect(bindingTag(22)).toBe("เหลือน้อยกว่า");
   });
 });

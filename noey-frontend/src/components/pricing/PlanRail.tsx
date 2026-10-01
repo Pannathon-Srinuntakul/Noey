@@ -8,10 +8,12 @@ import {
   DEFAULT_CLIP_MINUTES,
   DEFAULT_CUT_MODE,
   FOOTAGE_MINUTES,
+  MAX_CUT_RESULT_MINUTES,
   PLAN_COPY,
   SPEECH_FOOTAGE,
   TIERS,
   PRECISION_NAMES,
+  WEEKLY_PACE_NOTE,
   clampClipMinutes,
   clipsBasis,
   clipsCaveats,
@@ -67,7 +69,7 @@ interface Choice {
  */
 const MODE_NOTE: Record<CutMode, string> = {
   talking_head: "ใช้แค่การถอดเสียง ไม่มีขั้นที่ AI ดูภาพหรืออ่านเนื้อหา จึงใช้โควตาน้อยที่สุดในสามโหมด",
-  dub_first: "AI ดูฟุตเทจทุกวินาทีแล้วเขียนสคริปต์ ยิ่งคลิปยาว หรือเลือกระดับละเอียด (แพลน Pro ขึ้นไป) ยิ่งใช้โควตามาก",
+  dub_first: `AI ดูฟุตเทจทุกวินาทีแล้วเขียนสคริปต์ ยิ่งคลิปยาว หรือเลือกระดับละเอียด (แพลน Pro ขึ้นไป) ยิ่งใช้โควตามาก ผลลัพธ์ยาวได้ไม่เกิน ${MAX_CUT_RESULT_MINUTES} นาที`,
   speech_highlights:
     "ถอดเสียงแล้วให้ AI อ่านทั้งคลิปและเกลาทีละไฮไลต์ จำนวนไฮไลต์รู้ได้หลังอ่านจบ ระบบจึงประเมินโควตาต่อคลิปของโหมดนี้เผื่อไว้ ใช้จริงอาจได้คลิปมากกว่าตัวเลขนี้",
 };
@@ -766,6 +768,9 @@ export function PlanRail({
         <p className="picker__note picker__caveats" id={noteId}>
           {keepThai(clipsCaveats(choice.mode))}
         </p>
+        {/* The counts are monthly; Pro and up also pace them by the week
+            (owner, 2026-10-01). Said once, under the picker it qualifies. */}
+        <p className="picker__note picker__weekly">{keepThai(WEEKLY_PACE_NOTE)}</p>
       </div>
       {/* Beside the cards they move (hidden where every card is in view). At
           an end the arrow is aria-disabled rather than disabled, so a keyboard

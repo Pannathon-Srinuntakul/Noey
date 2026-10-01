@@ -3,9 +3,11 @@ import { cn } from "./ui";
 /**
  * The quota card of the editor's settings page
  * (web/src/components/settings/UsageCard.tsx), with sample numbers: a Pro
- * plan part-way through its month. Percent only, like the app. One window
- * per account since 2026-09-30 (backend limits.py rule 1): the monthly one,
- * reset on the billing date ("รีเซ็ต 13 ต.ค.", web/src/lib/usageLimits.ts).
+ * plan part-way through its month. Percent only, like the app. Pro and up
+ * have two windows since 2026-10-01 (backend limits.py rule 1), drawn in the
+ * order the server sends them: the monthly one, reset on the billing date
+ * ("รีเซ็ต 13 ต.ค."), then the rolling week ("รอบใหม่ พฤหัสบดี 09:40",
+ * web/src/lib/usageLimits.ts `resetLine`).
  */
 
 function MeterRow({ name, value, pct, line }: { name: string; value: string; pct: number; line: string }) {
@@ -37,6 +39,7 @@ export function UsageCard() {
       </div>
       <div className="mt-4 flex flex-col gap-4">
         <MeterRow name="โควตารายเดือน" value="ใช้ไป 38%" pct={38} line="รีเซ็ต 13 ต.ค." />
+        <MeterRow name="โควตารายสัปดาห์" value="ใช้ไป 22%" pct={22} line="รอบใหม่ พฤหัสบดี 09:40" />
         <MeterRow name="ที่เก็บไฟล์" value="3.7 / 10 GB" pct={37} line="ลบโปรเจกต์เก่าเพื่อคืนพื้นที่ได้" />
       </div>
       <p className="mt-4 border-t border-divider pt-3.5 text-[13px] leading-[1.6] text-muted">

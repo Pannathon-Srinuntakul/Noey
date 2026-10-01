@@ -147,7 +147,7 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
         <div className="notice" role="status">
           <p>
             {keepThaiProse(
-              "ยืนยันการเปลี่ยนแพลนแล้ว การอัปเกรดมีผลทันที ส่วนการลดแพลนมีผลเมื่อจบรอบบิลปัจจุบัน ถ้าแพลนด้านล่างยังไม่เปลี่ยน รีเฟรชหน้านี้อีกครั้งในอีกสักครู่",
+              "ยืนยันการเปลี่ยนแพลนแล้ว การอัปเกรดมีผลทันที เริ่มรอบบิลใหม่วันนี้ และโควตาเริ่มนับจาก 0% ส่วนการลดแพลนมีผลเมื่อจบรอบบิลปัจจุบัน ถ้าแพลนด้านล่างยังไม่เปลี่ยน รีเฟรชหน้านี้อีกครั้งในอีกสักครู่",
             )}
           </p>
         </div>
@@ -179,6 +179,7 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
         cycle={live ? billingCycle(billing?.current_period_end) : null}
         cardLabel={formatCard(billing?.payment_method)}
         betaNote={isBetaPriced(table) ? BETA_PRICE_NOTE_SHORT : null}
+        currentTier={currentTier}
       />
     </>
   );

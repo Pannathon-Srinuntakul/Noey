@@ -181,3 +181,40 @@ html[data-theme="dark"] .lvl i[data-on][data-hot] {
 .meter-note:last-child {
   margin-bottom: 0;
 }
+
+/* Past 100%: the meter and its clip light on one line, the light at the end
+   the way an audio meter's lights when the signal goes over. Same height as
+   the meter alone (14px), so nothing below moves. */
+.lvl-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.lvl-line > .lvl {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.lvl__clip {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  height: 14px;
+  padding: 0 6px;
+  border-radius: 4px;
+  background: var(--danger);
+  color: var(--color-bg);
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  box-shadow: 0 0 8px color-mix(in srgb, var(--color-danger) 50%, transparent);
+}
+
+/* The over line under the meter, in the clip light's colour. */
+.meter-note--over {
+  margin-bottom: 4px;
+  color: var(--danger);
+  font-weight: 500;
+}

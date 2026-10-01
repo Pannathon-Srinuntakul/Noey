@@ -644,6 +644,16 @@
   padding: 2px;
 }
 
+/* Past 100% the meter and its clip light share the row (LevelMeter). */
+.acct-summary .lvl-line {
+  flex-basis: 100%;
+}
+
+.acct-summary .lvl-line .lvl__clip {
+  height: 10px;
+  font-size: 9px;
+}
+
 /* The plan's renewal under its name: the cell carries a second line, as the
    two cells beside it carry their meters. */
 .acct-summary .kv dd.acct-summary__sub {
@@ -699,8 +709,42 @@
   margin-bottom: 0;
 }
 
+/* The window's name and, on Pro and up, the mark on the one with the least
+   room — the one the next job has to fit. */
+.acct-quota__name {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+
+.acct-quota__bind {
+  font-size: var(--fs-12);
+  line-height: 1.4;
+}
+
+/* The notes about the meters as a pair (which binds, how a paused job goes
+   on), under both, after a rule. */
+.acct-quota__rule {
+  margin: 0;
+  padding-top: 12px;
+  border-top: 1px dashed var(--line);
+}
+
+.acct-quota__rule + .acct-quota__rule {
+  padding-top: 0;
+  border-top: 0;
+}
+
 .acct-quota__limit .meter-note {
   margin-top: 0;
+}
+
+/* Past 100%: the over line sits tight under the meter, the reset line under it;
+   the "more quota" link follows without the note's usual gap. */
+.acct-quota__limit .meter-note--over,
+.acct-quota__limit .meter-note:has(+ .acct-quota__more) {
+  margin-bottom: 0;
 }
 
 .acct-quota__empty {
@@ -1587,4 +1631,41 @@ html[data-auth-name] .acct-greet::before {
 
 .acct-skel__list li::before {
   display: none;
+}
+
+/* ── The plan dialog: what the picked change does ───────────────────────── */
+/* First in the sticky footer, full width, above the consent: the change it
+   describes (upgrade, downgrade, first plan) follows the plan picked. Empty
+   on the plan already held, and it keeps no height then. */
+.plan-change {
+  flex-basis: 100%;
+  order: -2;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 0 0 2px;
+  font-size: var(--fs-13);
+  line-height: 1.6;
+  color: var(--ink-2);
+}
+
+.plan-change:empty {
+  display: none;
+}
+
+.plan-change__kind {
+  flex: none;
+  font-size: var(--fs-12);
+}
+
+.plan-change[data-kind="upgrade"] .plan-change__kind {
+  border-color: var(--gold);
+  color: var(--gold-ink);
+}
+
+@media (max-width: 480px) {
+  .dialog-actions:has(> .dialog-actions__consent) > .plan-change {
+    grid-column: 1 / -1;
+    order: -2;
+  }
 }
