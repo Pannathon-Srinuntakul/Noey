@@ -161,8 +161,9 @@ export function webPageNode(input: WebPageInput): JsonLdNode {
     description: input.description,
     inLanguage: LANG,
     isPartOf: { "@id": WEBSITE_ID },
-    dateModified: input.dateModified,
   };
+  // An empty listing has no content date to claim.
+  if (input.dateModified) node.dateModified = input.dateModified;
   if (input.about) node.about = { "@id": input.about };
   return node;
 }
@@ -202,6 +203,94 @@ export function articleNode(input: ArticleInput): JsonLdNode {
   };
   if (input.abstract) node.abstract = input.abstract;
   return node;
+}
+
+export interface JsonLdImage {
+  url: string;
+  width?: number | null;
+  height?: number | null;
+}
+
+function imageObject(image: JsonLdImage): JsonLdNode {
+  return {
+    "@type": "ImageObject",
+    url: image.url,
+    ...(image.width ? { width: image.width } : {}),
+    ...(image.height ? { height: image.height } : {}),
+  };
+}
+
+export interface BlogPostingInput {
+  path: string;
+  headline: string;
+  description: string;
+  /** ISO-8601 timestamps from the blog API. */
+  datePublished: string;
+  dateModified: string;
+  /** The post's cover, or the generated share image when it has none. */
+  image: JsonLdImage;
+  section?: string;
+  keywords?: readonly string[];
+  /** @id of the Blog the post belongs to. */
+  blogId?: string;
+}
+
+/**
+ * A blog post. Author and publisher are the Organization (the site never
+ * invents a byline; the posts are published under the studio's name).
+ */
+export function blogPostingNode(input: BlogPostingInput): JsonLdNode {
+  const url = absoluteUrl(input.path);
+  return {
+    "@type": "BlogPosting",
+    "@id": `${url}#article`,
+    mainEntityOfPage: { "@id": `${url}#webpage` },
+    url,
+    headline: input.headline,
+    description: input.description,
+    image: imageObject(input.image),
+    inLanguage: LANG,
+    datePublished: input.datePublished,
+    dateModified: input.dateModified,
+    author: { "@type": "Organization", "@id": ORGANIZATION_ID, name: SITE_NAME, url: absoluteUrl("/") },
+    publisher: { "@id": ORGANIZATION_ID },
+    isPartOf: { "@id": input.blogId ?? WEBSITE_ID },
+    ...(input.section ? { articleSection: input.section } : {}),
+    ...(input.keywords?.length ? { keywords: input.keywords.join(", ") } : {}),
+  };
+}
+
+export interface BlogListItem {
+  path: string;
+  headline: string;
+  datePublished: string;
+  dateModified: string;
+  image?: JsonLdImage;
+}
+
+/** The blog itself, with the posts the page lists. */
+export function blogNode(input: { path: string; name: string; description: string; posts: readonly BlogListItem[] }): JsonLdNode {
+  const url = absoluteUrl(input.path);
+  return {
+    "@type": "Blog",
+    "@id": `${url}#blog`,
+    url,
+    name: input.name,
+    description: input.description,
+    inLanguage: LANG,
+    publisher: { "@id": ORGANIZATION_ID },
+    isPartOf: { "@id": WEBSITE_ID },
+    blogPost: input.posts.map((post) => ({
+      "@type": "BlogPosting",
+      "@id": `${absoluteUrl(post.path)}#article`,
+      url: absoluteUrl(post.path),
+      headline: post.headline,
+      datePublished: post.datePublished,
+      dateModified: post.dateModified,
+      ...(post.image ? { image: imageObject(post.image) } : {}),
+      author: { "@type": "Organization", "@id": ORGANIZATION_ID, name: SITE_NAME },
+    })),
+  };
 }
 
 export interface HowToStep {

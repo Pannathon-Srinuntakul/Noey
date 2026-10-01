@@ -1,0 +1,1163 @@
+/*
+ * The blog (/blog, its categories and tags, and each post). Built from the
+ * site's own parts — the page hero, clip cards, track labels, the FAQ cue
+ * list, the timeline contents (article.css) — plus the blog's own:
+ *
+ *   the slate      a post's generated cover: a clapperboard whose stripes
+ *                  run on the logo's splice angle, its scene (category) and
+ *                  take (title), a track of clips under it; it claps when
+ *                  its card is picked up;
+ *   the monitor    the newest post, on the program monitor;
+ *   the bin        the other posts as clips, each with its reading length
+ *                  drawn as the clip's length on one scale;
+ *   the transport  page numbers as marks on a ruler.
+ *
+ * Colours are tokens and color-mix() of tokens only. Thai text keeps its
+ * line height; nothing is hidden before JavaScript runs.
+ */
+
+/* ── Listing layout ─────────────────────────────────────────────────────── */
+
+.blog-list {
+  padding-bottom: var(--section-y);
+}
+
+.blog-page .phero__copy h1 {
+  max-width: 18em;
+}
+
+/* ── Category tracks (the filter) ───────────────────────────────────────── */
+
+.cat-rail {
+  margin: 0 0 clamp(26px, 3.4vw, 40px);
+}
+
+.cat-rail__list {
+  display: flex;
+  gap: 8px;
+  margin: 0;
+  padding: 2px 2px 10px;
+  list-style: none;
+  overflow-x: auto;
+  scroll-snap-type: x proximity;
+  scrollbar-width: thin;
+  overscroll-behavior-x: contain;
+}
+
+.cat-rail__list > li {
+  flex: none;
+  scroll-snap-align: start;
+}
+
+.cat-rail__link {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 6px 14px 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  box-shadow: var(--rim);
+  color: var(--ink-2);
+  font-size: var(--fs-14);
+  font-weight: 400;
+  line-height: 1.4;
+  text-decoration: none;
+  white-space: nowrap;
+  transition:
+    border-color var(--dur-2) ease,
+    color var(--dur-2) ease,
+    background-color var(--dur-2) ease;
+}
+
+.cat-rail__link:hover {
+  border-color: color-mix(in srgb, var(--color-accent) 55%, transparent);
+  color: var(--ink);
+}
+
+.cat-rail__link[aria-current] {
+  border-color: var(--gold);
+  color: var(--ink);
+  font-weight: 500;
+  background: linear-gradient(var(--gold-softer), var(--gold-softer)), var(--panel);
+  box-shadow:
+    inset 3px 0 0 var(--gold),
+    var(--rim);
+}
+
+.cat-rail__link[aria-current] .trk {
+  background: var(--gold);
+  color: var(--on-gold);
+}
+
+.cat-rail__count {
+  min-width: 2ch;
+  color: var(--ink-3);
+  font-size: var(--fs-12);
+  letter-spacing: 0.04em;
+}
+
+/* ── The program monitor: the newest post ───────────────────────────────── */
+
+.blog-monitor {
+  margin-bottom: clamp(30px, 4.4vw, 56px);
+}
+
+.blog-monitor__bar,
+.blog-bin__bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+  color: var(--ink-3);
+}
+
+.blog-monitor__rec {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--gold);
+  box-shadow: 0 0 0 3px var(--gold-soft);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .blog-monitor__rec {
+    animation: blog-rec 2.4s ease-in-out infinite;
+  }
+}
+
+@keyframes blog-rec {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.blog-monitor__rule,
+.blog-bin__rule {
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, var(--line-2), transparent);
+}
+
+.blog-bin__count {
+  color: var(--ink-3);
+}
+
+/* ── Post cards ─────────────────────────────────────────────────────────── */
+
+.blog-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: clamp(14px, 1.6vw, 22px);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+@media (max-width: 1099px) {
+  .blog-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 679px) {
+  .blog-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.blog-grid > li {
+  display: flex;
+  min-width: 0;
+}
+
+.post-card {
+  flex: 1;
+  min-width: 0;
+}
+
+.post-card > .cover {
+  border-radius: 11px 11px 0 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.clip__body.post-card__body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.post-card__eyebrow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin: 0;
+  font-size: var(--fs-13);
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+.clip__body .post-card__eyebrow {
+  font-size: var(--fs-13);
+}
+
+.post-card__cat {
+  color: var(--gold-ink);
+  font-weight: 500;
+}
+
+.post-card__title {
+  font-size: var(--fs-h4);
+  line-height: 1.5;
+  text-wrap: balance;
+}
+
+.clip__body p.post-card__excerpt {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+  font-size: var(--fs-15);
+  font-weight: 400;
+  line-height: 1.75;
+  color: var(--ink-2);
+}
+
+.clip__body p.post-card__meta {
+  margin-top: auto;
+  font-size: var(--fs-13);
+  font-weight: 400;
+  color: var(--ink-3);
+}
+
+.post-card__dot {
+  margin-inline: 6px;
+}
+
+/* The reading time as the clip's length, on one scale for every card. */
+.post-card__length {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--line-2);
+}
+
+.post-card__len-bar {
+  position: relative;
+  flex: 1;
+  height: 10px;
+  border-radius: 3px;
+  background:
+    repeating-linear-gradient(90deg, var(--line-2) 0 1px, transparent 1px 14px) 0 100% / 100% 4px no-repeat,
+    color-mix(in srgb, var(--color-text) 4%, transparent);
+}
+
+.post-card__len-bar::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: max(10px, calc(var(--len, 0.3) * 100%));
+  border-radius: 3px 0 0 3px;
+  background: color-mix(in srgb, var(--color-accent) 62%, transparent);
+  clip-path: polygon(0 0, 100% 0, calc(100% - 6px) 100%, 0 100%);
+  transition: background-color var(--dur-2) ease;
+}
+
+.post-card:hover .post-card__len-bar::before,
+.post-card:focus-within .post-card__len-bar::before {
+  background: var(--gold);
+}
+
+.post-card__len-tc {
+  color: var(--ink-3);
+}
+
+/* The newest post: wide, its frame beside the words. */
+.post-card--feature {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+}
+
+.post-card--feature > .cover {
+  border-radius: 11px 0 0 11px;
+  border-bottom: 0;
+  border-right: 1px solid var(--line);
+}
+
+.post-card--feature .post-card__body {
+  justify-content: center;
+  gap: 14px;
+  padding: clamp(22px, 3vw, 40px);
+}
+
+.post-card--feature .post-card__title {
+  font-size: var(--fs-h3);
+  line-height: 1.45;
+}
+
+.clip__body p.post-card__excerpt:where(.post-card--feature *) {
+  -webkit-line-clamp: 4;
+  line-clamp: 4;
+  font-size: var(--fs-16);
+}
+
+.post-card__new {
+  margin-left: auto;
+}
+
+@media (max-width: 899px) {
+  .post-card--feature {
+    grid-template-columns: 1fr;
+  }
+
+  .post-card--feature > .cover {
+    border-radius: 11px 11px 0 0;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+}
+
+/* ── Covers ─────────────────────────────────────────────────────────────── */
+
+/* Behind a picture: the slate's ground and a faint clapper, so a cover that
+   is loading (or never loads) leaves a deliberate frame. */
+.cover {
+  position: relative;
+  margin: 0;
+  overflow: hidden;
+  aspect-ratio: 16 / 9;
+  background:
+    repeating-linear-gradient(130deg, color-mix(in srgb, var(--color-accent) 22%, transparent) 0 10px, transparent 10px 20px) 0 0 / 100% 12px no-repeat,
+    radial-gradient(90% 80% at 30% 0%, var(--gold-soft), transparent 70%),
+    var(--well);
+}
+
+.cover__img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  /* A picture that fails shows the frame, not its alt text over it. */
+  color: transparent;
+}
+
+.cover--hero {
+  aspect-ratio: var(--cover-ratio, 16 / 9);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-2), var(--rim);
+}
+
+.cover--hero .cover__img {
+  height: 100%;
+}
+
+.cover--slate {
+  background: none;
+}
+
+.cover--hero.cover--slate {
+  border: 0;
+  box-shadow: var(--shadow-2);
+}
+
+/* ── The slate: a post's generated cover ────────────────────────────────── */
+
+.slate {
+  --stripe: 5.2cqi;
+  container-type: inline-size;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background:
+    radial-gradient(110% 90% at var(--slate-glow, 40%) -10%, color-mix(in srgb, var(--color-accent) 16%, transparent), transparent 62%),
+    var(--well);
+  color: var(--ink);
+}
+
+.cover--hero .slate {
+  border-radius: var(--r-lg);
+  border: 1px solid var(--line);
+}
+
+.slate__clapper {
+  position: relative;
+  flex: none;
+  height: 12cqi;
+  min-height: 16px;
+  max-height: 58px;
+}
+
+.slate__stick {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 50%;
+  background: repeating-linear-gradient(130deg, var(--gold) 0 var(--stripe), var(--color-neutral-900) var(--stripe) calc(var(--stripe) * 2));
+  border-bottom: 1px solid color-mix(in srgb, var(--color-text) 14%, transparent);
+}
+
+/* The arm: open a little, hinged on the left. */
+.slate__stick:first-child {
+  top: 0;
+  transform-origin: 3% 100%;
+  rotate: -3.2deg;
+  translate: 0 -12%;
+  background: repeating-linear-gradient(50deg, var(--gold) 0 var(--stripe), var(--color-neutral-900) var(--stripe) calc(var(--stripe) * 2));
+}
+
+.slate__stick--base {
+  bottom: 0;
+}
+
+/* Picking up the card claps the slate shut: the take starts. */
+@media (prefers-reduced-motion: no-preference) {
+  .slate__stick:first-child {
+    transition: rotate 220ms var(--ease-cut), translate 220ms var(--ease-cut);
+  }
+
+  .post-card:hover .slate__stick:first-child,
+  .post-card:focus-within .slate__stick:first-child {
+    rotate: 0deg;
+    translate: 0 0;
+  }
+}
+
+.slate__glow {
+  position: absolute;
+  inset: auto -20% -40% auto;
+  width: 70%;
+  height: 80%;
+  background: radial-gradient(closest-side, var(--gold-softer), transparent);
+  pointer-events: none;
+}
+
+.slate__body {
+  position: relative;
+  flex: 1;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 2.4cqi;
+  min-height: 0;
+  padding: 3.4cqi 5cqi 4cqi;
+}
+
+.slate__row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 3cqi;
+  padding-bottom: 1.8cqi;
+  border-bottom: 1px solid var(--line-2);
+}
+
+.slate__field {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 1.8cqi;
+  min-width: 0;
+}
+
+.slate__key {
+  flex: none;
+  color: var(--ink-3);
+  font-size: max(9px, 2.1cqi);
+}
+
+.slate__scene {
+  overflow: hidden;
+  color: var(--gold-ink);
+  font-size: max(11px, 3cqi);
+  font-weight: 500;
+  line-height: 1.5;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.slate__take {
+  color: var(--ink);
+  font-size: max(11px, 3cqi);
+}
+
+.slate__title {
+  align-self: center;
+  margin: 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+  font-size: clamp(15px, 6.3cqi, 46px);
+  font-weight: 600;
+  line-height: 1.4;
+  text-wrap: balance;
+}
+
+.slate__track {
+  position: relative;
+  height: 8.5cqi;
+  min-height: 20px;
+  max-height: 40px;
+}
+
+.slate__ruler {
+  position: absolute;
+  inset: 0 0 auto;
+  height: 30%;
+  background:
+    repeating-linear-gradient(90deg, var(--line-3) 0 1px, transparent 1px 10cqi) 0 100% / 100% 100% no-repeat,
+    repeating-linear-gradient(90deg, var(--line-2) 0 1px, transparent 1px 2cqi) 0 100% / 100% 45% no-repeat;
+}
+
+.slate__lane {
+  position: absolute;
+  inset: 40% 0 0;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--color-text) 6%, transparent);
+}
+
+.slate__clip {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  border-radius: 3px;
+  clip-path: polygon(0 0, 100% 0, calc(100% - 1.6cqi) 100%, 0 100%);
+}
+
+.slate__clip--0 {
+  background: color-mix(in srgb, var(--color-accent) 82%, transparent);
+}
+
+.slate__clip--1 {
+  background: color-mix(in srgb, var(--color-accent) 55%, transparent);
+}
+
+.slate__clip--2 {
+  background: color-mix(in srgb, var(--color-accent) 70%, transparent);
+}
+
+.slate__head {
+  position: absolute;
+  top: 6%;
+  bottom: -6%;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--ink);
+  box-shadow: 0 0 10px var(--gold-glow);
+}
+
+.slate__head::before {
+  content: "";
+  position: absolute;
+  top: -2px;
+  left: -4px;
+  border: 5px solid transparent;
+  border-top: 6px solid var(--ink);
+  border-bottom: 0;
+}
+
+.slate__tc {
+  position: absolute;
+  right: 0;
+  top: -1.2cqi;
+  translate: 0 -100%;
+  color: var(--ink-3);
+  font-size: max(9px, 2cqi);
+}
+
+/* A card's slate is small: the title takes the room, the track stays thin. */
+.slate--card .slate__title {
+  font-size: clamp(14px, 6.8cqi, 26px);
+}
+
+.slate--hero .slate__title {
+  font-size: clamp(18px, 6.2cqi, 40px);
+  -webkit-line-clamp: 4;
+  line-clamp: 4;
+}
+
+/* ── Transport (pagination) ─────────────────────────────────────────────── */
+
+.pager {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-top: clamp(34px, 4.4vw, 56px);
+}
+
+.pager__marks {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  padding: 0 10px 6px;
+  list-style: none;
+  background: repeating-linear-gradient(90deg, var(--line-2) 0 1px, transparent 1px 12px) 0 100% / 100% 6px no-repeat;
+}
+
+.pager__mark.tc {
+  display: inline-grid;
+  place-items: center;
+  min-width: 44px;
+  min-height: 44px;
+  border-radius: 9px;
+  color: var(--ink-2);
+  font-size: var(--fs-13);
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.pager__mark:hover {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--color-text) 6%, transparent);
+}
+
+.pager__mark[aria-current] {
+  background: var(--gold);
+  color: var(--on-gold);
+  font-weight: 600;
+}
+
+.pager__gap {
+  color: var(--ink-3);
+}
+
+@media (max-width: 520px) {
+  .pager__marks {
+    order: -1;
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+.blog-feed {
+  margin: clamp(30px, 4vw, 44px) 0 0;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+  font-size: var(--fs-14);
+  font-weight: 400;
+  color: var(--ink-3);
+}
+
+/* ── Empty: a track waiting for its first clip ──────────────────────────── */
+
+.blog-empty {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+  gap: clamp(24px, 4vw, 56px);
+  align-items: center;
+  padding: clamp(20px, 3.4vw, 44px);
+  border: 1px solid var(--line);
+  border-radius: var(--r-xl);
+  background: linear-gradient(160deg, var(--gold-softer), transparent 55%), var(--panel);
+  box-shadow: var(--rim);
+}
+
+@media (max-width: 859px) {
+  .blog-empty {
+    grid-template-columns: 1fr;
+  }
+}
+
+.blog-empty__stage {
+  position: relative;
+  display: grid;
+  gap: 10px;
+  padding: 40px 18px 20px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--well);
+}
+
+.blog-empty__ruler {
+  position: absolute;
+  top: 12px;
+  left: 62px;
+  right: 18px;
+  height: 14px;
+  background:
+    repeating-linear-gradient(90deg, var(--line-3) 0 1px, transparent 1px 60px) 0 100% / 100% 100% no-repeat,
+    repeating-linear-gradient(90deg, var(--line-2) 0 1px, transparent 1px 12px) 0 100% / 100% 50% no-repeat;
+}
+
+.blog-empty__lane {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+}
+
+.blog-empty__well {
+  display: grid;
+  place-items: center;
+  height: 58px;
+  border: 1px dashed var(--line-3);
+  border-radius: 9px;
+  background: repeating-linear-gradient(130deg, color-mix(in srgb, var(--color-text) 6%, transparent) 0 2px, transparent 2px 11px);
+  color: var(--ink-3);
+}
+
+.blog-empty__lane--audio .blog-empty__well {
+  height: 34px;
+}
+
+.blog-empty__head {
+  position: absolute;
+  top: 10px;
+  bottom: 14px;
+  left: 62px;
+  width: 2px;
+  background: var(--gold);
+  box-shadow: 0 0 12px var(--gold-glow);
+}
+
+.blog-empty__head::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -5px;
+  border: 6px solid transparent;
+  border-top: 8px solid var(--gold);
+  border-bottom: 0;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .blog-empty__head {
+    animation: blog-idle 3.2s var(--ease-in-out) infinite alternate;
+  }
+}
+
+@keyframes blog-idle {
+  to {
+    translate: 10px 0;
+  }
+}
+
+.blog-empty__copy h2 {
+  margin-bottom: 12px;
+}
+
+.blog-empty__copy p {
+  max-width: 46ch;
+  color: var(--ink-2);
+  font-size: var(--fs-16);
+  line-height: 1.85;
+}
+
+/* ── The API is down (no earlier copy of the page to show) ──────────────── */
+
+.blog-down {
+  display: grid;
+  justify-items: center;
+  padding: clamp(8px, 2vw, 24px) 0;
+}
+
+.blog-down-page {
+  display: grid;
+  align-content: center;
+  min-height: 70vh;
+  padding-bottom: var(--section-y);
+}
+
+/* ── The post page ──────────────────────────────────────────────────────── */
+
+.blog-article .phero__aside {
+  align-self: center;
+  min-width: 0;
+}
+
+.blog-article .phero--split .phero__inner {
+  align-items: center;
+}
+
+@media (max-width: 960px) {
+  .blog-article .phero__aside {
+    max-width: 640px;
+  }
+}
+
+.post-stamp {
+  text-indent: 0;
+  padding-left: 12px;
+}
+
+.post-stamp::before {
+  margin-inline-start: 0;
+}
+
+@media (max-width: 480px) {
+  .post-stamp {
+    border-radius: 12px;
+  }
+}
+
+/* The opening paragraph that answers the title, with its links. */
+.blog-article .answer a {
+  display: inline;
+}
+
+.blog-intro {
+  padding-top: 0;
+}
+
+/* Markdown, drawn into the site's reading column. */
+.blog-prose > :first-child {
+  margin-top: 0;
+}
+
+.blog-prose > :last-child {
+  margin-bottom: 0;
+}
+
+.blog-prose h3 {
+  margin: 1.7em 0 0.55em;
+  font-size: var(--fs-h4);
+  line-height: 1.55;
+  color: var(--ink);
+  scroll-margin-top: calc(var(--beta-h) + var(--header-top) + var(--header-h) + 24px);
+}
+
+.blog-prose h4,
+.blog-prose h5,
+.blog-prose h6 {
+  margin: 1.4em 0 0.4em;
+  font-size: var(--fs-17);
+  line-height: 1.6;
+  color: var(--ink);
+}
+
+.blog-prose a {
+  display: inline;
+}
+
+.blog-prose ul,
+.blog-prose ol {
+  margin: 0 0 1.2em;
+}
+
+.blog-prose li > p {
+  margin: 0 0 0.4em;
+}
+
+.blog-prose li:has(> input[type="checkbox"]) {
+  list-style: none;
+  margin-left: -1.3em;
+}
+
+.blog-prose input[type="checkbox"] {
+  margin: 0 8px 0 0;
+  vertical-align: -1px;
+  accent-color: var(--gold);
+}
+
+.blog-prose blockquote {
+  margin: 1.5em 0;
+  padding: 14px 20px 14px 22px;
+  border-left: 3px solid var(--gold);
+  border-radius: 0 12px 12px 0;
+  background: var(--gold-softer);
+  color: var(--ink);
+}
+
+.blog-prose blockquote > :last-child {
+  margin-bottom: 0;
+}
+
+.blog-prose :not(pre) > code {
+  padding: 1px 7px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--color-text) 8%, transparent);
+  font-size: 0.92em;
+}
+
+.blog-prose pre {
+  margin: 1.5em 0;
+  padding: 16px 18px;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--well);
+  font-size: var(--fs-14);
+  line-height: 1.75;
+  tab-size: 2;
+}
+
+.blog-prose pre code {
+  font-variant-numeric: tabular-nums;
+  white-space: pre;
+}
+
+.blog-prose hr {
+  height: 12px;
+  margin: 2.2em 0;
+  border: 0;
+  background:
+    repeating-linear-gradient(90deg, var(--line-2) 0 1px, transparent 1px 60px) 0 50% / 100% 12px no-repeat,
+    repeating-linear-gradient(90deg, var(--line) 0 1px, transparent 1px 12px) 0 50% / 100% 6px no-repeat;
+}
+
+.blog-prose del {
+  color: var(--ink-3);
+}
+
+/* A table scrolls inside its frame on a phone, never the page. */
+.blog-table {
+  margin: 1.5em 0;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+  overscroll-behavior-x: contain;
+}
+
+.blog-table .table {
+  min-width: 460px;
+  font-size: var(--fs-15);
+  font-weight: 400;
+}
+
+.blog-table .table th {
+  background: color-mix(in srgb, var(--color-text) 4%, transparent);
+  color: var(--ink);
+}
+
+.blog-table .table tr:last-child td {
+  border-bottom: 0;
+}
+
+.blog-figure {
+  margin: 1.7em 0;
+}
+
+.blog-figure__img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--well);
+}
+
+.blog-figure__img--unsized {
+  aspect-ratio: 16 / 9;
+  object-fit: contain;
+  color: transparent;
+}
+
+.blog-figure figcaption {
+  margin-top: 8px;
+  font-size: var(--fs-13);
+  font-weight: 400;
+  color: var(--ink-3);
+}
+
+.blog-inline-img .blog-figure__img {
+  display: inline-block;
+  width: auto;
+  max-width: 100%;
+  vertical-align: middle;
+}
+
+.ext-link__icon {
+  display: inline-block;
+  margin-left: 3px;
+  vertical-align: -0.12em;
+}
+
+/* GitHub-style footnotes, small and quiet at the foot of the text. */
+.blog-prose .footnotes {
+  margin-top: 2em;
+  padding-top: 1em;
+  border-top: 1px solid var(--line);
+  font-size: var(--fs-14);
+  color: var(--ink-2);
+}
+
+/* ── Tags, the call to try it, related posts ────────────────────────────── */
+
+.blog-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 12px;
+  max-width: var(--measure);
+  padding: 22px 0 6px;
+  border-top: 1px solid var(--line);
+}
+
+.blog-tags__label {
+  font-size: var(--fs-13);
+  font-weight: 500;
+  color: var(--ink-3);
+}
+
+.blog-tags__list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.blog-tag {
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  padding: 4px 14px;
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  color: var(--ink-2);
+  font-size: var(--fs-14);
+  font-weight: 400;
+  text-decoration: none;
+  transition:
+    border-color var(--dur-2) ease,
+    color var(--dur-2) ease;
+}
+
+.blog-tag::before {
+  content: "#";
+  margin-right: 2px;
+  color: var(--gold-ink);
+}
+
+.blog-tag:hover {
+  border-color: var(--gold);
+  color: var(--ink);
+}
+
+.blog-cta__box {
+  position: relative;
+  overflow: hidden;
+  padding: 0 clamp(20px, 3vw, 32px) clamp(22px, 3vw, 30px);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 45%, transparent);
+  border-radius: var(--r-lg);
+  background: linear-gradient(160deg, var(--gold-soft), transparent 62%), var(--panel);
+  box-shadow: var(--shadow-2), var(--rim);
+}
+
+/* The slate's clapper across the top of the box. */
+.blog-cta__clapper {
+  display: block;
+  height: 14px;
+  margin: 0 calc(-1 * clamp(20px, 3vw, 32px)) 18px;
+  background: repeating-linear-gradient(130deg, var(--gold) 0 14px, var(--color-neutral-900) 14px 28px);
+}
+
+.blog-cta__strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  color: var(--ink-3);
+}
+
+.blog-cta__rec {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--gold);
+}
+
+.blog-cta__title {
+  margin: 0 0 8px;
+  font-size: var(--fs-h3);
+  line-height: 1.45;
+}
+
+.blog-cta__text {
+  max-width: 52ch;
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--fs-16);
+  line-height: 1.85;
+}
+
+.blog-cta__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px 24px;
+  margin-top: 20px;
+}
+
+@media (max-width: 560px) {
+  .blog-cta__actions .btn {
+    width: 100%;
+  }
+}
+
+/* Related posts: rows of picture and words, inside the reading column. */
+.blog-related {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.blog-related > li {
+  display: flex;
+}
+
+.blog-related .post-card {
+  display: grid;
+  grid-template-columns: minmax(0, 0.42fr) minmax(0, 1fr);
+}
+
+.blog-related .post-card > .cover {
+  height: 100%;
+  min-height: 132px;
+  aspect-ratio: auto;
+  border-radius: 11px 0 0 11px;
+  border-bottom: 0;
+  border-right: 1px solid var(--line);
+}
+
+.blog-related .post-card__body {
+  padding: 16px 18px;
+  gap: 6px;
+}
+
+.blog-related .post-card__title {
+  font-size: var(--fs-16);
+}
+
+.blog-related .post-card__excerpt {
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
+@media (max-width: 560px) {
+  .blog-related .post-card {
+    grid-template-columns: 1fr;
+  }
+
+  .blog-related .post-card > .cover {
+    min-height: 0;
+    aspect-ratio: 16 / 9;
+    border-radius: 11px 11px 0 0;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+}
+
+.blog-article .article__foot {
+  align-items: center;
+  justify-content: space-between;
+}
+
+.blog-article__feed {
+  font-size: var(--fs-14);
+}

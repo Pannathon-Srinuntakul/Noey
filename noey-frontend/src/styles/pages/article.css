@@ -434,6 +434,22 @@ html[data-theme="dark"] .article .prose {
     border-color var(--dur-2) ease;
 }
 
+/* A subsection (a blog post's ###): indented under its section, a smaller cue. */
+.toc__sub .toc__link {
+  padding-left: 40px;
+  font-size: var(--fs-13);
+}
+
+.toc__sub .toc__link::before {
+  left: 6px;
+  width: 5px;
+  height: 5px;
+}
+
+.toc__mobile .toc__sub .toc__link {
+  padding-left: 26px;
+}
+
 .toc__mobile .toc__link {
   padding-left: 10px;
 }
