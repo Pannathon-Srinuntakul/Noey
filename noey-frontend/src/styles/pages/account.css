@@ -1507,6 +1507,53 @@ html[data-auth-name] .acct-greet::before {
   translate: -50% -50%;
 }
 
+/* While the cards stack in one column (phones, small tablets), floated it
+   would cover a card's title strip whatever its height, so the centre piece
+   becomes a strip in the flow above the cards — the mark beside the words,
+   the waveform and the clock under them. */
+@media (max-width: 759px) {
+  .rl.acct-skel__centre {
+    position: static;
+    translate: none;
+    margin-bottom: 12px;
+    grid-template-columns: auto minmax(0, 280px) auto;
+    grid-template-areas:
+      "mark label label"
+      "mark track tc";
+    justify-content: start;
+    align-items: center;
+    justify-items: start;
+    gap: 6px 14px;
+    padding: 12px 16px;
+    text-align: start;
+  }
+
+  .acct-skel__centre .rl__art {
+    display: contents;
+  }
+
+  .acct-skel__centre .rl__art::before {
+    display: none;
+  }
+
+  .acct-skel__centre .rl__mark {
+    grid-area: mark;
+  }
+
+  .acct-skel__centre .rl__track {
+    grid-area: track;
+    width: 100%;
+  }
+
+  .acct-skel__centre .rl__tc {
+    grid-area: tc;
+  }
+
+  .acct-skel__centre .rl__label {
+    grid-area: label;
+  }
+}
+
 .acct-skel__label {
   display: block;
   margin-bottom: 7px;
