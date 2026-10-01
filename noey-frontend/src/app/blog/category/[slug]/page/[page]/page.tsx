@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { BlogListing } from "@/components/blog/BlogListing";
 import { keepThaiProse } from "@/components/ds/ThaiProse";
 import { BLOG_COPY, categoryPath, firstPages, isBlogSlug, pageCount, parsePageParam } from "@/lib/blog";
-import { BLOG_TRAIL, listingMetadata } from "@/lib/blog-seo";
+import { BLOG_TRAIL, MISSING_METADATA, listingMetadata } from "@/lib/blog-seo";
 import { getBlogCategories, getBlogPage, orUnavailable } from "@/lib/server/blog";
 
 /*
@@ -11,6 +11,9 @@ import { getBlogCategories, getBlogPage, orUnavailable } from "@/lib/server/blog
  * (see app/blog/page/[page]/page.tsx). A real page per category, not a
  * filter in the browser. The categories are the backend's fixed set: an
  * unknown slug is a 404, a known one without posts yet is the empty state.
+ * Proxy answers a 404 before this route runs (lib/blog-proxy.ts); the checks
+ * here are the backstop, and metadata never throws, so a 404 can never carry
+ * a canonical.
  */
 export const revalidate = 600;
 
@@ -25,18 +28,20 @@ export async function generateStaticParams() {
 async function load(params: Params["params"]) {
   const { slug, page: raw } = await params;
   const page = parsePageParam(raw);
-  if (!page || !isBlogSlug(slug)) notFound();
+  if (!page || !isBlogSlug(slug)) return { missing: true as const };
   const [categoriesResult, listResult] = await Promise.all([getBlogCategories(), getBlogPage({ category: slug, page })]);
   const categories = orUnavailable(categoriesResult, "blog categories");
   const list = orUnavailable(listResult, "category listing");
   const category = categories?.find((item) => item.slug === slug) ?? null;
-  if (categories && !category) notFound();
-  if (list && page > 1 && page > pageCount(list.total)) notFound();
-  return { slug, page, categories, list, category };
+  if (categories && !category) return { missing: true as const };
+  if (list && page > 1 && page > pageCount(list.total)) return { missing: true as const };
+  return { missing: false as const, slug, page, categories, list, category };
 }
 
 export async function generateMetadata({ params }: Params): Promise<Metadata> {
-  const { slug, page, list, category } = await load(params);
+  const loaded = await load(params);
+  if (loaded.missing) return MISSING_METADATA;
+  const { slug, page, list, category } = loaded;
   return listingMetadata({
     path: categoryPath(slug),
     // Unknown only while the API is down: the blog's own name, not a slug.
@@ -51,7 +56,9 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
 }
 
 export default async function CategoryPage({ params }: Params) {
-  const { slug, page, list, categories, category } = await load(params);
+  const loaded = await load(params);
+  if (loaded.missing) notFound();
+  const { slug, page, list, categories, category } = loaded;
   const title = category ? BLOG_COPY.categoryTitle(category.name) : BLOG_COPY.h1;
   return (
     <BlogListing
@@ -59,7 +66,7 @@ export default async function CategoryPage({ params }: Params) {
       path={categoryPath(slug)}
       page={page}
       title={title}
-      lead={category?.description ? <p>{keepThaiProse(category.description)}</p> : null}
+      lead={<p>{keepThaiProse(category?.description || BLOG_COPY.lead)}</p>}
       trail={category ? [...BLOG_TRAIL, { name: category.name, path: categoryPath(slug) }] : BLOG_TRAIL}
       list={list}
       categories={categories}

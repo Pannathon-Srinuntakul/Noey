@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useLayoutEffect, type CSSProperties, type ReactNode } from "react";
 import { AUTH_HINT_EVENT, applyAuthHint } from "@/lib/client/auth-hint";
+import { navPathname } from "@/lib/nav-path";
 import { THEME_STORAGE_KEY } from "@/lib/prepaint";
 import { IconMoon, IconSun } from "../ds/icons";
 
@@ -99,7 +100,7 @@ export function NavLinks({
   /** The sheet's version: each link carries its reel number. */
   numbered?: boolean;
 }) {
-  const pathname = usePathname();
+  const pathname = navPathname(usePathname());
   return (
     <nav aria-label={label} className={className}>
       {links.map((link, index) => {

@@ -4,7 +4,7 @@ import { notFound } from "next/navigation";
 import { BlogListing } from "@/components/blog/BlogListing";
 import { keepThaiProse } from "@/components/ds/ThaiProse";
 import { BLOG_COPY, BLOG_PATH, firstPages, pageCount, parsePageParam } from "@/lib/blog";
-import { BLOG_TRAIL, listingMetadata } from "@/lib/blog-seo";
+import { BLOG_TRAIL, MISSING_METADATA, listingMetadata } from "@/lib/blog-seo";
 import { getBlogCategories, getBlogPage, orUnavailable } from "@/lib/server/blog";
 import { PAGES } from "@/lib/site";
 
@@ -15,6 +15,10 @@ import { PAGES } from "@/lib/site";
  * static and regenerated in the background (ISR) — and when a build cannot
  * reach the API, no page is prerendered without posts: the first visit
  * renders it instead.
+ *
+ * A page past the last one is a 404. Proxy answers it with the site's 404
+ * page before this route runs (lib/blog-proxy.ts); the checks here are the
+ * backstop, and metadata never throws, so a 404 can never carry a canonical.
  */
 export const revalidate = 600;
 
@@ -25,10 +29,21 @@ export async function generateStaticParams() {
   return first.ok ? firstPages(first.data.total).map((page) => ({ page })) : [];
 }
 
-export async function generateMetadata({ params }: Params): Promise<Metadata> {
+/** The page's listing; `missing` when the page number is not a page. */
+async function load(params: Params["params"]) {
   const page = parsePageParam((await params).page);
-  if (!page) notFound();
-  const list = orUnavailable(await getBlogPage({ page }), "blog listing");
+  if (!page) return { missing: true as const };
+  const [listResult, categoriesResult] = await Promise.all([getBlogPage({ page }), getBlogCategories()]);
+  const list = orUnavailable(listResult, "blog listing");
+  const categories = orUnavailable(categoriesResult, "blog categories");
+  if (list && page > 1 && page > pageCount(list.total)) return { missing: true as const };
+  return { missing: false as const, page, list, categories };
+}
+
+export async function generateMetadata({ params }: Params): Promise<Metadata> {
+  const loaded = await load(params);
+  if (loaded.missing) return MISSING_METADATA;
+  const { page, list } = loaded;
   return listingMetadata({
     path: BLOG_PATH,
     title: BLOG_COPY.title,
@@ -40,13 +55,9 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
 }
 
 export default async function BlogIndexPage({ params }: Params) {
-  const page = parsePageParam((await params).page);
-  if (!page) notFound();
-  const [listResult, categoriesResult] = await Promise.all([getBlogPage({ page }), getBlogCategories()]);
-  const list = orUnavailable(listResult, "blog listing");
-  const categories = orUnavailable(categoriesResult, "blog categories");
-  if (list && page > 1 && page > pageCount(list.total)) notFound();
-
+  const loaded = await load(params);
+  if (loaded.missing) notFound();
+  const { page, list, categories } = loaded;
   return (
     <BlogListing
       kind="all"

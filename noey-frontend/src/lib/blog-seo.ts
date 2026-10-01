@@ -83,6 +83,18 @@ export function listingMetadata(input: ListingMeta): Metadata {
   };
 }
 
+/**
+ * A blog URL that is a 404 (a post not published, an unknown category or
+ * tag, a page past the last one): the site 404 page's own metadata —
+ * `noindex`, no canonical, no prev/next, no feed link. generateMetadata
+ * returns this rather than calling notFound(), so the 404 never inherits a
+ * listing's canonical; the page itself then calls notFound().
+ */
+export const MISSING_METADATA: Metadata = {
+  title: { absolute: `ไม่พบหน้าที่ต้องการ | ${SITE_NAME}` },
+  robots: { index: false, follow: true },
+};
+
 /** The title a post's <title> uses: its meta_title, brand appended once. */
 export function postTitle(post: Pick<BlogPostSummary, "metaTitle" | "title">): string {
   const base = (post.metaTitle || post.title).trim();

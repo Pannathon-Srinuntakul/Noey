@@ -2,6 +2,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { revalidatePath, revalidateTag } from "next/cache";
 import { NextResponse, type NextRequest } from "next/server";
 import { BLOG_FEED_PATH, BLOG_PATH, REVALIDATE_MAX_SLUGS, blogPostPath, parseRevalidateSlugs } from "@/lib/blog";
+import { forgetBlogIndex } from "@/lib/blog-proxy";
 
 /**
  * POST /api/revalidate-blog — called by the backend after it publishes,
@@ -49,6 +50,8 @@ export async function POST(request: NextRequest) {
 
   // Every fetch the blog makes carries `blog`; a post's also `blog:<slug>`.
   revalidateTag("blog", { expire: 0 });
+  // Proxy's index of published posts (the 404 gate) is read again on the next request.
+  forgetBlogIndex();
   for (const slug of slugs) {
     revalidateTag(`blog:${slug}`, { expire: 0 });
     revalidatePath(blogPostPath(slug));

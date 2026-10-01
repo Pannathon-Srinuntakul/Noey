@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const cache = vi.hoisted(() => ({ revalidateTag: vi.fn(), revalidatePath: vi.fn() }));
 vi.mock("next/cache", () => cache);
+const gate = vi.hoisted(() => ({ forgetBlogIndex: vi.fn() }));
+vi.mock("@/lib/blog-proxy", () => gate);
 
 import { NextRequest } from "next/server";
 import { POST } from "@/app/api/revalidate-blog/route";
@@ -24,6 +26,7 @@ describe("POST /api/revalidate-blog", () => {
     vi.unstubAllEnvs();
     cache.revalidateTag.mockReset();
     cache.revalidatePath.mockReset();
+    gate.forgetBlogIndex.mockReset();
   });
 
   it("does not exist (404) when no secret is configured", async () => {
@@ -38,6 +41,7 @@ describe("POST /api/revalidate-blog", () => {
     }
     expect(cache.revalidateTag).not.toHaveBeenCalled();
     expect(cache.revalidatePath).not.toHaveBeenCalled();
+    expect(gate.forgetBlogIndex).not.toHaveBeenCalled();
   });
 
   it("refuses odd slugs, more than 20 of them, and a body that is not JSON (400)", async () => {
@@ -71,5 +75,10 @@ describe("POST /api/revalidate-blog", () => {
     ]) {
       expect(paths, path).toContain(path);
     }
+  });
+
+  it("drops Proxy's index of published posts, so a post just published or taken down is judged afresh", async () => {
+    expect((await POST(request({ slugs: ["a-post"] }))).status).toBe(200);
+    expect(gate.forgetBlogIndex).toHaveBeenCalledTimes(1);
   });
 });

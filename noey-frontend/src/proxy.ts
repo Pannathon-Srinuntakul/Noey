@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { blogProxy } from "@/lib/blog-proxy";
 import { newCspNonce, nonceContentSecurityPolicy, usesNonceCsp } from "@/lib/csp";
 import { isPaidTier } from "@/lib/plans";
 import { sentryDsn, sentryIngestOrigin } from "@/lib/sentry-config";
@@ -17,9 +18,10 @@ import {
 } from "@/lib/session";
 
 /**
- * Next.js 16 Proxy (formerly middleware). Runs only on the signed-in routes
- * and the two auth pages — marketing pages never pass through here and stay
- * fully static.
+ * Next.js 16 Proxy (formerly middleware). Runs only on the signed-in routes,
+ * the two auth pages and the blog — the other marketing pages never pass
+ * through here. (Passing through does not make a page dynamic: the blog's
+ * pages stay ISR; Proxy only turns a missing post into the real 404.)
  *
  *  - /account/*, /checkout/*: no session cookie -> /login?next=<page>.
  *    An expired access token is refreshed HERE, before rendering, because a
@@ -70,6 +72,8 @@ function redirectToLogin(request: NextRequest, returnTo: string, clear: boolean)
 
 export async function proxy(request: NextRequest) {
   const { pathname, search, searchParams } = request.nextUrl;
+  // The blog: a missing post or page gets the site's real 404 (lib/blog-proxy.ts).
+  if (pathname === "/blog" || pathname.startsWith("/blog/")) return blogProxy(request, API_URL);
   const access = request.cookies.get(ACCESS_COOKIE)?.value;
   const refresh = request.cookies.get(REFRESH_COOKIE)?.value;
   const hasSession = !!(access || refresh);
@@ -132,5 +136,5 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/account/:path*", "/checkout/:path*", "/login", "/signup"],
+  matcher: ["/account/:path*", "/checkout/:path*", "/login", "/signup", "/blog", "/blog/:path*"],
 };
