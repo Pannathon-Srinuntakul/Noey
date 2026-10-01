@@ -43,6 +43,8 @@ they have**, and more.
   product images come from the user.
 - Infographic numbers must come from the speech or the user's brief — the AI never invents data.
 - The before/after comparison layout in Kitti's ad is marketing, not a feature to copy.
+- **Web only** (2026-10-02): the mode is built in `web/` + backend; nothing on desktop.
+  Customers use the web editor only, so this is a deliberate product scope, not parity drift.
 
 ## Mode flow
 1. **Ingest**: A-roll (talking head, one or more), b-roll folder (video, photos, screen
