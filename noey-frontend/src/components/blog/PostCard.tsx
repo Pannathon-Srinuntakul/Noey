@@ -1,7 +1,6 @@
 import Link from "next/link";
 import type { CSSProperties } from "react";
 import { keepThaiProse } from "@/components/ds/ThaiProse";
-import { formatTimecode } from "@/components/ds/timecode";
 import { BLOG_COPY, blogPostPath, type BlogCover, type BlogRef } from "@/lib/blog";
 import { formatThaiDate } from "@/lib/format";
 import { PostCover } from "./PostCover";
@@ -23,9 +22,9 @@ export interface CardPost {
  * A post in a listing, drawn as a clip in the editor's bin: its cover (or
  * its slate) as the clip's frame, the category on a track label, the title
  * as the one link that covers the whole card, the excerpt, the date and the
- * reading time — and the reading time again as the clip's length on a strip
- * at the foot, one scale for every card, so long and short reads show at a
- * glance (decoration; the words say it).
+ * reading time, drawn as the clip's length on a strip at the foot — one
+ * scale for every card, so long and short reads show at a glance (a picture
+ * of "อ่าน N นาที", never a second number).
  *
  * `feature`: the newest post, wide, at the head of the first page.
  */
@@ -84,7 +83,6 @@ export function PostCard({
         {share !== null && minutes ? (
           <span className="post-card__length" aria-hidden="true" style={{ "--len": share.toFixed(3) } as CSSProperties}>
             <span className="post-card__len-bar" />
-            <span className="tc post-card__len-tc">{formatTimecode(minutes * 60)}</span>
           </span>
         ) : null}
       </div>

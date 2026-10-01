@@ -3,7 +3,8 @@ import { Breadcrumb } from "@/components/Breadcrumb";
 import { FaqList } from "@/components/FaqList";
 import { JsonLd } from "@/components/JsonLd";
 import { ClipCard } from "@/components/ds/ClipCard";
-import { IconArrowLeft, IconArrowRight } from "@/components/ds/icons";
+import { CtaBand } from "@/components/ds/CtaBand";
+import { IconArrowLeft } from "@/components/ds/icons";
 import { PageHero } from "@/components/ds/PageHero";
 import { keepThaiProse } from "@/components/ds/ThaiProse";
 import { TimelineToc, type TocItem } from "@/components/ds/TimelineToc";
@@ -41,8 +42,8 @@ function guideLink(path: string): { path: string; label: string; note: string } 
  * One blog post, laid out like the guides (the same reading column, the
  * same timeline table of contents, the same FAQ cue list): the opening
  * answer under the title, the cover — or the post's slate — beside it, the
- * sections, then the FAQ, the call to try the product, related posts and
- * the guide pages for its category.
+ * sections, then the FAQ, related posts and the guide pages for its
+ * category, and the site's closing band with the call to try the product.
  */
 export function BlogArticle({ post }: { post: BlogPost }) {
   const parts = articleParts(post.contentMd);
@@ -155,34 +156,6 @@ export function BlogArticle({ post }: { post: BlogPost }) {
             </section>
           ) : null}
 
-          <section id="blog-cta" className="article__section blog-cta" aria-labelledby="blog-cta-title">
-            <div className="blog-cta__box">
-              <span className="blog-cta__clapper" aria-hidden="true" />
-              <div className="blog-cta__strip" aria-hidden="true">
-                <span className="blog-cta__rec" />
-                <span className="tc">TAKE 01 · YOUR FOOTAGE</span>
-              </div>
-              <h2 id="blog-cta-title" className="blog-cta__title">
-                {BLOG_COPY.ctaTitle}
-              </h2>
-              <p className="blog-cta__text">{keepThaiProse(BLOG_COPY.ctaText)}</p>
-              <div className="blog-cta__actions">
-                <Link href={PAGES.signup.path} className="btn btn-primary btn-lg" data-magnetic="" prefetch={false}>
-                  {BLOG_COPY.ctaButton}
-                  <IconArrowRight size={16} />
-                </Link>
-                <Link href={PAGES.scope.path} className="more-link" prefetch={false}>
-                  {BLOG_COPY.ctaScope}
-                  <IconArrowRight size={16} />
-                </Link>
-                <Link href={PAGES.pricing.path} className="more-link" prefetch={false}>
-                  {BLOG_COPY.ctaPricing}
-                  <IconArrowRight size={16} />
-                </Link>
-              </div>
-            </div>
-          </section>
-
           {post.related.length ? (
             <section id="related" className="article__section" aria-labelledby="related-title">
               <div className="article__cue" aria-hidden="true">
@@ -232,6 +205,29 @@ export function BlogArticle({ post }: { post: BlogPost }) {
           </div>
         </article>
       </div>
+
+      {/* "ลองใช้ Noey Studio": the site's closing band (as on the listings, /pricing and
+          /scope), with the site's own sign-up lines and the two pages to read first. */}
+      <CtaBand
+        id="blog-cta-title"
+        compact
+        title={BLOG_COPY.ctaTitle}
+        actions={
+          <>
+            <Link href={PAGES.signup.path} className="btn btn-primary btn-lg" data-magnetic="" prefetch={false}>
+              {BLOG_COPY.ctaButton}
+            </Link>
+            <Link href={PAGES.scope.path} className="btn btn-secondary btn-lg" prefetch={false}>
+              {BLOG_COPY.ctaScope}
+            </Link>
+            <Link href={PAGES.pricing.path} className="btn btn-secondary btn-lg" prefetch={false}>
+              {BLOG_COPY.ctaPricing}
+            </Link>
+          </>
+        }
+      >
+        <p>{keepThaiProse(BLOG_COPY.ctaText)}</p>
+      </CtaBand>
       <JsonLd data={postJsonLd(post, trail)} />
     </main>
   );

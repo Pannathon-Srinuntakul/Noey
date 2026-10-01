@@ -71,14 +71,20 @@ export function BlogListing({
               {BLOG_COPY.postsCount(list.total)}
               {newest ? (
                 <>
-                  <span className="stamp__sep">{" · "}</span>
+                  <span className="stamp__sep">{"\u00a0· "}</span>
                   <span className="kt stamp__more">
                     {BLOG_COPY.updated} <time dateTime={newest}>{formatThaiDate(newest)}</time>
                   </span>
                 </>
               ) : null}
             </p>
-          ) : null
+          ) : (
+            // No count to give (no post yet, or the API is down): the pill's
+            // space is kept, so every listing's hero has one height.
+            <p className="stamp stamp--reserved" aria-hidden="true">
+              {BLOG_COPY.postsCount(0)}
+            </p>
+          )
         }
       />
 

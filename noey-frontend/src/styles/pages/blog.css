@@ -26,6 +26,11 @@
   max-width: 18em;
 }
 
+/* The count pill's place, kept while there is no count to show. */
+.stamp--reserved {
+  visibility: hidden;
+}
+
 /* ── Category tracks (the filter) ───────────────────────────────────────── */
 
 .cat-rail {
@@ -272,10 +277,6 @@
   background: var(--gold);
 }
 
-.post-card__len-tc {
-  color: var(--ink-3);
-}
-
 /* The newest post: wide, its frame beside the words. */
 .post-card--feature {
   display: grid;
@@ -331,18 +332,35 @@
   overflow: hidden;
   aspect-ratio: 16 / 9;
   background:
-    repeating-linear-gradient(130deg, color-mix(in srgb, var(--color-accent) 22%, transparent) 0 10px, transparent 10px 20px) 0 0 / 100% 12px no-repeat,
+    repeating-linear-gradient(130deg, color-mix(in srgb, var(--color-neutral-800) 30%, transparent) 0 6px, transparent 6px 15px) 0 0 / 100% 12px no-repeat,
     radial-gradient(90% 80% at 30% 0%, var(--gold-soft), transparent 70%),
     var(--well);
 }
 
 .cover__img {
+  position: relative;
   display: block;
   width: 100%;
   height: 100%;
   object-fit: cover;
   /* A picture that fails shows the frame, not its alt text over it. */
   color: transparent;
+}
+
+/* A picture that fails before (or without) JavaScript: browsers draw a
+   pseudo-element on a BROKEN image only, so this covers the broken-image
+   glyph with the slate's ground. With JavaScript the slate itself replaces
+   the picture (CoverImage). */
+.cover__img::before,
+.blog-figure__img::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background:
+    repeating-linear-gradient(130deg, color-mix(in srgb, var(--color-neutral-800) 30%, transparent) 0 6px, transparent 6px 15px) 0 0 / 100% 12px no-repeat,
+    radial-gradient(90% 80% at 30% 0%, var(--gold-soft), transparent 70%),
+    var(--well);
 }
 
 .cover--hero {
@@ -367,8 +385,12 @@
 
 /* ── The slate: a post's generated cover ────────────────────────────────── */
 
+/* A real slate: chalk-light stripes on the dark board, thin, on the splice
+   angle. Gold is kept for the hinge and for the clap (hover / focus). */
 .slate {
-  --stripe: 5.2cqi;
+  --stripe: 1.5cqi;
+  --stripe-period: calc(var(--stripe) * 2.8);
+  --chalk: color-mix(in srgb, var(--color-neutral-800) 58%, transparent);
   container-type: inline-size;
   position: relative;
   display: flex;
@@ -377,7 +399,7 @@
   height: 100%;
   overflow: hidden;
   background:
-    radial-gradient(110% 90% at var(--slate-glow, 40%) -10%, color-mix(in srgb, var(--color-accent) 16%, transparent), transparent 62%),
+    radial-gradient(110% 90% at var(--slate-glow, 40%) -10%, color-mix(in srgb, var(--color-accent) 12%, transparent), transparent 62%),
     var(--well);
   color: var(--ink);
 }
@@ -390,44 +412,76 @@
 .slate__clapper {
   position: relative;
   flex: none;
-  height: 12cqi;
-  min-height: 16px;
-  max-height: 58px;
+  height: 10cqi;
+  min-height: 14px;
+  max-height: 48px;
 }
 
 .slate__stick {
   position: absolute;
   left: 0;
   right: 0;
-  height: 50%;
-  background: repeating-linear-gradient(130deg, var(--gold) 0 var(--stripe), var(--color-neutral-900) var(--stripe) calc(var(--stripe) * 2));
-  border-bottom: 1px solid color-mix(in srgb, var(--color-text) 14%, transparent);
-}
-
-/* The arm: open a little, hinged on the left. */
-.slate__stick:first-child {
-  top: 0;
-  transform-origin: 3% 100%;
-  rotate: -3.2deg;
-  translate: 0 -12%;
-  background: repeating-linear-gradient(50deg, var(--gold) 0 var(--stripe), var(--color-neutral-900) var(--stripe) calc(var(--stripe) * 2));
+  height: 46%;
+  background: repeating-linear-gradient(130deg, var(--chalk) 0 var(--stripe), var(--color-neutral-900) var(--stripe) var(--stripe-period));
+  border-bottom: 1px solid color-mix(in srgb, var(--color-text) 12%, transparent);
 }
 
 .slate__stick--base {
   bottom: 0;
 }
 
+/* The arm: open a little, hinged on the left. Its stripes run the other way. */
+.slate__stick--arm {
+  top: 4%;
+  transform-origin: 3% 100%;
+  rotate: -3.2deg;
+  translate: 0 -10%;
+  background: repeating-linear-gradient(50deg, var(--chalk) 0 var(--stripe), var(--color-neutral-900) var(--stripe) var(--stripe-period));
+}
+
+/* The clap's gold, laid over the arm and shown only while it claps. */
+.slate__stick--arm::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(50deg, var(--gold) 0 var(--stripe), var(--color-neutral-900) var(--stripe) var(--stripe-period));
+  opacity: 0;
+}
+
+.slate__hinge {
+  position: absolute;
+  left: 2.2%;
+  top: 50%;
+  width: max(6px, 1.8cqi);
+  height: max(6px, 1.8cqi);
+  translate: 0 -50%;
+  border-radius: 50%;
+  background: var(--gold);
+  box-shadow: 0 0 0 2px var(--color-neutral-900);
+}
+
 /* Picking up the card claps the slate shut: the take starts. */
 @media (prefers-reduced-motion: no-preference) {
-  .slate__stick:first-child {
-    transition: rotate 220ms var(--ease-cut), translate 220ms var(--ease-cut);
+  .slate__stick--arm {
+    transition:
+      rotate 220ms var(--ease-cut),
+      translate 220ms var(--ease-cut);
   }
 
-  .post-card:hover .slate__stick:first-child,
-  .post-card:focus-within .slate__stick:first-child {
+  .slate__stick--arm::after {
+    transition: opacity 160ms ease;
+  }
+
+  .post-card:hover .slate__stick--arm,
+  .post-card:focus-within .slate__stick--arm {
     rotate: 0deg;
     translate: 0 0;
   }
+}
+
+.post-card:hover .slate__stick--arm::after,
+.post-card:focus-within .slate__stick--arm::after {
+  opacity: 1;
 }
 
 .slate__glow {
@@ -444,74 +498,87 @@
   flex: 1;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
-  gap: 2.4cqi;
+  gap: 2.6cqi;
   min-height: 0;
-  padding: 3.4cqi 5cqi 4cqi;
+  padding: 3.2cqi 5cqi 4cqi;
 }
 
+/* PROD. … ROLL: the board's top line, chalk on the dark. */
 .slate__row {
   display: flex;
-  justify-content: space-between;
   align-items: baseline;
-  gap: 3cqi;
+  gap: 2cqi;
   padding-bottom: 1.8cqi;
   border-bottom: 1px solid var(--line-2);
-}
-
-.slate__field {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 1.8cqi;
-  min-width: 0;
 }
 
 .slate__key {
   flex: none;
   color: var(--ink-3);
-  font-size: max(9px, 2.1cqi);
+  font-size: max(11px, 2.1cqi);
+}
+
+.slate__prod {
+  color: var(--ink-2);
+  font-size: max(11px, 2.1cqi);
+}
+
+.slate__roll {
+  margin-left: auto;
+}
+
+/* A small slate (related posts) keeps the production and the roll only. */
+@container (max-width: 300px) {
+  .slate__row > .slate__key:first-child {
+    display: none;
+  }
+}
+
+/* SCENE (the category) and TAKE, the board's two big fields. */
+.slate__fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  min-height: 0;
+}
+
+.slate__field {
+  display: grid;
+  align-content: center;
+  gap: 1.2cqi;
+  min-width: 0;
+}
+
+.slate__field--take {
+  justify-items: end;
+  padding-left: 4cqi;
+  border-left: 1px solid var(--line-2);
+  align-self: stretch;
 }
 
 .slate__scene {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
   overflow: hidden;
-  color: var(--gold-ink);
-  font-size: max(11px, 3cqi);
-  font-weight: 500;
-  line-height: 1.5;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  color: var(--ink);
+  font-size: clamp(var(--fs-12), 7cqi, 44px);
+  font-weight: 600;
+  line-height: 1.35;
 }
 
 .slate__take {
-  color: var(--ink);
-  font-size: max(11px, 3cqi);
-}
-
-.slate__title {
-  align-self: center;
-  margin: 0;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
-  line-clamp: 3;
-  overflow: hidden;
-  font-size: clamp(15px, 6.3cqi, 46px);
+  color: var(--gold-ink);
+  font-size: clamp(var(--fs-12), 10cqi, 64px);
   font-weight: 600;
-  line-height: 1.4;
-  text-wrap: balance;
-}
-
-/* The track, and the take's length beside it (never over the title). */
-.slate__track {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: end;
-  gap: 2.4cqi;
+  letter-spacing: 0.02em;
 }
 
 .slate__timeline {
   position: relative;
   height: 8.5cqi;
-  min-height: 20px;
+  min-height: 18px;
   max-height: 40px;
 }
 
@@ -540,15 +607,15 @@
 }
 
 .slate__clip--0 {
-  background: color-mix(in srgb, var(--color-accent) 82%, transparent);
+  background: color-mix(in srgb, var(--color-accent) 62%, transparent);
 }
 
 .slate__clip--1 {
-  background: color-mix(in srgb, var(--color-accent) 55%, transparent);
+  background: color-mix(in srgb, var(--color-accent) 38%, transparent);
 }
 
 .slate__clip--2 {
-  background: color-mix(in srgb, var(--color-accent) 70%, transparent);
+  background: color-mix(in srgb, var(--color-accent) 50%, transparent);
 }
 
 .slate__head {
@@ -569,24 +636,6 @@
   border: 5px solid transparent;
   border-top: 6px solid var(--ink);
   border-bottom: 0;
-}
-
-.slate__tc {
-  padding-bottom: 0.6cqi;
-  color: var(--ink-3);
-  font-size: max(9px, 2cqi);
-  line-height: 1;
-}
-
-/* A card's slate is small: the title takes the room, the track stays thin. */
-.slate--card .slate__title {
-  font-size: clamp(14px, 6.8cqi, 26px);
-}
-
-.slate--hero .slate__title {
-  font-size: clamp(18px, 6.2cqi, 40px);
-  -webkit-line-clamp: 4;
-  line-clamp: 4;
 }
 
 /* ── Transport (pagination) ─────────────────────────────────────────────── */
@@ -970,6 +1019,7 @@
 }
 
 .blog-figure__img {
+  position: relative;
   display: block;
   width: 100%;
   height: auto;
@@ -1013,7 +1063,7 @@
   color: var(--ink-2);
 }
 
-/* ── Tags, the call to try it, related posts ────────────────────────────── */
+/* ── Tags and related posts ─────────────────────────────────────────────── */
 
 .blog-tags {
   display: flex;
@@ -1065,67 +1115,6 @@
 .blog-tag:hover {
   border-color: var(--gold);
   color: var(--ink);
-}
-
-.blog-cta__box {
-  position: relative;
-  overflow: hidden;
-  padding: 0 clamp(20px, 3vw, 32px) clamp(22px, 3vw, 30px);
-  border: 1px solid color-mix(in srgb, var(--color-accent) 45%, transparent);
-  border-radius: var(--r-lg);
-  background: linear-gradient(160deg, var(--gold-soft), transparent 62%), var(--panel);
-  box-shadow: var(--shadow-2), var(--rim);
-}
-
-/* The slate's clapper across the top of the box. */
-.blog-cta__clapper {
-  display: block;
-  height: 14px;
-  margin: 0 calc(-1 * clamp(20px, 3vw, 32px)) 18px;
-  background: repeating-linear-gradient(130deg, var(--gold) 0 14px, var(--color-neutral-900) 14px 28px);
-}
-
-.blog-cta__strip {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 10px;
-  color: var(--ink-3);
-}
-
-.blog-cta__rec {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--gold);
-}
-
-.blog-cta__title {
-  margin: 0 0 8px;
-  font-size: var(--fs-h3);
-  line-height: 1.45;
-}
-
-.blog-cta__text {
-  max-width: 52ch;
-  margin: 0;
-  color: var(--ink-2);
-  font-size: var(--fs-16);
-  line-height: 1.85;
-}
-
-.blog-cta__actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 14px 24px;
-  margin-top: 20px;
-}
-
-@media (max-width: 560px) {
-  .blog-cta__actions .btn {
-    width: 100%;
-  }
 }
 
 /* Related posts: rows of picture and words, inside the reading column. */

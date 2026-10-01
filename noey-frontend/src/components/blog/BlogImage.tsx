@@ -52,32 +52,3 @@ export function BlogImage({
     />
   );
 }
-
-/** A blog image filling its frame (cards: every cover cut to one shape). */
-export function BlogFillImage({
-  src,
-  alt,
-  sizes,
-  className,
-  eager = false,
-}: {
-  src: string;
-  alt: string;
-  sizes: string;
-  className?: string;
-  eager?: boolean;
-}) {
-  return (
-    <Image
-      src={src}
-      alt={alt}
-      fill
-      sizes={sizes}
-      className={className}
-      unoptimized={!isOptimizable(src)}
-      loading={eager ? "eager" : "lazy"}
-      fetchPriority={eager ? "high" : undefined}
-      decoding="async"
-    />
-  );
-}
