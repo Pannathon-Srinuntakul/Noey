@@ -209,6 +209,20 @@ was still running on this build, which would have sent the user's music to the
 server for a grid nothing here can use (the snap control is hidden). Now gated
 on `canSnapToBeat` — `useProjectPipeline.ts:603`.
 
+*Update 2026-10-01 — beat sync is back on web (owner).* The analyze stage now
+uploads the attached track to `POST /videos/{uid}/music` exactly like the
+desktop (when `beatSync` is on; a refusal — plan without music, unreadable
+file — is logged and the cut goes on without a grid), stores the grid on
+`music.beats`, and every AI cut call (analyze-video, reedit-dub-scenes,
+plan-dub) carries the song's placement (`lib/musicWindow.ts`). The wizard
+offers ตัดตามจังหวะ again (`beatSyncOffer`), and the editor's one magnet takes
+beats as targets with the ticks drawn — no separate beat-snap button.
+`canSnapToBeat` is gone. Server fix that came with it: the route used to
+analyse inside `video_outputs/<uid>/music/` and then wipe that folder (local
+and S3) — on web that folder is the synced `music/` root holding the user's
+track. It now analyses in its own scratch dir, and `DELETE /music` only clears
+the grid.
+
 Then `mix-music` was driven four ways and the audio measured off the result:
 
 | | duration | RMS 0–2 s | RMS 3–5 s |
@@ -384,8 +398,8 @@ Every gate passes. Against the desktop app:
   most of the rest differ only by an import path. Every screen, every string.
 - **Removed on purpose**: the phone/LAN features (there is no LAN here), zoom
   effects and AI re-edit (they need `render-effects` / `render-ai-preview`,
-  not yet written), and beat snapping (a server-side analysis of a music file
-  this build deliberately never uploads). All hidden, never disabled-with-a-hint.
+  not yet written). (Beat snapping was on this list until
+  2026-10-01 — see Gate 8.) All hidden, never disabled-with-a-hint.
 - **Different by necessity**: "โฟลเดอร์เก็บงาน" is "ที่เก็บงาน" — the browser
   owns where the data lives; the login subtitle and two wizard hints no longer
   point at a phone.
@@ -713,7 +727,7 @@ by a test.
 Copy that promised things this build does not do: the login page still said
 "คลิปอยู่ในเครื่องคุณ" after the server became the home of a project's files;
 the wizard offered "ตัดตามจังหวะ" (on by default) for beat-sync that never
-runs; the progress screen promised "ใส่การซูม"; a stalled queue told a browser
+ran (it runs again since 2026-10-01 — Gate 8); the progress screen promised "ใส่การซูม"; a stalled queue told a browser
 user to run `python -m services.worker`; an export failure pointed at a log
 folder that does not exist in a browser; the microphone error sent people to OS
 settings when the fix is the site permission; and "เรนเดอร์แบบไม่มีเสียงพากย์?"

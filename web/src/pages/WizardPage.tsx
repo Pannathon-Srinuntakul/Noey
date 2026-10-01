@@ -181,8 +181,12 @@ export default function WizardPage({
    * components, the projects that get created) reads THIS, and `setState`
    * still owns what the user typed.
    */
-  const effective: WizardState =
+  const planned: WizardState =
     precisionLocked && state.precision === 'high' ? { ...state, precision: 'standard' } : state
+  // A plan without music never stages the track (see stagedMusic), so there is
+  // no beat grid to cut to — the project must not say it was beat-cut.
+  const effective: WizardState =
+    musicLocked && planned.beatSync ? { ...planned, beatSync: false } : planned
   // Pre-flight estimate (docs/token-billing-plan.md §4.1): asked as soon as
   // every chosen clip has a length, re-asked when the mode or tiers change.
   const { estimate, loading: estimating } = useUsageEstimate(session, estimateRequestFor(effective))

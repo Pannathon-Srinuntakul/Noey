@@ -217,6 +217,45 @@ async def test_music_has_the_audio_cap(small_caps):
     assert left == []
 
 
+async def test_music_analysis_never_touches_the_web_store_music(small_caps, monkeypatch):
+    # `music/` is the web build's synced root: the user's own track lives in
+    # video_outputs/<uid>/music/. Beat analysis used to write its copy there and
+    # then wipe the folder (and its S3 prefix), deleting the web user's music.
+    from packages.video import beat_analysis
+
+    seen: list[Path] = []
+
+    def fake_detect(path):
+        seen.append(Path(path))
+        return {"tempo": 120.0, "beats": [0.5, 1.0, 1.5], "durationSec": 2.0}
+
+    monkeypatch.setattr(beat_analysis, "detect_beats", fake_detect)
+    user = await make_user(email("beat"), plan="pro")
+    token = await user_token(user)
+    async with client() as c:
+        uid = await _project(c, token)
+        store = data_root() / "video_outputs" / uid / "music"
+        try:
+            store.mkdir(parents=True)
+            (store / "song.mp3").write_bytes(b"users-track")
+            r = await c.post(
+                f"/videos/{uid}/music",
+                files={"file": ("song.mp3", b"\xff" * 1024, "audio/mpeg")},
+                headers=bearer(token),
+            )
+            kept = (store / "song.mp3").read_bytes()
+            d = await c.delete(f"/videos/{uid}/music", headers=bearer(token))
+            still = (store / "song.mp3").is_file()
+        finally:
+            _cleanup(uid)
+    assert r.status_code == 201, r.text
+    assert r.json()["beats"] == [0.5, 1.0, 1.5]
+    assert kept == b"users-track"
+    assert d.status_code == 204 and still
+    # The analysis copy lived outside the store and is gone afterwards.
+    assert seen and store not in seen[0].parents and not seen[0].exists()
+
+
 async def test_a_transcode_source_has_the_clip_cap_and_keeps_no_scratch(small_caps):
     user = await make_user(email("cap"), plan="pro")
     token = await user_token(user)

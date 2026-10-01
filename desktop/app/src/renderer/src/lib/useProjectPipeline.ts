@@ -682,7 +682,10 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
         // Re-sent every run, including "ให้ AI ตัดใหม่": the local project row
         // is the source of truth for the user's tier choice.
         { engine: current.engine, precision: current.precision },
-        walletOptIn()
+        walletOptIn(),
+        // The beat grid uploaded above is in file time; this is where the
+        // song plays in the cut (PARITY #41).
+        current.music
       )
       await spendWalletOptIn()
       await patchProject({ remote: { uid: remoteUid, jobId: job_id } })
@@ -930,7 +933,8 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
         remoteUid,
         voDuration,
         live().clips.map((c) => c.durationSec),
-        walletOptIn()
+        walletOptIn(),
+        live().music
       )
       await spendWalletOptIn()
 
@@ -1891,7 +1895,8 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
       project.cutStyleUid,
       [],
       [],
-      walletOptIn()
+      walletOptIn(),
+      live().music
     )
     await spendWalletOptIn()
     const final = await pollTracked(session, job_id, (status) => {

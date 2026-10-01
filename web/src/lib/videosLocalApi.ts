@@ -7,6 +7,7 @@
 import { ApiError, connectErrorMessage, errorFromResponse } from './api'
 import { refreshOnce } from './tokenRefresh'
 import { apiFetch } from './httpClient'
+import { musicWindowBody, musicWindowFormFields, type MusicWindow } from './musicWindow'
 import {
   isWaitingSlot,
   jobStopRefusal,
@@ -183,7 +184,10 @@ export async function analyzeVideo(
   tiers?: { engine?: string; precision?: string },
   /** The user agreed to pay from the top-up balance if the plan's limits
    * cannot cover this run (docs/token-billing-design.md §9.3). */
-  allowWallet = false
+  allowWallet = false,
+  /** Where the attached track sits on the output timeline, so the server
+   * reads its stored beat grid as output time (see musicWindow.ts). */
+  music?: MusicWindow | null
 ): Promise<{ job_id: string }> {
   const manifest = proxies.map((e) => ({
     clip_id: e.clip_id,
@@ -199,7 +203,8 @@ export async function analyzeVideo(
       ...(brief?.trim() ? { brief: brief.trim() } : {}),
       ...(tiers?.engine ? { engine: tiers.engine } : {}),
       ...(tiers?.precision ? { precision: tiers.precision } : {}),
-      ...walletField(allowWallet)
+      ...walletField(allowWallet),
+      ...musicWindowFormFields(music)
     },
     formFiles: await Promise.all(
       proxies.map(async (entry) => ({
@@ -348,14 +353,17 @@ export function planDub(
   remoteUid: string,
   voDurationSec: number,
   clipDurations: number[],
-  allowWallet = false
+  allowWallet = false,
+  /** Same placement as analyzeVideo's — plan-dub aligns to the beat too. */
+  music?: MusicWindow | null
 ): Promise<DubTimeline> {
   return request(session, `/videos/${remoteUid}/plan-dub`, {
     method: 'POST',
     body: JSON.stringify({
       voDurationSec,
       clipDurations,
-      ...(allowWallet ? { allow_wallet: true } : {})
+      ...(allowWallet ? { allow_wallet: true } : {}),
+      ...musicWindowBody(music)
     })
   })
 }
@@ -517,14 +525,17 @@ export function reeditDubScenes(
   previewPath: string,
   { selectedLineIds, instruction }: { selectedLineIds: number[]; instruction: string },
   styleUid?: string,
-  allowWallet = false
+  allowWallet = false,
+  /** Placement of the attached track — see analyzeVideo. */
+  music?: MusicWindow | null
 ): Promise<{ job_id: string }> {
   return request(session, `/videos/${remoteUid}/reedit-dub-scenes`, {
     method: 'POST',
     formFields: {
       manifest: JSON.stringify({ selectedLineIds, instruction }),
       ...(styleUid ? { style_uid: styleUid } : {}),
-      ...walletField(allowWallet)
+      ...walletField(allowWallet),
+      ...musicWindowFormFields(music)
     },
     formFiles: [{ field: 'preview', path: previewPath, filename: 'edited_preview.mp4' }]
   })
