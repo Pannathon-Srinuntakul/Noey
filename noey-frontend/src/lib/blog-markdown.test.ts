@@ -3,6 +3,7 @@ import { Fragment, jsx, jsxs } from "react/jsx-runtime";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { articleParts, headingSlug, linkTarget, markdownToHast } from "./blog-markdown";
+import DATA from "./server/__fixtures__/blog.json";
 
 /** The tree as HTML, rendered by React exactly as the page renders it (minus the site's components). */
 function html(markdown: string): string {
@@ -80,6 +81,15 @@ describe("blog Markdown: the article's parts", () => {
     const image = parts.intro[0];
     expect(image.type === "element" && image.properties.dataStandalone).toBe("");
     expect(image.type === "element" && image.properties.dataEager).toBe("");
+  });
+
+  it("keeps a captioned picture's title (the figure's caption) in the fixture post that has one", () => {
+    const post = DATA.posts.find((item) => item.slug === "check-subtitle-blocks-before-render");
+    const sections = articleParts(post?.content_md ?? "").sections;
+    const image = sections.flatMap((section) => section.children).find((node) => node.type === "element" && node.tagName === "img");
+    expect(image?.type === "element" && image.properties.dataStandalone).toBe("");
+    expect(image?.type === "element" && image.properties.title).toBe("เลนคำบรรยาย: แต่ละประโยคเป็นบล็อกที่แก้ข้อความได้");
+    expect(image?.type === "element" && image.properties.alt).toBe("ภาพประกอบ เลนคำบรรยายในไทม์ไลน์ แต่ละประโยคเป็นบล็อกแยกกัน");
   });
 
   it("gives every ## and ### a unique anchor and lists them as the table of contents", () => {

@@ -1051,6 +1051,23 @@
   inset: 0;
 }
 
+/* …and its description over the frame, as FigureImage writes it with
+   JavaScript. Only a broken image gets the pseudo-element, so a picture that
+   loads never shows it; with JavaScript the failed picture is replaced by
+   the frame before this is seen. */
+.blog-figure__img::after {
+  content: attr(alt);
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  color: var(--ink-3);
+  font-size: var(--fs-13);
+  line-height: 1.6;
+  text-align: center;
+}
+
 .blog-figure__missing {
   display: grid;
   place-items: center;

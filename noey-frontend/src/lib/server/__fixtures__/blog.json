@@ -1,5 +1,5 @@
 {
-  "_comment": "Development/test fixtures for the blog (BLOG_FIXTURES=1, never in production). Shaped exactly like the public blog API in BLOG_CONTRACT.md: five published posts covering a cover image, no cover, no FAQ and a long title. Image URLs use the reserved .invalid domain so a fixture never requests anything from a real server.",
+  "_comment": "Development/test fixtures for the blog (BLOG_FIXTURES=1, never in production). Shaped exactly like the public blog API in BLOG_CONTRACT.md: six published posts covering a cover image, no cover, no FAQ, a long title and a captioned picture in the body. Image URLs use the reserved .invalid domain so a fixture never requests anything from a real server.",
   "categories": [
     { "slug": "editing-tips", "name": "เทคนิคตัดต่อ", "description": "วิธีตัดคลิปสั้นให้เร็วและดูลื่น ตั้งแต่ถ่ายจนถึงเกลาไทม์ไลน์" },
     { "slug": "subtitles-audio", "name": "ซับไทยและเสียง", "description": "ซับไทย การถอดเสียง เสียงพากย์ และเพลงประกอบในคลิปสั้น" },
@@ -136,6 +136,29 @@
       "reading_minutes": 2,
       "published_at": "2026-09-20T01:00:00Z",
       "updated_at": "2026-09-20T01:00:00Z"
+    },
+    {
+      "slug": "check-subtitle-blocks-before-render",
+      "title": "อ่านซับทีละบล็อกก่อนเรนเดอร์",
+      "meta_title": "อ่านซับทีละบล็อกก่อนเรนเดอร์ | Noey Studio",
+      "meta_description": "ซับมาจากการถอดเสียงพร้อมเวลาของแต่ละคำ ก่อนเรนเดอร์ให้อ่านทีละบล็อกในไทม์ไลน์ แล้วแก้ชื่อแบรนด์ ตัวเลข และคำทับศัพท์",
+      "excerpt": "อ่านซับทีละบล็อกในเลนคำบรรยาย ฟังเทียบกับข้อความ แล้วแก้คำเฉพาะก่อนเรนเดอร์ การแก้ข้อความในไทม์ไลน์ไม่กินโควตา",
+      "content_md": "ก่อนเรนเดอร์ ให้อ่านซับทีละบล็อกในเลนคำบรรยายของไทม์ไลน์ ซับมาจากการถอดเสียงพร้อมเวลาของแต่ละคำ จึงตรงกับสิ่งที่พูดเกือบทั้งหมด แต่คำเฉพาะอย่างชื่อแบรนด์และตัวเลขยังต้องให้คนอ่านทวน\n\n## อ่านทีละบล็อก\n\nแต่ละประโยคในเลนคำบรรยายเป็นบล็อกแยกกัน อ่านทีละบล็อกเทียบกับเสียงในคลิป ถ้าคำไหนไม่ตรงกับที่พูด แก้ข้อความในบล็อกนั้นได้เลย\n\n![ภาพประกอบ เลนคำบรรยายในไทม์ไลน์ แต่ละประโยคเป็นบล็อกแยกกัน](https://media.fixture.invalid/blog/5c1d0b7e2f9a4c3e8b6d1a7f0e2c9b4d6a8f3e1c7b5d9a2e4f6c8b0d1e3a5c7f.webp \"เลนคำบรรยาย: แต่ละประโยคเป็นบล็อกที่แก้ข้อความได้\")\n\n## คำที่ควรตรวจ\n\n- ชื่อแบรนด์และชื่อรุ่น\n- ราคาและตัวเลข\n- คำทับศัพท์\n\nการแก้ข้อความในไทม์ไลน์ไม่กินโควตา แก้กี่ครั้งก็ได้ก่อนเรนเดอร์ อ่านเรื่องการจัดบรรทัดและตำแหน่งซับต่อได้ใน[คู่มือใส่ซับไทยอัตโนมัติ](/guide/thai-subtitles)",
+      "cover_image_url": null,
+      "cover_alt": null,
+      "cover_width": null,
+      "cover_height": null,
+      "category": { "slug": "subtitles-audio", "name": "ซับไทยและเสียง" },
+      "tags": [
+        { "slug": "subtitles", "name": "ซับไทย" },
+        { "slug": "timeline", "name": "ไทม์ไลน์" }
+      ],
+      "faq": [],
+      "author": "Noey Studio",
+      "source": "human",
+      "reading_minutes": 2,
+      "published_at": "2026-09-18T04:00:00Z",
+      "updated_at": "2026-09-18T04:00:00Z"
     }
   ]
 }

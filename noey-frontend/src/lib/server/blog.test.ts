@@ -119,14 +119,16 @@ describe("fixtures (BLOG_FIXTURES)", () => {
     vi.unstubAllGlobals();
   });
 
-  it("are five posts in the contract's exact shape: a cover, no cover, no FAQ, a long title", () => {
-    expect(DATA.posts).toHaveLength(5);
+  it("are six posts in the contract's exact shape: a cover, no cover, no FAQ, a long title, a captioned picture", () => {
+    expect(DATA.posts).toHaveLength(6);
     const posts = DATA.posts.map((post) => mapPost(post, "https://api.noeystudio.com/blog/media"));
     expect(posts.every(Boolean)).toBe(true);
     expect(posts.some((post) => post?.cover)).toBe(true);
     expect(posts.some((post) => !post?.cover)).toBe(true);
     expect(posts.some((post) => post?.faq.length === 0)).toBe(true);
     expect(posts.some((post) => (post?.title.length ?? 0) > 100)).toBe(true);
+    // A picture alone in its paragraph, with a title: drawn as a figure with a caption.
+    expect(DATA.posts.some((post) => /^!\[[^\]]+\]\(\S+ "[^"]+"\)$/m.test(post.content_md))).toBe(true);
     for (const post of DATA.posts) {
       expect(Object.keys(post).sort()).toEqual(
         [
@@ -147,7 +149,7 @@ describe("fixtures (BLOG_FIXTURES)", () => {
     vi.stubEnv("BLOG_FIXTURES", "1");
     expect(blogFixtureMode()).toBe("posts");
     const page = await getBlogPage();
-    expect(page.ok && page.data.total).toBe(5);
+    expect(page.ok && page.data.total).toBe(6);
     const post = await getBlogPost(POST.slug);
     expect(post.ok && post.data?.related.length).toBeGreaterThan(0);
     vi.stubEnv("BLOG_FIXTURES", "empty");

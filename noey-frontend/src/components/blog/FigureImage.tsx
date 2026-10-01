@@ -54,7 +54,12 @@ export function FigureImage({
         style={sized ? ({ "--figure-ratio": `${width} / ${height}` } as CSSProperties) : undefined}
         {...(alt ? { role: "img", "aria-label": alt } : { "aria-hidden": true })}
       >
-        {alt ? <span className="blog-figure__missing-text">{alt}</span> : null}
+        {/* Seen, not read twice: the frame's own name is the description. */}
+        {alt ? (
+          <span className="blog-figure__missing-text" aria-hidden="true">
+            {alt}
+          </span>
+        ) : null}
       </span>
     );
   }
