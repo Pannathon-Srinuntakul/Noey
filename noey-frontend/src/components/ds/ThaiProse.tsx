@@ -102,6 +102,25 @@ function tokenize(text: string, tokens: Token[]) {
 }
 
 export function keepThaiProse(source: string): ReactNode {
+  const runs = thaiProseRuns(source);
+  if (runs.length === 1 && !runs[0].keep) return runs[0].text;
+  return runs.map((run, index) =>
+    run.keep ? (
+      <span key={index} className="kt">
+        {run.text}
+      </span>
+    ) : (
+      <Fragment key={index}>{run.text}</Fragment>
+    ),
+  );
+}
+
+/**
+ * keepThaiProse's decision as data: the text in runs, `keep` for a run that
+ * must not break inside. Lets output that is not built here (the blog's
+ * Markdown tree) wrap the same runs in the same `.kt` spans.
+ */
+export function thaiProseRuns(source: string): { text: string; keep: boolean }[] {
   const text = glueMarks(source);
   const tokens: Token[] = [];
   for (const part of keepSegments(text)) {
@@ -139,14 +158,5 @@ export function keepThaiProse(source: string): ReactNode {
       runs.push({ text: token.text, keep: token.keep });
     }
   }
-  if (runs.length === 1 && !runs[0].keep) return text;
-  return runs.map((run, index) =>
-    run.keep ? (
-      <span key={index} className="kt">
-        {run.text}
-      </span>
-    ) : (
-      <Fragment key={index}>{run.text}</Fragment>
-    ),
-  );
+  return runs;
 }
