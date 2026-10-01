@@ -4,6 +4,7 @@ import { useActionState } from "react";
 import { startPlanAction } from "@/app/actions/billing";
 import type { ActionState } from "@/lib/messages";
 import type { PaidTier } from "@/lib/plans";
+import { PendingButton } from "./ui/PendingButton";
 
 /**
  * A paid-plan button. The Server Action decides where it goes (signup, or
@@ -25,14 +26,14 @@ export function PlanButton({
   return (
     <form action={action} className="plan-form">
       <input type="hidden" name="plan" value={tier} />
-      <button
-        type="submit"
+      <PendingButton
         className={`btn ${primary ? "btn-primary" : "btn-secondary"} btn-block`}
         disabled={disabled || pending}
-        aria-busy={pending || undefined}
+        busy={pending}
+        busyLabel="กำลังดำเนินการ…"
       >
-        {pending ? "กำลังดำเนินการ…" : label}
-      </button>
+        {label}
+      </PendingButton>
       {state?.error ? (
         <p className="form-error" role="alert">
           {state.error}

@@ -10,6 +10,7 @@ import {
 } from "@/app/actions/billing";
 import { BETA_BADGE, BETA_DISCOUNT_PERCENT } from "@/lib/beta";
 import type { ActionState } from "@/lib/messages";
+import { PendingButton } from "../ui/PendingButton";
 import type { PaidTier } from "@/lib/plans";
 import { Dialog } from "../ui/Dialog";
 import { keepThai } from "../ds/ThaiText";
@@ -244,9 +245,9 @@ export function BillingPanel(props: BillingPanelProps) {
           ) : null}
           {hasLiveSubscription && cancelScheduled ? (
             <form action={resumeAction}>
-              <button type="submit" className="btn btn-secondary" disabled={!billingEnabled || resumePending}>
-                {resumePending ? "กำลังดำเนินการ…" : "ใช้แพลนนี้ต่อ"}
-              </button>
+              <PendingButton className="btn btn-secondary" disabled={!billingEnabled || resumePending} busy={resumePending} busyLabel="กำลังดำเนินการ…">
+                ใช้แพลนนี้ต่อ
+              </PendingButton>
             </form>
           ) : null}
         </div>
@@ -300,9 +301,9 @@ export function BillingPanel(props: BillingPanelProps) {
             <dt>ใบเสร็จย้อนหลัง</dt>
             <dd>
               <form action={portalAction} className="inline-form">
-                <button type="submit" className="link-button" disabled={!billingEnabled || portalPending}>
-                  {portalPending ? "กำลังเปิด…" : "ดูรายการ"}
-                </button>
+                <PendingButton className="link-button" disabled={!billingEnabled || portalPending} busy={portalPending} busyLabel="กำลังเปิด…">
+                  ดูรายการ
+                </PendingButton>
               </form>
             </dd>
           </div>
@@ -311,9 +312,14 @@ export function BillingPanel(props: BillingPanelProps) {
         {!hasCustomer ? <p className="meter-note acct-pay__note">{keepThai("บัตรจะผูกกับบัญชีตอนชำระเงินครั้งแรก")}</p> : null}
         {hasCustomer ? (
           <form action={portalAction} className="inline-form">
-            <button type="submit" className="btn btn-secondary acct-pay__btn" disabled={!billingEnabled || portalPending}>
+            <PendingButton
+              className="btn btn-secondary acct-pay__btn"
+              disabled={!billingEnabled || portalPending}
+              busy={portalPending}
+              busyLabel={cardLabel ? "เปลี่ยนบัตร" : "เพิ่มบัตรเครดิต"}
+            >
               {cardLabel ? "เปลี่ยนบัตร" : "เพิ่มบัตรเครดิต"}
-            </button>
+            </PendingButton>
           </form>
         ) : (
           <button
@@ -412,9 +418,9 @@ export function BillingPanel(props: BillingPanelProps) {
             <button type="button" className="btn btn-secondary" onClick={() => setUpgradeOpen(false)}>
               ยกเลิก
             </button>
-            <button type="submit" className="btn btn-primary" disabled={!canSubmit || planPending} aria-busy={planPending || undefined}>
-              {planPending ? "กำลังไปหน้าชำระเงิน…" : "ไปหน้าชำระเงิน"}
-            </button>
+            <PendingButton className="btn btn-primary" disabled={!canSubmit || planPending} busy={planPending} busyLabel="กำลังไปหน้าชำระเงิน…">
+              ไปหน้าชำระเงิน
+            </PendingButton>
           </div>
         </form>
       </Dialog>
@@ -447,9 +453,9 @@ export function BillingPanel(props: BillingPanelProps) {
             <button type="button" className="btn btn-secondary" onClick={() => setCancelOpen(false)}>
               ใช้ต่อ
             </button>
-            <button type="submit" className="btn btn-ghost" disabled={cancelPending} aria-busy={cancelPending || undefined}>
-              {cancelPending ? "กำลังยกเลิก…" : "ยืนยันยกเลิก"}
-            </button>
+            <PendingButton className="btn btn-ghost" disabled={cancelPending} busy={cancelPending} busyLabel="กำลังยกเลิก…">
+              ยืนยันยกเลิก
+            </PendingButton>
           </div>
         </form>
       </Dialog>

@@ -5,6 +5,7 @@ import { deleteAccountAction, type DeleteAccountState } from "@/app/actions/acco
 import { formatBahtFromSatang } from "@/lib/google-auth";
 import { GoogleButton } from "../auth/GoogleButton";
 import { Dialog } from "../ui/Dialog";
+import { PendingButton } from "../ui/PendingButton";
 import { keepThai } from "../ds/ThaiText";
 
 /** What goes and what stays — kept in step with backend packages/auth/account_deletion.py. */
@@ -181,14 +182,14 @@ export function DeleteAccount({
               <button type="button" className="btn btn-secondary" onClick={() => setOpen(false)}>
                 ยกเลิก
               </button>
-              <button
-                type="submit"
+              <PendingButton
                 className="btn btn-danger"
                 disabled={pending || !understood || (walletSatang !== undefined && !forfeit)}
-                aria-busy={pending || undefined}
+                busy={pending}
+                busyLabel="กำลังลบบัญชี…"
               >
-                {pending ? "กำลังลบบัญชี…" : "ลบบัญชีถาวร"}
-              </button>
+                ลบบัญชีถาวร
+              </PendingButton>
             </div>
           </form>
         )}

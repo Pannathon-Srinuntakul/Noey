@@ -4,6 +4,7 @@ import { useActionState, useState } from "react";
 import { forgotPasswordAction, loginAction } from "@/app/actions/auth";
 import type { ActionState } from "@/lib/messages";
 import { Dialog } from "../ui/Dialog";
+import { PendingButton } from "../ui/PendingButton";
 import { submitKeepingValues } from "./keepValues";
 import { SearchParam } from "./SearchParam";
 import { TURNSTILE_SITE_KEY, TurnstileWidget } from "./TurnstileWidget";
@@ -48,9 +49,9 @@ function ForgotPasswordDialog({ open, onClose }: { open: boolean; onClose: () =>
         </div>
         {/* One action: the dialog closes with its ✕ or Escape. */}
         <div className="dialog-actions" style={{ marginTop: 22 }}>
-          <button type="submit" className="btn btn-primary" disabled={pending} aria-busy={pending || undefined}>
-            {pending ? "กำลังส่ง…" : "ส่งลิงก์"}
-          </button>
+          <PendingButton className="btn btn-primary" disabled={pending} busy={pending} busyLabel="กำลังส่ง…">
+            ส่งลิงก์
+          </PendingButton>
         </div>
       </form>
     </Dialog>
@@ -116,9 +117,9 @@ export function LoginForm() {
             <span>{state.error}</span>
           </p>
         ) : null}
-        <button type="submit" className="btn btn-primary btn-block btn-lg" disabled={pending} aria-busy={pending || undefined}>
-          {pending ? "กำลังเข้าสู่ระบบ…" : "เข้าสู่ระบบ"}
-        </button>
+        <PendingButton className="btn btn-primary btn-block btn-lg" disabled={pending} busy={pending} busyLabel="กำลังเข้าสู่ระบบ…">
+          เข้าสู่ระบบ
+        </PendingButton>
       </form>
 
       <SearchParam

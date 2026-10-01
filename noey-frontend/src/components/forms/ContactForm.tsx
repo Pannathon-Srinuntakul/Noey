@@ -5,6 +5,7 @@ import { CONTACT_LIMITS, HONEYPOT_FIELD, type ContactFieldErrors } from "@/lib/c
 import { MSG } from "@/lib/messages";
 import { keepThai } from "../ds/ThaiText";
 import { SearchParam } from "./SearchParam";
+import { PendingButton } from "../ui/PendingButton";
 import { TURNSTILE_SITE_KEY, TurnstileWidget } from "./TurnstileWidget";
 
 type Outcome = "sent" | "invalid" | "rate-limited" | "unavailable" | "captcha" | "error";
@@ -173,9 +174,9 @@ export function ContactForm({ contactEmail }: { contactEmail: string }) {
         <input id="c-company" name={HONEYPOT_FIELD} type="text" tabIndex={-1} autoComplete="off" />
       </div>
       <TurnstileWidget siteKey={TURNSTILE_SITE_KEY} resetKey={status.kind === "done" ? status : undefined} lazy />
-      <button type="submit" className="btn btn-primary btn-block btn-lg" disabled={sending} aria-busy={sending || undefined}>
-        {sending ? "กำลังส่ง…" : "ส่งข้อความ"}
-      </button>
+      <PendingButton className="btn btn-primary btn-block btn-lg" disabled={sending} busy={sending} busyLabel="กำลังส่ง…">
+        ส่งข้อความ
+      </PendingButton>
       <div aria-live="polite">
         {status.kind === "done" ? <OutcomeMessage outcome={status.outcome} contactEmail={contactEmail} /> : null}
         {/* Outcome of a no-JavaScript submit, echoed back as /about?contact=<outcome>. */}

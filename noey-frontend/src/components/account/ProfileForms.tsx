@@ -5,6 +5,7 @@ import { changeEmailAction, changePasswordAction, updateProfileAction } from "@/
 import { notifyAuthChanged } from "@/lib/client/auth-hint";
 import type { ActionState } from "@/lib/messages";
 import { keepThai } from "../ds/ThaiText";
+import { PendingButton } from "../ui/PendingButton";
 
 /** A form turns its submit gold once something in it was edited (account.css). */
 const markDirty = (event: React.FormEvent<HTMLFormElement>) => event.currentTarget.setAttribute("data-dirty", "");
@@ -54,9 +55,9 @@ export function ProfileForm({ name }: { name: string }) {
         />
         {errors.name ? <p className="field-error" id="a-name-error">{errors.name}</p> : null}
       </div>
-      <button type="submit" className="btn btn-primary acct-form__submit" disabled={pending}>
-        {pending ? "กำลังบันทึก…" : "บันทึกการแก้ไข"}
-      </button>
+      <PendingButton className="btn btn-primary acct-form__submit" disabled={pending} busy={pending} busyLabel="กำลังบันทึก…">
+        บันทึกการแก้ไข
+      </PendingButton>
       <Feedback state={state} />
     </form>
   );
@@ -115,9 +116,9 @@ export function EmailForm({ email }: { email: string }) {
           </p>
         )}
       </div>
-      <button type="submit" className="btn btn-primary acct-form__submit" disabled={pending}>
-        {pending ? "กำลังส่ง…" : "เปลี่ยนอีเมล"}
-      </button>
+      <PendingButton className="btn btn-primary acct-form__submit" disabled={pending} busy={pending} busyLabel="กำลังส่ง…">
+        เปลี่ยนอีเมล
+      </PendingButton>
       <Feedback state={state} />
     </form>
   );
@@ -177,9 +178,9 @@ export function PasswordForm() {
           </p>
         )}
       </div>
-      <button type="submit" className="btn btn-primary acct-form__submit" disabled={pending}>
-        {pending ? "กำลังเปลี่ยน…" : "เปลี่ยนรหัสผ่าน"}
-      </button>
+      <PendingButton className="btn btn-primary acct-form__submit" disabled={pending} busy={pending} busyLabel="กำลังเปลี่ยน…">
+        เปลี่ยนรหัสผ่าน
+      </PendingButton>
       <Feedback state={state} />
     </form>
   );
