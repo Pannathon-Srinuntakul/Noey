@@ -21,7 +21,7 @@
  * header carries progress ticks and a counter, where Dialog's is a 2xl title
  * block — the panel styling below is copied from it so the two still match.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Film, X } from 'lucide-react'
 import type { LocalClip } from '@renderer/platform/types'
@@ -44,6 +44,7 @@ import {
   type ShotWindow,
   type SwapChoice
 } from '../../lib/shotSwap'
+import { NOTE_LINE_H, NOTE_TOGGLE_H, noteFold, shotFrameSize } from '../../lib/shotSwapLayout'
 import { Button } from '../ui/Button'
 
 const num = (v: unknown): number => {
@@ -51,26 +52,7 @@ const num = (v: unknown): number => {
   return Number.isFinite(n) ? n : 0
 }
 
-/** Tallest a frame ever gets; below that it shrinks with the window so the row
- * never scrolls — comparing is the whole job, every option must be on screen. */
-const FRAME_MAX_H = 470
-/** Smallest a frame may shrink to before the body is allowed to scroll instead:
- * under this the shots are too small to judge, which is the only reason to be
- * on this screen. */
-const FRAME_MIN_H = 200
-/** The two centred caption lines under every frame (label + note), plus the
- * row's own bottom padding. Constant by construction: both are single lines,
- * and it is subtracted for a shot with no options too, so the frame does not
- * change size as you step between shots that have backups and shots that do
- * not. */
-const LABEL_BLOCK_H = 62
-/** pt-[26px] on the body plus the mt-[22px] above the row. */
-const BODY_PAD_H = 26 + 22
-/** px-6 on the body. */
-const BODY_SIDE_PAD = 24
-/** sm:gap-5 between the cards. */
-const CARD_GAP = 20
-/** Capture height for the stills. Comfortably above FRAME_MAX_H so a HiDPI
+/** Capture height for the stills. Comfortably above the 470px frame so a HiDPI
  * screen still gets real pixels rather than an upscale. */
 const THUMB_H = 960
 
@@ -343,6 +325,78 @@ function OptionFrame({
   )
 }
 
+/** Note room for the phone layout, where the cards scroll sideways and the
+ * frame is not sized from the body: three lines and the toggle. */
+const NARROW_NOTE_ROOM = NOTE_LINE_H * 3 + NOTE_TOGGLE_H
+
+/**
+ * The note under an option, in full: wrapped onto as many lines as it needs
+ * (Thai breaks between words — never `break-all`), not cut to one line with an
+ * ellipsis, which made the AI's reason for each option unreadable (owner
+ * screenshot 2026-10-01: "ยืนโพสโชว์แจ็คเก็ตบอมเบอร์สีน้ำตา…").
+ *
+ * It shows whole whenever it fits in the room under the frame. Only a note
+ * longer than that folds, to the lines that leave room for a ดูเพิ่ม toggle
+ * (lib/shotSwapLayout noteFold) — measured, since where Thai wraps depends on
+ * the card's width. Either way the text only grows downward: the card's width
+ * is fixed and the frame above it keeps its own aspect ratio, so no note can
+ * resize a shot.
+ */
+function CardNote({ text, roomPx }: { text: string; roomPx: number }): React.JSX.Element | null {
+  const ref = useRef<HTMLParagraphElement | null>(null)
+  const [expanded, setExpanded] = useState(false)
+  /** The note's full wrapped height — a clamped paragraph still reports it
+   * as its scrollHeight. */
+  const [naturalPx, setNaturalPx] = useState(0)
+
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const measure = (): void => setNaturalPx(el.scrollHeight)
+    measure()
+    // The card's width follows the window, and with it where the lines break.
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [text])
+
+  if (!text) return null
+  const fold = noteFold(naturalPx, roomPx)
+  return (
+    <>
+      <p
+        ref={ref}
+        className="mt-[3px] text-center text-[13.5px] leading-[1.6] break-words text-muted"
+        style={
+          fold.folded && !expanded
+            ? {
+                display: '-webkit-box',
+                WebkitBoxOrient: 'vertical',
+                WebkitLineClamp: fold.lines,
+                overflow: 'hidden'
+              }
+            : undefined
+        }
+      >
+        {text}
+      </p>
+      {fold.folded ? (
+        <button
+          type="button"
+          // The review's keyboard handler leaves Enter/Space on this button
+          // alone, so the toggle works from the keyboard too.
+          data-note-toggle
+          aria-expanded={expanded}
+          onClick={() => setExpanded((v) => !v)}
+          className="self-center rounded-sm text-[13px] leading-[1.4] text-ink-2 underline underline-offset-2 hover:text-ink"
+        >
+          {expanded ? 'ย่อ' : 'ดูเพิ่ม'}
+        </button>
+      ) : null}
+    </>
+  )
+}
+
 interface Option {
   /** null = the shot in use now; else an index into `swapCandidates(seg)`. */
   altIndex: number | null
@@ -437,20 +491,16 @@ export function ShotSwapReview({
   // resize a frame), the width is whatever that height allows at 9:16, and the
   // width is then capped so N cards still fit side by side on a narrow window.
   // Only the wrapper's width is set: the frame's own `aspect-[9/16]` derives
-  // the height from it, so the shot can never be squeezed out of ratio.
-  const cardCount = Math.max(1, options.length)
-  const frameH =
-    bodyBox.height > 0
-      ? Math.max(
-          FRAME_MIN_H,
-          Math.min(FRAME_MAX_H, bodyBox.height - headBox.height - BODY_PAD_H - LABEL_BLOCK_H)
-        )
-      : FRAME_MAX_H
-  const widthCap =
-    bodyBox.width > 0
-      ? (bodyBox.width - BODY_SIDE_PAD * 2 - CARD_GAP * (cardCount - 1)) / cardCount
-      : Infinity
-  const frameW = Math.max(120, Math.floor(Math.min((frameH * 9) / 16, widthCap)))
+  // the height from it, so the shot can never be squeezed out of ratio. No
+  // note is an input here: what is left under the frame (`noteRoomPx`) is
+  // where the notes fit, and a longer one folds or scrolls — it never takes
+  // size from a frame (lib/shotSwapLayout).
+  const { frameW, noteRoomPx } = shotFrameSize({
+    bodyW: bodyBox.width,
+    bodyH: bodyBox.height,
+    headH: headBox.height,
+    cardCount: options.length
+  })
   /** Below `sm` the CSS drives the size; from it up the measurement does. */
   const frameStyle = wide ? { width: frameW } : undefined
 
@@ -584,9 +634,15 @@ export function ShotSwapReview({
   // reaches the screen behind it (R17b.3).
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent): void => {
-      const tag = (e.target as HTMLElement | null)?.tagName
+      const target = e.target as HTMLElement | null
+      const tag = target?.tagName
       if (tag === 'INPUT' || tag === 'TEXTAREA') return
       e.stopPropagation()
+      // A note's ดูเพิ่ม/ย่อ toggle: Enter and Space press the button, not
+      // "next shot" / "next option".
+      if ((e.key === 'Enter' || e.code === 'Space') && target?.closest('[data-note-toggle]')) {
+        return
+      }
       if (e.key === 'Escape') {
         requestClose()
         return
@@ -779,7 +835,7 @@ export function ShotSwapReview({
                           // card: the height then follows the 9:16 source. The
                           // old `sm:h-[min(470px,56dvh)]` was viewport math the
                           // body could not honour, so the cards were clipped.
-                          'relative aspect-[9/16] w-full overflow-hidden rounded-[5px] bg-media outline-none transition-colors duration-state ease-out',
+                          'relative aspect-[9/16] w-full shrink-0 overflow-hidden rounded-[5px] bg-media outline-none transition-colors duration-state ease-out',
                           // One accent border, never a border plus a ring —
                           // stacked rings read as two overlapping edges.
                           chosen
@@ -815,9 +871,13 @@ export function ShotSwapReview({
                       >
                         {opt.label}
                       </p>
-                      <p className="mt-[3px] truncate text-center text-[13.5px] text-muted">
-                        {opt.disabledReason ?? opt.note}
-                      </p>
+                      {/* Keyed per shot: stepping to the next shot folds a
+                          note that was opened on this one. */}
+                      <CardNote
+                        key={`${segIndex}:${i}`}
+                        text={opt.disabledReason ?? opt.note}
+                        roomPx={wide ? noteRoomPx : NARROW_NOTE_ROOM}
+                      />
                     </div>
                   )
                 })}
