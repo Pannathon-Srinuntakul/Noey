@@ -361,7 +361,8 @@ def to_webp(png: bytes) -> tuple[bytes, int, int]:
         img.load()
         if img.size != (WIDTH, HEIGHT):
             raise CoverError(f"The renderer returned {img.size[0]}×{img.size[1]} instead of {WIDTH}×{HEIGHT}.", code="render_failed")
-        has_alpha = img.mode in ("RGBA", "LA") and img.getextrema()[-1][0] < 255
+        alpha = img.getextrema()[-1] if img.mode in ("RGBA", "LA") else None
+        has_alpha = isinstance(alpha, tuple) and alpha[0] < 255
         clean = img.convert("RGBA" if has_alpha else "RGB")
         out = io.BytesIO()
         clean.save(out, format="WEBP", quality=WEBP_QUALITY, method=6)
