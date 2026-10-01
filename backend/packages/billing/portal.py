@@ -41,6 +41,16 @@ def portal_features(price_ids: dict[str, str]) -> ConfigurationCreateParamsFeatu
             "proration_behavior": "always_invoice",
             # Downgrades (a cheaper item amount): scheduled for period end.
             "schedule_at_period_end": {"conditions": [{"type": "decreasing_item_amount"}]},
-            "billing_cycle_anchor": "unchanged",
+            # An upgrade starts a NEW cycle today (owner, 2026-10-01 — "like
+            # Claude"): the unused part of the old plan is credited, the new
+            # plan is charged from now, and our usage windows restart at 0 on
+            # the same day (plan_change.upgrade). The docs: "Setting the value
+            # to `now` resets the subscription's billing cycle anchor to the
+            # current time" — docs.stripe.com/api/customer_portal/
+            # configurations/create (features.subscription_update.
+            # billing_cycle_anchor), fetched 2026-10-01. A downgrade is
+            # scheduled at period end, where the anchor lands on the renewal
+            # day anyway.
+            "billing_cycle_anchor": "now",
         },
     }

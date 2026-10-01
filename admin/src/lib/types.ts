@@ -71,6 +71,9 @@ export interface LimitFacts {
   wallet_balance_satang: number;
   pending_plan: { plan: string; at: string | null } | null;
   grace_until: string | null;
+  /** Tokens charged past 100 % of `overage_window`, carried into its next period (Free: the first paid one). */
+  overage_tokens?: number;
+  overage_window?: WindowKey | "lifetime" | null;
 }
 
 export interface UserFacts extends Partial<LimitFacts> {

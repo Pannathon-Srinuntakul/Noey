@@ -34,6 +34,14 @@ async def _paid_run(plan: str = "lite", tokens: int = 10_000) -> tuple[int, str,
         return uid, str(run.id), job_id
 
 
+async def _burn(run_id: str, tokens: int) -> None:
+    """One recorded vendor request, charged the way metering charges it."""
+    async with get_sessionmaker()() as s:
+        await s.execute(text("SET search_path TO core, public"))
+        await runs.charge_as_spent(s, run_id, tokens)
+        await s.commit()
+
+
 async def _run_row(run_id: str) -> dict:
     row = await db("SELECT status, outcome, charged_tokens FROM core.ai_runs WHERE id = :r", r=run_id)
     return {"status": row[0][0], "outcome": row[0][1], "charged": row[0][2]}
@@ -58,7 +66,7 @@ async def test_a_finished_task_settles_what_it_used():
         meter = guard.current_meter()
         seen["ceiling"] = meter.ceiling
         seen["chain"] = tasks._chain_kwargs()
-        await db("UPDATE core.ai_runs SET actual_tokens = 4000 WHERE id = :r", r=meter.run_id)
+        await _burn(meter.run_id, 4000)
         return {"ok": True}
 
     uid, run_id, job_id = await _paid_run()
@@ -90,7 +98,7 @@ def _stt_rejected():
 async def test_a_failing_task_settles_by_whose_fault_it_was(raised, outcome, status):
     @tasks.billed_task()
     async def work(ctx, *, job_id):
-        await db("UPDATE core.ai_runs SET actual_tokens = 3000 WHERE id = :r", r=guard.current_meter().run_id)
+        await _burn(guard.current_meter().run_id, 3000)
         raise raised
 
     _, run_id, job_id = await _paid_run()
@@ -101,16 +109,16 @@ async def test_a_failing_task_settles_by_whose_fault_it_was(raised, outcome, sta
     assert row["charged"] == (0 if outcome == "our_failure" else 3000)
 
 
-async def test_a_guard_stop_ends_the_job_and_charges_at_most_the_reservation():
+async def test_a_guard_stop_ends_the_job_and_keeps_what_it_used():
     @tasks.billed_task()
     async def work(ctx, *, job_id):
-        await db("UPDATE core.ai_runs SET actual_tokens = 11500 WHERE id = :r", r=guard.current_meter().run_id)
+        await _burn(guard.current_meter().run_id, 11500)
         raise guard.RunBudgetExceeded("x")
 
     _, run_id, job_id = await _paid_run(tokens=10_000)
     out = await work({}, job_id=job_id, run_id=run_id)
     assert out == {"stopped": True, "code": "limit_stop"}
-    assert await _run_row(run_id) == {"status": "stopped", "outcome": "limit_stop", "charged": 10_000}
+    assert await _run_row(run_id) == {"status": "stopped", "outcome": "limit_stop", "charged": 11_500}
     status, result = await _job(job_id)
     assert status == "error" and result["step"] == "stopped" and result["code"] == "limit_stop"
 
@@ -125,7 +133,7 @@ async def test_running_out_of_quota_pauses_the_project_instead_of_failing_it():
 
     @tasks.billed_task()
     async def work(ctx, *, job_id, project_uid, tenant_slug):
-        await db("UPDATE core.ai_runs SET actual_tokens = 6000 WHERE id = :r", r=guard.current_meter().run_id)
+        await _burn(guard.current_meter().run_id, 6000)
         # What the task's own handler writes on its way out.
         await db(
             f"UPDATE {SHARED_DATA_SCHEMA}.video_projects SET status = 'error', error_msg = 'x' WHERE uid = :p",
@@ -156,14 +164,103 @@ async def test_running_out_of_quota_pauses_the_project_instead_of_failing_it():
     assert result["resets_at"] == runs.iso(resets)
     assert result["wallet_can_cover"] is True and result["wallet_satang"] == 4_200
     assert proj[0][0] == "paused_quota" and proj[0][1] == result["message"]
-    # Still a limit_stop for the money: charged what it burned, capped.
+    # Still a limit_stop for the money: charged what it burned.
     assert (await _run_row(run_id))["outcome"] == "limit_stop"
+
+
+async def _project_row(uid: int, job_id: str) -> str:
+    from packages.db.tenancy import SHARED_DATA_SCHEMA
+
+    project = str(uuid.uuid4())
+    await db(
+        f"INSERT INTO {SHARED_DATA_SCHEMA}.video_projects (uid, user_id, tenant_slug, mode, status, job_id, "
+        "resume_state) VALUES (:p, :u, 'default', 'dub_first', 'processing', :j, "
+        "CAST(:s AS JSONB))",
+        p=project, u=uid, j=job_id,
+        s='{"v": 1, "stage": "analyze", "kind": "analyze_video", "task": "analyze_dub_video_local", '
+          '"kwargs": {}, "media_sec": 10}',
+    )
+    return project
+
+
+async def _project_state(project: str) -> tuple:
+    from packages.db.tenancy import SHARED_DATA_SCHEMA
+
+    rows = await db(
+        f"SELECT status, error_msg, resume_state FROM {SHARED_DATA_SCHEMA}.video_projects WHERE uid = :p",
+        p=project,
+    )
+    return tuple(rows[0])
+
+
+async def test_the_call_in_flight_finishes_and_the_next_one_pauses_the_trial():
+    """Owner, 2026-10-01, end to end through the REAL meter: a Free account
+    with 10k of its credit left. The call that crosses 100 % is sent and
+    charged in full (the credit ends past 100 %, the excess recorded as
+    overage); the NEXT call is not sent — the project pauses, resumable, with
+    the trial-credit wording (no reset to wait for: upgrade)."""
+    from packages.billing import limits
+    from packages.db.tenancy import SHARED_DATA_SCHEMA
+
+    sent: list[int] = []
+
+    @tasks.billed_task()
+    async def work(ctx, *, job_id, project_uid, tenant_slug):
+        meter = guard.current_meter()
+        for _ in range(2):
+            guard.admit(meter, 50_000)  # priced far above the 10k left: sent anyway
+            sent.append(1)
+            await _burn(meter.run_id, 40_000)
+            guard.settle_call(meter, 50_000, 40_000)
+        return {"ok": True}
+
+    uid, run_id, job_id = await _paid_run(plan="free", tokens=60_000)
+    credit = limits.window_limit("free", "lifetime")
+    await db(
+        "INSERT INTO core.usage_accounts (user_id, lifetime_started_at, lifetime_used, reserved_tokens) "
+        "VALUES (:u, now(), :m, 0) ON CONFLICT (user_id) DO UPDATE SET lifetime_used = :m, lifetime_started_at = now()",
+        u=uid, m=credit - 10_000,
+    )
+    project = await _project_row(uid, job_id)
+    try:
+        out = await work({}, job_id=job_id, run_id=run_id, project_uid=project, tenant_slug="default")
+        _, result = await _job(job_id)
+        status, message, state = await _project_state(project)
+    finally:
+        await db(f"DELETE FROM {SHARED_DATA_SCHEMA}.video_projects WHERE uid = :p", p=project)
+    assert sent == [1]  # one call went out; the second was never sent
+    assert out == {"stopped": True, "paused": True, "code": "limit_reached"}
+    assert result["window"] == "lifetime" and result["resets"] is False
+    assert status == "paused_quota" and message == result["message"] and "อัปเกรด" in message
+    assert state["paused"] is True and state["task"] == "analyze_dub_video_local"
+    assert await _run_row(run_id) == {"status": "stopped", "outcome": "limit_stop", "charged": 40_000}
+    acct = await db(
+        "SELECT lifetime_used, overage_tokens, overage_window FROM core.usage_accounts WHERE user_id = :u",
+        u=uid,
+    )
+    assert tuple(acct[0]) == (credit + 30_000, 30_000, "lifetime")
+
+
+async def test_a_safety_cap_hit_is_a_retryable_failure_that_is_billed():
+    """A required answer cut off at the per-call SAFETY cap: the task's own
+    handler leaves a plain error (retryable), and the run keeps what it used
+    — no refund (owner, 2026-10-01)."""
+
+    @tasks.billed_task()
+    async def work(ctx, *, job_id):
+        await _burn(guard.current_meter().run_id, 61_000)
+        raise guard.OutputTruncated(guard.current_meter().run_id)
+
+    _, run_id, job_id = await _paid_run()
+    with pytest.raises(guard.OutputTruncated):
+        await work({}, job_id=job_id, run_id=run_id)
+    assert await _run_row(run_id) == {"status": "settled", "outcome": "safety_cap", "charged": 61_000}
 
 
 async def test_a_cancelled_task_pays_for_what_it_used():
     @tasks.billed_task()
     async def work(ctx, *, job_id):
-        await db("UPDATE core.ai_runs SET actual_tokens = 700 WHERE id = :r", r=guard.current_meter().run_id)
+        await _burn(guard.current_meter().run_id, 700)
         return {"cancelled": True}
 
     _, run_id, job_id = await _paid_run()

@@ -468,3 +468,33 @@ describe('ตัดไฮไลต์จากคลิปยาว has no lengt
     expect(row?.value).not.toMatch(/วินาที|ความยาว/)
   })
 })
+
+describe('the ตัดฉากเด่น result cap (owner, 2026-10-01)', () => {
+  const cut = (voiceover: WizardState['voiceover'], customSec: string): WizardState => ({
+    ...WIZARD_INITIAL,
+    uiMode: 'highlight',
+    voiceover,
+    duration: 'custom',
+    customSec,
+    userScript: voiceover === 'own' ? 'สคริปต์' : '',
+    files: [fileOf('a', 600)]
+  })
+
+  it('refuses more than 5 minutes for the single-call video cut', () => {
+    for (const vo of ['ai', 'none', 'own'] as const) {
+      expect(outcomeStepGate(cut(vo, '300'))).toEqual({ ok: true })
+      const refused = outcomeStepGate(cut(vo, '301'))
+      expect(refused.ok).toBe(false)
+      expect(refused.ok ? '' : refused.reason).toContain('5 นาที')
+    }
+  })
+
+  it('keeps the general bound for ใช้เสียงในคลิป (speech_scenes)', () => {
+    expect(outcomeStepGate(cut('original', '600'))).toEqual({ ok: true })
+    expect(buildSubmission(cut('original', '600')).targetDurationSec).toBe(600)
+  })
+
+  it('never sends a longer target than the mode allows', () => {
+    expect(buildSubmission(cut('none', '900')).targetDurationSec).toBe(300)
+  })
+})

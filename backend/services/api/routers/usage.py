@@ -21,8 +21,8 @@ from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.billing import estimate as estimator
+from packages.billing import guard, runs, wallet
 from packages.billing import limits as plan_limits_mod
-from packages.billing import runs, wallet
 from packages.billing.accounts import get_account
 from packages.db.models.core_auth import User
 from packages.db.models.llm_usage import LlmUsageLog
@@ -178,6 +178,11 @@ class EstimateIn(BaseModel):
     clips: list[EstimateClip] = Field(default_factory=list, max_length=60)
     #: Seconds of audio to transcribe, when it differs from the clips'.
     audio_sec: float | None = Field(default=None, ge=0, le=12 * 3600)
+    #: What the user asked the cut to be (estimate e4 — the answer's size
+    #: follows it): the requested result length and the voiceover script.
+    #: Same bounds as ``POST /videos/local``.
+    target_duration_sec: int | None = Field(default=None, ge=0, le=600)
+    user_script: str | None = Field(default=None, max_length=20_000)
 
 
 @router.post("/estimate")
@@ -207,6 +212,9 @@ async def estimate_usage(
             precision=body.precision,
             clip_secs=[c.duration_sec for c in body.clips],
             audio_sec=audio,
+            # speech_highlights takes no target (videos_local drops it).
+            target_sec=None if body.mode == "speech_highlights" else body.target_duration_sec,
+            script=body.user_script,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail="ไม่รู้จักโหมดงานนี้") from exc
@@ -214,7 +222,8 @@ async def estimate_usage(
     user = auth.user
     if plan_limits_mod.is_unlimited(user):
         return {
-            "fits": "plan", "pct": {}, "wallet_satang": 0, "binding": None,
+            "fits": "plan", "full": False, "overage_too_large": False, "pct": {}, "wallet_satang": 0,
+            "binding": None,
             "resets_at": None, "resets": True, "unlimited": True,
         }
 
@@ -227,8 +236,15 @@ async def estimate_usage(
         v.key: round(est.tokens / v.limit * 100, 1) if v.limit > 0 else 100.0 for v in views
     }
     tightest = runs.binding_window(views)
-    fit = tightest.headroom if tightest is not None else est.tokens
-    overflow = max(0, est.tokens - max(0, fit))
+    # The two refusals a start can meet (services/api/billing_start.py, owner
+    # 2026-10-01 — the strict start gate): ``full`` and ``overage_too_large``
+    # (= the estimate is bigger than what is left of the binding window, the
+    # user's runs in flight counted), both lifted by a balance the user
+    # allows. ``fits`` answers the same question from the same numbers:
+    # ``plan`` = it fits, ``wallet`` = only with the balance, ``none`` = no.
+    state = await runs.start_window(db, user, now)
+    left = state.left_for_new_work if state is not None else est.tokens
+    overflow = max(0, est.tokens - max(0, left))
     wallet_satang = wallet.satang_for_tokens(overflow)
     fits: Literal["plan", "wallet", "none"] = "plan"
     if overflow > 0:
@@ -236,8 +252,11 @@ async def estimate_usage(
         if account is not None:
             spare = await wallet.balance(db, auth.user_id, now) - int(account.wallet_reserved_satang or 0)
         fits = "wallet" if spare >= wallet_satang else "none"
+    too_large = guard.remaining_refusal(state, est.tokens, allow_wallet=False)
     return {
         "fits": fits,
+        "full": bool(state is not None and state.full),
+        "overage_too_large": too_large is not None,
         "pct": pct,
         "wallet_satang": wallet_satang,
         "binding": tightest.key if tightest else None,

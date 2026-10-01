@@ -5,7 +5,7 @@
  * the React state; this module owns what the state *means*.
  */
 import { CAPTION_STYLE_DEFAULT, type CaptionStyle } from './captionStyle'
-import { buildDubBrief, dubTargetDurationSec } from './dubBrief'
+import { MAX_CUT_RESULT_SEC, MAX_TARGET_SEC, buildDubBrief, dubTargetDurationSec } from './dubBrief'
 import type { ProjectMode } from './projectFlow'
 import { ENGINE_NAMES, PRECISION_NAMES, precisionLevelName } from './qualityTiers'
 
@@ -138,6 +138,15 @@ export function backendMode(uiMode: UiMode, voiceover: VoiceoverChoice): Project
   if (uiMode === 'longform') return 'speech_highlights'
   if (voiceover === 'original') return 'speech_scenes'
   return voiceover === 'none' ? 'highlight' : 'dub_first'
+}
+
+/**
+ * The longest result a mode may be asked for: 5 minutes for the single-call
+ * video-cut modes (owner, 2026-10-01 — one AI answer must hold the whole
+ * plan), the server's general bound otherwise. See `dubBrief.MAX_CUT_RESULT_SEC`.
+ */
+export function targetCapSec(mode: ProjectMode): number {
+  return mode === 'dub_first' || mode === 'highlight' ? MAX_CUT_RESULT_SEC : MAX_TARGET_SEC
 }
 
 /** Total source length, or null while any clip is still being probed. */
@@ -284,6 +293,19 @@ export function outcomeStepGate(state: WizardState): Gate {
   if (state.duration === 'custom' && !state.customSec) {
     return { ok: false, reason: 'ใส่ความยาวเป็นวินาที' }
   }
+  if (state.duration === 'custom') {
+    const cap = targetCapSec(backendMode(state.uiMode, state.voiceover))
+    const n = parseInt(state.customSec, 10)
+    if (Number.isFinite(n) && n > cap) {
+      return {
+        ok: false,
+        reason:
+          cap === MAX_CUT_RESULT_SEC
+            ? `ความยาวผลลัพธ์ของตัดฉากเด่นได้สูงสุด ${cap / 60} นาที (${cap} วินาที)`
+            : `ความยาวได้สูงสุด ${cap} วินาที`
+      }
+    }
+  }
   if (state.voiceover === 'own' && !state.userScript.trim()) {
     return { ok: false, reason: 'พิมพ์สคริปต์ที่จะพากย์ก่อน' }
   }
@@ -411,7 +433,8 @@ export function buildSubmission(state: WizardState): WizardSubmission {
       mode === 'speech_highlights'
         ? undefined
         : isCut || isSpeech
-          ? (dubTargetDurationSec(state.duration, state.customSec, musicLen) ?? undefined)
+          ? (dubTargetDurationSec(state.duration, state.customSec, musicLen, targetCapSec(mode)) ??
+            undefined)
           : undefined,
     // speech_scenes keeps the saved cut style; speech_highlights uses none.
     cutStyleUid:

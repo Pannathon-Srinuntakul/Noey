@@ -180,22 +180,19 @@ def test_a_run_too_big_for_every_window_is_refused_whatever_is_left():
     assert too_big["code"] == "run_too_large" and too_big["window"] == "lifetime"
     # A one-time credit has no "รอบ" to be too big for — it is simply all of it.
     assert "เครดิตทดลองใช้ทั้งหมด" in too_big["message"]
-    month = limits.window_limit("studio", "monthly")
-    assert plan_features.check_run_size(_user("studio"), month) is None
-    refused = plan_features.check_run_size(_user("studio"), month + 1)
+    month = limits.window_limit("starter", "monthly")
+    assert plan_features.check_run_size(_user("starter"), month) is None
+    refused = plan_features.check_run_size(_user("starter"), month + 1)
     assert refused["code"] == "run_too_large" and refused["window"] == "monthly"
     assert "โควตารายเดือนทั้งรอบ" in refused["message"]
-    # Only the BIGGEST window decides, so a plan that ever enforced two again
-    # could still start a run one of them cannot hold.
-    two = SimpleNamespace(id=1, plan="studio", is_admin=False)
-    from dataclasses import replace as _replace
-    old = limits.PLAN_LIMITS["studio"]
-    limits.PLAN_LIMITS["studio"] = _replace(old, windows=("monthly", "weekly"))
-    try:
-        assert plan_features.check_run_size(two, limits.window_limit("studio", "weekly") + 1) is None
-        assert plan_features.check_run_size(two, month + 1)["window"] == "monthly"
-    finally:
-        limits.PLAN_LIMITS["studio"] = old
+    # The SMALLEST enforced window decides (owner, 2026-10-01): a new run must
+    # fit what is left of every window, so a run bigger than Studio's whole
+    # 40 % week could never start however long the user waited.
+    week = limits.window_limit("studio", "weekly")
+    assert plan_features.check_run_size(_user("studio"), week) is None
+    weekly = plan_features.check_run_size(_user("studio"), week + 1)
+    assert weekly["code"] == "run_too_large" and weekly["window"] == "weekly"
+    assert "โควตารายสัปดาห์" in weekly["message"]
     assert plan_features.check_run_size(_user("free", admin=True), 10**9) is None
     assert plan_features.check_run_size(_user("enterprise"), 10**9) is None
 
@@ -247,10 +244,11 @@ def test_every_advertised_cap_is_actually_runnable():
                 _user(plan), limit.footage_sec, mode="dub_first", precision=precision
             ) is None, (plan, precision)
         priced[plan] = est.tokens  # the dearest precision the plan may pick
-    # Pinned so a change to the estimator shows up here, not on a user's run.
+    # Pinned so a change to the estimator shows up here, not on a user's run
+    # (e4: the default-size cut plan writes 24,530, e3's flat 24,000 + 530).
     assert priced == {
-        "free": 192_510, "lite": 192_510, "starter": 254_610,
-        "pro": 689_310, "studio": 689_310, "agency": 689_310, "max": 689_310,
+        "free": 195_253, "lite": 195_253, "starter": 257_353,
+        "pro": 692_053, "studio": 692_053, "agency": 692_053, "max": 692_053,
     }
 
 
@@ -328,8 +326,10 @@ def test_queue_priority_scores_paid_tiers_ahead():
 def test_prorate_is_rounded_up_and_full_price_from_free():
     now = datetime(2026, 9, 1, tzinfo=UTC)
     assert plan_switch.prorate_satang(0, 99_000, None, now, paid=False) == 99_000
+    # An upgrade starts a new cycle today (billing_cycle_anchor=now): the new
+    # plan's full month, less the unused half of the old one.
     half = plan_switch.prorate_satang(39_900, 99_000, now + timedelta(days=15), now, paid=True)
-    assert half == 29_600  # (990 − 399) × 0.5 = 295.5 → ฿296
+    assert half == 79_100  # 990 − 399 × 0.5 = 790.5 → ฿791
     assert plan_switch.prorate_satang(99_000, 39_900, now + timedelta(days=15), now, paid=True) == 0
 
 
@@ -534,3 +534,46 @@ async def test_storage_display_falls_back_to_last_value_when_the_walk_is_slow(mo
     assert vl._USED_LAST[4242] == (200, 2)  # … and both projects were measured concurrently
     vl._USED_CACHE.pop(4242, None)
     vl._USED_LAST.pop(4242, None)
+
+
+async def test_the_preview_is_stripes_own_prorated_invoice_for_a_new_cycle() -> None:
+    """The dialog's amount is Stripe's invoice preview for exactly what the
+    portal will do: the new price, a cycle reset to now, prorations invoiced
+    at once, at a fixed proration date."""
+    from types import SimpleNamespace as NS
+
+    seen: dict = {}
+
+    async def create_preview_async(params):
+        seen.update(params)
+        return NS(amount_due=61_234)
+
+    client_ = NS(v1=NS(invoices=NS(create_preview_async=create_preview_async)))
+    sub = NS(id="sub_1", customer="cus_1", items=NS(data=[NS(id="si_1")]))
+    now = datetime(2026, 10, 1, 12, 0, tzinfo=UTC)
+    assert await plan_switch._stripe_preview_amount(client_, sub, "price_studio", now) == 61_234  # type: ignore[arg-type]
+    details = seen["subscription_details"]
+    assert details["items"] == [{"id": "si_1", "price": "price_studio"}]
+    assert details["billing_cycle_anchor"] == "now"
+    assert details["proration_behavior"] == "always_invoice"
+    assert details["proration_date"] == int(now.timestamp())
+
+
+def test_the_portal_restarts_the_cycle_on_an_upgrade():
+    from packages.billing import catalog
+    from packages.billing.portal import portal_features
+
+    update = portal_features({p.tier: f"price_{p.tier}" for p in catalog.PAID_PLANS})["subscription_update"]
+    assert update["billing_cycle_anchor"] == "now"
+    assert update["proration_behavior"] == "always_invoice"
+    # Downgrades are still scheduled for the period end.
+    assert update["schedule_at_period_end"] == {"conditions": [{"type": "decreasing_item_amount"}]}
+
+
+async def test_the_preview_says_the_quota_restarts_on_an_upgrade(mock_payments):
+    uid = await make_user(email("sw"), plan="lite")
+    token = await user_token(uid)
+    async with client() as c:
+        up = (await c.post("/billing/plan-preview", json={"tier": "pro"}, headers=bearer(token))).json()
+        down = (await c.post("/billing/plan-preview", json={"tier": "free"}, headers=bearer(token))).json()
+    assert up["quota_restarts"] is True and down["quota_restarts"] is False

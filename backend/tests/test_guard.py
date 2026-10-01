@@ -1,4 +1,4 @@
-"""Guard layers 2 and 3: the per-call job ceiling and the circuit breaker.
+"""Guard layers 2 and 3: the per-call quota gate and the circuit breaker.
 
 The gateway half mocks LiteLLM (no network); the breaker half reads the
 real local database (today's recorded cost), with a cap set far above or
@@ -14,7 +14,7 @@ import pytest
 
 import packages.llm.gateway as gw
 from packages.billing import guard, rate_card, runs, wallet
-from packages.billing.estimate import MODE_PROFILES
+from packages.billing.estimate import MODE_PROFILES, MODEL_MAX
 from packages.llm.usage import UsageCtx, reset_usage_ctx, set_usage_ctx
 from tests.admin_helpers import _admin_env, db  # noqa: F401  (fixture)
 
@@ -68,29 +68,41 @@ def test_the_meter_uses_the_profile_the_estimate_used():
     )
     meter = guard.meter_for_run(run)
     assert meter.default_max_output == MODE_PROFILES["analyze_video"].max_output
-    assert meter.media_input_tokens == 60 * 300 and meter.spent == 1_234 and meter.ceiling == 90_000
+    # Video at the vendor's MEASURED rate (330/s at High), not the estimate's 300.
+    assert meter.media_input_tokens == 60 * 330 and meter.spent == 1_234 and meter.ceiling == 90_000
+    assert meter.output_cap == MODEL_MAX  # the model's own maximum, read at call time
     assert guard.meter_for_run(types.SimpleNamespace(**{**run.__dict__, "unlimited": True})).ceiling is None
 
 
-def test_admit_stops_before_the_ceiling_and_stays_stopped():
-    meter = _meter(ceiling=10_000)
+def test_a_required_call_is_never_refused_by_the_estimate_or_the_ceiling():
+    """The estimate is advice (owner, 2026-10-01): past the run's ceiling, a
+    required call still goes out while the plan has anything left."""
+    meter = _meter(ceiling=10_000, quota=_quota(1_000_000))
     guard.admit(meter, 6_000)
-    guard.settle_call(meter, 6_000, 5_000)
-    assert (meter.spent, meter.in_flight) == (5_000, 0)
-    guard.admit(meter, 5_000)  # exactly at the ceiling
-    guard.settle_call(meter, 5_000, 4_000)
-    with pytest.raises(guard.RunBudgetExceeded):
-        guard.admit(meter, 1_001 + 1_000)
-    assert meter.stopped
-    with pytest.raises(guard.RunBudgetExceeded):
-        guard.admit(meter, 1)  # once stopped, nothing more is sent
+    guard.settle_call(meter, 6_000, 9_500)
+    guard.admit(meter, 50_000)  # far past the ceiling: sent anyway
+    guard.settle_call(meter, 50_000, 40_000)
+    assert not meter.stopped and meter.spent == 49_500
 
 
-def test_parallel_calls_count_each_other_in_flight():
-    meter = _meter(ceiling=10_000)
+def test_parallel_calls_are_all_sent_while_anything_is_left():
+    meter = _meter(ceiling=10_000, quota=_quota(10_000))
     guard.admit(meter, 6_000)
-    with pytest.raises(guard.RunBudgetExceeded):
-        guard.admit(meter, 6_000)  # the first is still in flight
+    guard.admit(meter, 6_000)  # the first is in flight; the window is not yet spent
+    assert meter.in_flight == 12_000
+
+
+def test_once_paused_every_later_call_raises_the_same_pause():
+    """A sibling of an ``asyncio.gather`` must not turn the pause into a bare
+    stop by raising first."""
+    meter = _meter(quota=_quota(1_000), estimate=5_000)
+    guard.admit(meter, 500)
+    guard.settle_call(meter, 500, 1_000)
+    with pytest.raises(guard.QuotaExhausted) as first:
+        guard.admit(meter, 1)
+    with pytest.raises(guard.QuotaExhausted) as again:
+        guard.admit(meter, 1)
+    assert again.value is first.value and meter.stopped
 
 
 def test_an_optional_call_is_skipped_without_stopping_the_run():
@@ -122,8 +134,10 @@ def test_a_run_pauses_when_the_plans_window_runs_out_mid_run():
     meter = _meter(ceiling=500_000, quota=_quota(10_000), estimate=40_000)
     guard.admit(meter, 4_000)
     guard.settle_call(meter, 4_000, 4_000)
+    guard.admit(meter, 7_000)  # 6 000 left < 7 000: sent anyway — something is left
+    guard.settle_call(meter, 7_000, 7_000)
     with pytest.raises(guard.QuotaExhausted) as exc:
-        guard.admit(meter, 7_000)  # 4 000 spent + 7 000 > 10 000 left
+        guard.admit(meter, 1)  # 11 000 spent of 10 000: the NEXT call pauses
     payload = exc.value.payload()
     assert payload["code"] == "limit_reached" and payload["window"] == "weekly"
     assert payload["resets_at"] == runs.iso(RESETS)
@@ -135,6 +149,8 @@ def test_a_run_pauses_when_the_plans_window_runs_out_mid_run():
 
 def test_the_pause_says_the_balance_can_carry_it_when_it_can():
     meter = _meter(ceiling=500_000, quota=_quota(1_000, wallet_satang=100_000), estimate=20_000)
+    guard.admit(meter, 500)
+    guard.settle_call(meter, 500, 1_000)
     with pytest.raises(guard.QuotaExhausted) as exc:
         guard.admit(meter, 5_000)
     payload = exc.value.payload()
@@ -158,8 +174,10 @@ def test_a_chain_step_counts_only_what_it_spends_itself():
     meter = _meter(ceiling=500_000, quota=_quota(10_000), spent=30_000, quota_baseline=30_000)
     guard.admit(meter, 9_000)
     guard.settle_call(meter, 9_000, 9_000)
+    guard.admit(meter, 2_000)  # 1 000 left: still sent
+    guard.settle_call(meter, 2_000, 2_000)
     with pytest.raises(guard.QuotaExhausted):
-        guard.admit(meter, 2_000)
+        guard.admit(meter, 1)
 
 
 def test_an_optional_call_past_the_quota_is_skipped_not_paused():
@@ -181,12 +199,12 @@ def test_an_unlimited_run_carries_no_quota():
 
 # ── the gateway asks before every attempt ────────────────────────────────────
 
-async def test_the_gateway_does_not_send_a_call_past_the_ceiling(monkeypatch, quiet_gateway):
+async def test_the_gateway_does_not_send_a_call_once_the_window_is_spent(monkeypatch, quiet_gateway):
     sent = AsyncMock(return_value=_resp())
     monkeypatch.setattr(gw.litellm, "acompletion", sent)
     recorded = AsyncMock(return_value=0)
     monkeypatch.setattr(gw, "record_llm_attempt", recorded)
-    with guard.meter_scope(_meter(ceiling=1_000)), pytest.raises(guard.RunBudgetExceeded):
+    with guard.meter_scope(_meter(quota=_quota(0))), pytest.raises(guard.QuotaExhausted):
         await gw.acompletion([{"role": "user", "content": "hi"}], model="gemini/gemini-3.7-flash")
     sent.assert_not_awaited()
     recorded.assert_not_awaited()  # nothing reached the vendor, nothing to record
@@ -203,7 +221,8 @@ async def test_the_gateway_adds_what_each_call_cost(monkeypatch, quiet_gateway):
 
 
 async def test_every_retry_is_checked_again(monkeypatch, quiet_gateway):
-    """A retry after a billed failure must fit what is left; here it does not."""
+    """A retry after a billed failure is admitted again; here the failure used
+    up the window, so the retry pauses instead of going out."""
     monkeypatch.setattr(gw, "_RETRY_BACKOFF_SEC", 0.0)
     calls = {"n": 0}
 
@@ -212,11 +231,10 @@ async def test_every_retry_is_checked_again(monkeypatch, quiet_gateway):
         raise RuntimeError("Error 503 upstream")
 
     monkeypatch.setattr(gw.litellm, "acompletion", flaky)
-    budget = rate_card.tokens_for_llm("gemini-3.7-flash", 1, 0, 8_000)
     # The failed attempt still cost something (the vendor billed its input).
-    monkeypatch.setattr(gw, "record_llm_attempt", AsyncMock(return_value=budget // 2 + 1))
-    meter = _meter(ceiling=budget + budget // 2)
-    with guard.meter_scope(meter), pytest.raises(guard.RunBudgetExceeded):
+    monkeypatch.setattr(gw, "record_llm_attempt", AsyncMock(return_value=5_000))
+    meter = _meter(quota=_quota(4_000))
+    with guard.meter_scope(meter), pytest.raises(guard.QuotaExhausted):
         await gw.acompletion([{"role": "user", "content": "h"}], model="gemini/gemini-3.7-flash")
     assert calls["n"] == 1
 
@@ -268,14 +286,14 @@ def _measured(seconds: float):
     return lambda p: MediaMeasure(seconds, 0, 0)
 
 
-async def test_a_transcription_file_past_the_ceiling_is_not_sent(monkeypatch):
+async def test_a_transcription_file_after_the_window_is_spent_is_not_sent(monkeypatch):
     monkeypatch.setattr(guard, "breaker_hard_stop", AsyncMock(return_value=False))
     monkeypatch.setattr("packages.video.ffmpeg_bin.measure_media", _measured(100.0))
-    meter = _meter(ceiling=rate_card.tokens_for_stt(150))
+    meter = _meter(quota=_quota(rate_card.tokens_for_stt(50)))
     with guard.meter_scope(meter):
-        await guard.before_stt_clip(0, Path("a.wav"))
+        await guard.before_stt_clip(0, Path("a.wav"))  # 100 s on 50 s left: still sent
         guard.after_stt_clip(rate_card.tokens_for_stt(100))
-        with pytest.raises(guard.RunBudgetExceeded):
+        with pytest.raises(guard.QuotaExhausted):
             await guard.before_stt_clip(1, Path("b.wav"))
     assert meter.spent == rate_card.tokens_for_stt(100) and meter.in_flight == 0
 
@@ -311,67 +329,85 @@ async def test_run_transcription_calls_the_hooks_before_each_file(monkeypatch, t
 
 
 async def test_an_unmeasurable_wav_is_priced_from_its_size_never_as_zero(monkeypatch, tmp_path):
-    """It used to count as 0 s — priced at nothing and sent anyway."""
+    """It used to count as 0 s — priced at nothing."""
     monkeypatch.setattr(guard, "breaker_hard_stop", AsyncMock(return_value=False))
     wav = tmp_path / "a.wav"
     wav.write_bytes(b"\0" * 80_000)  # not a WAV ffprobe can read
     assert guard.stt_clip_seconds(wav) == 10.0  # 80 kB ÷ 8 kB/s, the lowest PCM rate
-    meter = _meter(ceiling=rate_card.tokens_for_stt(5))
-    with guard.meter_scope(meter), pytest.raises(guard.RunBudgetExceeded):
+    meter = _meter()
+    with guard.meter_scope(meter):
         await guard.before_stt_clip(0, wav)
+    assert meter.in_flight == rate_card.tokens_for_stt(10.0)
 
 
 # ── video parts priced per file, output capped (2026-09-22 review) ──────────
 
 def test_video_is_priced_from_the_seconds_the_call_attaches():
-    """Every attached file counts — not the run total once per call."""
+    """Every attached file counts — not the run total once per call — at the
+    vendor's MEASURED rate (2026-10-01: the guard used the estimate's 100/s)."""
     meter = _meter(media_input_tokens=1_000)
     video = [{"role": "user", "content": [{"type": "file", "file": {"file_id": f, "format": "video/mp4"}}
                                           for f in ("a", "b")]}]
-    assert guard.input_budget(meter, video, video_sec=90.0) == 90 * 100
-    assert guard.input_budget(meter, video, video_sec=90.0, video_precision="high") == 90 * 300
-    assert guard.input_budget(meter, video) == 1_000  # no hint: the run's own estimate
+    assert guard.input_budget(meter, video, video_sec=90.0) == 90 * 66
+    assert guard.input_budget(meter, video, video_sec=90.0, video_precision="high") == 90 * 330
+    assert guard.input_budget(meter, video) == 1_000  # no hint: the run's own footage
 
 
-async def test_the_admission_caps_output_at_what_the_run_can_still_afford(monkeypatch):
+async def test_a_required_call_gets_the_fixed_safety_cap_never_the_estimate(monkeypatch):
+    """Owner, 2026-10-01: the output cap is runaway protection, the same
+    however small the estimate or however little is left."""
     monkeypatch.setattr(guard, "breaker_hard_stop", AsyncMock(return_value=False))
     msgs = [{"role": "user", "content": "x" * 3_000}]  # 1,000 input tokens
-    meter = _meter(ceiling=100_000, spent=10_000)
-    with guard.meter_scope(meter):
-        adm = await guard.before_llm_call("gemini/gemini-3.7-flash", msgs, {})
-    rate = rate_card.card().llm["flash"]
-    assert adm.max_tokens == int((100_000 - 10_000 - 1_000 * rate.input) // rate.output)
-    assert adm.max_tokens >= 8_000  # never below the profile the estimate used
+    for meter in (
+        _meter(ceiling=100_000, spent=10_000, output_cap=60_000),
+        _meter(ceiling=20_000, spent=19_000, output_cap=60_000, quota=_quota(5), quota_baseline=19_000),
+        _meter(ceiling=None, unlimited=True, output_cap=60_000),
+    ):
+        with guard.meter_scope(meter):
+            adm = await guard.before_llm_call("gemini/gemini-3.7-flash", msgs, {})
+        assert adm.max_tokens == 60_000
     assert adm.input_tokens == 1_000 and adm.input_charge == rate_card.tokens_for_llm("flash", 1_000, 0, 0)
     with guard.meter_scope(_meter(ceiling=100_000)):
         own = await guard.before_llm_call("gemini/gemini-3.7-flash", msgs, {"max_tokens": 500})
     assert own.max_tokens is None  # the call site's own cap stands
-    with guard.meter_scope(_meter(ceiling=None, unlimited=True)):
-        free = await guard.before_llm_call("gemini/gemini-3.7-flash", msgs, {})
-    assert free.max_tokens is None
 
 
-def test_a_truncated_answer_stops_the_run_or_skips_an_optional_call():
+async def test_an_optional_call_stays_inside_the_ceiling(monkeypatch):
+    monkeypatch.setattr(guard, "breaker_hard_stop", AsyncMock(return_value=False))
+    msgs = [{"role": "user", "content": "x" * 3_000}]
+    meter = _meter(ceiling=100_000, spent=10_000, output_cap=60_000)
+    with guard.meter_scope(meter), guard.optional_call():
+        adm = await guard.before_llm_call("gemini/gemini-3.7-flash", msgs, {})
+    rate = rate_card.card().llm["flash"]
+    room = int((100_000 - 10_000 - 1_000 * rate.input) // rate.output)
+    assert adm.max_tokens == min(60_000, room)
+
+
+def test_a_truncated_answer_is_a_retryable_failure_or_skips_an_optional_call():
     meter = _meter()
     with guard.meter_scope(meter), guard.optional_call(), pytest.raises(guard.OptionalCallSkipped):
         guard.output_truncated()
-    assert not meter.stopped
-    with guard.meter_scope(meter), pytest.raises(guard.RunBudgetExceeded):
+    with guard.meter_scope(meter), pytest.raises(guard.OutputTruncated) as exc:
         guard.output_truncated()
-    assert meter.stopped
+    # Not a quota stop and not a pause: the next attempt may go out.
+    assert not isinstance(exc.value, guard.RunBudgetExceeded) and not meter.stopped
+    assert exc.value.payload()["code"] == "output_truncated"
 
 
-def _length_resp():
-    usage = types.SimpleNamespace(prompt_tokens=1_000, completion_tokens=9_000, total_tokens=10_000)
+def _length_resp(out: int = 9_000, finish: str = "length"):
+    usage = types.SimpleNamespace(prompt_tokens=1_000, completion_tokens=out, total_tokens=1_000 + out)
     return types.SimpleNamespace(
         choices=[types.SimpleNamespace(
-            message=types.SimpleNamespace(content='{"segm', tool_calls=None), finish_reason="length",
+            message=types.SimpleNamespace(content='{"segm', tool_calls=None), finish_reason=finish,
         )],
         usage=usage,
     )
 
 
-async def test_the_gateway_sends_the_cap_and_treats_a_cut_off_answer_as_a_limit_stop(monkeypatch, quiet_gateway):
+async def test_a_cut_off_answer_stops_the_run_without_a_retry(monkeypatch, quiet_gateway):
+    """Owner, 2026-10-01: an answer cut off at the model's maximum output is
+    NOT retried — one call, charged as it cost (no refund), then a retryable
+    failure for the user to start again."""
     seen: list[dict] = []
 
     async def capture(**kwargs):
@@ -380,15 +416,76 @@ async def test_the_gateway_sends_the_cap_and_treats_a_cut_off_answer_as_a_limit_
 
     monkeypatch.setattr(gw.litellm, "acompletion", capture)
     monkeypatch.setattr(gw, "record_llm_attempt", AsyncMock(return_value=50_000))
-    meter = _meter(ceiling=100_000)
-    with guard.meter_scope(meter), pytest.raises(guard.RunBudgetExceeded):
-        await gw.acompletion([{"role": "user", "content": "h"}], model="gemini/gemini-3.7-flash")
-    assert seen[0]["max_tokens"] >= 8_000 and meter.stopped and meter.spent == 50_000
-    # A call site's own max_tokens is sent as is and a "length" finish is its business.
-    seen.clear()
+    meter = _meter(ceiling=100_000, output_cap=60_000)
+    with guard.meter_scope(meter), pytest.raises(guard.OutputTruncated):
+        await gw.acompletion([{"role": "user", "content": "h"}], model="gemini/gemini-3.7-flash",
+                             reasoning_effort="high")
+    assert len(seen) == 1 and seen[0]["reasoning_effort"] == "high"
+    assert meter.spent == 50_000
+    assert not hasattr(gw, "CONCISE_RETRY_NOTE")
+
+
+def test_the_safety_cap_for_a_whole_step_is_the_models_own_maximum():
+    """Read from the model's metadata, not typed in (Google's model pages:
+    "Output token limit 65,536" for gemini-3.8-flash and gemini-3.7-flash)."""
+    from packages.llm.config import model_max_output_tokens
+
+    assert model_max_output_tokens("gemini-3.8-flash") == 65_536
+    assert model_max_output_tokens("gemini/gemini-3.7-flash") == 65_536
+    assert model_max_output_tokens("ollama/not-a-real-model") is None
+    meter = _meter(output_cap=MODEL_MAX)
+    assert guard.safety_cap(meter, "gemini/gemini-3.8-flash") == 65_536
+    assert guard.safety_cap(meter, "ollama/not-a-real-model") is None
+    # The inherently small calls keep a number of their own.
+    assert MODE_PROFILES["plan_effects"].output_cap == 16_000
+    assert all(MODE_PROFILES[k].output_cap == MODEL_MAX for k in (
+        "analyze_video", "analyze_frames", "reedit", "select_scenes", "select_highlights",
+    ))
+
+
+async def test_a_call_sites_own_max_tokens_is_its_own_business(monkeypatch, quiet_gateway):
+    seen: list[dict] = []
+
+    async def capture(**kwargs):
+        seen.append(dict(kwargs))
+        return _length_resp()
+
+    monkeypatch.setattr(gw.litellm, "acompletion", capture)
+    monkeypatch.setattr(gw, "record_llm_attempt", AsyncMock(return_value=10))
     with guard.meter_scope(_meter(ceiling=100_000)):
         await gw.acompletion([{"role": "user", "content": "h"}], model="gemini/gemini-3.7-flash", max_tokens=64)
-    assert seen[0]["max_tokens"] == 64
+    assert [s["max_tokens"] for s in seen] == [64]  # sent as is, never retried
+
+
+async def test_the_b8ad8c25_call_is_no_longer_cut_off(monkeypatch, quiet_gateway):
+    """Production 2026-10-01: Free user, dub_first, Pro engine, Standard,
+    331.8 s; estimate 164,756, ceiling 197,708. The one cut call answered
+    with 29,464 output tokens and was truncated at ~29.4k — the guard had
+    set max_tokens to what was left under the ceiling. Now the call carries
+    the cut plan's fixed 60k safety cap and the answer comes back whole."""
+    seen: list[dict] = []
+
+    async def answers(**kwargs):
+        seen.append(dict(kwargs))
+        return _length_resp(out=29_464, finish="stop")
+
+    monkeypatch.setattr(gw.litellm, "acompletion", answers)
+    charged = rate_card.tokens_for_llm("gemini-3.8-flash", 27_673, 0, 29_464)
+    monkeypatch.setattr(gw, "record_llm_attempt", AsyncMock(return_value=charged))
+    run = types.SimpleNamespace(
+        id="b8ad8c25", kind="analyze_video", unlimited=False, ceiling_tokens=197_708, actual_tokens=0,
+        media_sec=331.8, precision="standard", estimate_tokens=164_756,
+    )
+    meter = guard.meter_for_run(run, _quota(450_000, window="lifetime"))
+    prompt = [{"role": "user", "content": [
+        {"type": "text", "text": "x" * 15_000},
+        {"type": "file", "file": {"file_id": "p", "format": "video/mp4"}},
+    ]}]
+    with guard.meter_scope(meter):
+        resp = await gw.acompletion(prompt, model="gemini/gemini-3.8-flash", billing_video_sec=331.8)
+    assert resp.choices[0].finish_reason == "stop"
+    assert seen[0]["max_tokens"] == 65_536  # gemini-3.8-flash's own output limit — far above 29,464
+    assert meter.spent == charged == 181_118 and not meter.stopped
 
 
 async def test_a_retry_after_a_timeout_counts_the_timed_out_input(monkeypatch, quiet_gateway):

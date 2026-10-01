@@ -65,6 +65,9 @@ class ChangePreview:
     mode: Mode
     #: True when ``due_now_satang`` came from the payment provider itself.
     exact: bool
+    #: True for an upgrade: the plan starts a new billing cycle today and the
+    #: usage quota restarts at 0 (owner, 2026-10-01). The dialog says so.
+    quota_restarts: bool = False
 
 
 @dataclass(frozen=True)
@@ -88,25 +91,37 @@ def direction_of(current: str, target: str) -> Direction:
 def prorate_satang(
     old_satang: int, new_satang: int, period_end: datetime | None, now: datetime, *, paid: bool
 ) -> int:
-    """What an upgrade costs now: the full price from Free, else the price
-    difference for the part of the period that is left, rounded UP to the
-    baht (a preview must never under-state the charge)."""
+    """What an upgrade costs now, the way Stripe bills a cycle reset
+    (``billing_cycle_anchor=now`` + proration): the new plan's full month from
+    today, less a credit for the unused part of the old one — rounded UP to
+    the baht (a preview must never under-state the charge). From Free, the
+    full price."""
     if new_satang <= 0:
         return 0
     if not paid or period_end is None:
         return int(new_satang)
     remaining = max(0.0, min(1.0, (period_end - now).total_seconds() / MOCK_PERIOD.total_seconds()))
-    diff = max(0, new_satang - old_satang) * remaining
-    return int(math.ceil(diff / 100.0) * 100)
+    due = max(0.0, new_satang - old_satang * remaining)
+    return int(math.ceil(due / 100.0) * 100)
 
 
 async def _stripe_preview_amount(
-    client: stripe.StripeClient, sub: Any, price_id: str
+    client: stripe.StripeClient, sub: Any, price_id: str, now: datetime | None = None
 ) -> int | None:
-    """Stripe's own number for switching ``sub`` to ``price_id`` now, or None."""
+    """Stripe's own number for switching ``sub`` to ``price_id`` now, or None.
+
+    Previewed exactly as the portal applies it (packages/billing/portal.py):
+    a new cycle from now (``billing_cycle_anchor: now``) with prorations
+    invoiced at once — "Reset the billing period to the current time … Enable
+    proration to credit the customer for any days already paid"
+    (docs.stripe.com/billing/subscriptions/billing-cycle) and "create a
+    preview invoice to preview changes to a subscription … pass in a
+    subscription_details.proration_date" (docs.stripe.com/billing/
+    subscriptions/prorations), both fetched 2026-10-01."""
     items = items_of(sub)
     if len(items) != 1:
         return None
+    at = now or _now()
     try:
         invoice = await client.v1.invoices.create_preview_async({
             "customer": str(field(sub, "customer")),
@@ -114,6 +129,8 @@ async def _stripe_preview_amount(
             "subscription_details": {
                 "items": [{"id": str(field(items[0], "id")), "price": price_id}],
                 "proration_behavior": "always_invoice",
+                "billing_cycle_anchor": "now",
+                "proration_date": int(at.timestamp()),
             },
         })
     except stripe.StripeError as exc:
@@ -166,7 +183,7 @@ async def preview(
                 plan = catalog.plan_for_tier(target)
                 if sub is not None and plan is not None:
                     price = await service._active_price(client, plan)
-                    amount = await _stripe_preview_amount(client, sub, str(price.id))
+                    amount = await _stripe_preview_amount(client, sub, str(price.id), now)
                     if amount is not None:
                         due, exact = amount, True
             except (stripe.StripeError, service.BillingError) as exc:
@@ -175,6 +192,7 @@ async def preview(
     return ChangePreview(
         tier=target, current=current, direction=direction, due_now_satang=int(due),
         next_price_satang=new_price, effective_at=effective, mode=mode, exact=exact,
+        quota_restarts=direction == "upgrade",
     )
 
 

@@ -137,6 +137,8 @@ def estimate_for(
     *,
     engine: str | None = None,
     precision: str | None = None,
+    target_sec: float | None = None,
+    script: str | None = None,
 ) -> Estimate | None:
     """What finishing costs: the INTERRUPTED stage only.
 
@@ -157,6 +159,9 @@ def estimate_for(
         precision=precision,
         clip_secs=[media] if media > 0 else (),
         frame_count=int(frames) if frames is not None else None,
+        # The project's own request sizes a cut plan's answer (e4), exactly
+        # as it did when the stage first started.
+        target_sec=target_sec, script=script,
     )
 
 

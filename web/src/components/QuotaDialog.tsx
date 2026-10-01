@@ -3,14 +3,19 @@ import { Dialog } from './ui/Dialog'
 import {
   formatBaht,
   limitLabel,
+  OVERAGE_TOO_LARGE_LINE,
   TRIAL_CREDIT_SPENT,
   whenBack,
   type LimitKey
 } from '../lib/usageLimits'
 
 /**
- * "โควตารอบนี้หมดแล้ว" (docs/design/editor-limits.md §3) — shown when start is
- * pressed and the plan cannot cover the run. Nothing has uploaded yet.
+ * "โควตารอบนี้ใช้ครบแล้ว" (docs/design/editor-limits.md §3) — shown when start is
+ * pressed and one of the server's two start gates would refuse it (the
+ * window is full, or the run would go too far past what is left). A run
+ * merely bigger than what is left is NOT stopped here (owner, 2026-10-01):
+ * it starts, pauses at 100 % and its overage counts into the next period.
+ * Nothing has uploaded yet.
  *
  * With a top-up balance that covers it, the primary action continues on the
  * balance; without one it goes to the usage settings, where the balance is
@@ -26,6 +31,7 @@ export function QuotaDialog({
   limitKey,
   resetsAt,
   resets = true,
+  reason = 'full',
   walletSatang,
   onClose,
   onUseWallet,
@@ -36,6 +42,12 @@ export function QuotaDialog({
   resetsAt: string | null
   /** False = the allowance never comes back. Defaults to true (it does). */
   resets?: boolean
+  /**
+   * Which of the server's two start gates this is (owner, 2026-10-01): the
+   * window is already at 100 % (`full`), or this run would go too far past
+   * what is left (`overage` — a shorter clip or the Scout engine also fixes it).
+   */
+  reason?: 'full' | 'overage'
   /** What the balance would pay; null when it cannot cover the run. */
   walletSatang: number | null
   onClose: () => void
@@ -44,17 +56,26 @@ export function QuotaDialog({
 }): React.JSX.Element | null {
   if (!open) return null
   const back = resets ? whenBack(resetsAt) : ''
+  const overage = reason === 'overage'
   return (
     <Dialog
       open={open}
       onClose={onClose}
-      title={resets ? 'โควตารอบนี้หมดแล้ว' : TRIAL_CREDIT_SPENT}
+      title={
+        overage
+          ? 'งานนี้ใหญ่กว่าโควตาที่เหลือ'
+          : resets
+            ? 'โควตารอบนี้ใช้ครบแล้ว'
+            : TRIAL_CREDIT_SPENT
+      }
       subtitle={
-        !resets
-          ? 'เครดิตทดลองใช้เหลือไม่พอสำหรับงานนี้'
-          : limitKey
-            ? `${limitLabel(limitKey)}เหลือไม่พอสำหรับงานนี้`
-            : undefined
+        overage
+          ? OVERAGE_TOO_LARGE_LINE
+          : !resets
+            ? 'เครดิตทดลองใช้หมดแล้ว — งานที่ทำค้างไว้ทำต่อได้หลังอัปเกรด'
+            : limitKey
+              ? `${limitLabel(limitKey)}ใช้ครบ 100% แล้ว — งานที่หยุดพักไว้ทำต่อได้เมื่อรอบใหม่เริ่ม`
+              : undefined
       }
       width={560}
       footerActions={

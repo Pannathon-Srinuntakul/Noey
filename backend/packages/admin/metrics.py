@@ -164,6 +164,10 @@ def window_facts(user: User, account: UsageAccount | None, now: datetime) -> dic
             if account is not None and account.pending_plan else None
         ),
         "grace_until": runs_mod.iso(account.grace_until) if account is not None else None,
+        # Tokens charged past 100 % of a window, carried into its next period
+        # (or, for Free, into the first paid one) — owner, 2026-10-01.
+        "overage_tokens": int(getattr(account, "overage_tokens", 0) or 0) if account is not None else 0,
+        "overage_window": getattr(account, "overage_window", None) if account is not None else None,
     }
 
 

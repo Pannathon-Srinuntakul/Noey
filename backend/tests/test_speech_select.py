@@ -346,3 +346,41 @@ def test_prompts_carry_no_material_from_any_one_recording() -> None:
         thai = re.findall(r"[฀-๿]+", prompt)
         assert not thai, f"clip-specific Thai leaked into a prompt: {thai[:5]}"
 
+
+
+# ── a long recording with many spans (owner, 2026-10-01) ─────────────────────
+
+@pytest.mark.asyncio
+async def test_thirty_spans_are_one_selector_call_and_thirty_trims(monkeypatch) -> None:
+    """The owner's example: an hour of speech where 30 spans are worth
+    keeping. The selector's answer (~200 tokens a pick, ~6k for 30, on top of
+    its thinking) fits one response with room to spare, and the per-span work
+    is already one call per span — one response holds it with room to spare.
+    The estimate prices exactly that shape: 30 picks."""
+    from packages.billing import estimate
+    from packages.video import speech_select
+
+    segments = [{"start": i * 2.0, "end": i * 2.0 + 1.8, "text": f"s{i}"} for i in range(1800)]
+    picks = [
+        {"segFrom": i * 60, "segTo": i * 60 + 40, "score": 8, "title": f"t{i}", "why": "w"}
+        for i in range(30)
+    ]
+    calls = {"select": 0, "trim": 0}
+
+    async def fake_select(system, schema, user, **kwargs):
+        calls["select"] += 1
+        return picks
+
+    async def fake_trim(segs, *, seg_from, seg_to, **kwargs):
+        calls["trim"] += 1
+        return [(seg_from, seg_to)]
+
+    monkeypatch.setattr(speech_select, "_select", fake_select)
+    monkeypatch.setattr(speech_select, "trim_span_content", fake_trim)
+    monkeypatch.setattr(speech_select, "gate_highlights", lambda p, s, **kw: p)
+    out = await speech_select.select_highlights(segments, source_duration=3600.0)
+    assert calls == {"select": 1, "trim": 30} and len(out) == 30
+
+    est = estimate.estimate_run(mode="speech_highlights", clip_secs=[3600.0])
+    assert est.expected_items == 30
+    assert est.call_output == estimate.SELECT_THINKING_TOKENS + 200 * 30 < est.max_call_output
