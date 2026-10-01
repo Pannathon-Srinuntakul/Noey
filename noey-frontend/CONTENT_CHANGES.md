@@ -439,6 +439,19 @@ Asked for by the owner, point by point; every change below is theirs.
 - The line under the terms box, "ติ๊กยอมรับเงื่อนไขก่อนจึงจะสมัครได้", is gone
   (the box stays drawn as the empty slot the locked buttons wait on).
 
+**Browsers: Safari 26 and up too**
+
+The editor's own gate names "Chrome หรือ Edge เวอร์ชันล่าสุด หรือ Safari 26 ขึ้นไป"
+(web/src/platform/WebGate.tsx); the owner chose to say the same on the site.
+
+- Everywhere: "Chrome หรือ Edge เวอร์ชันใหม่" → "Chrome หรือ Edge เวอร์ชันใหม่ หรือ Safari 26 ขึ้นไป"
+- Home, the hero's fine print: "สมัครแล้วได้เครดิตทดลองฟรี · ไม่ต้องผูกบัตร · ใช้ได้เฉพาะบนคอมผ่าน Chrome หรือ Edge"
+  → "… · ใช้ได้เฉพาะบนคอมผ่าน Chrome, Edge หรือ Safari 26 ขึ้นไป"; the computer-only
+  note likewise ("…ผ่าน Chrome, Edge หรือ Safari 26 ขึ้นไป ยังใช้บนมือถือหรือแท็บเล็ตไม่ได้").
+- FAQ: "คอมทั่วไปที่รัน Chrome เวอร์ชันใหม่ได้ก็พอ เครื่องที่แรงกว่าจะเรนเดอร์เสร็จเร็วกว่า และคลิปยิ่งยาวก็ยิ่งใช้เวลานานขึ้นตามส่วน"
+  → "คอมทั่วไปที่รัน Chrome หรือ Edge เวอร์ชันใหม่ หรือ Safari 26 ขึ้นไปได้ก็พอ …".
+- Structured data (`operatingSystem`): "Web browser (Chrome, Edge)" → "Web browser (Chrome, Edge, Safari 26+)".
+
 ## Text added (not replacing anything)
 
 Only labels, no claims:

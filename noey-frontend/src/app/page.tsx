@@ -74,7 +74,7 @@ const MINI_CARDS: ReadonlyArray<{ title: string; body: string; demo: MicroKind; 
 ];
 
 /** The hero's fine print; its last part says again what the computer-only note says on a phone. */
-const HERO_FINE = "สมัครแล้วได้เครดิตทดลองฟรี · ไม่ต้องผูกบัตร · ใช้ได้เฉพาะบนคอมผ่าน Chrome หรือ Edge";
+const HERO_FINE = "สมัครแล้วได้เครดิตทดลองฟรี · ไม่ต้องผูกบัตร · ใช้ได้เฉพาะบนคอมผ่าน Chrome, Edge หรือ Safari 26 ขึ้นไป";
 const HERO_FINE_CUT = HERO_FINE.lastIndexOf(" · ");
 
 /**

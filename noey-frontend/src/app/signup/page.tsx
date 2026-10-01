@@ -49,7 +49,7 @@ export default async function SignupPage() {
               ))}
               <li>
                 <IconCheck size={16} className="auth-free__tick" />
-                <span>{keepThaiProse("ใช้ได้เฉพาะบนคอมพิวเตอร์ผ่าน Chrome หรือ Edge เวอร์ชันใหม่ ไม่ต้องติดตั้งโปรแกรม")}</span>
+                <span>{keepThaiProse("ใช้ได้เฉพาะบนคอมพิวเตอร์ผ่าน Chrome หรือ Edge เวอร์ชันใหม่ หรือ Safari 26 ขึ้นไป ไม่ต้องติดตั้งโปรแกรม")}</span>
               </li>
               <li>
                 <IconCheck size={16} className="auth-free__tick" />

@@ -102,7 +102,7 @@ export function softwareApplicationNode(table: PriceTable): JsonLdNode {
     "@id": SOFTWARE_ID,
     name: SITE_NAME,
     applicationCategory: "MultimediaApplication",
-    operatingSystem: "Web browser (Chrome, Edge)",
+    operatingSystem: "Web browser (Chrome, Edge, Safari 26+)",
     inLanguage: LANG,
     url: absoluteUrl("/"),
     description: SOFTWARE_DESCRIPTION,

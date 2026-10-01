@@ -14,7 +14,7 @@ export function ComputerOnly({ className }: { className?: string }) {
   return (
     <p className={["computer-only", className].filter(Boolean).join(" ")}>
       <IconMonitor size={18} className="computer-only__icon" />
-      <span>{keepThai("ห้องตัดต่อใช้ได้เฉพาะบนคอมพิวเตอร์ ผ่าน Chrome หรือ Edge ยังใช้บนมือถือหรือแท็บเล็ตไม่ได้")}</span>
+      <span>{keepThai("ห้องตัดต่อใช้ได้เฉพาะบนคอมพิวเตอร์ ผ่าน Chrome, Edge หรือ Safari 26 ขึ้นไป ยังใช้บนมือถือหรือแท็บเล็ตไม่ได้")}</span>
     </p>
   );
 }
