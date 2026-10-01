@@ -1,4 +1,3 @@
-import { ComputerOnly } from "../ComputerOnly";
 import { LevelMeter } from "../ds/LevelMeter";
 import { LoadingFrame, RenderLoading, Skel, SkelLines } from "../shell/RenderLoading";
 import { AccountTabs } from "./AccountTabs";
@@ -50,8 +49,10 @@ function OverviewSkeleton() {
             <p className="acct-skel__fill">
               <SkelLines widths={["100%", "94%", "52%"]} />
             </p>
-            {/* The real note (phones and tablets only, by its own rule): the same height as on the page. */}
-            <ComputerOnly />
+            {/* The computer-only note's frame (phones and tablets only, by its own rule), its lines as bars. */}
+            <p className="computer-only acct-skel__note">
+              <SkelLines widths={["96%", "88%", "92%", "40%"]} />
+            </p>
             <Skel className="skel--box acct-hero__open" w="220px" h="52px" />
           </div>
           {/* The picture's column, left empty: the centre piece floats here. */}

@@ -4,10 +4,17 @@ import "../../styles/pages/article.css";
 const TOC_WIDTHS = ["11em", "14em", "9em", "12em", "8em", "4em"] as const;
 
 /**
- * A guide article (and any article page to come): the hero's breadcrumb,
- * title, answer and meta line, the centre piece where the picture goes, the
- * timeline table of contents, and the first sections' headings and
- * paragraphs.
+ * An article page while it loads: the hero's breadcrumb, title, answer and
+ * meta line, the centre piece where the picture goes, the timeline table of
+ * contents, and the first sections' headings and paragraphs.
+ *
+ * Not mounted on the six guides: they are static, and a loading boundary
+ * over static content makes React stream that content in a separate,
+ * script-revealed chunk after the shell (React outlines a finished boundary
+ * larger than its progressive chunk size), which held the home page's LCP
+ * back by 0.3 s when tried at the root. It is ready for the first article
+ * route that waits on the server (the /blog to come): its loading.tsx is
+ * `export { ArticleSkeleton as default }`.
  */
 export function ArticleSkeletonBody({ demo = false }: { demo?: boolean }) {
   return (

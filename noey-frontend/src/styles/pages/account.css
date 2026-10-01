@@ -1519,6 +1519,15 @@ html[data-auth-name] .acct-greet::before {
   justify-self: stretch;
 }
 
+/* The note's icon column stays (the bars start where its words do). */
+.acct-hero .acct-skel__note {
+  padding-left: 42px;
+}
+
+.acct-skel__note .skel-lines {
+  flex: 1;
+}
+
 .acct-skel__mix {
   display: block;
   margin-top: 6px;

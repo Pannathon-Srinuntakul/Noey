@@ -419,16 +419,6 @@
   }
 }
 
-/* ── The default (app/loading.tsx): the centre piece in the middle of <main> ── */
-
-.ld-page {
-  display: grid;
-  place-items: center;
-  min-height: 100vh;
-  min-height: 100svh;
-  padding: calc(var(--beta-h) + var(--header-top) + var(--header-h) + 40px) var(--gutter) 64px;
-}
-
 /* ── The header ruler while a page is on its way ────────────────────────── */
 
 /*
@@ -684,7 +674,6 @@
  * changes nothing on screen.
  */
 .pend {
-  --pend-ink: var(--gold);
   position: absolute;
   left: 0;
   right: 0;
@@ -693,7 +682,7 @@
   border-radius: 2px;
   overflow: hidden;
   pointer-events: none;
-  background: color-mix(in srgb, var(--pend-ink) 40%, transparent);
+  background: color-mix(in srgb, var(--pend-ink, var(--gold)) 40%, transparent);
   opacity: 0;
   visibility: hidden;
   transition:
@@ -708,7 +697,7 @@
   left: 0;
   width: 10px;
   border-radius: inherit;
-  background: var(--pend-ink);
+  background: var(--pend-ink, var(--gold));
 }
 
 .pend[data-on],
@@ -722,12 +711,12 @@
 
 @media (prefers-reduced-motion: no-preference) {
   .pend:not(.motion-still *) {
-    background: color-mix(in srgb, var(--pend-ink) 16%, transparent);
+    background: color-mix(in srgb, var(--pend-ink, var(--gold)) 20%, transparent);
   }
 
   .pend:not(.motion-still *) i {
     width: 36%;
-    background: linear-gradient(90deg, transparent, var(--pend-ink));
+    background: linear-gradient(90deg, transparent, var(--pend-ink, var(--gold)));
     transform: translateX(-100%);
   }
 

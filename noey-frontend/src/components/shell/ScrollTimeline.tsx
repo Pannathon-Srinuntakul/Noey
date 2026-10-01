@@ -54,8 +54,10 @@ export function ScrollTimeline() {
   useEffect(() => {
     const rootElement = document.documentElement;
     let safety = 0;
+    let watch = 0;
     const clear = () => {
       window.clearTimeout(safety);
+      window.cancelAnimationFrame(watch);
       rootElement.removeAttribute("data-nav-pending");
     };
     const onClick = (event: MouseEvent) => {
@@ -72,6 +74,13 @@ export function ScrollTimeline() {
         rootElement.setAttribute("data-nav-pending", "");
         window.clearTimeout(safety);
         safety = window.setTimeout(clear, 15_000);
+        // Done the moment the address changes, whatever order React's effects run in.
+        window.cancelAnimationFrame(watch);
+        const settle = () => {
+          if (window.location.pathname !== from) clear();
+          else watch = window.requestAnimationFrame(settle);
+        };
+        watch = window.requestAnimationFrame(settle);
       }, 0);
     };
     document.addEventListener("click", onClick, true);

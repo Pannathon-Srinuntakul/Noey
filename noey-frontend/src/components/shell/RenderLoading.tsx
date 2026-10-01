@@ -39,8 +39,8 @@ export function SkelLines({ widths, className }: { widths: readonly string[]; cl
  * assistive technology. Still with reduced motion: drawn, at rest, the
  * playhead parked, the clock still counting.
  *
- * `full` stands alone in <main>; `chip` floats over a skeleton; `emblem` is
- * the emblem of a status card.
+ * `full` stands alone (an article's picture slot); `chip` floats over a
+ * skeleton (the account tabs); `emblem` is the emblem of a status card.
  */
 export function RenderLoading({
   variant = "full",
@@ -73,7 +73,7 @@ export function RenderLoading({
 }
 
 /**
- * The frame of a route's loading state (every loading.tsx, and the account
+ * The frame of a route's loading state (each loading.tsx, and the account
  * layout's own Suspense fallbacks): it appears only after 150 ms, marks the
  * region busy, tells the header ruler a page is on its way
  * (data-loading="route"), and fades out over the page when it arrives.
