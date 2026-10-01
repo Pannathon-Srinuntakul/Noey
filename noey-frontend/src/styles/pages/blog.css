@@ -1240,13 +1240,18 @@
   grid-template-columns: minmax(0, 0.42fr) minmax(0, 1fr);
 }
 
+.blog-related .post-card {
+  align-items: center;
+}
+
+/* The cover keeps its own 16:9 frame: stretched to the text's height it was
+   cropped at both sides (a 1600x900 cover in a near-square box). */
 .blog-related .post-card > .cover {
-  height: 100%;
-  min-height: 132px;
-  aspect-ratio: auto;
-  border-radius: 11px 0 0 11px;
-  border-bottom: 0;
-  border-right: 1px solid var(--line);
+  align-self: center;
+  margin: 14px 0 14px 14px;
+  aspect-ratio: 16 / 9;
+  border: 1px solid var(--line);
+  border-radius: 8px;
 }
 
 .blog-related .post-card__body {
@@ -1269,11 +1274,10 @@
   }
 
   .blog-related .post-card > .cover {
-    min-height: 0;
-    aspect-ratio: 16 / 9;
-    border-radius: 11px 11px 0 0;
-    border-right: 0;
+    margin: 0;
+    border: 0;
     border-bottom: 1px solid var(--line);
+    border-radius: 11px 11px 0 0;
   }
 }
 
