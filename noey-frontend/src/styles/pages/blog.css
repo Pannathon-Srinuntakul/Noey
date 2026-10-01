@@ -768,12 +768,6 @@
   padding: clamp(8px, 2vw, 24px) 0;
 }
 
-.blog-down-page {
-  display: grid;
-  align-content: center;
-  min-height: 70vh;
-  padding-bottom: var(--section-y);
-}
 
 /* ── The post page ──────────────────────────────────────────────────────── */
 

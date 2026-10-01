@@ -39,8 +39,9 @@ export function BlogUnavailable({ retry, titleAs = "h2" }: { retry: ReactNode; t
 /** A whole page of it: a post the server could not load. */
 export function BlogUnavailablePage({ path }: { path: string }) {
   return (
-    <main id="main" className="blog-page blog-page--down">
-      <div className="wrap page-top blog-down-page">
+    // The site's utility-page layout (status-page): the card centred on a timeline track.
+    <main id="main" className="status-page page-top blog-page--down">
+      <div className="wrap">
         <BlogUnavailable
           titleAs="h1"
           retry={

@@ -14,8 +14,9 @@ import "../../styles/pages/blog.css";
 export default function BlogError({ retry }: { error: Error & { digest?: string }; retry: () => void }) {
   const pathname = usePathname();
   return (
-    <main id="main" className="blog-page blog-page--down">
-      <div className="wrap page-top blog-down-page">
+    // The site's utility-page layout (status-page): the card centred on a timeline track.
+    <main id="main" className="status-page page-top blog-page--down">
+      <div className="wrap">
         <BlogUnavailable
           titleAs="h1"
           retry={
