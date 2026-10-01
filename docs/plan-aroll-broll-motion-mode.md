@@ -96,6 +96,18 @@ a 4-min A-roll at 1 fps ≈ 30–40k tokens), so roles are merged:
    graphic written in one response; template shots need no call.
 5. **Graphics QA** (1 call): sample frames of every graphic at once.
 6. **Graphics fix** (0–1 call): only the failing pieces.
+Division of labour (owner, 2026-10-02):
+- **Concepts are written by the AI for each job** from the footage, transcript and brief — never
+  a fixed list in code. Code only bounds the count (2–3) and the fields (hook, structure, tone).
+- **The storyboard decides everything creative**: which A-roll range plays, where b-roll / stock
+  / infographic / text card goes, the layout per shot (full, person cut-out over b-roll,
+  split, picture-in-picture), effects, camera moves, transitions, captions + emphasis, SFX and
+  music cues.
+- **Code holds only the menu and the renderer**: the catalog of layouts, effects, templates and
+  SFX the storyboard may pick from (enforced by the response schema), plus a deterministic
+  renderer that executes `storyboard.json` exactly. The renderer makes no creative choices;
+  after approval, rendering needs no AI except the graphics code calls.
+
 User checkpoints (the run stops and waits; no call runs until the user acts):
 - after call 1: pick a concept (one or more).
 - after call 2: review the storyboard player (still frames + super text + per-shot notes);
