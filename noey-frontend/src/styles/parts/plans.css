@@ -56,13 +56,67 @@
     0 24px 60px -30px var(--gold-glow);
 }
 
-/* The clips-per-month picker on /pricing marks the plan that fits. */
-.plan[data-fit] {
+/* /pricing has ONE answer: the plan the calculator fits carries the gold
+   edge, the tint, the badge and the one gold action (PlanRail moves
+   [data-fit]; the HTML marks the default's). Pro's "แนะนำ" steps back to a
+   quiet tag while another plan fits. The home strip keeps Pro as before. */
+.plan--full.plan--recommended:not([data-fit]) {
+  --plan-edge: var(--line);
+  background: var(--panel);
+  box-shadow: var(--rim);
+}
+
+.plan--full .plan__tag--rec {
+  border-color: var(--line-2);
+  color: var(--ink-2);
+}
+
+.plan--full[data-fit] .plan__tag--rec {
+  border-color: var(--gold);
+  color: var(--gold-ink);
+}
+
+.plan--full[data-fit] {
   --plan-edge: var(--gold);
+  background:
+    linear-gradient(180deg, var(--gold-soft), transparent 45%),
+    var(--panel);
   box-shadow:
     0 0 0 3px var(--gold-soft),
     0 30px 70px -30px var(--gold-glow);
   translate: 0 -6px;
+}
+
+/* The badge sits on the card's top edge, like a marker on a clip. */
+.plan__fit-tag {
+  position: absolute;
+  top: -12px;
+  left: clamp(20px, 2.2vw, 26px);
+  display: none;
+  background: var(--gold);
+  color: var(--on-gold);
+  font-weight: 600;
+  box-shadow: 0 6px 16px -8px var(--gold-glow);
+}
+
+.plan--full[data-fit] .plan__fit-tag {
+  display: inline-flex;
+}
+
+.plan--full[data-fit] .plan__foot .btn-secondary {
+  --btn-bg: var(--gold);
+  --btn-ink: var(--on-gold);
+  --btn-line: var(--gold);
+  --btn-handle: color-mix(in srgb, var(--on-gold) 55%, transparent);
+  font-weight: 600;
+  box-shadow:
+    var(--rim),
+    0 8px 24px -12px var(--gold-glow);
+}
+
+.plan--full[data-fit] .plan__foot .btn-secondary:hover {
+  --btn-bg: color-mix(in srgb, var(--color-accent) 88%, var(--color-text));
+  --btn-line: var(--gold);
 }
 
 .plan__head {
@@ -184,6 +238,26 @@
   font-size: var(--fs-13);
   line-height: 1.5;
   color: var(--ink-2);
+}
+
+/* With ระดับละเอียด picked, the headline is that count and the second line
+   the ordinary one, dimmed: the card and the readout never disagree. */
+.usage-high[data-cuts-precision="standard"] {
+  color: var(--ink-3);
+}
+
+.usage-setting {
+  margin-left: 8px;
+  padding: 1px 8px;
+  border: 1px solid var(--gold);
+  border-radius: 999px;
+  font-size: var(--fs-12);
+  color: var(--gold-ink);
+  white-space: nowrap;
+}
+
+.usage-setting[hidden] {
+  display: none;
 }
 
 .clip-note {
@@ -399,7 +473,21 @@
   box-shadow: inset 0 -2px 0 var(--gold);
 }
 
-/* /pricing's calculator marks the plan that fits, down its whole column. */
+/* /pricing's calculator marks the plan that fits, down its whole column, and
+   the recommended column's tint gives way to it (one answer per page). */
+.cmp--live .cmp__table .cmp__rec:not([data-fit]),
+.cmp--live .cmp__table thead .cmp__plan--recommended:not([data-fit]) {
+  background-color: transparent;
+}
+
+.cmp--live .cmp__table thead .cmp__plan--recommended:not([data-fit]) {
+  color: var(--ink) !important;
+  box-shadow: inset 0 -1px 0 var(--line-2);
+}
+
+.cmp--live .cmp__table thead th.cmp__plan--recommended:not([data-fit]) {
+  background: color-mix(in srgb, var(--panel) 94%, transparent);
+}
 .cmp__table [data-plan-col][data-fit] {
   background-color: color-mix(in srgb, var(--color-accent) 13%, var(--panel));
 }

@@ -8,6 +8,7 @@ import {
   CLIP_MINUTES,
   CUT_MODES,
   CUT_MODE_WORDS,
+  DEFAULT_CLIP_MINUTES,
   DEFAULT_CUT_MODE,
   FOOTAGE_MINUTES,
   FOOTAGE_PER_PROJECT,
@@ -17,9 +18,11 @@ import {
   TIERS,
   clampClipMinutes,
   clipsBasis,
+  clipsCaveats,
   clipsFootnote,
   cutCost,
   cutsAt,
+  fitTier,
   footageFeature,
   formatCount,
   hasHighPrecision,
@@ -142,9 +145,31 @@ describe("cutsAt", () => {
   });
 });
 
+describe("fitTier", () => {
+  it("answers with the cheapest monthly plan that covers the ask", () => {
+    expect(fitTier(30, 5)).toBe("pro");
+    expect(fitTier(31, 5)).toBe("studio");
+    expect(fitTier(1, 5)).toBe("lite");
+    expect(fitTier(30, 5, "talking_head")).toBe("lite");
+    expect(fitTier(30, 5, "dub_first", "high")).toBe("studio");
+  });
+
+  it("skips plans that cannot take the clip, and says when none can cover it", () => {
+    expect(fitTier(1, 25)).toBe("pro"); // ตัดฉากเด่น past Lite's and Starter's ceilings
+    expect(fitTier(1, 80, "speech_highlights")).toBe("starter"); // one clip is more than Lite's month
+    expect(fitTier(260, 5)).toBeNull();
+    expect(fitTier(180, 5, "dub_first", "high")).toBeNull();
+  });
+
+  it("ignores ระดับละเอียด in a mode without it", () => {
+    expect(fitTier(30, 5, "talking_head", "high")).toBe(fitTier(30, 5, "talking_head"));
+  });
+});
+
 describe("the calculator's words", () => {
   it("lists the modes in the home page's order, with the home page's names", () => {
     expect(MODES.map((mode) => mode.id)).toEqual([...CUT_MODES]);
+    for (const mode of MODES) if (mode.nameParts) expect(mode.nameParts.join("")).toBe(mode.name);
     expect(MODES.map((mode) => mode.name)).toEqual(["ตัดช่วงเงียบ", "ตัดฉากเด่น", "ตัดไฮไลต์จากคลิปยาว"]);
     expect(DEFAULT_CUT_MODE).toBe("dub_first");
   });
@@ -155,9 +180,23 @@ describe("the calculator's words", () => {
     expect(clipsBasis(12, "talking_head")).toBe("คิดจากโหมดตัดช่วงเงียบ คลิปดิบ 12 นาที");
   });
 
-  it("calls the long-clip count a floor, in long clips", () => {
-    expect(CUT_MODE_WORDS.speech_highlights).toEqual({ hedge: "อย่างน้อย", unit: "คลิปยาว" });
+  it("hedges the long-clip count like every other, in long clips — never a floor", () => {
+    // A run is charged per request as it goes and can exceed the estimate,
+    // so "อย่างน้อย" would read as a guarantee the product cannot keep.
+    expect(CUT_MODE_WORDS.speech_highlights).toEqual({ hedge: "ราว", unit: "คลิปยาว" });
     expect(clipsFootnote(5, "speech_highlights")).toContain("หนึ่งคลิปยาวแยกได้หลายคลิปสั้น");
+    expect(JSON.stringify(CUT_MODE_WORDS)).not.toContain("อย่างน้อย");
+  });
+
+  it("states the setting in the basis when the count is at ระดับละเอียด", () => {
+    expect(clipsBasis(5, "dub_first", "high")).toBe("คิดจากโหมดตัดฉากเด่น ระดับละเอียด คลิปดิบ 5 นาที");
+    expect(clipsBasis(5, "talking_head", "high")).toBe("คิดจากโหมดตัดช่วงเงียบ คลิปดิบ 5 นาที");
+    expect(`${clipsBasis(5)} ${clipsCaveats()}`).toBe(CLIPS_FOOTNOTE);
+  });
+
+  it("opens each mode on its own length", () => {
+    expect(DEFAULT_CLIP_MINUTES).toEqual({ talking_head: 5, dub_first: 5, speech_highlights: 30 });
+    for (const mode of CUT_MODES) expect(DEFAULT_CLIP_MINUTES[mode]).toBeLessThanOrEqual(maxClipMinutes(mode));
   });
 
   it("agrees with the footage ceilings the site states", () => {

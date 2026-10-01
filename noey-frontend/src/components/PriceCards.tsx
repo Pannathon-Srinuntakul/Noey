@@ -5,6 +5,8 @@ import {
   APPROX_HIGH_CUTS_PER_MONTH,
   CLIPS_FOOTNOTE,
   CUTS_APPROX_SHORT,
+  CLIPS_BASIS_SHORT,
+  CUTS_NO_FINE,
   CUTS_OVER_FOOTAGE,
   CUTS_SHORT_OF_BUDGET,
   EXTRA_TIERS,
@@ -23,7 +25,7 @@ import {
   type Tier,
 } from "@/lib/plans";
 import { PlanButton } from "./PlanButton";
-import { ClipsBasis, CutsCount, CutsNumber, CutsWord } from "./pricing/CutsCount";
+import { CutsCount, CutsNumber, CutsWord } from "./pricing/CutsCount";
 import "../styles/parts/plans.css";
 import { keepThaiProse } from "./ds/ThaiProse";
 
@@ -60,19 +62,28 @@ const REEL: Record<Tier, string> = { free: "P0", lite: "P1", starter: "P2", pro:
  * Prices come from the shared PriceTable; a paid tier the backend does not
  * list shows no invented price and cannot be bought.
  */
-export function PriceCards({ table, variant }: { table: PriceTable; variant: "home" | "full" }) {
+export function PriceCards({
+  table,
+  variant,
+  fit = null,
+}: {
+  table: PriceTable;
+  variant: "home" | "full";
+  /** /pricing: the plan the calculator answers with at its default, marked in the HTML (PlanRail moves it). */
+  fit?: Tier | null;
+}) {
   if (variant === "full") {
     return (
       <>
         <ol className="plan-rail__track" data-rail-track="">
           {TIERS.map((tier) => (
             <li key={tier} className="plan-rail__slot">
-              <PriceCard tier={tier} table={table} size="full" />
+              <PriceCard tier={tier} table={table} size="full" fit={fit === tier} />
             </li>
           ))}
         </ol>
-        {/* The basis of every count is said once, under the clips picker
-            above (PlanRail's footnote); each card carries only the short one. */}
+        {/* The basis of every count is said once, beside the calculator's
+            answer (PlanRail); the cards carry none of their own here. */}
         {/* The legend for the tag three of the cards carry: the tag itself,
             then what it means. */}
         <p className="price-extra">
@@ -128,7 +139,7 @@ export function PriceCards({ table, variant }: { table: PriceTable; variant: "ho
   );
 }
 
-function PriceCard({ tier, table, size }: { tier: Tier; table: PriceTable; size: CardSize }) {
+function PriceCard({ tier, table, size, fit = false }: { tier: Tier; table: PriceTable; size: CardSize; fit?: boolean }) {
   const copy = PLAN_COPY[tier];
   const price = displayPrice(table, tier);
   const detailed = size === "full";
@@ -153,7 +164,10 @@ function PriceCard({ tier, table, size }: { tier: Tier; table: PriceTable; size:
   const highCuts = APPROX_HIGH_CUTS_PER_MONTH[tier];
 
   return (
-    <article className={classes.join(" ")} data-tier={tier} aria-labelledby={`plan-${size}-${tier}`}>
+    <article className={classes.join(" ")} data-tier={tier} data-fit={fit ? "" : undefined} aria-labelledby={`plan-${size}-${tier}`}>
+      {/* /pricing's one answer: shown on the card that fits the calculator
+          (PlanRail moves [data-fit]); a marker on the card's top edge. */}
+      {detailed && paid ? <span className="tag plan__fit-tag">พอดีกับที่เลือก</span> : null}
       <div className="plan__head">
         {/* The reel number on /pricing, where the whole ladder is in view; the
             home strip shows four plans out of order with the ladder's others
@@ -166,7 +180,7 @@ function PriceCard({ tier, table, size }: { tier: Tier; table: PriceTable; size:
         <h3 className="plan__name" id={`plan-${size}-${tier}`}>
           {copy.name}
         </h3>
-        {copy.recommended ? <span className="tag tag-outline plan__tag">แนะนำ</span> : null}
+        {copy.recommended ? <span className="tag tag-outline plan__tag plan__tag--rec">แนะนำ</span> : null}
         {detailed && extra ? <span className="tag tag-neutral plan__tag">แพลนเพิ่มเติม</span> : null}
       </div>
       <div className="plan__amount">
@@ -190,10 +204,15 @@ function PriceCard({ tier, table, size }: { tier: Tier; table: PriceTable; size:
         </p>
       ) : null}
       <p className="plan__usage">
+        {/* The headline: the setting the calculator has picked (ระดับปกติ
+            until it says otherwise); the second line, Pro and up: the other
+            setting, quieter. Both rounded down. */}
         <CutsCount
           tier={tier}
+          slot="primary"
           over={<span className="usage-over">{`${CUTS_OVER_FOOTAGE} (${FOOTAGE_PER_PROJECT[tier]})`}</span>}
           short={<span className="usage-over">{CUTS_SHORT_OF_BUDGET}</span>}
+          none={<span className="usage-over">{CUTS_NO_FINE}</span>}
         >
           <span className="usage-approx">
             <CutsWord word={free ? "hedge" : "prefix"} />
@@ -204,12 +223,15 @@ function PriceCard({ tier, table, size }: { tier: Tier; table: PriceTable; size:
               <CutsWord word={free ? "unit" : "unit-month"} />
             </span>
           </span>
-        </CutsCount>
-        {free ? <span className="usage-caption">{keepThaiProse(` · ${FREE_CLIPS_CAPTION}`)}</span> : null}
-        {/* Pro and up: the same count at ระดับละเอียด, rounded down like the first. */}
-        {highCuts ? (
-          <CutsCount tier={tier} precision="high" className="usage-high">
+          <span className="usage-setting" data-cuts-setting-tag="" hidden>
             {`ระดับ${PRECISION_NAMES.high}`}
+          </span>
+        </CutsCount>
+        {/* /pricing says the free plan's one-off nature once, in its blurb. */}
+        {free && !detailed ? <span className="usage-caption">{keepThaiProse(` · ${FREE_CLIPS_CAPTION}`)}</span> : null}
+        {highCuts ? (
+          <CutsCount tier={tier} precision="high" slot="secondary" className="usage-high">
+            ระดับ<span data-cuts-setting-word="">{PRECISION_NAMES.high}</span>
             <span className="usage-count">
               {`${CUTS_APPROX_SHORT} `}
               <CutsNumber value={highCuts} /> คลิป
@@ -217,9 +239,8 @@ function PriceCard({ tier, table, size }: { tier: Tier; table: PriceTable; size:
           </CutsCount>
         ) : null}
       </p>
-      <p className="clip-note">
-        <ClipsBasis />
-      </p>
+      {/* On /pricing the basis is said once, beside the calculator's answer. */}
+      {detailed ? null : <p className="clip-note">{keepThaiProse(CLIPS_BASIS_SHORT)}</p>}
       <p className="plan__blurb">{keepThaiProse(detailed ? copy.pricingBlurb : copy.homeBlurb)}</p>
       {detailed ? (
         <ul className="plan__features">
@@ -233,7 +254,9 @@ function PriceCard({ tier, table, size }: { tier: Tier; table: PriceTable; size:
           <PlanButton
             tier={tier as (typeof PAID_TIERS)[number]}
             label={detailed ? copy.pricingCta : "เลือกแพลนนี้"}
-            primary={!!copy.recommended}
+            // /pricing: no card is gold by itself; the plan that fits wears
+            // the gold action (plans.css, [data-fit]). Home: Pro, as before.
+            primary={!detailed && !!copy.recommended}
             disabled={price === null}
           />
         ) : (

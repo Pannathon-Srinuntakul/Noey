@@ -63,6 +63,7 @@ export function PlanComparisonTable({
   table,
   labelledBy,
   footnote = true,
+  fit = null,
 }: {
   table: PriceTable;
   labelledBy: string;
@@ -71,9 +72,17 @@ export function PlanComparisonTable({
    * mode and length the calculator above has set, marked so it follows them.
    */
   footnote?: boolean | "live";
+  /**
+   * "live" only: the plan the calculator answers with at its default, marked
+   * down its column in the HTML (PlanRail moves it). The recommended column
+   * keeps its tint only while it is that plan — one answer per page.
+   */
+  fit?: Tier | null;
 }) {
+  const live = footnote === "live";
+  const fitAttr = (tier: Tier) => (live && fit === tier ? "" : undefined);
   return (
-    <div className="cmp">
+    <div className={live ? "cmp cmp--live" : "cmp"}>
       {/* Where the table scrolls sideways (narrow screens), say so above it:
           the fading right edge alone was easy to miss. */}
       <p className="cmp__hint" aria-hidden="true">
@@ -93,7 +102,7 @@ export function PlanComparisonTable({
                 ความสามารถ
               </th>
               {TIERS.map((tier) => (
-                <th key={tier} scope="col" data-plan-col={tier} className={PLAN_COPY[tier].recommended ? "c cmp__plan cmp__plan--recommended" : "c cmp__plan"}>
+                <th key={tier} scope="col" data-plan-col={tier} data-fit={fitAttr(tier)} className={PLAN_COPY[tier].recommended ? "c cmp__plan cmp__plan--recommended" : "c cmp__plan"}>
                   {PLAN_COPY[tier].name}
                 </th>
               ))}
@@ -105,7 +114,7 @@ export function PlanComparisonTable({
               {TIERS.map((tier) => {
                 const full = strikePrice(table, tier);
                 return (
-                  <td key={tier} data-plan-col={tier} className={PLAN_COPY[tier].recommended ? "c num cmp__rec" : "c num"}>
+                  <td key={tier} data-plan-col={tier} data-fit={fitAttr(tier)} className={PLAN_COPY[tier].recommended ? "c num cmp__rec" : "c num"}>
                     {full ? (
                       <s className="price-strike">
                         <span className="sr-only">{BETA_STRIKE_LABEL} </span>
@@ -124,6 +133,7 @@ export function PlanComparisonTable({
                   <td
                     key={TIERS[index]}
                     data-plan-col={TIERS[index]}
+                    data-fit={fitAttr(TIERS[index])}
                     className={[row.numeric ? "c num" : "c", value === "—" ? "cmp__none" : null, PLAN_COPY[TIERS[index]].recommended ? "cmp__rec" : null]
                       .filter(Boolean)
                       .join(" ")}

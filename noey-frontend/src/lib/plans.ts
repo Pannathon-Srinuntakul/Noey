@@ -408,6 +408,8 @@ export const CUTS_OVER_FOOTAGE = "เกินเพดานฟุตเทจ�
 export const CUTS_OVER_FOOTAGE_SHORT = "เกินเพดานฟุตเทจ";
 /** What it says where one clip of that length costs more than the plan's whole budget. */
 export const CUTS_SHORT_OF_BUDGET = "ไม่พอสำหรับคลิปยาวขนาดนี้";
+/** What a card's headline says when ระดับละเอียด is picked on a plan without it. */
+export const CUTS_NO_FINE = "ไม่มีระดับละเอียด";
 
 /**
  * The word that makes the number honest. Load-bearing: without it the card
@@ -495,14 +497,26 @@ export function formatCount(count: number): string {
 
 /**
  * How a count reads in each mode. ตัดไฮไลต์จากคลิปยาว counts the LONG clips
- * that go in (each comes out as several short ones), and its estimate assumes
- * up to one highlight a minute — above what real runs produce — so its count
- * is a floor ("อย่างน้อย"), not an approximation.
+ * that go in (each comes out as several short ones). Its estimate assumes up
+ * to one highlight a minute, which is generous, but a run is charged per
+ * request as it goes and can still exceed it — so the count is "ราว" like the
+ * others, never a floor (owner's reviewer, 2026-10-01).
  */
 export const CUT_MODE_WORDS: Record<CutMode, { hedge: string; unit: string }> = {
   talking_head: { hedge: CUTS_APPROX_SHORT, unit: "คลิป" },
   dub_first: { hedge: CUTS_APPROX_SHORT, unit: "คลิป" },
-  speech_highlights: { hedge: "อย่างน้อย", unit: "คลิปยาว" },
+  speech_highlights: { hedge: CUTS_APPROX_SHORT, unit: "คลิปยาว" },
+};
+
+/**
+ * The length the calculator starts a mode on, the first time it is picked
+ * and as long as the visitor has not set one: a long clip is what
+ * ตัดไฮไลต์จากคลิปยาว is for.
+ */
+export const DEFAULT_CLIP_MINUTES: Record<CutMode, number> = {
+  talking_head: 5,
+  dub_first: 5,
+  speech_highlights: 30,
 };
 
 /** The mode's name as the editor and the home page spell it. */
@@ -510,23 +524,54 @@ export function cutModeName(mode: CutMode): string {
   return MODES.find((entry) => entry.id === mode)?.name ?? mode;
 }
 
-/** The basis of a count, short: "คิดจากโหมดตัดฉากเด่น คลิปดิบ 5 นาที". */
-export function clipsBasis(minutes: number, mode: CutMode = DEFAULT_CUT_MODE): string {
-  return `คิดจากโหมด${cutModeName(mode)} คลิปดิบ ${clampClipMinutes(minutes, mode)} นาที`;
+/**
+ * The basis of a count, short: "คิดจากโหมดตัดฉากเด่น คลิปดิบ 5 นาที", with
+ * "ระดับละเอียด" after the mode when the count is at that setting.
+ */
+export function clipsBasis(minutes: number, mode: CutMode = DEFAULT_CUT_MODE, precision: Precision = "standard"): string {
+  const setting = precision === "high" && modeHasPrecision(mode) ? ` ระดับ${PRECISION_NAMES.high}` : "";
+  return `คิดจากโหมด${cutModeName(mode)}${setting} คลิปดิบ ${clampClipMinutes(minutes, mode)} นาที`;
+}
+
+/** What a count leaves out, per mode, after its basis. */
+const CLIPS_CAVEAT: Record<CutMode, string> = {
+  talking_head: "คลิปที่ยาวกว่าใช้โควตามากกว่า",
+  dub_first: "คลิปที่ยาวกว่าหรือระดับละเอียดใช้โควตามากกว่า",
+  speech_highlights: "หนึ่งคลิปยาวแยกได้หลายคลิปสั้น",
+};
+
+/**
+ * Everything a count's footnote says after its basis: "ปัดลง · <caveat> ·
+ * ระบบบอกก่อนเริ่มทุกครั้งว่างานนี้ใช้เท่าไหร่". /pricing's calculator states
+ * the basis beside its answer and this under the picker.
+ */
+export function clipsCaveats(mode: CutMode = DEFAULT_CUT_MODE): string {
+  return `ปัดลง · ${CLIPS_CAVEAT[mode]} · ระบบบอกก่อนเริ่มทุกครั้งว่างานนี้ใช้เท่าไหร่`;
 }
 
 /**
- * The footnote for a count in `mode` at `minutes` — the clips picker's note
- * on /pricing, which follows the visitor's choices. Every other surface states
- * `CLIPS_FOOTNOTE`, which is this at the default: ตัดฉากเด่น, 5 minutes.
+ * The whole footnote for a count in `mode` at `minutes`. Every surface without
+ * the calculator states `CLIPS_FOOTNOTE`, which is this at the default:
+ * ตัดฉากเด่น, 5 minutes.
  */
 export function clipsFootnote(minutes: number, mode: CutMode = DEFAULT_CUT_MODE): string {
-  const middle: Record<CutMode, string> = {
-    talking_head: "คลิปที่ยาวกว่าใช้โควตามากกว่า",
-    dub_first: "คลิปที่ยาวกว่าหรือระดับละเอียดใช้โควตามากกว่า",
-    speech_highlights: "หนึ่งคลิปยาวแยกได้หลายคลิปสั้น",
-  };
-  return `${clipsBasis(minutes, mode)} ปัดลง · ${middle[mode]} · ระบบบอกก่อนเริ่มทุกครั้งว่างานนี้ใช้เท่าไหร่`;
+  return `${clipsBasis(minutes, mode)} ${clipsCaveats(mode)}`;
+}
+
+/**
+ * The plan the calculator answers with: the cheapest monthly plan whose count
+ * covers `wanted` for this choice. Null when none does — the page then says
+ * so rather than quietly pointing at the largest plan. Free is a one-off
+ * trial credit, never the answer.
+ */
+export function fitTier(
+  wanted: number,
+  minutes: number,
+  mode: CutMode = DEFAULT_CUT_MODE,
+  precision: Precision = "standard",
+): PaidTier | null {
+  const setting = modeHasPrecision(mode) ? precision : "standard";
+  return PAID_TIERS.find((tier) => (cutsAt(tier, minutes, setting, mode) ?? 0) >= Math.max(1, wanted)) ?? null;
 }
 
 /**

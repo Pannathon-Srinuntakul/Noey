@@ -17,6 +17,11 @@ export interface ModeIntro {
   id: CutMode;
   /** The mode's name in the editor. */
   name: string;
+  /**
+   * Where the name may break, when it is too long for one line: each part is
+   * kept whole ("ตัดไฮไลต์ / จากคลิปยาว", never "…คลิป / ยาว").
+   */
+  nameParts?: readonly string[];
   icon: ModeIcon;
   /** The footage it is for. */
   fit: string;
@@ -54,6 +59,7 @@ export const MODES: readonly ModeIntro[] = [
   {
     id: "speech_highlights",
     name: "ตัดไฮไลต์จากคลิปยาว",
+    nameParts: ["ตัดไฮไลต์", "จากคลิปยาว"],
     icon: "Layers",
     fit: "คลิปพูดยาวหรือไลฟ์ ที่อยากแยกเป็นคลิปสั้น",
     steps: [

@@ -1,18 +1,22 @@
 "use client";
 
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import {
   CLIP_MINUTES,
   CUT_MODE_WORDS,
+  DEFAULT_CLIP_MINUTES,
   DEFAULT_CUT_MODE,
   PRECISION_NAMES,
   clampClipMinutes,
-  clipsFootnote,
-  maxClipMinutes,
+  clipsBasis,
+  clipsCaveats,
   cutModeName,
   cutsAt,
+  fitTier,
   formatCount,
+  hasHighPrecision,
   isTier,
+  maxClipMinutes,
   modeHasPrecision,
   type CutMode,
   type Precision,
@@ -34,6 +38,8 @@ export interface RailPlan {
 export interface RailMode {
   id: CutMode;
   name: string;
+  /** The name in parts that are each kept whole (lib/modes.ts `nameParts`). */
+  nameParts: readonly string[];
   /** The footage it is for (lib/modes.ts `fit`). */
   fit: string;
   icon: ReactNode;
@@ -56,7 +62,7 @@ const MODE_NOTE: Record<CutMode, string> = {
   talking_head: "ใช้แค่การถอดเสียง ไม่มีขั้นที่ AI ดูภาพหรืออ่านเนื้อหา จึงใช้โควตาน้อยที่สุดในสามโหมด",
   dub_first: "AI ดูฟุตเทจทุกวินาทีแล้วเขียนสคริปต์ ยิ่งคลิปยาว หรือเลือกระดับละเอียด (แพลน Pro ขึ้นไป) ยิ่งใช้โควตามาก",
   speech_highlights:
-    "ถอดเสียงแล้วให้ AI อ่านทั้งคลิปและเกลาทีละไฮไลต์ จำนวนไฮไลต์รู้ได้หลังอ่านจบ ระบบจึงคิดเผื่อไว้สูงและบอกเป็นจำนวนขั้นต่ำ",
+    "ถอดเสียงแล้วให้ AI อ่านทั้งคลิปและเกลาทีละไฮไลต์ จำนวนไฮไลต์รู้ได้หลังอ่านจบ ตัวเลขของโหมดนี้จึงคิดเผื่อไว้ค่อนข้างสูง",
 };
 
 /** In place of the setting where the mode has none, so nothing below moves. */
@@ -78,131 +84,178 @@ const clipsFor = (position: number, max: number) => Math.max(1, Math.round(Math.
 
 /**
  * Rewrites every count the page marked (pricing/CutsCount) for this choice:
- * each number, the words that change with the mode, the footage-ceiling note
- * where the length is over a plan's ceiling, and the ระดับละเอียด counts —
- * hidden whole, row and all, in a mode that has no such setting.
+ * each number; the words that change with the mode; a card's headline and
+ * second line, pointed at the setting picked and at the other one; the notes
+ * shown instead of a count (past the ตัดฉากเด่น footage ceiling, short of
+ * budget for one clip this long, no ระดับละเอียด on the plan); and the
+ * ระดับละเอียด counts — hidden whole, row and all, in a mode without it.
  */
 function applyChoice(choice: Choice) {
   const { mode, minutes } = choice;
   const fine = modeHasPrecision(mode);
+  const setting = settingOf(choice);
+  const other: Precision = setting === "high" ? "standard" : "high";
+  for (const scope of document.querySelectorAll<HTMLElement>("[data-cuts-slot]")) {
+    scope.dataset.cutsPrecision = scope.dataset.cutsSlot === "primary" ? setting : other;
+    if (scope.dataset.cutsSlot === "secondary") scope.hidden = !fine;
+  }
   for (const node of document.querySelectorAll<HTMLElement>("[data-cuts-n], [data-cuts-when]")) {
     const scope = node.closest<HTMLElement>("[data-cuts-tier]");
     const tier = scope?.dataset.cutsTier;
     if (!scope || !tier || !isTier(tier)) continue;
-    const count = cutsAt(tier, minutes, scope.dataset.cutsPrecision === "high" ? "high" : "standard", mode);
+    const precision: Precision = scope.dataset.cutsPrecision === "high" ? "high" : "standard";
+    const count = cutsAt(tier, minutes, precision, mode);
     if (node.hasAttribute("data-cuts-n")) {
       if (count) node.textContent = formatCount(count);
-    } else {
-      const state = count === null ? "over" : count === 0 ? "short" : "fit";
-      node.hidden = node.dataset.cutsWhen !== state;
+      continue;
     }
+    const state =
+      precision === "high" && fine && !hasHighPrecision(tier) ? "none" : count === null ? "over" : count === 0 ? "short" : "fit";
+    node.hidden = node.dataset.cutsWhen !== state;
   }
-  for (const node of document.querySelectorAll<HTMLElement>('[data-cuts-precision="high"], [data-cuts-row="high"]')) {
+  for (const node of document.querySelectorAll<HTMLElement>('[data-cuts-precision="high"]:not([data-cuts-slot]), [data-cuts-row="high"]')) {
     node.hidden = !fine;
   }
   for (const node of document.querySelectorAll<HTMLElement>("[data-cuts-word]")) {
     node.textContent = cutsWordText(node.dataset.cutsWord as CutsWordKind, mode);
+  }
+  for (const node of document.querySelectorAll<HTMLElement>("[data-cuts-setting-word]")) {
+    node.textContent = PRECISION_NAMES[other];
+  }
+  for (const node of document.querySelectorAll<HTMLElement>("[data-cuts-setting-tag]")) {
+    node.hidden = setting !== "high";
   }
   for (const node of document.querySelectorAll<HTMLElement>("[data-clip-minutes]")) {
     node.textContent = String(minutes);
   }
 }
 
+/** Marks the plan the calculator answers with: its card and its table column. */
+function markFit(tier: Tier | null) {
+  for (const node of document.querySelectorAll<HTMLElement>("[data-plan-col], .plan--full[data-tier]")) {
+    const plan = node.dataset.planCol ?? node.dataset.tier;
+    node.toggleAttribute("data-fit", plan === tier);
+  }
+}
+
+// False on the server and while hydrating, true once the page's script runs:
+// the controls stay disabled until then, so nothing looks live while it is dead.
+const noSubscribe = () => () => {};
+const useHydrated = () =>
+  useSyncExternalStore(
+    noSubscribe,
+    () => true,
+    () => false,
+  );
+
 /**
  * /pricing's plan rail: the seven cards on one horizontal track that snaps
  * card by card, with the calculator above them. The visitor sets the mode
  * they cut in, how long their raw clips run and (in ตัดฉากเด่น) the setting,
- * then how many clips a month they need; the picker points at the plan that
- * fits.
+ * then how many clips a month they need; the readout names the plan that fits.
  *
  * Every count comes from lib/plans.ts `cutsAt` for that choice — ตัดฉากเด่น,
  * 5 minutes, ระดับปกติ until the visitor changes it, which is what the server
  * HTML states — and the choice rewrites every marked count on the page: the
- * cards, the sentence under them and the comparison table. The fit is the
- * cheapest monthly plan whose count covers the number picked and whose
- * footage ceiling takes the length. The free plan is a one-off trial credit,
- * not a monthly allowance, so it is never the answer.
+ * cards, the list under them and the comparison table. The answer is
+ * lib/plans.ts `fitTier`, and it is the ONE answer on the page: its card and
+ * table column carry the gold, the badge and the gold action. When no plan
+ * covers the number asked for, the readout says so instead of pointing at the
+ * largest plan.
  *
  * Without JavaScript the rail still scrolls (natively, with snap) and every
- * card shows its default count; only the controls need the script.
+ * card shows its default count; the controls render disabled until the
+ * script runs.
  */
 export function PlanRail({
   plans,
   modes,
   initial,
-  freeNote,
   children,
 }: {
   plans: readonly RailPlan[];
   modes: readonly RailMode[];
   initial: number;
-  freeNote: string;
   children: ReactNode;
 }) {
   const root = useRef<HTMLDivElement>(null);
-  const [choice, setChoice] = useState<Choice>({ mode: DEFAULT_CUT_MODE, minutes: CLIP_MINUTES.basis, precision: "standard" });
+  const live = useHydrated();
+  const [choice, setChoice] = useState<Choice>({
+    mode: DEFAULT_CUT_MODE,
+    minutes: DEFAULT_CLIP_MINUTES[DEFAULT_CUT_MODE],
+    precision: "standard",
+  });
+  // Whether the visitor has set a length: until then each mode opens on its own.
+  const [edited, setEdited] = useState(false);
   // What the length field shows while it is being typed in.
-  const [draft, setDraft] = useState(String(CLIP_MINUTES.basis));
+  const [draft, setDraft] = useState(String(DEFAULT_CLIP_MINUTES[DEFAULT_CUT_MODE]));
   const max = maxCuts(plans, choice);
   // The clips asked for; kept when the choice moves, so the answer follows it.
   const [wanted, setWanted] = useState(initial);
   const [position, setPosition] = useState(() => positionFor(initial, max));
-  const [touched, setTouched] = useState(false);
   // Which ends of the rail are in view: an arrow that cannot move says so.
   const [edges, setEdges] = useState({ start: true, end: false });
+  // The first time the fit is marked (on load) the rail jumps; later it glides.
+  const placed = useRef(false);
   const modeGroup = useId();
   const settingGroup = useId();
   const sliderId = useId();
   const noteId = useId();
   const lengthId = useId();
   const lengthNoteId = useId();
+  const setting = settingOf(choice);
   const counts = countsFor(plans, choice);
-  const clips = Math.min(wanted, max);
-  const fit = counts.find((plan) => plan.cuts !== null && plan.cuts > 0 && plan.cuts >= clips) ?? counts[counts.length - 1];
+  const fit = fitTier(wanted, choice.minutes, choice.mode, setting);
+  const fitPlan = plans.find((plan) => plan.tier === fit) ?? null;
+  // The largest count on offer, for the readout when no plan covers the ask.
+  const top = counts.reduce((best, plan) => ((plan.cuts ?? 0) > (best.cuts ?? 0) ? plan : best), counts[counts.length - 1]);
   const { unit } = CUT_MODE_WORDS[choice.mode];
   const fine = modeHasPrecision(choice.mode);
+  const current = modes.find((mode) => mode.id === choice.mode) ?? modes[0];
 
-  /** Moves the choice and keeps the picker on the same number of clips. */
-  function choose(next: Partial<Choice>) {
-    const merged = { ...choice, ...next };
-    // A mode with a shorter range pulls the length into it.
-    const updated = { ...merged, minutes: clampClipMinutes(merged.minutes, merged.mode) };
-    if (updated.minutes !== merged.minutes || next.mode) setDraft(String(updated.minutes));
+  /**
+   * Moves the choice and keeps the picker on the same number of clips. A new
+   * mode opens on its own length unless the visitor has set one, which is
+   * kept, pulled into the new mode's range.
+   */
+  function choose(next: Partial<Choice>, { lengthSet = false }: { lengthSet?: boolean } = {}) {
+    const mode = next.mode ?? choice.mode;
+    const asked = next.minutes ?? choice.minutes;
+    const fresh = next.mode !== undefined && next.mode !== choice.mode && !edited && !lengthSet;
+    const minutes = clampClipMinutes(fresh ? DEFAULT_CLIP_MINUTES[mode] : asked, mode);
+    if (lengthSet) setEdited(true);
+    if (minutes !== asked || next.mode !== undefined) setDraft(String(minutes));
+    const updated = { mode, minutes, precision: next.precision ?? choice.precision };
     if (updated.mode === choice.mode && updated.minutes === choice.minutes && updated.precision === choice.precision) return;
     setChoice(updated);
     const nextMax = maxCuts(plans, updated);
     setPosition(positionFor(Math.min(wanted, nextMax), nextMax));
-    setTouched(true);
   }
 
   function commitLength(next: number) {
     const minutes = clampClipMinutes(next, choice.mode);
     setDraft(String(minutes));
-    choose({ minutes });
+    choose({ minutes }, { lengthSet: true });
   }
 
   useEffect(() => {
     applyChoice(choice);
   }, [choice]);
 
-  // Mark the fitting card and its column in the comparison table; bring the
-  // card into view once the visitor has used a control.
+  // Mark the answer on its card and table column, and open the rail on its
+  // card (phones and tablets, where the rail scrolls): a jump on load, a
+  // glide after, never an animation under reduced motion.
   useEffect(() => {
-    for (const cell of document.querySelectorAll<HTMLElement>("[data-plan-col]")) {
-      cell.toggleAttribute("data-fit", cell.dataset.planCol === fit.tier);
-    }
+    markFit(fit);
     const track = root.current?.querySelector<HTMLElement>("[data-rail-track]");
-    if (!track) return;
-    let target: HTMLElement | null = null;
-    for (const card of track.querySelectorAll<HTMLElement>("[data-tier]")) {
-      const match = card.dataset.tier === fit.tier;
-      card.toggleAttribute("data-fit", match);
-      if (match) target = card.closest<HTMLElement>("li") ?? card;
-    }
-    if (!touched || !target) return;
-    const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    track.scrollTo({ left: target.offsetLeft - track.offsetLeft - 8, behavior: still ? "auto" : "smooth" });
-  }, [fit.tier, touched]);
+    const card = fit ? track?.querySelector<HTMLElement>(`[data-tier="${fit}"]`)?.closest<HTMLElement>("li") : null;
+    const first = !placed.current;
+    placed.current = true;
+    if (!track || !card || track.scrollWidth <= track.clientWidth + 2) return;
+    const still = first || window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const inset = parseFloat(getComputedStyle(track).paddingLeft) || 0;
+    track.scrollTo({ left: card.offsetLeft - inset, behavior: still ? "auto" : "smooth" });
+  }, [fit]);
 
   useEffect(() => {
     const track = root.current?.querySelector<HTMLElement>("[data-rail-track]");
@@ -235,191 +288,226 @@ export function PlanRail({
   const longest = maxClipMinutes(choice.mode);
   const atMax = choice.minutes >= longest;
   const settings: readonly Precision[] = ["standard", "high"];
+  // The basis in two unbreakable halves: "คิดจากโหมด… (ระดับละเอียด)" and "คลิปดิบ N นาที".
+  const basis = clipsBasis(choice.minutes, choice.mode, setting);
+  const cut = basis.lastIndexOf(" คลิปดิบ ");
+  const basisHead = basis.slice(0, cut);
+  const basisTail = basis.slice(cut + 1);
+  const answerText = fitPlan
+    ? `แพลนที่พอดีคือ ${fitPlan.name}`
+    : `เกินทุกแพลน ${top.name} ได้ราว ${formatCount(top.cuts ?? 0)} ${unit}`;
 
   return (
     <div ref={root} className="plan-rail">
-      <div className="plan-rail__bar">
+      <div className="plan-rail__bar" data-idle={live ? undefined : ""}>
         {/* What every count below is priced on: the mode, the length, the
             setting. Native radios, so arrow keys move within each group. */}
-        <div className="rail-setup">
-          <fieldset className="mode-pick">
-            <legend className="picker__label">โหมดที่ใช้</legend>
-            <div className="mode-pick__options">
-              {modes.map((mode) => (
-                <label key={mode.id} className="mode-pick__option">
-                  <input
-                    className="mode-pick__input"
-                    type="radio"
-                    name={modeGroup}
-                    value={mode.id}
-                    checked={choice.mode === mode.id}
-                    onChange={() => choose({ mode: mode.id })}
-                  />
-                  <span className="mode-pick__face">
-                    <span className="mode-pick__icon" aria-hidden="true">
-                      {mode.icon}
-                    </span>
-                    <span className="mode-pick__text">
-                      <span className="mode-pick__name">{keepThai(mode.name)}</span>
-                      <span className="mode-pick__fit">{keepThai(mode.fit)}</span>
-                    </span>
+        <fieldset className="mode-pick" disabled={!live}>
+          <legend className="picker__label">โหมดที่ใช้</legend>
+          <div className="mode-pick__options">
+            {modes.map((mode) => (
+              <label key={mode.id} className="mode-pick__option">
+                <input
+                  className="mode-pick__input"
+                  type="radio"
+                  name={modeGroup}
+                  value={mode.id}
+                  checked={choice.mode === mode.id}
+                  onChange={() => choose({ mode: mode.id })}
+                />
+                <span className="mode-pick__face">
+                  <span className="mode-pick__icon" aria-hidden="true">
+                    {mode.icon}
                   </span>
+                  <span className="mode-pick__text">
+                    <span className="mode-pick__name">
+                      {mode.nameParts.map((part, index) => (
+                        <span key={part}>
+                          {index ? <wbr /> : null}
+                          <span className="kt">{part}</span>
+                        </span>
+                      ))}
+                    </span>
+                    <span className="mode-pick__fit">{keepThai(mode.fit)}</span>
+                  </span>
+                </span>
+              </label>
+            ))}
+          </div>
+          {/* Phones show the modes as a row of chips; what the picked one is
+              for is said once, under them. */}
+          <p className="mode-pick__current">
+            <span className="mode-pick__current-label">เหมาะกับ</span>
+            {keepThai(current.fit)}
+          </p>
+        </fieldset>
+        {/* The steppers are aria-disabled at an end rather than disabled, so a
+            keyboard user who just pressed one keeps their focus. */}
+        <div className="cliplen">
+          <label className="picker__label" htmlFor={lengthId}>
+            ความยาวคลิปดิบของคุณ
+          </label>
+          <div className="cliplen__row">
+            <button
+              type="button"
+              className="btn btn-secondary btn-icon cliplen__step"
+              onClick={() => !atMin && commitLength(choice.minutes - 1)}
+              disabled={!live}
+              aria-disabled={atMin || undefined}
+              aria-controls={lengthId}
+              aria-label="สั้นลง 1 นาที"
+            >
+              <IconMinus />
+            </button>
+            <input
+              id={lengthId}
+              className="input num cliplen__input"
+              type="number"
+              inputMode="numeric"
+              min={CLIP_MINUTES.min}
+              max={longest}
+              step={1}
+              value={draft}
+              disabled={!live}
+              aria-describedby={lengthNoteId}
+              onChange={(event) => {
+                const text = event.target.value;
+                setDraft(text);
+                const value = Number(text);
+                // Applied as typed when it is a length the page takes;
+                // anything else waits for the field to lose focus, then
+                // snaps into range.
+                if (text.trim() !== "" && Number.isInteger(value) && value >= CLIP_MINUTES.min && value <= longest) {
+                  choose({ minutes: value }, { lengthSet: true });
+                }
+              }}
+              onBlur={() => commitLength(draft.trim() === "" ? choice.minutes : Number(draft))}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") commitLength(draft.trim() === "" ? choice.minutes : Number(draft));
+              }}
+            />
+            <button
+              type="button"
+              className="btn btn-secondary btn-icon cliplen__step"
+              onClick={() => !atMax && commitLength(choice.minutes + 1)}
+              disabled={!live}
+              aria-disabled={atMax || undefined}
+              aria-controls={lengthId}
+              aria-label="ยาวขึ้น 1 นาที"
+            >
+              <IconPlus />
+            </button>
+            <span className="cliplen__unit">นาที</span>
+          </div>
+          <p className="picker__note" id={lengthNoteId}>
+            {keepThai(`ความยาวต่อคลิป ตั้งได้ ${CLIP_MINUTES.min}–${longest} นาที`)}
+          </p>
+        </div>
+        {/* ระดับละเอียด exists only in ตัดฉากเด่น. In the other modes a line
+            saying so takes the group's place in the same cell, so nothing
+            below moves. */}
+        <div className="rail-setup__fine">
+          <fieldset className="seg rail-setup__layer" disabled={!live || !fine} data-off={fine ? undefined : ""}>
+            <legend className="picker__label">ความละเอียด</legend>
+            <div className="seg__options">
+              {settings.map((option) => (
+                <label key={option} className="seg__option">
+                  <input
+                    className="seg__input"
+                    type="radio"
+                    name={settingGroup}
+                    value={option}
+                    checked={setting === option}
+                    onChange={() => choose({ precision: option })}
+                  />
+                  <span className="seg__text">{PRECISION_NAMES[option]}</span>
                 </label>
               ))}
             </div>
           </fieldset>
-          <div className="rail-setup__row">
-            {/* The steppers are aria-disabled at an end rather than disabled,
-                so a keyboard user who just pressed one keeps their focus. */}
-            <div className="cliplen">
-              <label className="picker__label" htmlFor={lengthId}>
-                ความยาวคลิปดิบของคุณ
-              </label>
-              <div className="cliplen__row">
-                <button
-                  type="button"
-                  className="btn btn-secondary btn-icon cliplen__step"
-                  onClick={() => !atMin && commitLength(choice.minutes - 1)}
-                  aria-disabled={atMin || undefined}
-                  aria-controls={lengthId}
-                  aria-label="สั้นลง 1 นาที"
-                >
-                  <IconMinus />
-                </button>
-                <input
-                  id={lengthId}
-                  className="input num cliplen__input"
-                  type="number"
-                  inputMode="numeric"
-                  min={CLIP_MINUTES.min}
-                  max={longest}
-                  step={1}
-                  value={draft}
-                  aria-describedby={lengthNoteId}
-                  onChange={(event) => {
-                    const text = event.target.value;
-                    setDraft(text);
-                    const value = Number(text);
-                    // Applied as typed when it is a length the page takes;
-                    // anything else waits for the field to lose focus, then
-                    // snaps into range.
-                    if (text.trim() !== "" && Number.isInteger(value) && value >= CLIP_MINUTES.min && value <= longest) {
-                      choose({ minutes: value });
-                    }
-                  }}
-                  onBlur={() => commitLength(draft.trim() === "" ? choice.minutes : Number(draft))}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") commitLength(draft.trim() === "" ? choice.minutes : Number(draft));
-                  }}
-                />
-                <button
-                  type="button"
-                  className="btn btn-secondary btn-icon cliplen__step"
-                  onClick={() => !atMax && commitLength(choice.minutes + 1)}
-                  aria-disabled={atMax || undefined}
-                  aria-controls={lengthId}
-                  aria-label="ยาวขึ้น 1 นาที"
-                >
-                  <IconPlus />
-                </button>
-                <span className="cliplen__unit">นาที</span>
-              </div>
-              <p className="picker__note" id={lengthNoteId}>
-                {keepThai(`ความยาวต่อคลิป ตั้งได้ ${CLIP_MINUTES.min}–${longest} นาที`)}
-              </p>
-            </div>
-            {/* ระดับละเอียด exists only in ตัดฉากเด่น. In the other modes a
-                line saying so takes the group's place in the same cell, so
-                nothing below moves. */}
-            <div className="rail-setup__fine">
-              <fieldset className="seg rail-setup__layer" disabled={!fine} data-off={fine ? undefined : ""}>
-                <legend className="picker__label">ความละเอียด</legend>
-                <div className="seg__options">
-                  {settings.map((setting) => (
-                    <label key={setting} className="seg__option">
-                      <input
-                        className="seg__input"
-                        type="radio"
-                        name={settingGroup}
-                        value={setting}
-                        checked={settingOf(choice) === setting}
-                        onChange={() => choose({ precision: setting })}
-                      />
-                      <span className="seg__text">{PRECISION_NAMES[setting]}</span>
-                    </label>
-                  ))}
-                </div>
-              </fieldset>
-              <div className="rail-setup__layer" data-off={fine ? "" : undefined}>
-                <span className="picker__label">ความละเอียด</span>
-                <p className="seg__none">{keepThai(NO_SETTING)}</p>
-              </div>
-            </div>
+          <div className="rail-setup__layer" data-off={fine ? "" : undefined}>
+            <span className="picker__label">ความละเอียด</span>
+            <p className="seg__none">{keepThai(NO_SETTING)}</p>
           </div>
+        </div>
+        {/* The answer, beside the choices it answers: the clips asked for and
+            the plan that covers them, then the basis — said once here for
+            every count on the page. */}
+        <div className="rail-answer">
+          <output className="picker__out" htmlFor={`${sliderId} ${lengthId}`} aria-live="polite">
+            <span className="num picker__num">{formatCount(wanted)}</span>
+            <span className="picker__unit">{`${unit} / เดือน`}</span>
+            {fitPlan ? (
+              <>
+                <span className="picker__arrow" aria-hidden="true">
+                  →
+                </span>
+                <span className="picker__plan">{fitPlan.name}</span>
+              </>
+            ) : (
+              <span className="picker__over">
+                <span className="kt">เกินทุกแพลน</span>
+                {" · "}
+                <span className="kt">{`${top.name} ได้ราว ${formatCount(top.cuts ?? 0)}`}</span>
+              </span>
+            )}
+          </output>
+          <p className="rail-answer__basis">
+            <span className="kt">{basisHead}</span> <span className="kt">{basisTail}</span>
+          </p>
         </div>
         <p className="picker__note rail-setup__note">{keepThai(MODE_NOTE[choice.mode])}</p>
         {/* Says what the counts are now priced on, once per change; the
-            readout below announces the plan. */}
+            readout announces the answer. */}
         <p className="sr-only" aria-live="polite">
-          {`คิดใหม่ตามโหมด${cutModeName(choice.mode)} คลิปดิบ ${choice.minutes} นาที${fine && choice.precision === "high" ? " ระดับละเอียด" : ""}`}
+          {live ? `คิดใหม่ตามโหมด${cutModeName(choice.mode)} คลิปดิบ ${choice.minutes} นาที${setting === "high" ? " ระดับละเอียด" : ""}` : ""}
         </p>
         <div className="picker">
           <label className="picker__label" htmlFor={sliderId}>
             {`ใช้ประมาณกี่${unit}ต่อเดือน`}
           </label>
-          <div className="picker__row">
-            {/* The track and its plan markers share one box, so a marker sits
-                exactly where the playhead stops for that plan. */}
-            <div className="picker__track">
-              <input
-                id={sliderId}
-                className="picker__range"
-                type="range"
-                min={0}
-                max={SCALE}
-                step={1}
-                value={position}
-                aria-describedby={noteId}
-                aria-valuetext={`ราว ${formatCount(clips)} ${unit}ต่อเดือน แพลนที่พอดีคือ ${fit.name}`}
-                style={{ ["--fill" as string]: `${percent}%` }}
-                onChange={(event) => {
-                  const next = Number(event.target.value);
-                  setPosition(next);
-                  setWanted(clipsFor(next, max));
-                  setTouched(true);
-                }}
-              />
-              <div className="picker__ticks" aria-hidden="true">
-                {/* A plan with no count for this choice (past its ตัดฉากเด่น
-                    footage ceiling, short of budget for one clip this long,
-                    or without the setting) steps off the track. */}
-                {counts.map((plan) => (
-                  <span
-                    key={plan.tier}
-                    className={["picker__tick", plan.tier === fit.tier ? "picker__tick--on" : null, !plan.cuts ? "picker__tick--out" : null]
-                      .filter(Boolean)
-                      .join(" ")}
-                    style={{ ["--at" as string]: plan.cuts ? positionFor(plan.cuts, max) / SCALE : 0 }}
-                  >
-                    {plan.name}
-                  </span>
-                ))}
-              </div>
+          {/* The track and its plan markers share one box, so a marker sits
+              exactly where the playhead stops for that plan. */}
+          <div className="picker__track">
+            <input
+              id={sliderId}
+              className="picker__range"
+              type="range"
+              min={0}
+              max={SCALE}
+              step={1}
+              value={position}
+              disabled={!live}
+              aria-describedby={noteId}
+              aria-valuetext={`ราว ${formatCount(wanted)} ${unit}ต่อเดือน ${answerText}`}
+              style={{ ["--fill" as string]: `${percent}%` }}
+              onChange={(event) => {
+                const next = Number(event.target.value);
+                setPosition(next);
+                setWanted(clipsFor(next, max));
+              }}
+            />
+            <div className="picker__ticks" aria-hidden="true">
+              {/* A plan with no count for this choice (past its ตัดฉากเด่น
+                  footage ceiling, short of budget for one clip this long, or
+                  without the setting) steps off the track. */}
+              {counts.map((plan) => (
+                <span
+                  key={plan.tier}
+                  className={["picker__tick", plan.tier === fit ? "picker__tick--on" : null, !plan.cuts ? "picker__tick--out" : null]
+                    .filter(Boolean)
+                    .join(" ")}
+                  style={{ ["--at" as string]: plan.cuts ? positionFor(plan.cuts, max) / SCALE : 0 }}
+                >
+                  {plan.name}
+                </span>
+              ))}
             </div>
-            <output className="picker__out" htmlFor={sliderId} aria-live="polite">
-              <span className="num picker__num">{formatCount(clips)}</span>
-              <span className="picker__unit">{`${unit} / เดือน`}</span>
-              <span className="picker__arrow" aria-hidden="true">
-                →
-              </span>
-              <span className="picker__plan">{fit.name}</span>
-            </output>
           </div>
-          <p className="picker__note" id={noteId}>
-            {keepThai(clipsFootnote(choice.minutes, choice.mode))}
-          </p>
-          <p className="picker__note">{keepThai(freeNote)}</p>
         </div>
+        <p className="picker__note picker__caveats" id={noteId}>
+          {keepThai(clipsCaveats(choice.mode))}
+        </p>
       </div>
       {/* Beside the cards they move (hidden where every card is in view). At
           an end the arrow is aria-disabled rather than disabled, so a keyboard

@@ -603,6 +603,54 @@ every mode is rewritten; the two hours is stated by one constant,
   appears only in ตัดฉากเด่น, and where one clip of that length costs more than a
   plan's whole budget the count reads "ไม่พอสำหรับคลิปยาวขนาดนี้".
 
+## 28. /pricing calculator: the review round (2026-10-01)
+
+An independent review scored the calculator 7.0; these are its fixes.
+
+- ตัดไฮไลต์จากคลิปยาว: "ตัดได้อย่างน้อย N คลิปยาว / เดือน" → "ตัดได้ราว N คลิปยาว / เดือน"
+  (and "อย่างน้อย N คลิปยาว" → "ราว N คลิปยาว" in the table and the list). A run is
+  charged per request as it goes and can exceed the estimate, so a floor read
+  as a guarantee. The mode's cost line now says the estimate is generous:
+  "…จำนวนไฮไลต์รู้ได้หลังอ่านจบ ระบบจึงคิดเผื่อไว้สูงและบอกเป็นจำนวนขั้นต่ำ" →
+  "…จำนวนไฮไลต์รู้ได้หลังอ่านจบ ตัวเลขของโหมดนี้จึงคิดเผื่อไว้ค่อนข้างสูง".
+- "โควตาคิดยังไง" contradicted itself ("ใช้กำลังใกล้เคียงกันไม่ว่าฟุตเทจจะยาวแค่ไหน"
+  beside "คลิปที่ยาวกว่าใช้โควตามากกว่า"):
+  "เรานับเป็นจำนวนคลิปที่ AI ตัดให้ต่อเดือน เพราะงานหนักของแต่ละคลิปคือการถอดเสียงและการวางแผนตัด ซึ่งใช้กำลังใกล้เคียงกันไม่ว่าฟุตเทจจะยาวแค่ไหน ตัวเลขบนการ์ดคิดจากโหมดและความยาวคลิปดิบที่ตั้งไว้ด้านบน ตั้งต้นที่โหมดตัดฉากเด่น คลิปดิบ 5 นาที และปัดลง แต่ละโหมดใช้โควตาไม่เท่ากัน แพลน Pro ขึ้นไปบอกทั้งจำนวนที่ระดับปกติและระดับละเอียด คลิปที่ยาวกว่าใช้โควตามากกว่า และหน้าตั้งค่าแสดงเป็นเปอร์เซ็นต์ของรอบที่เหลือ"
+  → "เรานับเป็นจำนวนคลิปที่ AI ตัดให้ต่อเดือน แต่ละคลิปใช้โควตาตามโหมดและความยาวฟุตเทจ
+  ตัดช่วงเงียบใช้น้อยที่สุดเพราะถอดเสียงอย่างเดียว ตัดฉากเด่นและตัดไฮไลต์จากคลิปยาวมีขั้นที่ AI
+  วางแผนตัดเพิ่มเข้ามา และทุกโหมด คลิปที่ยาวกว่าใช้โควตามากกว่า ตัวเลขบนการ์ดคิดจากโหมดและ
+  ความยาวคลิปดิบที่ตั้งไว้ด้านบน ตั้งต้นที่โหมดตัดฉากเด่น คลิปดิบ 5 นาที และปัดลง แพลน Pro
+  ขึ้นไปบอกทั้งจำนวนที่ระดับปกติและระดับละเอียด และหน้าตั้งค่าแสดงเป็นเปอร์เซ็นต์ของรอบที่เหลือ" —
+  true for all three modes.
+- The plans section's heading was for screen readers only ("แพลนทั้งหมด"); it is
+  now visible like every other section's, "คำนวณแพลนที่พอดี", with the intro
+  "เลือกโหมดที่ใช้และความยาวคลิปดิบของคุณ แล้วบอกว่าอยากได้กี่คลิปต่อเดือน
+  ระบบชี้แพลนที่พอดีให้ และการ์ดทุกใบคิดตัวเลขใหม่ตามนั้น".
+- One answer per page: the card that fits carries "พอดีกับที่เลือก" (new) and the
+  gold action; Pro's "แนะนำ" stays, quieter, while another plan fits.
+- With ระดับละเอียด picked, a card's headline is its ระดับละเอียด count, tagged
+  "ระดับละเอียด", and the second line reads "ระดับปกติราว N คลิป" (dimmed); a plan
+  without the setting says "ไม่มีระดับละเอียด" (new) in place of a count.
+- When no plan covers the clips asked for, the readout says "เกินทุกแพลน · Max
+  ได้ราว N" (new) instead of pointing at Max.
+- The basis is said once, beside the answer ("คิดจากโหมดตัดฉากเด่น คลิปดิบ 5 นาที",
+  plus "ระดับละเอียด" when picked); the cards on /pricing no longer repeat it
+  under each count (the home strip still does), and the picker's note keeps
+  only what follows it: "ปัดลง · … · ระบบบอกก่อนเริ่มทุกครั้งว่างานนี้ใช้เท่าไหร่".
+- The free plan's one-off nature is said once on /pricing, in its card's blurb:
+  the card's " · ทดลองใช้ครั้งเดียว ไม่รีเซ็ต" after its count and the picker's
+  "ฟรี: ทดลองใช้ครั้งเดียว ไม่รีเซ็ต" are gone there (both stay where the blurb is
+  not shown: the home strip, the account card).
+- The sentence under the cards is a short list now: the lead
+  "ใช้หมดแล้วเลือกแพลนรายเดือนได้ 6 ระดับ ราคาต่อเดือนและจำนวนคลิปต่อเดือน (คิดจาก…)"
+  then one row per plan ("Lite · 99 บาท · ราว 4 คลิป"). Its old middle part,
+  "ต่อเดือน โดยได้จำนวนคลิปต่อเดือน", and the run-on list of prices and counts are
+  replaced by those rows.
+- Phones: the modes are chips (icon over name), and what the picked mode is for
+  is said once under them — "เหมาะกับ" + the mode's footage line.
+- Per-mode starting length: ตัดไฮไลต์จากคลิปยาว opens on 30 minutes (the others on
+  5) until the visitor sets a length.
+
 ## Text added (not replacing anything)
 
 Only labels, no claims:

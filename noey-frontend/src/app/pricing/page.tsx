@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { Fragment } from "react";
 import { BetaPriceNote } from "@/components/BetaPriceNote";
 import { Breadcrumb } from "@/components/Breadcrumb";
 import { CheckoutCanceledNotice } from "@/components/CheckoutCanceledNotice";
@@ -35,7 +34,7 @@ import {
   CUTS_APPROX_SHORT,
   CUTS_OVER_FOOTAGE_SHORT,
   CUTS_SHORT_OF_BUDGET,
-  FREE_CLIPS_CAPTION,
+  CLIP_MINUTES,
   PAID_TIERS,
   PLAN_COPY,
   PRECISION_NAMES,
@@ -43,6 +42,7 @@ import {
   VOLUME_VALUE_NOTE,
   clipsHeadline,
   displayPrice,
+  fitTier,
   footageLadderSentence,
   formatBaht,
   isBetaPriced,
@@ -93,42 +93,49 @@ function answer(): string[] {
 }
 
 /**
- * Every monthly plan's price and clip count in one sentence (the cards' text
- * twin). The counts are marked like the cards' (pricing/CutsCount), so the
- * calculator above reprices them too, and the sentence ends on its basis.
+ * Every monthly plan's price and clip count (the cards' text twin): one lead
+ * line with the basis, then one short row per plan. The counts are marked like
+ * the cards' (pricing/CutsCount), so the calculator above reprices them too.
  */
 function PriceList({ table }: { table: PriceTable }) {
-  const paid = PAID_TIERS.flatMap((tier) => {
-    const price = displayPrice(table, tier);
-    return price ? [`${PLAN_COPY[tier].name} ${price} บาท`] : [];
-  });
-  const list = paid.length > 1 ? `${paid.slice(0, -1).join(", ")} และ ${paid[paid.length - 1]}` : paid.join("");
+  const paid = PAID_TIERS.filter((tier) => displayPrice(table, tier) !== null);
   return (
-    <p className="pricing-summary">
-      {keepThaiProse(`ใช้หมดแล้วเลือกแพลนรายเดือนได้ ${paid.length} ระดับ ได้แก่ ${list} ต่อเดือน โดยได้จำนวนคลิปต่อเดือน`)}{" "}
-      {PAID_TIERS.map((tier, index) => {
-        const high = APPROX_HIGH_CUTS_PER_MONTH[tier];
-        return (
-          <Fragment key={tier}>
-            {index ? "\u00a0· " : null}
-            {`${PLAN_COPY[tier].name} `}
-            <CutsCount tier={tier} over={CUTS_OVER_FOOTAGE_SHORT} short={CUTS_SHORT_OF_BUDGET}>
-              <CutsWord word="hedge" /> <CutsNumber value={APPROX_CUTS_PER_MONTH[tier]} /> <CutsWord word="unit" />
-            </CutsCount>
-            {high ? (
-              <CutsCount tier={tier} precision="high">
-                {` (ระดับ${PRECISION_NAMES.high}`}
-                <span className="kt">
-                  {`${CUTS_APPROX_SHORT} `}
-                  <CutsNumber value={high} /> คลิป)
-                </span>
-              </CutsCount>
-            ) : null}
-          </Fragment>
-        );
-      })}{" "}
-      (<ClipsBasis />)
-    </p>
+    <div className="price-list">
+      <p className="price-list__lead">
+        {keepThaiProse(`ใช้หมดแล้วเลือกแพลนรายเดือนได้ ${paid.length} ระดับ ราคาต่อเดือนและจำนวนคลิปต่อเดือน`)}{" "}
+        <span className="price-list__basis">
+          (<ClipsBasis />)
+        </span>
+      </p>
+      <ul className="price-list__items">
+        {paid.map((tier) => {
+          const high = APPROX_HIGH_CUTS_PER_MONTH[tier];
+          return (
+            <li key={tier} className="price-list__item">
+              <span className="price-list__plan">{PLAN_COPY[tier].name}</span>
+              <span className="num price-list__price">{`${displayPrice(table, tier)} บาท`}</span>
+              <span className="price-list__cuts">
+                <CutsCount tier={tier} over={CUTS_OVER_FOOTAGE_SHORT} short={CUTS_SHORT_OF_BUDGET}>
+                  <CutsWord word="hedge" />{" "}
+                  <span className="kt">
+                    <CutsNumber className="num" value={APPROX_CUTS_PER_MONTH[tier]} /> <CutsWord word="unit" />
+                  </span>
+                </CutsCount>
+                {high ? (
+                  <CutsCount tier={tier} precision="high" className="price-list__high">
+                    {` · ระดับ${PRECISION_NAMES.high}`}
+                    <span className="kt">
+                      {`${CUTS_APPROX_SHORT} `}
+                      <CutsNumber className="num" value={high} /> คลิป
+                    </span>
+                  </CutsCount>
+                ) : null}
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
   );
 }
 
@@ -165,10 +172,13 @@ export default async function PricingPage() {
     faqPageNode(pricingFaq(isBetaPriced(table)), page.path),
   );
   const railPlans = PAID_TIERS.map((tier) => ({ tier, name: PLAN_COPY[tier].name }));
+  // The calculator's answer at its default, marked in the HTML before any script runs.
+  const defaultFit = fitTier(APPROX_CUTS_PER_MONTH.pro, CLIP_MINUTES.basis);
   // The three modes as the home page introduces them, with the editor's icons.
   const railModes = MODES.map((mode) => ({
     id: mode.id,
     name: mode.name,
+    nameParts: mode.nameParts ?? [mode.name],
     fit: mode.fit,
     icon: <Icon name={mode.icon} size={18} strokeWidth={1.8} />,
   }));
@@ -194,16 +204,19 @@ export default async function PricingPage() {
       />
 
       <section className="pricing-plans" aria-labelledby="pricing-plans-title">
-        {/* The plans' heading for the page's outline (the cards are h3). */}
-        <h2 id="pricing-plans-title" className="sr-only">
-          แพลนทั้งหมด
-        </h2>
         <div className="wrap">
+          {/* The calculator opens like every other section: its marker, its
+              timecode, its heading. */}
+          <SectionHeader id="pricing-plans-title" marker timecode="00:00:24:00" title="คำนวณแพลนที่พอดี" size="h-2">
+            <p>
+              {keepThaiProse("เลือกโหมดที่ใช้และความยาวคลิปดิบของคุณ แล้วบอกว่าอยากได้กี่คลิปต่อเดือน ระบบชี้แพลนที่พอดีให้ และการ์ดทุกใบคิดตัวเลขใหม่ตามนั้น")}
+            </p>
+          </SectionHeader>
           <CheckoutCanceledNotice />
           <ComputerOnly className="computer-only--top" />
           <BetaPriceNote table={table} />
-          <PlanRail plans={railPlans} modes={railModes} initial={APPROX_CUTS_PER_MONTH.pro} freeNote={`${PLAN_COPY.free.name}: ${FREE_CLIPS_CAPTION}`}>
-            <PriceCards table={table} variant="full" />
+          <PlanRail plans={railPlans} modes={railModes} initial={APPROX_CUTS_PER_MONTH.pro}>
+            <PriceCards table={table} variant="full" fit={defaultFit} />
           </PlanRail>
           <PriceList table={table} />
         </div>
@@ -213,7 +226,7 @@ export default async function PricingPage() {
         <div className="wrap quota__grid">
           <SectionHeader id="quota-title" marker timecode="00:00:48:00" title="โควตาคิดยังไง" size="h-2">
             <p>
-              {keepThaiProse("เรานับเป็นจำนวนคลิปที่ AI ตัดให้ต่อเดือน เพราะงานหนักของแต่ละคลิปคือการถอดเสียงและการวางแผนตัด ซึ่งใช้กำลังใกล้เคียงกันไม่ว่าฟุตเทจจะยาวแค่ไหน ตัวเลขบนการ์ดคิดจากโหมดและความยาวคลิปดิบที่ตั้งไว้ด้านบน ตั้งต้นที่โหมดตัดฉากเด่น คลิปดิบ 5 นาที และปัดลง แต่ละโหมดใช้โควตาไม่เท่ากัน แพลน Pro ขึ้นไปบอกทั้งจำนวนที่ระดับปกติและระดับละเอียด คลิปที่ยาวกว่าใช้โควตามากกว่า และหน้าตั้งค่าแสดงเป็นเปอร์เซ็นต์ของรอบที่เหลือ")}
+              {keepThaiProse("เรานับเป็นจำนวนคลิปที่ AI ตัดให้ต่อเดือน แต่ละคลิปใช้โควตาตามโหมดและความยาวฟุตเทจ ตัดช่วงเงียบใช้น้อยที่สุดเพราะถอดเสียงอย่างเดียว ตัดฉากเด่นและตัดไฮไลต์จากคลิปยาวมีขั้นที่ AI วางแผนตัดเพิ่มเข้ามา และทุกโหมด คลิปที่ยาวกว่าใช้โควตามากกว่า ตัวเลขบนการ์ดคิดจากโหมดและความยาวคลิปดิบที่ตั้งไว้ด้านบน ตั้งต้นที่โหมดตัดฉากเด่น คลิปดิบ 5 นาที และปัดลง แพลน Pro ขึ้นไปบอกทั้งจำนวนที่ระดับปกติและระดับละเอียด และหน้าตั้งค่าแสดงเป็นเปอร์เซ็นต์ของรอบที่เหลือ")}
             </p>
           </SectionHeader>
           <div className="quota-card">
@@ -246,7 +259,7 @@ export default async function PricingPage() {
               {keepThaiProse("ทุกแพลนได้ดราฟต์แรกจากการคัดช็อตเหมือนกัน แล้วยังต้องเกลาต่อเองในไทม์ไลน์ ระบบเหมาะกับคลิปสั้นที่โครงไม่ซับซ้อน ไม่ใช่งานโปรดักชันที่ต้องแทรกภาพหรือตัดซ้อนหลายชั้น")}
             </p>
           </SectionHeader>
-          <PlanComparisonTable table={table} labelledBy="compare-title" footnote="live" />
+          <PlanComparisonTable table={table} labelledBy="compare-title" footnote="live" fit={defaultFit} />
         </div>
       </section>
 

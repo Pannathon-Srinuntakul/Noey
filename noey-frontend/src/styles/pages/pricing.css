@@ -76,9 +76,14 @@
   gap: 18px;
 }
 
+/* The calculator: the choices (mode, length, setting), the answer, the cost
+   note, the clips picker, its caveats — one grid whose areas move with the
+   width. Phones: one column, the answer right under the picker it answers.
+   From 900px: the answer sits beside the length and the setting. */
 .plan-rail__bar {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "modes" "length" "fine" "note" "picker" "answer" "caveats";
   gap: 16px;
   padding: clamp(18px, 2.4vw, 26px);
   border: 1px solid var(--line);
@@ -96,22 +101,58 @@
   margin-bottom: -8px;
 }
 
-/* The calculator's choices — mode, raw-clip length, setting — ruled off from
-   the clips picker under them. */
-.rail-setup {
-  display: grid;
-  gap: 18px;
+.mode-pick {
+  grid-area: modes;
 }
 
-.rail-setup__row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  gap: 18px 44px;
+.cliplen {
+  grid-area: length;
+}
+
+.rail-setup__fine {
+  grid-area: fine;
+}
+
+.rail-answer {
+  grid-area: answer;
 }
 
 .rail-setup__note {
-  margin-top: -4px;
+  grid-area: note;
+}
+
+.picker {
+  grid-area: picker;
+}
+
+.picker__caveats {
+  grid-area: caveats;
+}
+
+@media (min-width: 600px) {
+  .plan-rail__bar {
+    grid-template-columns: max-content minmax(0, 1fr);
+    grid-template-areas: "modes modes" "length fine" "note note" "picker picker" "answer answer" "caveats caveats";
+    column-gap: 44px;
+  }
+}
+
+@media (min-width: 900px) {
+  .plan-rail__bar {
+    grid-template-columns: max-content max-content minmax(0, 1fr);
+    grid-template-areas: "modes modes modes" "length fine answer" "note note note" "picker picker picker" "caveats caveats caveats";
+  }
+
+}
+
+/* Before the page's script runs (or without it) the controls are drawn but
+   disabled, and look it: nothing seems live while it is dead. */
+.plan-rail__bar[data-idle] :is(.mode-pick__options, .cliplen__row, .seg__options, .picker__track) {
+  opacity: 0.55;
+}
+
+.rail-setup__note {
+  margin-top: -2px;
   padding-bottom: 18px;
   border-bottom: 1px dashed var(--line-2);
 }
@@ -172,12 +213,19 @@
   cursor: pointer;
 }
 
+.mode-pick__input:disabled,
+.seg__input:disabled {
+  cursor: default;
+}
+
+/* Name and footage line start on one line across the three, however many
+   lines each footage line takes. */
 .mode-pick__face {
   --clip-edge: var(--line-2);
   position: relative;
   display: flex;
   flex: 1;
-  align-items: center;
+  align-items: flex-start;
   gap: 12px;
   padding: 12px 16px;
   border: 1px solid var(--clip-edge);
@@ -215,7 +263,7 @@
   translate: -5px 0;
 }
 
-.mode-pick__option:hover .mode-pick__face {
+.mode-pick__option:hover .mode-pick__input:not(:disabled) + .mode-pick__face {
   --clip-edge: var(--line-3);
 }
 
@@ -258,19 +306,34 @@
 
 .mode-pick__text {
   display: grid;
+  gap: 2px;
   min-width: 0;
 }
 
 .mode-pick__name {
   font-size: var(--fs-15);
   font-weight: 600;
-  line-height: 1.45;
+  line-height: 1.5;
   color: var(--ink);
 }
 
 .mode-pick__fit {
   font-size: var(--fs-13);
-  line-height: 1.55;
+  line-height: 1.7;
+  color: var(--ink-3);
+}
+
+/* Phones: what the picked mode is for, said once under the chips. */
+.mode-pick__current {
+  display: none;
+  margin: 10px 0 0;
+  font-size: var(--fs-13);
+  line-height: 1.7;
+  color: var(--ink-2);
+}
+
+.mode-pick__current-label {
+  margin-right: 6px;
   color: var(--ink-3);
 }
 
@@ -311,7 +374,7 @@
     color var(--dur-2) ease;
 }
 
-.seg__option:hover .seg__text {
+.seg__option:hover .seg__input:not(:disabled) + .seg__text {
   color: var(--ink);
 }
 
@@ -395,16 +458,8 @@
   font-weight: 600;
 }
 
-.picker__row {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px 24px;
-  flex-wrap: wrap;
-}
-
 .picker__track {
   position: relative;
-  flex: 1 1 280px;
   min-width: 0;
   padding-bottom: 30px;
 }
@@ -418,6 +473,10 @@
   margin: 0;
   background: transparent;
   cursor: pointer;
+}
+
+.picker__range:disabled {
+  cursor: default;
 }
 
 .picker__range::-webkit-slider-runnable-track {
@@ -458,29 +517,42 @@
   border-radius: 8px;
 }
 
-/* The readout never changes width: it sits beside the track, so a readout
-   that grew or shrank with the plan's name ("Max" / "Agency") would resize
-   the track under the pointer, move the value, flip the name back — and the
-   thumb would bounce between two plans while dragged. */
-.picker__out {
-  flex: none;
-  display: inline-flex;
-  align-items: baseline;
+/* The answer: the clips asked for, then the plan that covers them (or that
+   none does), then the basis every count on the page is priced on. */
+.rail-answer {
+  display: grid;
   gap: 8px;
-  padding: 6px 14px;
-  border-radius: 12px;
+  justify-items: start;
+  min-width: 0;
+}
+
+/* From 900px the answer sits at the right of the choices' row. */
+@media (min-width: 900px) {
+  .rail-answer {
+    justify-self: end;
+    align-self: center;
+    justify-items: end;
+    text-align: right;
+  }
+}
+
+.picker__out {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 10px;
+  max-width: 100%;
+  padding: 12px 20px;
+  border-radius: 14px;
   background: var(--well);
   border: 1px solid var(--line);
-  white-space: nowrap;
+  box-shadow: var(--rim);
 }
 
 .picker__num {
-  display: inline-block;
-  /* Four digits: ตัดช่วงเงียบ counts run into the thousands. */
-  min-width: 2.4em;
-  text-align: right;
-  font-size: var(--fs-20);
+  font-size: 1.75rem;
   font-weight: 600;
+  line-height: 1.25;
   color: var(--gold-ink);
 }
 
@@ -494,10 +566,23 @@
 }
 
 .picker__plan {
-  display: inline-block;
-  min-width: 4.4em;
-  font-size: var(--fs-17);
+  font-size: 1.375rem;
   font-weight: 600;
+  line-height: 1.25;
+}
+
+.picker__over {
+  font-size: var(--fs-14);
+  font-weight: 600;
+  line-height: 1.6;
+  color: var(--ink-2);
+}
+
+.rail-answer__basis {
+  margin: 0;
+  font-size: var(--fs-13);
+  line-height: 1.6;
+  color: var(--ink-2);
 }
 
 /* Plan markers under the scrubber, placed where the playhead's centre stops:
@@ -558,22 +643,56 @@
   color: var(--ink-3);
 }
 
-@media (max-width: 720px) {
-  /* The modes stack, one clip per row, each with its footage line. */
+.picker__caveats {
+  margin-top: -6px;
+}
+
+@media (max-width: 599px) {
+  /* The modes as a row of chips — icon over name — with what the picked one
+     is for said once under them: the calculator stays short on a phone. */
   .mode-pick__options {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 8px;
+    gap: 6px;
   }
 
   .mode-pick__face {
-    padding-block: 10px;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 6px;
+    text-align: center;
   }
 
-  /* The readout takes the track's full width under it. */
+  .mode-pick__face::before,
+  .mode-pick__face::after {
+    top: 10px;
+    bottom: 10px;
+  }
+
+  .mode-pick__icon {
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+  }
+
+  .mode-pick__name {
+    font-size: var(--fs-13);
+    line-height: 1.45;
+  }
+
+  .mode-pick__fit {
+    display: none;
+  }
+
+  .mode-pick__current {
+    display: block;
+  }
+
   .picker__out {
-    flex: 1 1 100%;
+    width: 100%;
   }
+}
 
+@media (max-width: 720px) {
   /* The arrows stay on a phone too: with the rail's fading right edge they
      say there are more plans to the side. */
   .plan-rail__nav {
@@ -624,9 +743,15 @@
     margin-inline: calc(var(--gutter) * -1);
     padding-inline: var(--gutter);
     scroll-padding-inline: var(--gutter);
-    /* Each card its own height: the free trial's short list left a 130px
-       hole above its button when every card took the tallest one's. */
-    align-items: start;
+    /* The monthly plans share one height, so the rail ends where its
+       cards end (each card its own height left up to 130px of empty rail
+       under a short one). The free trial keeps its own: stretched, its short
+       list left a 130px hole above its button. */
+    align-items: stretch;
+  }
+
+  .plan-rail__slot:has(> .plan[data-tier="free"]) {
+    align-self: start;
   }
 }
 
@@ -678,15 +803,9 @@
     border: 0;
   }
 
-  .plan--full[data-tier="free"] > .clip-note {
-    grid-column: 2;
-    grid-row: 2;
-    margin: 0;
-  }
-
   .plan--full[data-tier="free"] > .plan__blurb {
     grid-column: 2;
-    grid-row: 3;
+    grid-row: 2 / 4;
   }
 
   .plan--full[data-tier="free"] > .plan__features {
@@ -750,19 +869,71 @@
   color: var(--ink-3);
 }
 
-/* Every plan's price and clip count in a sentence, under the cards that
-   show them: the text twin of the cards, quiet. */
-/* Every plan's price and clips in one sentence, at reading size (a 13px
-   grey line read as a footnote). */
-.pricing-summary {
-  max-width: var(--prose-max);
-  margin: 22px 0 0;
-  padding-top: 16px;
+/* Every plan's price and clips under the cards: the cards' text twin, as a
+   short list — one lead line with the basis, then a row per plan. */
+.price-list {
+  margin: 24px 0 0;
+  padding-top: 18px;
   border-top: 1px dashed var(--line-2);
-  font-size: var(--fs-16);
-  font-weight: 400;
-  line-height: 1.85;
+}
+
+.price-list__lead {
+  max-width: var(--prose-max);
+  margin: 0 0 10px;
+  font-size: var(--fs-15);
+  line-height: 1.75;
   color: var(--ink-2);
+}
+
+.price-list__basis {
+  color: var(--ink-3);
+}
+
+.price-list__items {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  column-gap: 32px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.price-list__item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 10px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: var(--fs-14);
+  line-height: 1.6;
+  color: var(--ink-2);
+}
+
+.price-list__plan {
+  min-width: 4.4em;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.price-list__price {
+  color: var(--ink);
+}
+
+.price-list__high {
+  color: var(--ink-3);
+}
+
+@media (max-width: 999px) {
+  .price-list__items {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 599px) {
+  .price-list__items {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 /* ── How the quota works ────────────────────────────────────────────────── */
