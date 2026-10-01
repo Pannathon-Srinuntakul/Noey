@@ -25,6 +25,22 @@ Only `noey-frontend/` changed.
 listing page is ISR and has its own canonical; `/blog/page/N` and the other
 internal paths redirect back to the public URL. Page 1 is always the bare path.
 
+**404s** (a post not published, an unknown category or tag, a page past the
+last one) are answered by Proxy before any page renders (`lib/blog-proxy.ts`,
+`lib/blog-gate.ts`): it keeps an index of the published slugs, categories and
+tags (three public calls, 30 s, re-read before turning a URL away) and
+rewrites a missing URL to `<path>/__missing/404`, which no route matches, so
+the site's own 404 page renders on the server like `/nope`. Measured: a page
+that calls `notFound()` while rendering gets Next 16's error shell instead —
+an empty body, the 404 drawn in the browser, the root layout's scripts
+re-created on the client ("Encountered a script tag…" in development).
+When the API does not answer, Proxy decides nothing. The pages keep
+`notFound()` as the backstop; their `generateMetadata` never throws and
+returns the 404's own metadata (`noindex`, no canonical, no prev/next).
+The header maps rewritten paths back to the address bar's
+(`lib/nav-path.ts`), so its "you are here" is the same on the server and in
+the browser.
+
 ## What was built, by spec section
 
 - **Data layer** — `lib/server/blog.ts` (fetch + tags `blog`, `blog:<slug>`),
@@ -52,14 +68,17 @@ internal paths redirect back to the public URL. Page 1 is always the bare path.
   `noopener nofollow` in a new tab (internal links get neither). Breadcrumb,
   H1, the opening paragraph as the answer, meta line (โดย Noey Studio · เผยแพร่
   · อัปเดตล่าสุด when changed on a later day · อ่าน N นาที), the cover or a
-  generated slate, sticky `TimelineToc` from ##/### (### indented, cues
-  01.1…), FAQ as `<details>`, the "ลองใช้ Noey Studio" box (existing copy,
-  /signup, /scope, /pricing), related posts, the guide pages for the category,
-  tags.
-- **Signature moments** — the *slate*: a post without a cover gets a
-  clapperboard drawn from the post (stripes on the logo's splice angle, the
-  category as the scene, the title as the take, a track of clips, the reading
-  time as a timecode); it claps shut when its card is picked up. The *program
+  generated slate (also when the picture fails to load), sticky `TimelineToc` from ##/### (### indented, cues
+  01.1…), FAQ as `<details>`, related posts, the guide pages for the category,
+  tags, then the site's closing band "ลองใช้ Noey Studio" (existing copy,
+  /signup, /scope, /pricing).
+- **Signature moments** — the *slate*: a post without a cover (or whose
+  cover fails to load) gets a clapperboard drawn from the post: thin chalk
+  stripes on the dark sticks on the logo's splice angle, a gold hinge,
+  PROD. NOEY STUDIO and a roll, the category as the scene, a take number, a
+  track of clips. It never repeats the title or the reading time (the card
+  prints those once). The arm claps shut, and only then turns gold, when its
+  card is picked up. The *program
   monitor* for the newest post, the *bin* of clips whose length is the
   reading time, the *transport* for pages, the *empty track*.
 - **SEO** — `generateMetadata` (template `%s | Noey Studio`, canonical, OG
@@ -126,10 +145,12 @@ refused two drafts under its word minimum, as it should). Then one new post:
 
 | Page | Perf | A11y | BP | SEO | LCP | TBT | CLS |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `/blog` (median of 3) | 93 | 100 | 100 | 100 | 3.1 s | 0 ms | 0 |
-| `/blog/hook-first-shot-in-the-timeline` (cover, FAQ; median of 3) | 93 | 100 | 100 | 100 | 3.2 s | 0 ms | 0 |
-| `/blog/subtitle-words-to-check` (no cover) | 95 | 100 | 100 | 100 | 2.9 s | 0 ms | 0 |
-| `/blog/category/editing-tips` | 94 | 100 | 100 | 100 | 3.1 s | 0 ms | 0 |
+| `/blog` (median of 3) | 93 | 100 | 100 | 100 | 3.2 s | 30 ms | 0 |
+| `/blog/hook-first-shot-in-the-timeline` (cover, FAQ; median of 3) | 91 | 100 | 100 | 100 | 3.4 s | 20 ms | 0 |
+| `/blog/subtitle-words-to-check` (no cover) | 94 | 100 | 100 | 100 | 3.1 s | 20 ms | 0 |
+
+(Review round 2, after the fixes below. The first round measured 93 / 93 /
+95, and 94 on a category page.)
 
 The LCP element is the hero's lead text, as on the guides. Local images come
 from an http backend, which the optimiser cannot fetch (local IP), so the
@@ -138,10 +159,11 @@ from an http backend, which the optimiser cannot fetch (local IP), so the
 
 ## Checks
 
-- `npm run lint`, `npm run typecheck`: clean. `npx vitest run`: 33 files,
-  343 tests (new: data layer, mapping, fixtures-never-in-production,
+- `npm run lint`, `npm run typecheck`: clean. `npx vitest run`: 35 files,
+  360 tests (new: data layer, mapping, fixtures-never-in-production,
   Markdown sanitising, revalidation route, JSON-LD with/without FAQ,
-  metadata, sitemap, feeds, llms.txt, `.md` twin, image sizes, OG text).
+  metadata, sitemap, feeds, llms.txt, `.md` twin, image sizes, OG text, the
+  404 gate and its index, the 404 metadata of every blog route).
   The two existing tests that call `sitemap()` now `await` it (assertions
   unchanged).
 - `npm run build`: passes with the API up and with it unreachable.
@@ -153,9 +175,12 @@ from an http backend, which the optimiser cannot fetch (local IP), so the
   No console errors or CSP reports. Keyboard: 69 tab stops on a post, every
   one visible with a focus ring; FAQ opens with Enter. JavaScript off: full
   text, every FAQ answer in the DOM, nothing hidden; every image sized.
+- Computed styles at 360/390/1440: no Thai text in the blog under 12 px.
+  (The one smaller Thai string on these pages is the header's site-wide
+  brand tagline "ตัดคลิปด้วย AI", 10.5–11.5 px, unchanged from `main`.)
 - `thai-breaks` (360/390/768/1024/1440): no break inside a word in the
   blog's own copy. Left: dictionary disagreements in test-article text
-  ("อ่านทวน / คำ", "ทุกครั้ง / ก่อน…", "ข้อความ / เคลื่อนไหว") — the same class as the
+  ("อ่านทวน / คำ", "ทุกครั้ง / ก่อน…") — the same class as the
   21 hits `main` already has on /about, /scope, /terms and the guides
   (identical on both branches). New glue rules: "ตั้งแต่", "จนถึง", "จน" hold
   to the next word; the glossary gained the new copy's words.
@@ -165,7 +190,31 @@ from an http backend, which the optimiser cannot fetch (local IP), so the
 36 files (390 and 1440 px, light and dark) of /blog, a category, a tag, a post
 with a cover, a post without one (the slate), a post with FAQ, the empty
 state (dev, `BLOG_FIXTURES=empty`) and the API-down state (a post and a
-listing never rendered before the outage), all reviewed.
+listing never rendered before the outage), plus a cover that fails to load
+(its file deleted from the media store) on a post and on a listing card,
+with JavaScript (the slate) and without it (the frame, never the broken-image
+glyph). All reviewed.
+
+## Review round 2 (2026-10-01)
+
+1. Slate sticks: light neutral stripes on the dark board, thinner; gold only
+   on the hinge and while the arm claps. The box at the end of a post is now
+   the site's closing band.
+2. The slate shows no title: PROD. NOEY STUDIO, roll, SCENE (category), TAKE,
+   the track. The share image keeps the title.
+3. Reading time is said once ("อ่าน N นาที" and the card's strip); both
+   timecodes are gone.
+4. A cover that fails becomes the slate (`CoverImage`, next/image `onError`
+   plus a check for a failure before hydration); without JavaScript the
+   frame's ground covers the broken image.
+5. Thai labels are at least `--fs-12` (the slate's scene clamps from it);
+   checked with computed styles.
+6. A page past the last one (and an unknown category, tag or post) has the
+   404's metadata: `noindex`, no canonical, no prev/next.
+7. Blog 404s render the site's 404 page on the server (Proxy, above): no
+   script warning, no error shell, the same HTML as `/nope`.
+8. The API-down listing keeps the lead; the count pill shows only when known
+   and keeps its line either way.
 
 ## Waiting on the backend
 

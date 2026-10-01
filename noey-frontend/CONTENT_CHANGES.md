@@ -778,17 +778,22 @@ other. No AI vendor is named. The posts themselves come from the blog API
 | Empty state | "ยังไม่มีบทความในแทร็กนี้"; "ยังไม่มีบทความเผยแพร่ ระหว่างนี้อ่านคู่มือใช้งานที่ตอบคำถามที่คนถามบ่อยไว้แล้วได้" (no post yet) or "หมวดนี้ยังไม่มีบทความ ลองดูบทความหมวดอื่น หรืออ่านคู่มือใช้งาน" (a category without posts); buttons "ไปที่คู่มือใช้งาน", "ดูบทความทั้งหมด" |
 | API down | "ตอนนี้ยังโหลดบทความไม่ได้"; "ระบบดึงบทความไม่สำเร็จชั่วคราว ลองใหม่อีกครั้งในอีกสักครู่ ระหว่างนี้อ่านคู่มือใช้งานได้ตามปกติ"; buttons "ลองใหม่", "ไปที่คู่มือใช้งาน"; the Markdown twin's 503 "ตอนนี้ยังโหลดบทความไม่ได้ ลองใหม่อีกครั้งในอีกสักครู่" |
 | A post | meta line "โดย Noey Studio · เผยแพร่ <date> · อัปเดตล่าสุด <date> (only when changed on a later day) · อ่าน N นาที"; contents "หัวข้อในบทความ"; "แท็ก"; "คำถามที่พบบ่อย (FAQ)"; "บทความที่เกี่ยวข้อง"; "อ่านต่อในคู่มือใช้งาน"; "กลับไปหน้าบทความทั้งหมด"; a link out ends with the screen-reader text " (เปิดในแท็บใหม่)"; a table's scroll region is named "ตาราง"; GFM footnotes: "เชิงอรรถ", "กลับไปที่เนื้อหา (เชิงอรรถ N)" |
-| A post, the box at its end | "ลองใช้ Noey Studio" (the spec's own title), then the site's existing lines and buttons: "สมัครแล้วได้เครดิตทดลองฟรีทันที ไม่ต้องผูกบัตร ใช้หมดแล้วค่อยเลือกแพลนรายเดือน", "เริ่มใช้ฟรี", and links "ดูว่าระบบทำอะไรได้บ้าง" (/scope), "ดูราคา" (/pricing) |
+| A post, closing band | the site's closing band (as on the listings), titled "ลองใช้ Noey Studio" (the spec's own title), then the site's existing lines and buttons: "สมัครแล้วได้เครดิตทดลองฟรีทันที ไม่ต้องผูกบัตร ใช้หมดแล้วค่อยเลือกแพลนรายเดือน", "เริ่มใช้ฟรี", "ดูว่าระบบทำอะไรได้บ้าง" (/scope), "ดูราคา" (/pricing). (First round: a striped box inside the article column; review round 2 moved it to the band.) |
 | Listings, closing band | the home page's own "ลองตัดคลิปแรกวันนี้" + the same sign-up line and "เริ่มใช้ฟรี" |
 | Share images (`lib/og-copy.ts`) | blog card: "บทความ" / "บทความจากห้องตัดต่อ" / "ตัดคลิป ซับไทย เสียง และคลิปขายของ สำหรับคนถ่ายคลิปเอง", alt "บทความจาก Noey Studio"; a post without a cover: "บทความ · <category>" over its title |
 | /llms.txt | "- [บทความ](…/blog): <the blog description> · Atom: …/blog/feed.xml", a section "## บทความล่าสุด" (the newest 20 posts with their Markdown twins), "- [ฟีดบทความ](…/blog/feed.xml): บทความทั้งหมด เรียงจากล่าสุด" |
 | /blog/<slug>.md | header lines "หน้าเว็บ", "เผยแพร่ · อัปเดตล่าสุด", "ผู้เขียน", "หมวด", "แท็ก", "เวลาอ่าน"; sections "## คำถามที่พบบ่อย", "## บทความที่เกี่ยวข้อง"; 404 "ไม่พบบทความนี้" |
 
 Decoration hidden from assistive technology: the slate on a post without a
-cover ("SCENE", "TAKE 01", its category and title, a track of clips and the
-reading time as a timecode), "PROGRAM" / "LATEST" over the newest post,
+cover, or whose cover fails to load ("PROD. NOEY STUDIO", "ROLL A1"–"A4",
+"SCENE" over the post's category, "TAKE" and a two-digit number, a track of
+clips; review round 2 took the title and the reading-time timecode off it,
+and the timecode off the cards, so a post's title and reading time are each
+printed once), "PROGRAM" / "LATEST" over the newest post,
 "BIN · NN CLIPS · 01/02" over the others, "ALL" / "V1"–"V4" track labels on
-the categories, "TAKE 01 · YOUR FOOTAGE" on the closing box.
+the categories. While the API is down, the listing keeps its lead and holds
+the count stamp's line empty (an invisible placeholder, hidden from
+assistive technology) so the heading does not jump when the count returns.
 
 ## Text added (not replacing anything)
 
