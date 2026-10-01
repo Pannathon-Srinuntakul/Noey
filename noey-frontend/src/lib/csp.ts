@@ -48,13 +48,18 @@ const ANALYTICS_REPORT_ORIGIN = "https://cloudflareinsights.com";
 /** `'sha256-…'` source for the constant pre-paint script in app/layout.tsx. */
 export const PREPAINT_SCRIPT_HASH = `'sha256-${createHash("sha256").update(PREPAINT_SCRIPT, "utf8").digest("base64")}'`;
 
-function policy(scriptSrc: string, sentryOrigin: string | null, extraConnect: readonly string[] = []): string {
+function policy(
+  scriptSrc: string,
+  sentryOrigin: string | null,
+  extraConnect: readonly string[] = [],
+  extraImg: readonly string[] = [],
+): string {
   const connect = ["'self'", ...(sentryOrigin ? [sentryOrigin] : []), ...extraConnect].join(" ");
   return [
     "default-src 'self'",
     scriptSrc,
     "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: blob: https:",
+    ["img-src 'self' data: blob: https:", ...extraImg].join(" "),
     "media-src 'self' blob: https:",
     "font-src 'self' data:",
     `connect-src ${connect}`,
@@ -66,11 +71,17 @@ function policy(scriptSrc: string, sentryOrigin: string | null, extraConnect: re
   ].join("; ");
 }
 
-export function staticContentSecurityPolicy(sentryOrigin: string | null): string {
+/**
+ * `blogMediaOrigin`: the blog's image origin when it is NOT https (a local
+ * test backend, lib/blog-media.ts) — the one origin `img-src https:` does not
+ * already cover. Production's https media base adds nothing.
+ */
+export function staticContentSecurityPolicy(sentryOrigin: string | null, blogMediaOrigin: string | null = null): string {
   return policy(
     `script-src 'self' 'unsafe-inline' ${TURNSTILE_ORIGIN} ${ANALYTICS_SCRIPT_ORIGIN}`,
     sentryOrigin,
     [ANALYTICS_REPORT_ORIGIN],
+    blogMediaOrigin ? [blogMediaOrigin] : [],
   );
 }
 

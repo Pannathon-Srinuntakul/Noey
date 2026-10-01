@@ -162,8 +162,8 @@ describe("machine-readable surfaces", () => {
 });
 
 describe("sitemap", () => {
-  it("includes every guide page with its content date", () => {
-    const entries = sitemap();
+  it("includes every guide page with its content date", async () => {
+    const entries = await sitemap();
     for (const key of GUIDE_KEYS) {
       const entry = entries.find((row) => row.url === `https://noeystudio.com${PAGES[key].path}`);
       expect(entry, `${key} sitemap entry`).toBeDefined();

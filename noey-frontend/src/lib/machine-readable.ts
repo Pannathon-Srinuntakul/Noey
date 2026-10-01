@@ -5,6 +5,8 @@
  * show. No AI vendor is named anywhere in this output (unit-tested).
  */
 import { BETA_END_DATE_ISO, BETA_PRICE_AFTER_SHORT, BETA_PRICE_LINE } from "./beta";
+import { BLOG_COPY, BLOG_FEED_PATH, BLOG_PATH, type BlogPostSummary } from "./blog";
+import { llmsBlogLines } from "./blog-machine";
 import { pricingFaq } from "./faq";
 import { ANSWERED_QUESTIONS, GUIDE_DOCS, GUIDE_ORDER, type GuideDoc } from "./guide";
 import { SOFTWARE_DESCRIPTION } from "./jsonld";
@@ -191,7 +193,11 @@ export function buildScopeMarkdown(): string {
   return `${lines.join("\n").trimEnd()}\n`;
 }
 
-export function buildLlmsTxt(table: PriceTable): string {
+/**
+ * `posts`: the newest blog posts (at most 20, lib/blog.ts BLOG_LLMS_LIMIT),
+ * listed with their Markdown twins; empty when the blog API did not answer.
+ */
+export function buildLlmsTxt(table: PriceTable, posts: readonly BlogPostSummary[] = []): string {
   const prices = TIERS.map((tier) => `${PLAN_COPY[tier].name} ${priceLine(table, tier)}`).join(" · ");
   const lines = [
     `# ${SITE_NAME}`,
@@ -231,6 +237,7 @@ export function buildLlmsTxt(table: PriceTable): string {
         `- [${GUIDE_DOCS[key].h1}](${absoluteUrl(PAGES[key].path)}): ${PAGES[key].description} · Markdown: ${absoluteUrl(`${PAGES[key].path}.md`)}`,
     ),
     "",
+    ...llmsBlogLines(posts),
     "## ข้อจำกัดที่ประกาศไว้",
     "",
     "- ระบบทำดราฟต์แรกให้ ไม่ได้ตัดจบแทน จังหวะและลำดับการเล่ายังต้องเกลาเองในไทม์ไลน์",
@@ -252,12 +259,14 @@ export function buildLlmsTxt(table: PriceTable): string {
     `- [หน้าแรก](${absoluteUrl(PAGES.home.path)}): ภาพรวมเครื่องมือ วิธีใช้งาน และคำถามที่พบบ่อย`,
     `- [ทำอะไรได้บ้าง](${absoluteUrl(PAGES.scope.path)}): ขอบเขตของระบบ — ถอดเสียง คัดช็อต เรียงลำดับ ใส่ซับไทยเป็นดราฟต์แรก แล้วคุณเกลาต่อ งานแบบไหนเหมาะและไม่เหมาะ · Markdown: ${absoluteUrl("/scope.md")}`,
     `- [เกี่ยวกับเรา](${absoluteUrl(PAGES.about.path)}): ที่มาของเครื่องมือ และช่องทางติดต่อทีมงาน`,
+    `- [${BLOG_COPY.label}](${absoluteUrl(BLOG_PATH)}): ${BLOG_COPY.description} · Atom: ${absoluteUrl(BLOG_FEED_PATH)}`,
     `- [มีอะไรใหม่](${absoluteUrl(PAGES.changelog.path)}): ฟีเจอร์ใหม่ การปรับปรุง และการเปลี่ยนแปลงราคา เรียงจากล่าสุด · Atom: ${absoluteUrl("/changelog/feed.xml")}`,
     `- [สมัครใช้งานฟรี](${absoluteUrl(PAGES.signup.path)}): สมัครแล้วได้เครดิตทดลองฟรีทันที ไม่ต้องผูกบัตร`,
     "",
     "## ติดตามการอัปเดต",
     "",
     `- [ฟีด Atom](${absoluteUrl("/feed.xml")}): ทุกหน้าที่เผยแพร่ เรียงตามวันที่อัปเดตล่าสุด`,
+    `- [ฟีดบทความ](${absoluteUrl(BLOG_FEED_PATH)}): บทความทั้งหมด เรียงจากล่าสุด`,
     `- [Sitemap](${absoluteUrl("/sitemap.xml")}): รายการหน้าทั้งหมดพร้อมวันที่แก้ไขล่าสุด`,
   ];
   return `${lines.join("\n")}\n`;

@@ -16,6 +16,9 @@ export default defineConfig({
     include: ["src/**/*.test.ts"],
     env: {
       NEXT_PUBLIC_SITE_URL: "https://noeystudio.com",
+      // Nothing listens on the discard port: code that calls the backend sees
+      // it down at once, whatever runs on this machine's :8000.
+      API_URL: "http://127.0.0.1:9",
       TZ: "UTC",
     },
   },

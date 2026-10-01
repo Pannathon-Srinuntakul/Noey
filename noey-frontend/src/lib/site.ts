@@ -270,12 +270,17 @@ export const PAGES: Record<PageKey, PageEntry> = {
   },
 };
 
-/** Primary navigation — the design's header links, plus the guide section. */
+/**
+ * Primary navigation — the design's header links, plus the guide section and
+ * the blog (lib/blog.ts; the blog is not a registry page: its dates are its
+ * posts').
+ */
 export const NAV_LINKS: ReadonlyArray<{ href: string; label: string }> = [
   { href: PAGES.home.path, label: PAGES.home.label },
   { href: PAGES.scope.path, label: PAGES.scope.label },
   { href: PAGES.pricing.path, label: PAGES.pricing.label },
   { href: PAGES.guide.path, label: PAGES.guide.label },
+  { href: "/blog", label: "บทความ" },
   { href: PAGES.about.path, label: PAGES.about.label },
 ];
 

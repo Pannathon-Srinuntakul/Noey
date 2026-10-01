@@ -9,6 +9,8 @@ export interface TocItem {
   label: ReactNode;
   /** The marker's label; defaults to the item's number. Parts that are not numbered sections (FAQ, related pages) carry their own. */
   cue?: string;
+  /** 2 = a subsection (an article's ###), listed indented under its section. */
+  depth?: 1 | 2;
 }
 
 /**
@@ -78,7 +80,7 @@ export function TimelineToc({ items, label, className }: { items: readonly TocIt
   const list = (
     <ol className="toc__list">
       {items.map((item, index) => (
-        <li key={item.id}>
+        <li key={item.id} className={item.depth === 2 ? "toc__sub" : undefined}>
           <a href={`#${item.id}`} data-toc-link={index} className="toc__link">
             <span className="toc__n tc" aria-hidden="true">
               {item.cue ?? String(index + 1).padStart(2, "0")}

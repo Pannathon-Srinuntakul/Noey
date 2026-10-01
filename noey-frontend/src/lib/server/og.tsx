@@ -2,6 +2,7 @@ import "server-only";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ImageResponse } from "next/og";
+import type { ReactNode } from "react";
 import type { OgCopy } from "../og-copy";
 import { BRAND, SITE_URL } from "../site";
 
@@ -83,6 +84,28 @@ function Timeline() {
 }
 
 export async function renderOgImage(copy: OgCopy): Promise<ImageResponse> {
+  return renderOgCard({
+    eyebrow: (
+      <div style={{ fontSize: 26, fontWeight: 500, color: BRAND.gold, marginBottom: 20 }}>
+        {copy.eyebrow}
+      </div>
+    ),
+    title: <div style={{ fontSize: 64, fontWeight: 500, lineHeight: 1.3, maxWidth: 1020 }}>{copy.title}</div>,
+    subtitle: (
+      <div style={{ fontSize: 29, fontWeight: 300, lineHeight: 1.5, color: BRAND.mutedOnDark, marginTop: 22, maxWidth: 1000 }}>
+        {copy.subtitle}
+      </div>
+    ),
+  });
+}
+
+/**
+ * The share card's frame — logo, the middle block, the timeline and the
+ * host — around blocks drawn by the caller: satori text for the site's own
+ * copy (renderOgImage), outlines from lib/server/og-text.tsx for a blog
+ * post's title.
+ */
+export async function renderOgCard({ eyebrow, title, subtitle }: { eyebrow: ReactNode; title: ReactNode; subtitle?: ReactNode }): Promise<ImageResponse> {
   const fonts = await loadFonts();
   const host = new URL(SITE_URL).host;
   return new ImageResponse(
@@ -105,13 +128,9 @@ export async function renderOgImage(copy: OgCopy): Promise<ImageResponse> {
           <div style={{ fontSize: 38, fontWeight: 500, letterSpacing: "-0.01em" }}>Noey Studio</div>
         </div>
         <div style={{ display: "flex", flexDirection: "column" }}>
-          <div style={{ fontSize: 26, fontWeight: 500, color: BRAND.gold, marginBottom: 20 }}>
-            {copy.eyebrow}
-          </div>
-          <div style={{ fontSize: 64, fontWeight: 500, lineHeight: 1.3, maxWidth: 1020 }}>{copy.title}</div>
-          <div style={{ fontSize: 29, fontWeight: 300, lineHeight: 1.5, color: BRAND.mutedOnDark, marginTop: 22, maxWidth: 1000 }}>
-            {copy.subtitle}
-          </div>
+          {eyebrow}
+          {title}
+          {subtitle ?? null}
         </div>
         <div style={{ display: "flex", flexDirection: "column" }}>
           <Timeline />

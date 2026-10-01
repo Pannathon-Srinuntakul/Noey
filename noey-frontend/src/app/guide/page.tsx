@@ -8,6 +8,7 @@ import { IconArrowLeft, IconArrowRight } from "@/components/ds/icons";
 import { PageHero } from "@/components/ds/PageHero";
 import { SectionHeader } from "@/components/ds/SectionHeader";
 import { BinThumb } from "@/components/guide/BinThumb";
+import { BLOG_COPY, BLOG_PATH } from "@/lib/blog";
 import { formatThaiDate } from "@/lib/format";
 import { GUIDE_DOCS, GUIDE_ORDER } from "@/lib/guide";
 import { breadcrumbNode, itemListNode, jsonLdGraph, webPageNode } from "@/lib/jsonld";
@@ -27,6 +28,7 @@ const MORE = [
   { href: PAGES.scope.path, label: PAGES.scope.label, note: "ขอบเขตของระบบ ทำอะไรได้ และอะไรที่ยังทำไม่ได้" },
   { href: PAGES.pricing.path, label: PAGES.pricing.label, note: "ตารางเทียบทั้งเจ็ดแพลน โควตา และเพดานฟุตเทจ" },
   { href: PAGES.about.path, label: PAGES.about.label, note: "ที่มาของเครื่องมือ และช่องทางติดต่อทีมงาน" },
+  { href: BLOG_PATH, label: BLOG_COPY.label, note: BLOG_COPY.guideNote },
   { href: PAGES.signup.path, label: PAGES.signup.label, note: "ทดลองกับฟุตเทจของคุณเองด้วยแพลนฟรี" },
 ];
 

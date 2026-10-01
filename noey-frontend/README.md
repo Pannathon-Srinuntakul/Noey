@@ -62,6 +62,9 @@ the build again. `next build` prints a warning when one of them is missing.
 | `NEXT_PUBLIC_SENTRY_DSN` | optional | empty | Sentry DSN for this site's own project. Empty = no SDK loaded, nothing sent, CSP unchanged. Set = browser + server errors reported with every data-collection category off, and `connect-src` gains exactly the DSN's ingest origin. |
 | `NEXT_PUBLIC_SENTRY_ENVIRONMENT`, `NEXT_PUBLIC_SENTRY_RELEASE`, `NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE` | optional | `production`/`development`, none, `0` | Sentry tags and trace sampling (0..1, clamped). |
 | `NEXT_SERVER_ACTIONS_ENCRYPTION_KEY` | multi-instance | — | A Next.js variable. Set the same value on every instance when you run more than one, or Server Actions fail across instances. |
+| `BLOG_REVALIDATE_SECRET` | for the blog | empty | Shared with the backend (same value). The backend calls `POST /api/revalidate-blog` with it after a publish, edit or take-down. Empty = that route does not exist (404) and posts refresh by ISR alone (10 min lists, 1 h posts). Run time. |
+| `BLOG_MEDIA_PUBLIC_URL` | optional | `https://api.noeystudio.com/blog/media` | The backend's blog image base (same value as the backend's). **Build time**: it becomes the one `next/image` remote pattern (https only); a non-https base (a local backend) is also added to CSP `img-src`. |
+| `BLOG_FIXTURES` | dev only | empty | `1` = the blog reads `src/lib/server/__fixtures__/blog.json` instead of the API, `empty` = no posts. Ignored by a production build. |
 
 Do not put Stripe keys or email-provider keys here. Those belong to the backend.
 
@@ -88,6 +91,11 @@ Do not put Stripe keys or email-provider keys here. Those belong to the backend.
 | `/reset-password?token=` | dynamic, `no-store` | noindex, robots-disallowed | New password from the emailed link |
 | `/verify-email?token=` | dynamic, `no-store` | noindex, robots-disallowed | Confirms the emailed link server-side |
 | 404 | static | noindex | Custom not-found page |
+| `/blog`, `/blog?page=N` | ISR 600 s | yes | The blog (posts from the backend's public blog API, BLOG_CONTRACT.md). `?page=N` is rewritten to the static route `/blog/page/N` |
+| `/blog/category/<slug>`, `/blog/tag/<slug>` (+ `?page=N`) | ISR 600 s | yes (a tag with < 3 posts: noindex) | Listings per category and tag (rewritten to `…/page/N`) |
+| `/blog/<slug>` | ISR (1 h; 10 min with the layout's price fetch) | yes | One post: Markdown rendered on the server, TOC, FAQ, related posts; its share image is generated when it has no cover |
+| `/blog/<slug>.md`, `/blog/feed.xml` | ISR | — | The post's Markdown twin (rewritten to `/blog/md/<slug>`), the blog's Atom feed |
+| `/api/revalidate-blog` (POST) | route handler | — | Called by the backend after a publish/edit/take-down (`BLOG_REVALIDATE_SECRET`) |
 | `/robots.txt`, `/sitemap.xml`, `/manifest.webmanifest` | static | — | Crawling and PWA metadata |
 | `/llms.txt`, `/pricing.md` | static, ISR 600 s | — | Machine-readable summaries for AI agents |
 | `/opengraph-image` (+ per page), `/icons/*`, `/favicon.ico`, `/apple-icon`, `/icon.svg` | static | — | Generated at build time (no binaries in the repo) |

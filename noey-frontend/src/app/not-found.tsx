@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { waveform } from "@/components/ds/timecode";
+import { NotFoundMark } from "@/components/shell/NotFoundMark";
 import { SITE_NAME } from "@/lib/site";
 
 export const metadata: Metadata = {
@@ -135,6 +136,7 @@ const LEAD_BREAK = LEAD.lastIndexOf(" ");
 export default function NotFound() {
   return (
     <main id="main" className="status-page page-top nf">
+      <NotFoundMark />
       <div className="wrap nf__inner">
         <div className="nf__stage">
           <MissingClip />

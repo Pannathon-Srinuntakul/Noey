@@ -60,6 +60,11 @@ const LEANS_ON_NEXT = new Set([
   "ฐาน",
   // ICU returns "เป็นการ" as one word, so "การ" alone never sees it.
   "เป็นการ",
+  // "From / until": a span's start stays with what it starts from
+  // ("ตั้งแต่ / ก่อนถ่าย", "จนถึง / ก่อนเรนเดอร์" — the blog's long copy).
+  "ตั้งแต่",
+  "จนถึง",
+  "จน",
 ]);
 
 const LEANS_ON_PREVIOUS = new Set(["ใด", "ไป", "มา", "อยู่", "ไว้"]);
@@ -102,6 +107,25 @@ function tokenize(text: string, tokens: Token[]) {
 }
 
 export function keepThaiProse(source: string): ReactNode {
+  const runs = thaiProseRuns(source);
+  if (runs.length === 1 && !runs[0].keep) return runs[0].text;
+  return runs.map((run, index) =>
+    run.keep ? (
+      <span key={index} className="kt">
+        {run.text}
+      </span>
+    ) : (
+      <Fragment key={index}>{run.text}</Fragment>
+    ),
+  );
+}
+
+/**
+ * keepThaiProse's decision as data: the text in runs, `keep` for a run that
+ * must not break inside. Lets output that is not built here (the blog's
+ * Markdown tree) wrap the same runs in the same `.kt` spans.
+ */
+export function thaiProseRuns(source: string): { text: string; keep: boolean }[] {
   const text = glueMarks(source);
   const tokens: Token[] = [];
   for (const part of keepSegments(text)) {
@@ -139,14 +163,5 @@ export function keepThaiProse(source: string): ReactNode {
       runs.push({ text: token.text, keep: token.keep });
     }
   }
-  if (runs.length === 1 && !runs[0].keep) return text;
-  return runs.map((run, index) =>
-    run.keep ? (
-      <span key={index} className="kt">
-        {run.text}
-      </span>
-    ) : (
-      <Fragment key={index}>{run.text}</Fragment>
-    ),
-  );
+  return runs;
 }
