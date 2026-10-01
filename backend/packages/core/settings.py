@@ -486,9 +486,9 @@ class Settings(BaseSettings):
     #: Bearer secret shared with noey-frontend. Unset → revalidation is skipped
     #: (logged); ISR catches up within 10 minutes.
     blog_revalidate_secret: str | None = None
-    #: Public base URL of the bucket that serves blog images (objects under
-    #: `blog/`). Unset with no bucket → images are served by this API at
-    #: `/blog/media/...` (local development).
+    #: Public base URL of blog images: `<this>/<sha256>.webp`. Unset → this
+    #: API's own `<API_PUBLIC_URL>/blog/media` (reads the bucket's `blog/`
+    #: objects, or DATA_DIR/blog without a bucket; the bucket stays private).
     blog_media_public_url: str = ""
     #: Publishes per Bangkok calendar day through MCP. The admin dashboard can
     #: override it (core.admin_settings `blog_config`).

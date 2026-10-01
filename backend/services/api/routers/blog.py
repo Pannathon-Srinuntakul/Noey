@@ -5,7 +5,7 @@ GET /blog/posts/{slug}                       one published post (404 otherwise)
 GET /blog/slugs                              every published slug + updated_at
 GET /blog/categories                         categories + published post counts
 GET /blog/tags                               tags with >= 1 published post
-GET /blog/media/{name}                       images, ONLY when no bucket is configured
+GET /blog/media/{name}                       blog images (bucket `blog/` or DATA_DIR/blog)
 
 No auth; every answer is `Cache-Control: public, max-age=60`. Only
 `status = published` posts ever leave this router.
@@ -14,7 +14,6 @@ No auth; every answer is `Cache-Control: public, max-age=60`. Only
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.blog import media, service
@@ -72,10 +71,14 @@ async def tags(response: Response, db: CoreSession) -> list[dict[str, Any]]:
 
 
 @router.get("/media/{name}", include_in_schema=False)
-async def local_media(name: str) -> FileResponse:
-    """Serves blog images in development (no bucket). With a bucket, images are
-    served by the bucket's public domain and this answers 404."""
-    path = None if media.s3.s3_enabled() else media.local_path(name)
-    if path is None:
+async def blog_media(name: str) -> Response:
+    """A blog image (`<sha256>.webp`, from the bucket's `blog/` or DATA_DIR/blog).
+    Content-addressed, so cacheable forever — Cloudflare keeps it at the edge."""
+    body = await media.read(name)
+    if body is None:
         raise HTTPException(status_code=404, detail="not found")
-    return FileResponse(path, media_type="image/webp", headers={"Cache-Control": "public, max-age=31536000, immutable"})
+    return Response(
+        content=body,
+        media_type="image/webp",
+        headers={"Cache-Control": "public, max-age=31536000, immutable", "X-Content-Type-Options": "nosniff"},
+    )

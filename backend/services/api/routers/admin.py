@@ -859,4 +859,3 @@ async def put_plan_prices(
         "changed": [c.tier for c in changes],
         "max_thb": MAX_PRICE_THB,
     }
-

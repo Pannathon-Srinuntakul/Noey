@@ -186,6 +186,46 @@ def test_base64_limits():
     assert media.decode_base64("data:image/png;base64," + base64.b64encode(raw).decode()) == raw
 
 
+async def test_bucket_storage_keeps_blog_under_its_prefix(monkeypatch):
+    """With a bucket: objects go to `blog/<sha>.webp`, the API route reads only
+    that prefix, and the URL base is the API (bucket stays private) unless
+    BLOG_MEDIA_PUBLIC_URL says otherwise."""
+    from packages.core.settings import get_settings
+
+    objects: dict[str, bytes] = {}
+
+    class Body:
+        def __init__(self, data: bytes) -> None:
+            self.data = data
+
+        def read(self) -> bytes:
+            return self.data
+
+    class FakeS3:
+        def put_object(self, *, Bucket, Key, Body, ContentType, CacheControl):
+            assert ContentType == "image/webp" and "immutable" in CacheControl
+            objects[Key] = Body
+
+        def get_object(self, *, Bucket, Key):
+            if Key not in objects:
+                raise KeyError(Key)
+            return {"Body": Body(objects[Key])}
+
+    monkeypatch.setattr(media.s3, "s3_enabled", lambda: True)
+    monkeypatch.setattr(media.s3, "_client", lambda: FakeS3())
+    monkeypatch.setattr(media.s3, "_bucket", lambda: "bucket")
+    out, w, h = media.reencode(_png(10, 10))
+    stored = await media.store(out, w, h)
+    name = stored.key.removeprefix("blog/")
+    assert list(objects) == [stored.key] and stored.key.startswith("blog/")
+    assert stored.url == f"http://localhost:8000/blog/media/{name}"
+    assert await media.read(name) == out
+    assert await media.read("../videos/x.webp") is None and await media.read("abc.webp") is None
+    monkeypatch.setenv("BLOG_MEDIA_PUBLIC_URL", "https://media.noeystudio.com/blog/")
+    get_settings.cache_clear()
+    assert media.url_for(stored.key) == f"https://media.noeystudio.com/blog/{name}"
+
+
 def test_media_url_containment():
     assert v.media_url_ok("https://media.noeystudio.com/blog/a.webp", BASE)
     assert not v.media_url_ok("https://media.noeystudio.com.evil.example/blog/a.webp", BASE)

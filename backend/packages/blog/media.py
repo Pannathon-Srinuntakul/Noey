@@ -7,9 +7,12 @@ WebP — longest side <= 1600 px, no EXIF/ICC/XMP or any other metadata — whos
 name is the SHA-256 of the encoded bytes. So a polyglot or a payload hidden in
 metadata cannot survive, and the same picture uploaded twice is one object.
 
-Storage: the bucket of packages/video/s3.py under `blog/` (served publicly via
-BLOG_MEDIA_PUBLIC_URL), or — when no bucket is configured — DATA_DIR/blog/,
-served by this API at /blog/media/<name> (local development).
+Storage: the bucket of packages/video/s3.py under `blog/`, or — when no bucket
+is configured — DATA_DIR/blog/. Served by this API at /blog/media/<name>
+(bucket stays private; Cloudflare caches `.webp` at the edge), unless
+BLOG_MEDIA_PUBLIC_URL points at a public bucket domain instead. A public
+bucket domain exposes EVERY object in the bucket, videos included — only use
+one restricted to `blog/` (docs/blog-mcp.md).
 """
 
 from __future__ import annotations
@@ -123,18 +126,19 @@ def reencode(data: bytes) -> tuple[bytes, int, int]:
 
 
 def media_base() -> str:
-    """The public URL prefix every blog image URL starts with (no trailing slash)."""
+    """The public URL prefix every blog image URL starts with (no trailing slash).
+
+    `<base>/<sha256>.webp` is an image. BLOG_MEDIA_PUBLIC_URL sets the base —
+    e.g. a public bucket domain's `/blog` folder; unset, it is this API's own
+    `/blog/media` route, which serves the same objects (from the bucket, or
+    from DATA_DIR/blog without one) and keeps the bucket private.
+    """
     s = get_settings()
-    if s3.s3_enabled():
-        return s.blog_media_public_url.rstrip("/")
-    return f"{s.api_public_url.rstrip('/')}{LOCAL_ROUTE}"
+    return s.blog_media_public_url.strip().rstrip("/") or f"{s.api_public_url.rstrip('/')}{LOCAL_ROUTE}"
 
 
 def url_for(key: str) -> str:
-    name = key.removeprefix(KEY_PREFIX)
-    if s3.s3_enabled():
-        return f"{get_settings().blog_media_public_url.rstrip('/')}/{KEY_PREFIX}{name}"
-    return f"{media_base()}/{name}"
+    return f"{media_base()}/{key.removeprefix(KEY_PREFIX)}"
 
 
 def local_dir() -> pathlib.Path:
@@ -152,12 +156,19 @@ def _put_s3(key: str, body: bytes) -> None:
     )
 
 
+def _get_s3(key: str) -> bytes | None:
+    try:
+        obj = s3._client().get_object(Bucket=s3._bucket(), Key=key)
+    except Exception:  # noqa: BLE001 — NoSuchKey and transport errors alike: not served
+        return None
+    body: bytes = obj["Body"].read()
+    return body
+
+
 async def store(encoded: bytes, width: int, height: int) -> StoredImage:
     digest = hashlib.sha256(encoded).hexdigest()
     key = f"{KEY_PREFIX}{digest}.webp"
     if s3.s3_enabled():
-        if not get_settings().blog_media_public_url.strip():
-            raise ImageRejected("Image storage is not configured on the server (BLOG_MEDIA_PUBLIC_URL). Ask the owner.")
         await asyncio.to_thread(_put_s3, key, encoded)
     else:
         folder = local_dir()
@@ -170,9 +181,12 @@ async def store(encoded: bytes, width: int, height: int) -> StoredImage:
     return StoredImage(key=key, url=url_for(key), width=width, height=height, bytes=len(encoded))
 
 
-def local_path(name: str) -> pathlib.Path | None:
-    """The local file for /blog/media/<name>, only for a well-formed name."""
+async def read(name: str) -> bytes | None:
+    """The stored image for GET /blog/media/<name> — only a well-formed name,
+    only under `blog/`, from the bucket or DATA_DIR/blog."""
     if not NAME_RE.match(name):
         return None
+    if s3.s3_enabled():
+        return await asyncio.to_thread(_get_s3, f"{KEY_PREFIX}{name}")
     path = local_dir() / name
-    return path if path.is_file() else None
+    return path.read_bytes() if path.is_file() else None

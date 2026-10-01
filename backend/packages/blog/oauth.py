@@ -176,9 +176,15 @@ async def _issue(grant: BlogOAuthGrant) -> OAuthToken:
     base = {"sub": str(grant.admin_user_id), "gid": int(grant.id), "cid": grant.client_id, "scope": grant.scopes,
             "resource": grant.resource, "tv": int(grant.token_version)}
     access, _ = _encode({**base, "typ": ACCESS_TYPE, "jti": secrets.token_urlsafe(12)}, s.blog_mcp_access_ttl_sec)
-    jti = refresh_store_jti = secrets.token_urlsafe(16)
+    jti = secrets.token_urlsafe(16)
     refresh, _ = _encode({**base, "typ": REFRESH_TYPE, "jti": jti}, s.blog_mcp_refresh_ttl_sec)
-    await get_store().issue(int(grant.id), refresh_store_jti, s.blog_mcp_refresh_ttl_sec)
+    # The refresh store keys the token by (grant id, jti): spending it once is
+    # the rotation, presenting it again is the reuse signal.
+    try:
+        await get_store().issue(int(grant.id), jti, s.blog_mcp_refresh_ttl_sec)
+    except refresh_store.RefreshStoreUnavailable:
+        # Fail closed: a refresh token the store does not know could never be spent.
+        raise TokenError("invalid_request", "temporarily unavailable, retry shortly") from None
     return OAuthToken(
         access_token=access,
         token_type="Bearer",
@@ -432,7 +438,12 @@ class BlogOAuthProvider:
         return await self.load_access_token(token)
 
     async def revoke_token(self, token: AccessToken | RefreshToken) -> None:
-        """RFC 7009: revoking either token ends the whole grant."""
+        """RFC 7009: revoking either token ends the whole grant.
+
+        The SDK's revocation handler only calls this with a token it already
+        loaded through `load_access_token` / `load_refresh_token` (signature,
+        audience, issuer verified) for the authenticated client — so reading
+        the grant id here without re-verifying is safe."""
         try:
             claims = jwt.decode(token.token, options={"verify_signature": False})
             gid = int(claims["gid"])
