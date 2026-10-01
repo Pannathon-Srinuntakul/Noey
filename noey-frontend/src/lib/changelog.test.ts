@@ -27,8 +27,8 @@ describe("changelog", () => {
     }
   });
 
-  it("is in the sitemap and the site feed", () => {
-    expect(sitemap().map((item) => item.url)).toContain(absoluteUrl("/changelog"));
+  it("is in the sitemap and the site feed", async () => {
+    expect((await sitemap()).map((item) => item.url)).toContain(absoluteUrl("/changelog"));
     expect(feedEntryKeys()).toContain("changelog");
   });
 
