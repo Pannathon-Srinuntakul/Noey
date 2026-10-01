@@ -56,6 +56,9 @@ const nextConfig: NextConfig = {
   // The Docker image runs `.next/standalone/server.js` with only the traced
   // files, not a full `node_modules` (see Dockerfile).
   output: "standalone",
+  // A post's share image is drawn at run time (not at build like the others)
+  // with the bundled Thai font files, read from disk: ship them in the image.
+  outputFileTracingIncludes: { "/blog/**": ["./src/assets/og/*.woff"] },
   poweredByHeader: false,
   // Frozen at build time, like the image patterns built from it, so the
   // server's "may this image be optimised?" can never disagree with them.

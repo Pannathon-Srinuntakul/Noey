@@ -38,34 +38,34 @@ async function load(params: Params["params"]) {
 
 export async function generateMetadata({ params }: Params): Promise<Metadata> {
   const { slug, page, list, tag } = await load(params);
-  const name = tag?.name ?? slug;
   return listingMetadata({
     path: tagPath(slug),
-    title: BLOG_COPY.tagTitle(name),
-    description: BLOG_COPY.tagLead(name),
+    // Unknown only while the API is down: the blog's own name, not a slug.
+    title: tag ? BLOG_COPY.tagTitle(tag.name) : BLOG_COPY.title,
+    description: tag ? BLOG_COPY.tagLead(tag.name) : BLOG_COPY.description,
     page,
     last: list ? pageCount(list.total) : 1,
-    indexable: (list?.total ?? 0) >= TAG_INDEX_MIN_POSTS,
+    // Unknown while the API is down: a 30-second stand-in must not tell crawlers to drop it.
+    indexable: list === null || list.total >= TAG_INDEX_MIN_POSTS,
   });
 }
 
 export default async function TagPage({ params }: Params) {
   const { slug, page, list, tag, categories } = await load(params);
-  const name = tag?.name ?? slug;
-  const title = BLOG_COPY.tagTitle(name);
+  const title = tag ? BLOG_COPY.tagTitle(tag.name) : BLOG_COPY.h1;
   return (
     <BlogListing
       kind="tag"
       path={tagPath(slug)}
       page={page}
       title={title}
-      lead={<p>{keepThaiProse(BLOG_COPY.tagLead(name))}</p>}
-      trail={[...BLOG_TRAIL, { name: `${BLOG_COPY.tagsLabel} ${name}`, path: tagPath(slug) }]}
+      lead={tag ? <p>{keepThaiProse(BLOG_COPY.tagLead(tag.name))}</p> : null}
+      trail={tag ? [...BLOG_TRAIL, { name: `${BLOG_COPY.tagsLabel} ${tag.name}`, path: tagPath(slug) }] : BLOG_TRAIL}
       list={list}
       categories={categories}
       current={undefined}
       jsonLdName={title}
-      jsonLdDescription={BLOG_COPY.tagLead(name)}
+      jsonLdDescription={tag ? BLOG_COPY.tagLead(tag.name) : BLOG_COPY.description}
     />
   );
 }

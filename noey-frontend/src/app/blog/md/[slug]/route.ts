@@ -1,6 +1,6 @@
 import { blogPostPath } from "@/lib/blog";
 import { buildPostMarkdown } from "@/lib/blog-machine";
-import { BlogUnavailableError, getBlogPost, getBlogSlugs } from "@/lib/server/blog";
+import { getBlogPost, getBlogSlugs, orUnavailable } from "@/lib/server/blog";
 import { absoluteUrl } from "@/lib/site";
 
 /*
@@ -20,8 +20,14 @@ export async function generateStaticParams() {
 export async function GET(_request: Request, { params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
   const result = await getBlogPost(slug);
-  // Down: throw, so the last good copy keeps being served.
-  if (!result.ok) throw new BlogUnavailableError(`post ${slug} (markdown)`);
+  // Down, and no earlier answer to use (lib/server/blog.ts): say so, briefly cached.
+  if (!result.ok) {
+    orUnavailable(result, `post ${slug} (markdown)`);
+    return new Response("ตอนนี้ยังโหลดบทความไม่ได้ ลองใหม่อีกครั้งในอีกสักครู่\n", {
+      status: 503,
+      headers: { "Content-Type": "text/plain; charset=utf-8", "Retry-After": "30" },
+    });
+  }
   if (!result.data) {
     return new Response("ไม่พบบทความนี้\n", { status: 404, headers: { "Content-Type": "text/plain; charset=utf-8" } });
   }

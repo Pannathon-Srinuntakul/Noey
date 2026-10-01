@@ -1,7 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mapPost } from "../blog";
 import DATA from "./__fixtures__/blog.json";
-import { BlogUnavailableError, blogFixtureMode, getBlogCategories, getBlogPage, getBlogPost, getBlogSlugs, getBlogTags, orUnavailable } from "./blog";
+import {
+  BLOG_RETRY_REVALIDATE,
+  blogFixtureMode,
+  forgetBlogAnswers,
+  getBlogCategories,
+  getBlogPage,
+  getBlogPost,
+  getBlogSlugs,
+  getBlogTags,
+  orUnavailable,
+} from "./blog";
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 
@@ -17,6 +27,7 @@ describe("blog data layer (the API)", () => {
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();
     fetchMock.mockReset();
+    forgetBlogAnswers();
   });
 
   it("asks GET /blog/posts with the listing's query, tags the fetch `blog`, maps the answer", async () => {
@@ -62,9 +73,22 @@ describe("blog data layer (the API)", () => {
     expect(await getBlogPost(POST.slug)).toEqual({ ok: false });
   });
 
-  it("retries a 5xx once and uses the second answer", async () => {
+  it("retries an outage once, with the short lifetime the page then takes on", async () => {
     fetchMock.mockResolvedValueOnce(json({}, 502)).mockResolvedValueOnce(json([{ slug: "a", updated_at: "2026-10-01T00:00:00Z" }]));
     expect(await getBlogSlugs()).toEqual({ ok: true, data: [{ slug: "a", updatedAt: "2026-10-01T00:00:00.000Z" }] });
+    expect(fetchMock.mock.calls[0][1].next.revalidate).toBe(600);
+    expect(fetchMock.mock.calls[1][1].next.revalidate).toBe(BLOG_RETRY_REVALIDATE);
+  });
+
+  it("keeps showing the last good answer through an outage, but not past a real 404", async () => {
+    fetchMock.mockResolvedValueOnce(json(POST));
+    expect((await getBlogPost(POST.slug)).ok).toBe(true);
+    fetchMock.mockRejectedValue(new TypeError("fetch failed"));
+    const during = await getBlogPost(POST.slug);
+    expect(during.ok && during.data?.title).toBe(POST.title);
+    fetchMock.mockReset();
+    fetchMock.mockResolvedValue(json({ detail: "not found" }, 404));
+    expect(await getBlogPost(POST.slug)).toEqual({ ok: true, data: null });
   });
 
   it("does not take another post's body for this page", async () => {
@@ -76,20 +100,15 @@ describe("blog data layer (the API)", () => {
 describe("what a page does when the API is down", () => {
   afterEach(() => vi.unstubAllEnvs());
 
-  it("throws on a production server, so ISR keeps the last good page", () => {
-    vi.stubEnv("NODE_ENV", "production");
-    vi.stubEnv("NEXT_PHASE", "phase-production-server");
-    expect(() => orUnavailable({ ok: false }, "test")).toThrow(BlogUnavailableError);
+  it("renders its own 'could not load' state — never a throw, on a production server too", () => {
+    for (const phase of ["phase-production-server", "phase-production-build"]) {
+      vi.stubEnv("NODE_ENV", "production");
+      vi.stubEnv("NEXT_PHASE", phase);
+      expect(orUnavailable({ ok: false }, "test")).toBeNull();
+    }
   });
 
-  it("renders without the data while building (the build never depends on the backend)", () => {
-    vi.stubEnv("NODE_ENV", "production");
-    vi.stubEnv("NEXT_PHASE", "phase-production-build");
-    expect(orUnavailable({ ok: false }, "test")).toBeNull();
-  });
-
-  it("passes data through either way", () => {
-    vi.stubEnv("NODE_ENV", "production");
+  it("passes data through", () => {
     expect(orUnavailable({ ok: true, data: [1] }, "test")).toEqual([1]);
   });
 });

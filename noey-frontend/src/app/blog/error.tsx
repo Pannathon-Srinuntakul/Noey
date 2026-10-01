@@ -6,10 +6,10 @@ import { BLOG_COPY } from "@/lib/blog";
 import "../../styles/pages/blog.css";
 
 /**
- * Every /blog page when the blog API is down AND there is no earlier copy
- * of the page to serve (ISR serves that copy whenever it has one). A calm
- * status card with a retry — a plain link, so it also works without
- * JavaScript; with JavaScript it re-renders the segment in place.
+ * The blog's boundary for an error nobody planned for (an API outage is not
+ * one: the pages render their own "could not load" state, lib/server/blog.ts).
+ * The same calm status card, with a retry — a plain link, so it also works
+ * without JavaScript; with JavaScript it re-renders the segment in place.
  */
 export default function BlogError({ retry }: { error: Error & { digest?: string }; retry: () => void }) {
   const pathname = usePathname();

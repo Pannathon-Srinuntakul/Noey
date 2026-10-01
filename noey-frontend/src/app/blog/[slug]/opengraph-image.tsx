@@ -1,7 +1,8 @@
 import { notFound } from "next/navigation";
 import { BLOG_COPY } from "@/lib/blog";
-import { getBlogPost, BlogUnavailableError } from "@/lib/server/blog";
-import { renderOgCard } from "@/lib/server/og";
+import { OG_COPY } from "@/lib/og-copy";
+import { getBlogPost } from "@/lib/server/blog";
+import { renderOgCard, renderOgImage } from "@/lib/server/og";
 import { OgText, ogTextBlock } from "@/lib/server/og-text";
 import { BRAND } from "@/lib/site";
 
@@ -22,7 +23,8 @@ export const revalidate = 3600;
 export default async function OpenGraphImage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
   const result = await getBlogPost(slug);
-  if (!result.ok) throw new BlogUnavailableError(`post ${slug} (share image)`);
+  // Down, and no earlier answer: the blog's own card, briefly cached (lib/server/blog.ts).
+  if (!result.ok) return renderOgImage(OG_COPY.blog);
   const post = result.data;
   if (!post) notFound();
   const eyebrow = ogTextBlock(`${BLOG_COPY.label} · ${post.category.name}`, { sizes: [26], maxWidth: 1040, maxLines: 1 });

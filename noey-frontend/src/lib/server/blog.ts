@@ -1,5 +1,4 @@
 import "server-only";
-import { PHASE_PRODUCTION_BUILD } from "next/constants";
 import {
   BLOG_LIST_REVALIDATE,
   BLOG_PER_PAGE,
@@ -24,14 +23,20 @@ import { API_URL } from "./config";
  * with Next's data cache and tagged `blog` (every call) and `blog:<slug>`
  * (one post), so POST /api/revalidate-blog can expire exactly what changed.
  *
- * A call never throws: it answers `{ ok: false }` when the backend is down or
- * answers nonsense, and the PAGE decides what that means (`orUnavailable`):
- *  - during `next build` → render without the posts (a build never depends
- *    on the backend; on Railway the private API is unreachable while building);
- *  - on a production server → throw, so ISR keeps serving the last good page,
- *    and a page that was never rendered shows the blog's "try again" state
- *    (app/blog/error.tsx);
- *  - in development and tests → render without the posts, like the build.
+ * When the backend is down (no answer, a 5xx, or nonsense):
+ *  1. the call is retried once — a restart of the API must not fail a build
+ *     or a regeneration on its own;
+ *  2. the last good answer this server saw for the same request is used, so
+ *     a page regenerated during the outage keeps the content it had;
+ *  3. otherwise the call answers `{ ok: false }` and the page renders its
+ *     "could not load" state in place (`orUnavailable` → null). Never a
+ *     throw: Next answers a failed first render of an ISR page with a bare
+ *     "Internal Server Error" (measured, 2026-10-01), and never a 404 — the
+ *     post may well exist.
+ * Either way the retry was made with a 30-second lifetime, which Next takes
+ * as the page's own: the page is tried again 30 s later instead of keeping
+ * the stand-in for its usual 10 minutes. A build that cannot reach the API
+ * (Railway builds without the private network) is the same case.
  *
  * Fixtures (`BLOG_FIXTURES=1`, or `=empty` for the empty state) replace the
  * API in development and tests ONLY: the check is on NODE_ENV, which a
@@ -42,13 +47,8 @@ import { API_URL } from "./config";
 export type BlogResult<T> = { ok: true; data: T } | { ok: false };
 
 const TIMEOUT_MS = 5_000;
-
-export class BlogUnavailableError extends Error {
-  constructor(what: string) {
-    super(`blog API unavailable: ${what}`);
-    this.name = "BlogUnavailableError";
-  }
-}
+/** Seconds a page rendered without (fresh) data is kept before it is tried again. */
+export const BLOG_RETRY_REVALIDATE = 30;
 
 /** `BLOG_FIXTURES` is honoured outside production only. */
 export function blogFixtureMode(): "posts" | "empty" | null {
@@ -59,49 +59,57 @@ export function blogFixtureMode(): "posts" | "empty" | null {
   return null;
 }
 
-function isBuilding(): boolean {
-  return process.env.NEXT_PHASE === PHASE_PRODUCTION_BUILD;
-}
-
-/**
- * What a page does with a failed call: throw on a production server (see the
- * module comment); anywhere else — the build, `next dev`, the unit tests —
- * `null`, and the page renders without the data (a listing then shows its
- * "could not load" state in place).
- */
+/** The data, or null (logged) when the API did not answer: the page renders its "could not load" state. */
 export function orUnavailable<T>(result: BlogResult<T>, what: string): T | null {
   if (result.ok) return result.data;
-  if (isBuilding() || process.env.NODE_ENV !== "production") {
-    console.warn(`[blog] ${what}: the blog API did not answer; rendering without it`);
-    return null;
-  }
-  throw new BlogUnavailableError(what);
+  console.warn(`[blog] ${what}: the blog API did not answer; rendering without it`);
+  return null;
 }
 
 type Fetched = { status: number; body: unknown };
 
-async function getJson(path: string, revalidate: number, tags: string[]): Promise<Fetched> {
-  // One retry for a network failure or a 5xx: a restart of the API must not
-  // fail a build or a regeneration on its own.
-  for (let attempt = 0; attempt < 2; attempt++) {
+/** The last good JSON body per request path, for an outage (bounded; this process only). */
+const lastGood = new Map<string, unknown>();
+const LAST_GOOD_MAX = 300;
+
+function remember(path: string, body: unknown) {
+  lastGood.delete(path);
+  lastGood.set(path, body);
+  if (lastGood.size > LAST_GOOD_MAX) lastGood.delete(lastGood.keys().next().value as string);
+}
+
+/** Forget every remembered answer (tests). */
+export function forgetBlogAnswers(): void {
+  lastGood.clear();
+}
+
+async function attempt(path: string, revalidate: number, tags: string[]): Promise<Fetched> {
+  try {
+    const response = await fetch(`${API_URL}${path}`, {
+      headers: { Accept: "application/json" },
+      next: { revalidate, tags },
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
+    if (!response.ok) return { status: response.status, body: null };
     try {
-      const response = await fetch(`${API_URL}${path}`, {
-        headers: { Accept: "application/json" },
-        next: { revalidate, tags },
-        signal: AbortSignal.timeout(TIMEOUT_MS),
-      });
-      if (response.status >= 500 && attempt === 0) continue;
-      if (!response.ok) return { status: response.status, body: null };
-      try {
-        return { status: response.status, body: await response.json() };
-      } catch {
-        return { status: 502, body: null };
-      }
+      return { status: response.status, body: await response.json() };
     } catch {
-      if (attempt === 1) return { status: 0, body: null };
+      return { status: 502, body: null };
     }
+  } catch {
+    return { status: 0, body: null };
   }
-  return { status: 0, body: null };
+}
+
+const isOutage = (status: number) => status === 0 || status >= 500;
+
+async function getJson(path: string, revalidate: number, tags: string[]): Promise<Fetched> {
+  let answer = await attempt(path, revalidate, tags);
+  // The retry carries the short lifetime: the page that used it is tried again soon.
+  if (isOutage(answer.status)) answer = await attempt(path, BLOG_RETRY_REVALIDATE, tags);
+  if (answer.status === 200) remember(path, answer.body);
+  else if (isOutage(answer.status) && lastGood.has(path)) return { status: 200, body: lastGood.get(path) };
+  return answer;
 }
 
 async function fixtures() {

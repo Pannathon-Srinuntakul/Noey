@@ -37,22 +37,22 @@ async function load(params: Params["params"]) {
 
 export async function generateMetadata({ params }: Params): Promise<Metadata> {
   const { slug, page, list, category } = await load(params);
-  const name = category?.name ?? slug;
   return listingMetadata({
     path: categoryPath(slug),
-    title: BLOG_COPY.categoryTitle(name),
+    // Unknown only while the API is down: the blog's own name, not a slug.
+    title: category ? BLOG_COPY.categoryTitle(category.name) : BLOG_COPY.title,
     description: category?.description || BLOG_COPY.description,
     page,
     last: list ? pageCount(list.total) : 1,
-    // An empty category is not a page worth indexing yet.
-    indexable: !!list && list.total > 0,
+    // An empty category is not a page worth indexing yet. (Unknown while the
+    // API is down: a 30-second stand-in must not tell crawlers to drop it.)
+    indexable: list === null || list.total > 0,
   });
 }
 
 export default async function CategoryPage({ params }: Params) {
   const { slug, page, list, categories, category } = await load(params);
-  const name = category?.name ?? slug;
-  const title = BLOG_COPY.categoryTitle(name);
+  const title = category ? BLOG_COPY.categoryTitle(category.name) : BLOG_COPY.h1;
   return (
     <BlogListing
       kind="category"
@@ -60,7 +60,7 @@ export default async function CategoryPage({ params }: Params) {
       page={page}
       title={title}
       lead={category?.description ? <p>{keepThaiProse(category.description)}</p> : null}
-      trail={[...BLOG_TRAIL, { name, path: categoryPath(slug) }]}
+      trail={category ? [...BLOG_TRAIL, { name: category.name, path: categoryPath(slug) }] : BLOG_TRAIL}
       list={list}
       categories={categories}
       current={slug}
