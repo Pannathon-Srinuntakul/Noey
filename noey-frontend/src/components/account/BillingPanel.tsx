@@ -23,7 +23,7 @@ export interface UpgradeOption {
   price: string | null;
   /** Full price to strike through beside it during the beta; null otherwise. */
   fullPrice: string | null;
-  /** The same facts on every row (clips, footage, storage), so plans compare down the list. */
+  /** The same facts on every row (footage, concurrency, storage), so plans compare down the list. */
   specs: readonly string[];
   current: boolean;
   /** Shows the "แนะนำ" tag (Pro). */
@@ -35,10 +35,14 @@ export interface PlanCardParts {
   reel: string;
   /** The "เบต้า −50%" chip beside the struck price (a discounted plan, during the beta). */
   beta: boolean;
-  usage: { prefix: string; count: number; unit: string; caption: string | null };
-  /** Pro and up: the count at ระดับละเอียด ("ระดับละเอียดราว 20 คลิป"), as /pricing's cards state it. */
-  high: string | null;
-  basis: string;
+  /** The free plan's one-off nature ("ทดลองใช้ครั้งเดียว ไม่รีเซ็ต"); null on a paid plan. */
+  caption: string | null;
+  /**
+   * No clip count here (owner, 2026-10-01): a count is pinned to one mode and
+   * raw-clip length, so the card says what it depends on and links to
+   * /pricing's calculator, where the reader can set both.
+   */
+  clips: { note: string; link: string; href: string };
   features: readonly string[];
 }
 
@@ -199,12 +203,13 @@ export function BillingPanel(props: BillingPanelProps) {
             {statusLine && !renewalOnTrack ? <p className={statusWarn ? "plan-status plan-status--warn" : "plan-status"}>{keepThai(statusLine)}</p> : null}
             {plan ? (
               <div className="plan-usage">
-                <p className="plan-usage__line">
-                  {plan.usage.prefix} <span className="num plan-usage__count">{plan.usage.count}</span> {plan.usage.unit}
-                  {plan.usage.caption ? <span className="plan-usage__caption">{keepThai(` · ${plan.usage.caption}`)}</span> : null}
+                {plan.caption ? <p className="plan-usage__caption">{keepThai(plan.caption)}</p> : null}
+                <p className="plan-usage__basis">
+                  {keepThai(plan.clips.note)}{" "}
+                  <Link href={plan.clips.href}>
+                    {keepThai(plan.clips.link)}
+                  </Link>
                 </p>
-                {plan.high ? <p className="plan-usage__high">{keepThai(plan.high)}</p> : null}
-                <p className="plan-usage__basis">{plan.basis}</p>
               </div>
             ) : null}
           </div>

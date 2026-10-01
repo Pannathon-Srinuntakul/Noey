@@ -9,7 +9,6 @@ import {
   featureLockedLine,
   footageNotice,
   FULL_PRICE_SATANG,
-  APPROX_CUTS_NOTE,
   FOOTAGE_NOTE,
   fullPriceAfterBeta,
   HIGH_PRECISION_MIN_PLAN,
@@ -20,15 +19,12 @@ import {
   PLAN_ROWS,
   planButtonLabel,
   planChangeBody,
-  PLAN_APPROX_CUTS,
-  planApproxCuts,
-  planApproxHighCuts,
-  PLAN_APPROX_HIGH_CUTS,
   planConsentText,
   planFooter,
   priceText,
   projectLimitNotice,
   queueLimitNotice,
+  QUOTA_NOTE,
   storageNotice
 } from './planLadder'
 
@@ -48,9 +44,9 @@ describe('plan list (design §5)', () => {
       'max'
     ])
     expect(PLAN_ROWS[3].sub).toBe(
-      'ตัดได้ราว 30 คลิป/เดือน · ระดับละเอียดราว 20 คลิป · ฟุตเทจ 30 นาที'
+      'ฟุตเทจ 30 นาที · เลือกระดับละเอียดได้ · ทำงานพร้อมกัน 2 งาน · 10 GB'
     )
-    expect(PLAN_ROWS[2].sub).toBe('ตัดได้ราว 10 คลิป/เดือน · ฟุตเทจ 20 นาที · ระดับปกติ')
+    expect(PLAN_ROWS[2].sub).toBe('ฟุตเทจ 20 นาที · ระดับปกติ · 5 GB')
   })
 
   it('labels the row button by direction', () => {
@@ -81,47 +77,21 @@ describe('plan list (design §5)', () => {
     expect(PLAN_ROWS[3].sub).toContain('30 นาที')
   })
 
-  it('states every cut count as an approximation, and which tier it may pick', () => {
-    // "ราว" is what keeps the number a claim rather than an allowance.
-    expect(PLAN_ROWS.every((r) => r.sub.includes('ราว'))).toBe(true)
+  it('states no clip count, and which tier each plan may pick', () => {
+    // Owner, 2026-10-01: a count is pinned to one mode and raw-clip length,
+    // so it lives on the website's pricing calculator only.
+    for (const row of PLAN_ROWS) expect(row.sub, row.key).not.toMatch(/คลิป|ราว/)
     // The three cheapest plans are Standard-only (owner, 2026-09-29 revision).
-    expect(PLAN_ROWS.slice(0, 3).every((r) => r.sub.endsWith('ระดับปกติ'))).toBe(true)
-    // Pro and up: the ระดับละเอียด count names the setting and what it buys.
-    expect(PLAN_ROWS.slice(3).every((r) => r.sub.includes('ระดับละเอียดราว '))).toBe(true)
+    expect(PLAN_ROWS.slice(0, 3).every((r) => r.sub.includes('ระดับปกติ'))).toBe(true)
+    expect(PLAN_ROWS.slice(0, 3).some((r) => r.sub.includes('ระดับละเอียด'))).toBe(false)
+    expect(PLAN_ROWS.slice(3).every((r) => r.sub.includes('เลือกระดับละเอียดได้'))).toBe(true)
   })
 
-  it('keeps the printed count and the figure from drifting apart', () => {
-    // Honest counts (owner, 2026-10-01): budget ÷ a 5-minute cut, rounded
-    // down — the backend's tests pin the same figures.
-    expect(PLAN_APPROX_CUTS).toEqual({
-      free: 2,
-      lite: 4,
-      starter: 10,
-      pro: 30,
-      studio: 64,
-      agency: 140,
-      max: 259
-    })
-    expect(PLAN_APPROX_HIGH_CUTS).toEqual({ pro: 20, studio: 44, agency: 97, max: 179 })
-    for (const row of PLAN_ROWS) {
-      expect(row.sub).toContain(`ราว ${PLAN_APPROX_CUTS[row.key]} คลิป`)
-      const high = PLAN_APPROX_HIGH_CUTS[row.key]
-      if (high) expect(row.sub).toContain(`ระดับละเอียดราว ${high} คลิป`)
-    }
-    expect(planApproxCuts('pro')).toBe(30)
-    expect(planApproxHighCuts('pro')).toBe(20)
-    expect(planApproxHighCuts('starter')).toBeNull()
-    expect(planApproxHighCuts('enterprise')).toBeNull()
-    // An admin-set or unknown plan advertises none, so nothing may show one.
-    expect(planApproxCuts('enterprise')).toBeNull()
-    expect(planApproxCuts(null)).toBeNull()
-  })
-
-  it('never states a cut count without its basis AND that it is not a quota', () => {
-    expect(APPROX_CUTS_NOTE).toContain('5 นาที')
-    expect(APPROX_CUTS_NOTE).toContain('ระดับละเอียด')
-    expect(APPROX_CUTS_NOTE).toContain('ไม่ใช่โควตา')
-    expect(APPROX_CUTS_NOTE).toContain('ตัดฉากเด่น')
+  it('says what a clip count depends on and where to find it, and what the footage means', () => {
+    expect(QUOTA_NOTE).toContain('โหมด')
+    expect(QUOTA_NOTE).toContain('ความยาวคลิปดิบ')
+    expect(QUOTA_NOTE).toContain('หน้าราคา')
+    expect(QUOTA_NOTE).not.toMatch(/\d+ คลิป/)
     expect(FOOTAGE_NOTE).toContain('ตัดฉากเด่น')
     expect(FOOTAGE_NOTE).toContain('2 ชั่วโมง')
   })

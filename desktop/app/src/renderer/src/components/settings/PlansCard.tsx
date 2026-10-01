@@ -4,14 +4,14 @@ import {
   BETA_STRIP_TEXT,
   betaPricing,
   canChangePlan,
-  APPROX_CUTS_NOTE,
   FOOTAGE_NOTE,
   fullPriceAfterBeta,
   PLAN_ROWS,
   planButtonLabel,
   planFooter,
   planRank,
-  priceText
+  priceText,
+  QUOTA_NOTE
 } from '../../lib/planLadder'
 
 /**
@@ -112,10 +112,10 @@ export function PlansCard({
         )
       })}
       <div className="px-4 py-[13px] text-[13px] leading-[1.6] text-muted">
-        {/* The cut counts above are a claim about a typical clip, not an
-            allowance — this says what they are counted from and that nothing
-            counts down from them (owner, 2026-09-29). Not optional. */}
-        <p>{APPROX_CUTS_NOTE}</p>
+        {/* No clip count here (owner, 2026-10-01): it depends on the mode and
+            the raw clip's length, which only the website's pricing calculator
+            lets the reader set. */}
+        <p>{QUOTA_NOTE}</p>
         <p className="mt-1">{FOOTAGE_NOTE}</p>
         <p className="mt-1">
           {changeable ? planFooter() : 'แผนนี้ผู้ดูแลตั้งให้ ติดต่อผู้ดูแลเพื่อเปลี่ยนแผน'}

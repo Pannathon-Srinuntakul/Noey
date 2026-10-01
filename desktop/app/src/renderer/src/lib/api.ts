@@ -188,15 +188,8 @@ export interface Usage {
 
 /** Per-plan features the pricing page promises. Null limits = unlimited. */
 export interface PlanFeatures {
-  /**
-   * Roughly how many cuts a month the plan buys — MARKETING COPY, never
-   * subtracted from. Nothing counts down from it and no meter may read it;
-   * the quota is the percentage in `limits`. (Renamed from `clips` by the
-   * server, 2026-09-29, for exactly that reason.)
-   */
-  approx_cuts?: number | null
-  /** The same count at ความละเอียด "high"; null below Pro (it cannot pick High). */
-  approx_cuts_high?: number | null
+  // The server also sends `approx_cuts` / `approx_cuts_high`; the editor
+  // shows no clip count (owner, 2026-10-01), so they are not read.
   /** Footage per project for ตัดฉากเด่น only (`video_call_modes`). */
   footage_sec: number | null
   /** The speech modes' footage cap, the same on every plan; null = unlimited. */

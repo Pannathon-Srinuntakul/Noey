@@ -518,10 +518,13 @@ export default function WizardPage({
         <WizardStepFiles
           state={effective}
           setFiles={(update) => setState((prev) => ({ ...prev, files: update(prev.files) }))}
+          // Only the plan notices (footage / storage / projects) belong here:
+          // the mode is not chosen yet, so a cost line would price a mode the
+          // user never picked. The estimate is shown on the review step.
           estimate={
-            planNotices.length || estimating || (estimate && !estimate.unlimited)
-              ? estimateLine
-              : undefined
+            planNotices.length ? (
+              <LimitNotices notices={planNotices} onAction={onNoticeAction} />
+            ) : undefined
           }
         />
       ) : step === 2 ? (

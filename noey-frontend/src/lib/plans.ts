@@ -196,14 +196,10 @@ export interface PlanCopy {
   /** Card sentence on /pricing. */
   pricingBlurb: string;
   /**
-   * Bullet list on /pricing. It never repeats the clip count — the card's
-   * headline states that, with `CLIPS_FOOTNOTE` under it.
+   * Bullet list on /pricing (and the account billing card). It never states a
+   * clip count: counts appear on /pricing's calculator only (owner, 2026-10-01).
    */
   features: readonly string[];
-  /** Bullets on the account billing card (design shows the free-plan version). */
-  accountFeatures: readonly string[];
-  /** One-line summary inside the upgrade dialog. */
-  dialogSummary: string;
   /** Button label on /pricing. */
   pricingCta: string;
   recommended?: boolean;
@@ -220,8 +216,12 @@ export type UsageLimit = "Trial credit" | "Monthly limit" | "Weekly limit" | "5-
 // Owner, 2026-09-29. The product is sold in CLIPS, not in minutes: what a cut
 // costs is dominated by a fixed per-run cost rather than by the footage, so a
 // long source is barely dearer than a short one. Minutes described something
-// the user does not care about. Every surface derives its count from this one
-// map — cards, comparison table, FAQ, guides, /pricing.md, /llms.txt.
+// the user does not care about. Every count derives from this one map.
+//
+// WHERE (owner, 2026-10-01): /pricing only — its cards, calculator, comparison
+// table and summary list — plus its /pricing.md twin. A count anywhere else
+// would be pinned to a 5-minute ตัดฉากเด่น clip with no way to change it, which
+// confused people; every other surface points to the calculator instead.
 //
 // APPROX, and the name says so on purpose: an ordinary cut and a long
 // high-precision one differ by about four times, so this number is a guide,
@@ -433,8 +433,8 @@ export function clipsHighLine(tier: Tier): string | null {
 
 /**
  * Both counts in one line — "ตัดได้ราว 30 คลิป/เดือน · ระดับละเอียดราว 20
- * คลิป" — for a surface that has room for only one line per plan (account
- * card, upgrade dialog). Lite/Starter/Free get the headline alone.
+ * คลิป" — for /pricing.md, which states one line per plan. Lite/Starter/Free
+ * get the headline alone.
  */
 export function clipsHeadlineFull(tier: Tier): string {
   const high = clipsHighLine(tier);
@@ -587,6 +587,16 @@ export const CLIPS_BASIS_SHORT = "คิดจากโหมดตัดฉา�
 /** The free plan's headline needs its own caption: it never comes back. */
 export const FREE_CLIPS_CAPTION = "ทดลองใช้ครั้งเดียว ไม่รีเซ็ต";
 
+/**
+ * Where a surface without the calculator sends the reader instead of quoting
+ * a count (owner, 2026-10-01): /pricing's calculator section.
+ */
+export const CLIPS_CALCULATOR_HREF = "/pricing#pricing-plans-title";
+/** The sentence before that link: what a count depends on. */
+export const CLIPS_DEPEND_NOTE = "ตัดได้กี่คลิปต่อเดือนขึ้นกับโหมดและความยาวคลิปดิบของคุณ";
+/** The link's own words. */
+export const CLIPS_CALCULATOR_LINK = "ลองคำนวณที่หน้าราคา";
+
 // ─── Footage per project ─────────────────────────────────────────────────────
 //
 // Owner, 2026-09-29, narrowed 2026-10-01: the per-plan ceiling applies to
@@ -681,12 +691,6 @@ export const PLAN_COPY: Record<Tier, PlanCopy> = {
       "ครบทุกโหมด รวมโหมดพากย์ใหม่",
       "เก็บได้ 3 โปรเจกต์ · 1 GB",
     ],
-    accountFeatures: [
-      `${clipsHeadline("free")} · ${FREE_CLIPS_CAPTION}`,
-      `${footageFeature("free")} · ${precisionFeature("free")}`,
-      "เก็บได้ 3 โปรเจกต์ · 1 GB",
-    ],
-    dialogSummary: "",
     pricingCta: "เริ่มใช้ฟรี",
     limits: ["Trial credit"],
     concurrentJobs: 1,
@@ -702,12 +706,6 @@ export const PLAN_COPY: Record<Tier, PlanCopy> = {
       "เพิ่มเพลงประกอบได้",
       "เก็บได้ 10 โปรเจกต์ · 3 GB",
     ],
-    accountFeatures: [
-      clipsHeadline("lite"),
-      `${footageFeature("lite")} · ${precisionFeature("lite")}`,
-      "เก็บได้ 10 โปรเจกต์ · 3 GB",
-    ],
-    dialogSummary: `${clipsHeadline("lite")} · ฟุตเทจตัดฉากเด่น ${FOOTAGE_PER_PROJECT.lite}ต่อโปรเจกต์ · 3 GB`,
     pricingCta: "เลือกแพลนนี้",
     limits: ["Monthly limit"],
     concurrentJobs: 1,
@@ -723,12 +721,6 @@ export const PLAN_COPY: Record<Tier, PlanCopy> = {
       "ฟุตเทจยาวขึ้น พร้อมเพลงประกอบ",
       "เก็บได้ 20 โปรเจกต์ · 5 GB",
     ],
-    accountFeatures: [
-      clipsHeadline("starter"),
-      `${footageFeature("starter")} · ${precisionFeature("starter")}`,
-      "เก็บได้ 20 โปรเจกต์ · 5 GB",
-    ],
-    dialogSummary: `${clipsHeadline("starter")} · ฟุตเทจตัดฉากเด่น ${FOOTAGE_PER_PROJECT.starter}ต่อโปรเจกต์ · 5 GB`,
     pricingCta: "เลือกแพลนนี้",
     limits: ["Monthly limit"],
     concurrentJobs: 1,
@@ -744,12 +736,6 @@ export const PLAN_COPY: Record<Tier, PlanCopy> = {
       "ทำงาน AI พร้อมกันได้ 2 งาน",
       "คิวประมวลผลก่อนแพลนอื่น · จำนวนโปรเจกต์ไม่จำกัด ภายใน 10 GB",
     ],
-    accountFeatures: [
-      clipsHeadlineFull("pro"),
-      `${footageFeature("pro")} · ${precisionFeature("pro")}`,
-      "คิวประมวลผลก่อนแพลนอื่น · เก็บโปรเจกต์ไม่จำกัดจำนวน · 10 GB",
-    ],
-    dialogSummary: `${clipsHeadlineFull("pro")} · 10 GB`,
     pricingCta: "เลือกแพลนนี้",
     recommended: true,
     limits: ["Monthly limit"],
@@ -766,12 +752,6 @@ export const PLAN_COPY: Record<Tier, PlanCopy> = {
       "ทำงาน AI พร้อมกันได้ 3 งาน",
       "คิวประมวลผลลำดับแรก · จำนวนโปรเจกต์ไม่จำกัด ภายใน 30 GB",
     ],
-    accountFeatures: [
-      clipsHeadlineFull("studio"),
-      `${footageFeature("studio")} · ${precisionFeature("studio")}`,
-      "คิวประมวลผลลำดับแรก · เก็บโปรเจกต์ไม่จำกัด · 30 GB",
-    ],
-    dialogSummary: `${clipsHeadlineFull("studio")} · ทำงานพร้อมกัน 3 งาน · 30 GB`,
     pricingCta: "เลือกแพลนนี้",
     limits: ["Monthly limit"],
     concurrentJobs: 3,
@@ -787,12 +767,6 @@ export const PLAN_COPY: Record<Tier, PlanCopy> = {
       "ทำงาน AI พร้อมกันได้ 4 งาน",
       "คิวประมวลผลลำดับแรก · จำนวนโปรเจกต์ไม่จำกัด ภายใน 60 GB",
     ],
-    accountFeatures: [
-      clipsHeadlineFull("agency"),
-      "ทำงาน AI พร้อมกันได้ 4 งาน",
-      "คิวประมวลผลลำดับแรก · เก็บโปรเจกต์ไม่จำกัด · 60 GB",
-    ],
-    dialogSummary: `${clipsHeadlineFull("agency")} · ทำงานพร้อมกัน 4 งาน · 60 GB`,
     pricingCta: "เลือกแพลนนี้",
     limits: ["Monthly limit"],
     concurrentJobs: 4,
@@ -808,12 +782,6 @@ export const PLAN_COPY: Record<Tier, PlanCopy> = {
       "ทำงาน AI พร้อมกันได้ 5 งาน",
       "คิวประมวลผลลำดับแรก · จำนวนโปรเจกต์ไม่จำกัด ภายใน 100 GB",
     ],
-    accountFeatures: [
-      clipsHeadlineFull("max"),
-      "ทำงาน AI พร้อมกันได้ 5 งาน",
-      "คิวประมวลผลลำดับแรก · เก็บโปรเจกต์ไม่จำกัด · 100 GB",
-    ],
-    dialogSummary: `${clipsHeadlineFull("max")} · ทำงานพร้อมกัน 5 งาน · 100 GB`,
     pricingCta: "เลือกแพลนนี้",
     limits: ["Monthly limit"],
     concurrentJobs: 5,

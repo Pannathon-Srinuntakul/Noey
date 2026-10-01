@@ -1,8 +1,11 @@
+import Link from "next/link";
 import { BETA_PRICE_NOTE, BETA_STRIKE_LABEL } from "@/lib/beta";
 import {
   APPROX_CUTS_PER_MONTH,
   APPROX_HIGH_CUTS_PER_MONTH,
-  CLIPS_FOOTNOTE,
+  CLIPS_CALCULATOR_HREF,
+  CLIPS_CALCULATOR_LINK,
+  CLIPS_DEPEND_NOTE,
   COMPARISON_ROWS,
   CUTS_APPROX_SHORT,
   CUTS_OVER_FOOTAGE_SHORT,
@@ -55,6 +58,11 @@ function CutsCell({ tier, precision }: { tier: Tier; precision: Precision }) {
  * cannot drift apart. `labelledBy` is the id of the <h2> that introduces it;
  * the table's caption takes that id plus "-caption".
  *
+ * The clip-count rows are /pricing's alone (`footnote="live"`), where the
+ * calculator sets the mode and length they are counted at. Anywhere else they
+ * would be pinned to a 5-minute ตัดฉากเด่น clip (owner, 2026-10-01: confusing),
+ * so the table drops them and its note points to the calculator.
+ *
  * The header row and the first column stay in place while the rest scrolls
  * (the page on wide screens, the table's own box on narrow ones), and the
  * row and column under the pointer light up like a selection in the editor.
@@ -68,8 +76,9 @@ export function PlanComparisonTable({
   table: PriceTable;
   labelledBy: string;
   /**
-   * The basis of the clip counts under the table. "live" (/pricing) states the
-   * mode and length the calculator above has set, marked so it follows them.
+   * "live" (/pricing): the clip-count rows, with their basis under the table
+   * marked so it follows the calculator. Otherwise no counts, and a note that
+   * points to the calculator (or none, with `false`).
    */
   footnote?: boolean | "live";
   /**
@@ -126,7 +135,7 @@ export function PlanComparisonTable({
                 );
               })}
             </tr>
-            {COMPARISON_ROWS.map((row) => (
+            {COMPARISON_ROWS.filter((row) => live || !row.cuts).map((row) => (
               <tr key={row.label} data-cuts-row={row.cuts === "high" ? "high" : undefined}>
                 <th scope="row">{keepThaiProse(row.label)}</th>
                 {row.values.map((value, index) => (
@@ -156,7 +165,7 @@ export function PlanComparisonTable({
           </tbody>
         </table>
       </div>
-      {/* The clip counts in the table are estimates; say on what. */}
+      {/* /pricing: the counts are estimates, so say on what. Elsewhere: where to find them. */}
       {footnote === "live" ? (
         <p className="table-note">
           {"จำนวนคลิปในตาราง"}
@@ -164,7 +173,9 @@ export function PlanComparisonTable({
           {" ตามที่ตั้งไว้ในส่วนแพลนด้านบน ปัดลง"}
         </p>
       ) : footnote ? (
-        <p className="table-note">{keepThaiProse(CLIPS_FOOTNOTE)}</p>
+        <p className="table-note">
+          {keepThaiProse(CLIPS_DEPEND_NOTE)} <Link href={CLIPS_CALCULATOR_HREF}>{keepThaiProse(CLIPS_CALCULATOR_LINK)}</Link>
+        </p>
       ) : null}
       {isBetaPriced(table) ? <p className="table-note">{keepThaiProse(BETA_PRICE_NOTE)}</p> : null}
     </div>

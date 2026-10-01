@@ -16,6 +16,7 @@ import {
   PLAN_COPY,
   TIERS,
   displayPrice,
+  CLIPS_CALCULATOR_HREF,
   CLIPS_FOOTNOTE,
   VOLUME_VALUE_NOTE,
   clipsHeadlineFull,
@@ -29,6 +30,13 @@ import {
   type PriceTable,
 } from "./plans";
 import { PAGES, SITE_NAME, absoluteUrl, publishedDate, type PageKey } from "./site";
+
+/**
+ * What every count depends on, said beside /pricing.md's counts. /pricing.md
+ * keeps them (it is the pricing page's twin, with their basis beside them);
+ * /llms.txt quotes none and points to the calculator (owner, 2026-10-01).
+ */
+const CLIPS_COUNT_DEPENDS = "แต่ละงานใช้โควตาไม่เท่ากันตามโหมดและความยาวคลิปดิบ ตัวเลขจริงจึงต่างจากตัวเลขตั้งต้นนี้ได้มาก";
 
 /** Header every Markdown twin carries: what it is, where the HTML lives, when it changed. */
 function markdownHeader(key: PageKey, title: string): string[] {
@@ -71,6 +79,7 @@ export function buildPricingMarkdown(table: PriceTable, updatedIso: string): str
   lines.push("- สกุลเงิน: บาท (THB) ราคาต่อเดือน ชำระด้วยบัตรเครดิตหรือเดบิต ตัดอัตโนมัติทุกเดือน");
   lines.push(`- จำนวนคลิปต่อเดือนของแต่ละแพลน: ${clipsLadderSentence()}`);
   lines.push(`- วิธีนับ: ${CLIPS_FOOTNOTE}`);
+  lines.push(`- ${CLIPS_COUNT_DEPENDS} หน้าราคามีตัวคำนวณให้เลือกโหมดและความยาวคลิปดิบเอง: ${absoluteUrl(CLIPS_CALCULATOR_HREF)}`);
   lines.push(`- ความคุ้ม: ${VOLUME_VALUE_NOTE}`);
   lines.push(`- สมัครใช้งาน: ${absoluteUrl(PAGES.signup.path)}`);
   lines.push("");
@@ -228,8 +237,7 @@ export function buildLlmsTxt(table: PriceTable): string {
     "- ไม่มีชั้นกราฟิก สติกเกอร์ ข้อความเคลื่อนไหว หรือเอฟเฟกต์ภาพ",
     "- ไม่แทรกภาพประกอบตามบท ไม่ตัดซ้อนหลายชั้น และไม่คุมจังหวะระดับเฟรมแทนผู้ใช้",
     "- ใช้ได้เฉพาะบนคอมพิวเตอร์ผ่าน Chrome หรือ Edge เวอร์ชันใหม่ หรือ Safari 26 ขึ้นไป ยังใช้บนมือถือไม่ได้",
-    `- จำนวนคลิปที่ AI ตัดให้ต่อเดือน: ${clipsLadderSentence()}`,
-    `- วิธีนับจำนวนคลิป: ${CLIPS_FOOTNOTE}`,
+    `- จำนวนคลิปที่ AI ตัดให้ต่อเดือน: ขึ้นกับแพลน โหมด และความยาวคลิปดิบ ดูจำนวนโดยประมาณได้ที่ตัวคำนวณของหน้าราคา ${absoluteUrl(CLIPS_CALCULATOR_HREF)}`,
     `- ความยาวฟุตเทจรวมต่อโปรเจกต์ โหมดตัดฉากเด่น: ${footageLadderSentence()} · ${SPEECH_FOOTAGE_NOTE}`,
     "- ความละเอียดการวิเคราะห์: แพลนฟรี Lite และ Starter วิเคราะห์ที่ระดับปกติ ส่วน Pro ขึ้นไปเลือกระดับละเอียดได้ ซึ่งตัดถี่ขึ้นและจุดตัดแม่นขึ้น แต่ใช้โควตามากกว่า",
     "- แพลนฟรีคือเครดิตทดลองก้อนเดียวเมื่อสมัคร ไม่รีเซ็ตรายเดือน ใช้หมดแล้วต้องอัปเกรด",
