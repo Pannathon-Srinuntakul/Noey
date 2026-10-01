@@ -85,6 +85,14 @@ file / per shot in parallel. All calls go through `packages/llm` (provider-agnos
 | 10 | Reviser | user's per-shot notes → updates only those shots, re-runs 6–9 for them | strongest model |
 | 11 | Renderer (no AI) | storyboard + assets + graphics → MP4 | compositor + code-graphics renderer |
 
+Call count (estimate, Kitti-sized job: 4-min A-roll → ~80 s, 20 b-roll files, ~38 shots, ~8
+graphic shots, ~5 stock shots): ~46–54 model calls on a first pass unbatched, ~24–28 with
+batching (photos 10 per analysis call, one stock-pick call for all shots, QA over all graphics in
+1–2 calls). Small job (no b-roll, few graphics): ~8–12. Each revision round: ~4–10. Wall time
+with parallel fan-out: guess 3–8 min (measure). **Vendor daily cap**: Tier 1 is ~250 Pro
+requests/day — if Pro is used for concept/storyboard/graphics (~10–12 per job) the whole system
+manages ~20 jobs/day; raise the tier or route those roles to another provider before launch.
+
 Artifacts per project: `transcript.json`, `broll_index.json`, `concepts.json`, `storyboard.json`,
 `graphics/<shot_id>/` (code + rendered transparent clip or frames), `stock/` (+ attribution
 manifest), `audio_plan.json`, final render.
