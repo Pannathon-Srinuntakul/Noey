@@ -22,15 +22,11 @@ export const EDITOR_OPENING_TEXT = "กำลังเปิดห้องต�
  * its own content has arrived, then hides it and shows the content where it
  * landed — above the footer, by flex order. The page reads complete, in
  * order, if not in its exact layout. Pages with nothing streamed (every
- * static page) are untouched. The header ruler, which turns pending while a
- * loading state is in the page, keeps its ordinary face: here a loading
- * state stays in the DOM, hidden, after its content has come.
+ * static page) are untouched.
  */
 export const NOSCRIPT_STREAM_CSS = [
   'body:has(> div[hidden][id^="S:"]){display:flex;flex-direction:column}',
   'body:has(> div[hidden][id^="S:"]) > [data-site-footer]{order:1}',
   'div[hidden][id^="S:"]{display:contents}',
   Array.from({ length: 16 }, (_, n) => `body:has(#S\\:${n}) #B\\:${n} + *`).join(",") + "{display:none}",
-  ".stl__scrub,.stl__wait{display:none}",
-  ".stl__tc,.stl__fill,.stl__playhead{opacity:1!important;scale:none!important}",
 ].join("");

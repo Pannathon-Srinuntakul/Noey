@@ -2,6 +2,14 @@ import { LevelMeter } from "../ds/LevelMeter";
 import { LoadingFrame, RenderLoading, Skel, SkelLines } from "../shell/RenderLoading";
 import { AccountTabs } from "./AccountTabs";
 
+export type AccountTab = "overview" | "quota" | "billing" | "profile";
+
+/** The tab a path opens ("/account/quota" → "quota"; anything else under /account → "overview"). */
+export function accountTabOf(path: string): AccountTab {
+  const tab = path.split("?")[0].replace(/^\/account\/?/, "").split("/")[0];
+  return tab === "quota" || tab === "billing" || tab === "profile" ? tab : "overview";
+}
+
 /*
  * The account tabs while their data is on its way, drawn with the tabs' own
  * classes (account-grid, account-card, the card strips, kv rows, the level
@@ -10,9 +18,11 @@ import { AccountTabs } from "./AccountTabs";
  * bar: the strips' names are the cards' real, fixed names, the meters are
  * real meters left unlit. The centre piece floats over the cards.
  *
- * One skeleton per tab, all four in the markup: CSS shows the one whose tab
- * is current (`.acct-page__panel:has(.tabs a[aria-current]…)`, account.css),
- * so this stays a server component and the switch needs no script.
+ * On the way in, the layout draws the requested tab's skeleton. For a tab
+ * switch (app/account/loading.tsx, one loading state for every tab) all four
+ * are in the markup and CSS shows the one whose tab is current
+ * (`.acct-page__panel:has(.tabs a[aria-current]…)`, account.css), so this
+ * stays a server component and the switch needs no script.
  */
 
 function Kicker({ children }: { children: string }) {
@@ -36,9 +46,9 @@ function Field({ label, hint }: { label: string; hint?: string }) {
   );
 }
 
-function OverviewSkeleton() {
+function OverviewSkeleton({ only = false }: { only?: boolean }) {
   return (
-    <div className="account-grid acct-home acct-skel__tab" data-tab="overview">
+    <div className={only ? "account-grid acct-home acct-skel__tab acct-skel__tab--only" : "account-grid acct-home acct-skel__tab"} data-tab="overview">
       <div className="card account-card acct-hero">
         <Kicker>ห้องตัดต่อ</Kicker>
         <div className="acct-hero__main">
@@ -97,9 +107,9 @@ function OverviewSkeleton() {
   );
 }
 
-function QuotaSkeleton() {
+function QuotaSkeleton({ only = false }: { only?: boolean }) {
   return (
-    <div className="account-grid acct-quota acct-skel__tab" data-tab="quota">
+    <div className={only ? "account-grid acct-quota acct-skel__tab acct-skel__tab--only" : "account-grid acct-quota acct-skel__tab"} data-tab="quota">
       <div className="card account-card">
         <Kicker>รอบปัจจุบัน</Kicker>
         <div className="acct-quota__limit">
@@ -151,9 +161,9 @@ function QuotaSkeleton() {
   );
 }
 
-function BillingSkeleton() {
+function BillingSkeleton({ only = false }: { only?: boolean }) {
   return (
-    <div className="account-grid acct-billing acct-skel__tab" data-tab="billing">
+    <div className={only ? "account-grid acct-billing acct-skel__tab acct-skel__tab--only" : "account-grid acct-billing acct-skel__tab"} data-tab="billing">
       <div className="card account-card acct-plan">
         <Kicker>แพลนปัจจุบัน</Kicker>
         <div className="plan-body">
@@ -226,9 +236,9 @@ function BillingSkeleton() {
   );
 }
 
-function ProfileSkeleton() {
+function ProfileSkeleton({ only = false }: { only?: boolean }) {
   return (
-    <div className="account-grid acct-profile acct-skel__tab" data-tab="profile">
+    <div className={only ? "account-grid acct-profile acct-skel__tab acct-skel__tab--only" : "account-grid acct-profile acct-skel__tab"} data-tab="profile">
       <div className="card account-card">
         <Kicker>ข้อมูลส่วนตัว</Kicker>
         <div className="stack acct-form acct-form--inline">
@@ -278,27 +288,31 @@ function ProfileSkeleton() {
  * The inside of the account panel while a tab's data loads (app/account/
  * loading.tsx when switching tabs; the layout's own fallback on the way in).
  */
-export function AccountBodySkeleton({ demo = false }: { demo?: boolean }) {
+export function AccountBodySkeleton({ demo = false, tab }: { demo?: boolean; tab?: AccountTab }) {
   return (
     <LoadingFrame className="acct-skel" demo={demo}>
       <RenderLoading variant="chip" className="acct-skel__centre" />
       <div className="acct-skel__tabs" aria-hidden="true">
-        <OverviewSkeleton />
-        <QuotaSkeleton />
-        <BillingSkeleton />
-        <ProfileSkeleton />
+        {tab === "overview" ? <OverviewSkeleton only /> : tab ? null : <OverviewSkeleton />}
+        {tab === "quota" ? <QuotaSkeleton only /> : tab ? null : <QuotaSkeleton />}
+        {tab === "billing" ? <BillingSkeleton only /> : tab ? null : <BillingSkeleton />}
+        {tab === "profile" ? <ProfileSkeleton only /> : tab ? null : <ProfileSkeleton />}
       </div>
     </LoadingFrame>
   );
 }
 
-/** The whole panel (its tabs are the real, working tabs) — the layout's fallback while the account is read. */
-export function AccountPanelSkeleton({ demo = false }: { demo?: boolean }) {
+/**
+ * The whole panel (its tabs are the real, working tabs) — the layout's
+ * fallback while the account is read. The layout knows the tab from the
+ * request, so it draws that tab's skeleton only.
+ */
+export function AccountPanelSkeleton({ demo = false, tab }: { demo?: boolean; tab?: AccountTab }) {
   return (
     <div className="acct-page__panel">
       <AccountTabs />
       <div className="acct-page__body">
-        <AccountBodySkeleton demo={demo} />
+        <AccountBodySkeleton demo={demo} tab={tab} />
       </div>
     </div>
   );

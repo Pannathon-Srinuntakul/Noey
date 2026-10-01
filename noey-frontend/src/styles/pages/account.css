@@ -1492,7 +1492,8 @@ html[data-auth-name] .acct-greet::before {
 .acct-page__panel:has(.tabs a[href="/account/quota"][aria-current="page"]) .acct-skel__tab[data-tab="quota"],
 .acct-page__panel:has(.tabs a[href="/account/billing"][aria-current="page"]) .acct-skel__tab[data-tab="billing"],
 .acct-page__panel:has(.tabs a[href="/account/profile"][aria-current="page"]) .acct-skel__tab[data-tab="profile"],
-.acct-page__panel:not(:has(.tabs a[aria-current="page"])) .acct-skel__tab[data-tab="overview"] {
+.acct-page__panel:not(:has(.tabs a[aria-current="page"])) .acct-skel__tab[data-tab="overview"],
+.acct-skel__tab--only {
   display: grid;
 }
 

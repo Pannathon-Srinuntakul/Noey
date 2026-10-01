@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
-import { AccountPanelSkeleton } from "@/components/account/AccountSkeleton";
+import { AccountPanelSkeleton, accountTabOf } from "@/components/account/AccountSkeleton";
 import { AccountTabs } from "@/components/account/AccountTabs";
 import { VerifyEmailBanner } from "@/components/account/VerifyEmail";
 import { MSG } from "@/lib/messages";
@@ -81,7 +81,9 @@ async function AccountPanel({ children }: { children: React.ReactNode }) {
  * runtime data from blocking navigation). Switching tabs never re-renders
  * this layout: app/account/loading.tsx fills the panel's body meanwhile.
  */
-export default function AccountLayout({ children }: { children: React.ReactNode }) {
+export default async function AccountLayout({ children }: { children: React.ReactNode }) {
+  // The request's own path (Proxy forwards it; no backend call): which tab's skeleton to draw.
+  const tab = accountTabOf(await currentPathname("/account"));
   return (
     <main id="main" className="acct-page page-top">
       <div className="wrap">
@@ -92,7 +94,7 @@ export default function AccountLayout({ children }: { children: React.ReactNode 
           </Suspense>
           <p className="acct-page__lead">{keepThaiProse("หน้านี้ใช้จัดการบัญชี แพลน และดูโควตา ส่วนการสร้างโปรเจกต์และตัดต่ออยู่ในห้องตัดต่อบนเว็บ")}</p>
         </div>
-        <Suspense fallback={<AccountPanelSkeleton />}>
+        <Suspense fallback={<AccountPanelSkeleton tab={tab} />}>
           <AccountPanel>{children}</AccountPanel>
         </Suspense>
       </div>

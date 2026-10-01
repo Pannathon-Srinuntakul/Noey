@@ -8,8 +8,9 @@ import { useEffect, useRef } from "react";
  * (useLinkStatus — before the address changes), its pending mark runs along
  * the link (`.pend`, loading.css: after 150 ms, so a quick navigation shows
  * nothing), the link says aria-busy, and <html data-nav-pending> turns the
- * header ruler into its scrubbing playhead. A fixed-size, always-rendered,
- * absolutely placed element: it never moves the link's layout.
+ * header ruler into its scrubbing playhead. Absolutely placed, so it never
+ * moves the link's layout; rendered only while pending, so the pages carry
+ * nothing for it (its appear delay starts as it mounts).
  */
 export function LinkPending() {
   const { pending } = useLinkStatus();
@@ -28,9 +29,9 @@ export function LinkPending() {
     };
   }, [pending]);
 
-  return (
-    <span ref={mark} className="pend" data-link="" data-on={pending ? "" : undefined} aria-hidden="true">
+  return pending ? (
+    <span ref={mark} className="pend" data-link="" data-on="" aria-hidden="true">
       <i />
     </span>
-  );
+  ) : null;
 }

@@ -1,0 +1,114 @@
+/*
+ * The pieces every loading state shares (loading-deferred.css and
+ * render-loading.css read them): the wait clock and the keyframes for
+ * appearing late, the mark drawing itself and its halves parting and coming
+ * back to rest. Linked by the header with loading-deferred.css, and bundled
+ * with render-loading.css by shell/RenderLoading.tsx.
+ */
+
+/* ── The wait clock: HH:MM:SS:FF of the real wait ────────────────────────── */
+
+@property --ld-h {
+  syntax: "<integer>";
+  inherits: false;
+  initial-value: 0;
+}
+
+@property --ld-m {
+  syntax: "<integer>";
+  inherits: false;
+  initial-value: 0;
+}
+
+@property --ld-s {
+  syntax: "<integer>";
+  inherits: false;
+  initial-value: 0;
+}
+
+@property --ld-f {
+  syntax: "<integer>";
+  inherits: false;
+  initial-value: 0;
+}
+
+.ld-tc::after {
+  content: counter(ld-h, decimal-leading-zero) ":" counter(ld-m, decimal-leading-zero) ":" counter(ld-s, decimal-leading-zero) ":"
+    counter(ld-f, decimal-leading-zero);
+  counter-reset: ld-h var(--ld-h) ld-m var(--ld-m) ld-s var(--ld-s) ld-f var(--ld-f);
+  animation:
+    ld-h 86400s steps(24) infinite,
+    ld-m 3600s steps(60) infinite,
+    ld-s 60s steps(60) infinite,
+    ld-f 1s steps(25) infinite;
+}
+
+/* Digits are not motion: the clock keeps counting with reduced motion. */
+@media (prefers-reduced-motion: reduce) {
+  .ld-tc::after {
+    animation-duration: 86400s, 3600s, 60s, 1s !important;
+    animation-iteration-count: infinite !important;
+  }
+}
+
+@keyframes ld-h {
+  to {
+    --ld-h: 24;
+  }
+}
+
+@keyframes ld-m {
+  to {
+    --ld-m: 60;
+  }
+}
+
+@keyframes ld-s {
+  to {
+    --ld-s: 60;
+  }
+}
+
+@keyframes ld-f {
+  to {
+    --ld-f: 25;
+  }
+}
+
+/* ── Shared keyframes: appearing late; the mark drawing itself; its halves
+      parting and coming back to rest ─────────────────────────────────────── */
+
+@keyframes ld-appear {
+  from {
+    opacity: 0;
+    visibility: hidden;
+  }
+}
+
+@keyframes ld-draw {
+  from {
+    stroke-dashoffset: 1;
+  }
+}
+
+@keyframes ld-half-l {
+  0%,
+  100% {
+    transform: translate(0, 0);
+  }
+  45%,
+  55% {
+    transform: translate(-6px, 5px);
+  }
+}
+
+@keyframes ld-half-r {
+  0%,
+  100% {
+    transform: translate(0, 0);
+  }
+  45%,
+  55% {
+    transform: translate(6px, -5px);
+  }
+}

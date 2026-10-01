@@ -265,7 +265,7 @@ async function run({ theme, width, still }) {
     await page.goto(`${BASE}/reset-password?token=ok`, { waitUntil: "networkidle" });
     await page.locator(".auth__form input[type='password']").nth(0).fill("password123");
     await page.locator(".auth__form input[type='password']").nth(1).fill("password123");
-    const button = page.locator(".auth__form .pbtn").first();
+    const button = page.locator(".auth__form form.stack .btn-primary[type='submit']").first();
     await button.click();
     await page.waitForTimeout(700);
     const state = await button.evaluate((element) => ({
@@ -273,7 +273,7 @@ async function run({ theme, width, still }) {
       disabled: element.disabled,
       label: [...element.querySelectorAll(".pbtn__labels > span")].find((span) => getComputedStyle(span).visibility === "visible")?.textContent,
     }));
-    const mark = await shown(page, ".auth__form .pbtn .pend");
+    const mark = await shown(page, ".auth__form form.stack .btn-primary[type='submit'] .pend");
     await shot(page, "reset-password", mode);
     record(`reset-password saving, ${tag}`, state.busy === "true" && state.disabled && state.label === "กำลังบันทึก…" && mark, { ...state, mark });
     await page.waitForURL((url) => !url.pathname.startsWith("/reset-password"), { timeout: 10000 });
@@ -407,7 +407,7 @@ async function run({ theme, width, still }) {
     await page.goto(`${BASE}/login`, { waitUntil: "networkidle" });
     await page.locator("#l-email").fill("pro@x.test");
     await page.locator("#l-pass").fill("password123");
-    const button = page.locator(".auth__form .pbtn").first();
+    const button = page.locator(".auth__form form.stack .btn-primary[type='submit']").first();
     const before = await button.boundingBox();
     await button.click();
     await page.waitForTimeout(700);
@@ -417,8 +417,8 @@ async function run({ theme, width, still }) {
       label: [...element.querySelectorAll(".pbtn__labels > span")].find((span) => getComputedStyle(span).visibility === "visible")?.textContent,
     }));
     const after = await button.boundingBox();
-    const mark = await shown(page, ".auth__form .pbtn .pend");
-    const motion = still ? await moving(page, ".auth__form .pbtn") : [];
+    const mark = await shown(page, ".auth__form form.stack .btn-primary[type='submit'] .pend");
+    const motion = still ? await moving(page, ".auth__form form.stack .btn-primary[type='submit']") : [];
     await shot(page, "form-pending", mode);
     const sameSize = Math.abs(before.width - after.width) < 0.5 && Math.abs(before.height - after.height) < 0.5;
     record(`form pending, ${tag}`, state.busy === "true" && state.disabled && state.label === "กำลังเข้าสู่ระบบ…" && mark && sameSize && motion.length === 0, { ...state, mark, sameSize, ...(still ? { moving: motion } : {}) });

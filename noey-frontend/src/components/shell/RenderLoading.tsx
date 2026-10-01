@@ -1,17 +1,12 @@
 import { ViewTransition, type CSSProperties, type ReactNode } from "react";
 import { Waveform } from "../ds/Waveform";
 import { NoeyMark } from "../NoeyMark";
-import { LOADING_TEXT } from "@/lib/loading";
+import { LOADING_TEXT, NOSCRIPT_STREAM_CSS } from "@/lib/loading";
 import { LoadingSignal } from "./LoadingSignal";
+import { WaitClock } from "./WaitClock";
+import "../../styles/parts/loading-core.css";
+import "../../styles/parts/render-loading.css";
 
-/**
- * A timecode that counts the real wait from the moment it appears — CSS
- * counters (loading.css), so it runs before hydration, without JavaScript
- * and with reduced motion. Never a percentage: nobody knows how much is left.
- */
-export function WaitClock({ className }: { className?: string }) {
-  return <span className={["tc ld-tc", className].filter(Boolean).join(" ")} aria-hidden="true" />;
-}
 
 /** A placeholder bar where text, a number or a control will be (`w`, `h`: CSS lengths). */
 export function Skel({ w, h, className }: { w?: string; h?: string; className?: string }) {
@@ -91,7 +86,16 @@ export function LoadingFrame({
   return (
     <ViewTransition exit="ld-out" default="none">
       <div className={["ld", className].filter(Boolean).join(" ")} data-loading={demo ? undefined : "route"} aria-busy="true">
-        {demo ? null : <LoadingSignal />}
+        {demo ? null : (
+          <>
+            <LoadingSignal />
+            {/* Without JavaScript: this page's streamed content, in order
+                (lib/loading.ts). Here, so only pages that stream carry it. */}
+            <noscript>
+              <style>{NOSCRIPT_STREAM_CSS}</style>
+            </noscript>
+          </>
+        )}
         {children}
       </div>
     </ViewTransition>

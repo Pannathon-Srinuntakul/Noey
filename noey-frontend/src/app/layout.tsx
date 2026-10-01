@@ -5,11 +5,9 @@ import { BetaNotice } from "@/components/beta/BetaNotice";
 import { SiteFooter } from "@/components/SiteFooter";
 import { SiteHeader } from "@/components/header/SiteHeader";
 import { Atmosphere } from "@/components/shell/Atmosphere";
-import { EditorOpenOverlay } from "@/components/shell/EditorOpening";
 import { MotionRuntime } from "@/components/shell/MotionRuntime";
 import { RouteTransition } from "@/components/shell/RouteTransition";
 import { betaNoticeCopy, shouldShowBetaBanner } from "@/lib/beta";
-import { NOSCRIPT_STREAM_CSS } from "@/lib/loading";
 import { PREPAINT_SCRIPT } from "@/lib/prepaint";
 import { catalogIsBetaPriced } from "@/lib/server/prices";
 import { SITE_VERIFICATION } from "@/lib/server/config";
@@ -67,10 +65,6 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
             metadata: a page that sets its own canonical replaces the layout's
             whole `alternates` object, which would drop this link. */}
         <link rel="alternate" type="application/atom+xml" title={`${SITE_NAME} — อัปเดตเนื้อหา`} href="/feed.xml" />
-        {/* Streamed pages without JavaScript: their content in order (lib/loading.ts). */}
-        <noscript>
-          <style>{NOSCRIPT_STREAM_CSS}</style>
-        </noscript>
       </head>
       <body>
         <a className="skip-link" href="#main">
@@ -85,7 +79,6 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
         <RouteTransition>{children}</RouteTransition>
         <SiteFooter />
         <Atmosphere />
-        <EditorOpenOverlay />
         <MotionRuntime />
       </body>
     </html>

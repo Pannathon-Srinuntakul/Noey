@@ -28,6 +28,8 @@ import { StatusCardSkeleton } from "@/components/shell/StatusSkeleton";
 import { PendingButton } from "@/components/ui/PendingButton";
 import { HOME_FAQ } from "@/lib/faq";
 import { HOME_FITS, HOME_MISFITS } from "@/lib/scope";
+import "../../styles/parts/loading-core.css";
+import "../../styles/parts/loading-deferred.css";
 import "../../styles/pages/account.css";
 import "../../styles/pages/article.css";
 import "./kitchen-sink.css";

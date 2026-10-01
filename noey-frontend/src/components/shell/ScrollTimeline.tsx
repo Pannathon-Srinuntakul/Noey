@@ -1,7 +1,7 @@
 "use client";
 
 import { usePathname } from "next/navigation";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
 import { formatTimecode } from "../ds/timecode";
 import { whenHydrated } from "@/lib/client/hydration";
 import { LOADED_EVENT, LOADING_TEXT } from "@/lib/loading";
@@ -35,8 +35,13 @@ interface Mark {
  * the new page's position. Driven by CSS from <html data-nav-pending> and
  * from any route loading state on the page.
  */
+const noop = () => () => {};
+
 export function ScrollTimeline() {
   const pathname = usePathname();
+  // The indicator's parts are drawn on the client only: no page's HTML
+  // carries them (true once hydrated, false on the server).
+  const client = useSyncExternalStore(noop, () => true, () => false);
   const root = useRef<HTMLDivElement>(null);
   const layer = useRef<HTMLDivElement>(null);
   const readout = useRef<HTMLSpanElement>(null);
@@ -239,15 +244,19 @@ export function ScrollTimeline() {
         00:00:00:00
       </span>
       {/* The navigation indicator (loading.css): the scrubbing playhead, and the wait clock. */}
-      <div className="stl__scrub">
-        <span className="stl__rail">
-          <i />
-        </span>
-      </div>
-      <span className="stl__wait">
-        <span className="stl__wait-label">{LOADING_TEXT}</span>
-        <span className="tc ld-tc" />
-      </span>
+      {client ? (
+        <>
+          <div className="stl__scrub">
+            <span className="stl__rail">
+              <i />
+            </span>
+          </div>
+          <span className="stl__wait">
+            <span className="stl__wait-label">{LOADING_TEXT}</span>
+            <span className="tc ld-tc" />
+          </span>
+        </>
+      ) : null}
     </div>
   );
 }
