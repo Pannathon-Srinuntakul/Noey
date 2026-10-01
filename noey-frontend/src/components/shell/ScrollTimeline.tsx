@@ -1,8 +1,10 @@
 "use client";
 
 import { usePathname } from "next/navigation";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
 import { formatTimecode } from "../ds/timecode";
+import { whenHydrated } from "@/lib/client/hydration";
+import { LOADED_EVENT, LOADING_TEXT } from "@/lib/loading";
 
 /** How many pixels of scrolling make one second of "footage" on the ruler. */
 const PX_PER_SECOND = 90;
@@ -26,12 +28,74 @@ interface Mark {
  * Purely an extra way to move around the page — the same sections are
  * reachable by scrolling, headings and the table of contents — so it is
  * hidden from assistive technology and takes no tab stops.
+ *
+ * It is also the site's navigation indicator (loading.css): while a page is
+ * on its way the playhead steps aside and a second one scrubs the ruler, the
+ * clock counting the wait; when the page is ready the playhead snaps back to
+ * the new page's position. Driven by CSS from <html data-nav-pending> and
+ * from any route loading state on the page.
  */
+const noop = () => () => {};
+
 export function ScrollTimeline() {
   const pathname = usePathname();
+  // The indicator's parts are drawn on the client only: no page's HTML
+  // carries them (true once hydrated, false on the server).
+  const client = useSyncExternalStore(noop, () => true, () => false);
   const root = useRef<HTMLDivElement>(null);
   const layer = useRef<HTMLDivElement>(null);
   const readout = useRef<HTMLSpanElement>(null);
+
+  // Any link that leaves for another page in this app — not only the header's
+  // and the account's, which say so themselves (LinkPending) — sets the ruler
+  // pending until the new page commits. A Next.js <Link> cancels the browser's
+  // own navigation (defaultPrevented) and fetches the page; a plain link the
+  // browser follows itself is left to the browser.
+  useEffect(() => {
+    const rootElement = document.documentElement;
+    rootElement.removeAttribute("data-nav-pending");
+  }, [pathname]);
+
+  useEffect(() => {
+    const rootElement = document.documentElement;
+    let safety = 0;
+    let watch = 0;
+    const clear = () => {
+      window.clearTimeout(safety);
+      window.cancelAnimationFrame(watch);
+      rootElement.removeAttribute("data-nav-pending");
+    };
+    const onClick = (event: MouseEvent) => {
+      if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      const link = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>("a[href]") : null;
+      if (!link || (link.target && link.target !== "_self") || link.hasAttribute("download")) return;
+      const url = new URL(link.href, window.location.href);
+      if (url.origin !== window.location.origin || url.pathname === window.location.pathname || url.pathname.startsWith("/api/")) return;
+      // After every handler has run: was it taken over by the router, and is
+      // it still on its way (a prefetched page may already be in)?
+      const from = window.location.pathname;
+      window.setTimeout(() => {
+        if (!event.defaultPrevented || window.location.pathname !== from) return;
+        rootElement.setAttribute("data-nav-pending", "");
+        window.clearTimeout(safety);
+        safety = window.setTimeout(clear, 15_000);
+        // Done the moment the address changes, whatever order React's effects run in.
+        window.cancelAnimationFrame(watch);
+        const settle = () => {
+          if (window.location.pathname !== from) clear();
+          else watch = window.requestAnimationFrame(settle);
+        };
+        watch = window.requestAnimationFrame(settle);
+      }, 0);
+    };
+    document.addEventListener("click", onClick, true);
+    window.addEventListener("pageshow", clear);
+    return () => {
+      clear();
+      document.removeEventListener("click", onClick, true);
+      window.removeEventListener("pageshow", clear);
+    };
+  }, []);
 
   useEffect(() => {
     const bar = root.current;
@@ -147,16 +211,25 @@ export function ScrollTimeline() {
       rebuild = window.setTimeout(build, 180);
     };
 
+    // The section stamps are written into the page: only once React has
+    // hydrated it (a stamp changed before that is a hydration mismatch).
     const resize = new ResizeObserver(scheduleBuild);
-    resize.observe(document.body);
-    window.addEventListener("scroll", onScroll, { passive: true });
-    const first = window.setTimeout(build, 60);
+    let first = 0;
+    const cancelWait = whenHydrated("main .sec-head__tc, main .chapter__tc", () => {
+      resize.observe(document.body);
+      window.addEventListener("scroll", onScroll, { passive: true });
+      // A loading state gave way to its page: read the page's sections again.
+      window.addEventListener(LOADED_EVENT, scheduleBuild);
+      first = window.setTimeout(build, 60);
+    });
 
     return () => {
+      cancelWait();
       window.clearTimeout(first);
       window.clearTimeout(rebuild);
       window.cancelAnimationFrame(frame);
       window.removeEventListener("scroll", onScroll);
+      window.removeEventListener(LOADED_EVENT, scheduleBuild);
       resize.disconnect();
     };
   }, [pathname]);
@@ -170,6 +243,20 @@ export function ScrollTimeline() {
       <span className="stl__tc tc" ref={readout}>
         00:00:00:00
       </span>
+      {/* The navigation indicator (loading.css): the scrubbing playhead, and the wait clock. */}
+      {client ? (
+        <>
+          <div className="stl__scrub">
+            <span className="stl__rail">
+              <i />
+            </span>
+          </div>
+          <span className="stl__wait">
+            <span className="stl__wait-label">{LOADING_TEXT}</span>
+            <span className="tc ld-tc" />
+          </span>
+        </>
+      ) : null}
     </div>
   );
 }

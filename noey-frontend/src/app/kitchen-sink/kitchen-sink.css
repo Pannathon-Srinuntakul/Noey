@@ -72,3 +72,42 @@
 .ks-grid--2 {
   grid-template-columns: 1fr;
 }
+
+/* Loading states. */
+.ks-loading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-around;
+  gap: 32px;
+  padding-block: 24px;
+}
+
+.ks-article .phero {
+  padding-top: 0;
+}
+
+.ks-pend-link {
+  position: relative;
+  align-self: center;
+  color: var(--ink-2);
+  text-decoration: none;
+}
+
+.ks-edopen {
+  display: grid;
+  place-items: center;
+  margin-top: 28px;
+}
+
+/* The reduced-motion column: the loading styles leave .motion-still out of
+   their motion rules; this does to the rest what the site's own
+   reduced-motion rule does (globals.css): every animation and transition
+   over at once, delays kept — the 150 ms appear delay and the buttons'
+   label swap still happen; the wait clock (::after) still counts. */
+.motion-still *,
+.motion-still *::before {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+}

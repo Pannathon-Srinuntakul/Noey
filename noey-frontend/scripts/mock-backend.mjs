@@ -6,7 +6,7 @@
  * site imports it, and it holds no real data.
  *
  *   node scripts/mock-backend.mjs            # http://localhost:8765
- *   MOCK_PORT=8765 MOCK_SITE=http://127.0.0.1:3100 MOCK_GOOGLE=1 MOCK_BETA=1
+ *   MOCK_PORT=8765 MOCK_SITE=http://127.0.0.1:3100 MOCK_GOOGLE=1 MOCK_BETA=1 MOCK_DELAY_MS=0
  *
  * Stateless on purpose: the signed-in "scenario" travels inside the unsigned
  * JWT payload (`scn` claim). Signing in with <scenario>@x.test picks it
@@ -17,6 +17,13 @@
  * Token-driven outcomes: /auth/verify-email token ok | change | used | taken
  * | slow (anything else fails); /auth/reset-password token ok (anything else
  * is expired); a contact message containing fail503 / fail429 fails that way.
+ *
+ * A slow backend, for the loading states: MOCK_DELAY_MS=2500 holds every
+ * answer the account, verification, reset, checkout and form pages wait on
+ * for that long (default 0: no delay). The price catalog, the Google config
+ * and token refresh are never held — the root layout and Proxy read those on
+ * every page, and a slow one would slow the whole site, not one page. The
+ * delay can be changed while the mock runs: GET /__mock/delay?ms=2500.
  */
 import http from "node:http";
 import { pathToFileURL } from "node:url";
@@ -136,13 +143,23 @@ async function readBody(request) {
   }
 }
 
-export function createMockBackend({ site = "http://127.0.0.1:3100", google = true, beta = true, log = false } = {}) {
+/** Read by the root layout or Proxy on every page: never held by MOCK_DELAY_MS. */
+const NEVER_DELAYED = new Set(["/billing/plans", "/auth/google/config", "/auth/refresh", "/auth/google/start"]);
+
+export function createMockBackend({ site = "http://127.0.0.1:3100", google = true, beta = true, log = false, delayMs = 0 } = {}) {
+  let delay = Math.max(0, Number(delayMs) || 0);
   return http.createServer(async (request, response) => {
-    const path = new URL(request.url, "http://mock").pathname;
+    const url = new URL(request.url, "http://mock");
+    const path = url.pathname;
     const method = request.method;
+    if (path === "/__mock/delay") {
+      delay = Math.max(0, Number(url.searchParams.get("ms")) || 0);
+      return send(response, 200, { delay_ms: delay });
+    }
     const body = method === "GET" ? {} : await readBody(request);
     const s = scenarioOf(request);
-    if (log) console.log(method, path, s?.key ?? "-");
+    if (log) console.log(method, path, s?.key ?? "-", delay && !NEVER_DELAYED.has(path) ? `+${delay}ms` : "");
+    if (delay && !NEVER_DELAYED.has(path)) await new Promise((resolve) => setTimeout(resolve, delay));
 
     if (path === "/billing/plans") {
       const ladder = beta ? BETA_PRICES : FULL_PRICES;
@@ -227,5 +244,6 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
     google: process.env.MOCK_GOOGLE !== "0",
     beta: process.env.MOCK_BETA !== "0",
     log: !!process.env.MOCK_LOG,
+    delayMs: Number(process.env.MOCK_DELAY_MS || 0),
   }).listen(port, () => console.log(`mock backend on http://localhost:${port}`));
 }

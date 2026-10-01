@@ -8,6 +8,7 @@ import { PLAN_COPY, isPaidTier } from "@/lib/plans";
 import { GoogleSignInForm, OrDivider } from "../auth/GoogleSignInForm";
 import { submitKeepingValues } from "./keepValues";
 import { SearchParam } from "./SearchParam";
+import { PendingButton } from "../ui/PendingButton";
 import { TURNSTILE_SITE_KEY, TurnstileWidget } from "./TurnstileWidget";
 import { keepThai } from "../ds/ThaiText";
 
@@ -157,14 +158,14 @@ export function SignupForm({ googleEnabled = false }: { googleEnabled?: boolean 
             {formError}
           </p>
         ) : null}
-        <button
-          type="submit"
+        <PendingButton
           className="btn btn-primary btn-block btn-lg"
           disabled={pending || !agreed}
-          aria-busy={pending || undefined}
+          busy={pending}
+          busyLabel="กำลังสมัคร…"
         >
-          {pending ? "กำลังสมัคร…" : "สมัครและเริ่มใช้งาน"}
-        </button>
+          สมัครและเริ่มใช้งาน
+        </PendingButton>
         {agreed ? <p className="legal-line">ยังไม่ต้องกรอกบัตรในขั้นนี้ เริ่มที่แพลนฟรีได้เลย</p> : null}
       </form>
     </>

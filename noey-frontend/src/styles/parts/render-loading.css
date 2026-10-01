@@ -1,0 +1,301 @@
+/*
+ * The route loading states themselves (RenderLoading, the skeletons and
+ * their frame): imported by RenderLoading.tsx, so only the pages that can
+ * show one (the account, verification, checkout; the kitchen sink) load it.
+ * The rules shared with the rest of the site — the wait clock, the 150 ms
+ * appear delay, the mark's draw and halves — stay in loading.css, which
+ * every page loads. Same rules as there: the base styles are the still
+ * picture; motion is added under prefers-reduced-motion: no-preference.
+ */
+
+/* ── The frame: appearing late, leaving softly ─────────────────────────── */
+
+.ld {
+  animation: ld-appear 240ms var(--ease-out) 150ms both;
+}
+
+/* The page arriving: the loading state's last frame fades over it
+   (<ViewTransition exit="ld-out"> in RenderLoading's LoadingFrame). */
+::view-transition-old(.ld-out) {
+  animation: ld-out 200ms ease-out both;
+}
+
+@keyframes ld-out {
+  to {
+    opacity: 0;
+  }
+}
+
+/* ── The centre piece (RenderLoading) ───────────────────────────────────── */
+
+.rl {
+  --rl-mark: 64px;
+  --rl-track-w: 220px;
+  --rl-track-h: 28px;
+  display: grid;
+  justify-items: center;
+  gap: 14px;
+  color: var(--ink-2);
+  text-align: center;
+}
+
+.rl__art {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: 14px;
+}
+
+.rl__art::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  top: calc(var(--rl-mark) * -0.55);
+  left: 50%;
+  width: calc(var(--rl-mark) * 2.6);
+  aspect-ratio: 1;
+  translate: -50% 0;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, var(--gold-soft), transparent);
+}
+
+.rl__mark {
+  width: var(--rl-mark);
+  height: var(--rl-mark);
+  color: var(--gold);
+  overflow: visible;
+  filter: drop-shadow(0 6px 18px var(--gold-glow));
+}
+
+/* The waveform track the playhead crosses. */
+.rl__track {
+  position: relative;
+  display: block;
+  width: var(--rl-track-w);
+  height: var(--rl-track-h);
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--well);
+  overflow: hidden;
+}
+
+.rl__wave {
+  position: absolute;
+  inset: 5px 8px;
+  width: calc(100% - 16px);
+  height: calc(100% - 10px);
+}
+
+.rl__wave path {
+  stroke: color-mix(in srgb, var(--color-text) 26%, transparent);
+}
+
+/* What the playhead has passed, in gold: a window that opens from the left
+   while the waveform inside it holds still (two opposite translations). */
+.rl__played {
+  position: absolute;
+  inset: 5px 8px;
+  overflow: hidden;
+  transform: translateX(-100%);
+}
+
+.rl__played .rl__wave {
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  transform: translateX(100%);
+}
+
+.rl__played .rl__wave path {
+  stroke: var(--gold);
+}
+
+.rl__rail {
+  position: absolute;
+  inset: 0 8px;
+}
+
+.rl__head {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 2px;
+  translate: -1px 0;
+  background: var(--gold);
+  box-shadow: 0 0 8px var(--gold-glow);
+}
+
+.rl__tc {
+  color: var(--gold-ink);
+  font-size: var(--fs-11);
+}
+
+.rl__label {
+  margin: 0;
+  font-size: var(--fs-15);
+  font-weight: 400;
+  line-height: 1.6;
+  color: var(--ink-2);
+}
+
+/* A compact copy, floated over a skeleton (the account tabs). */
+.rl--chip {
+  --rl-mark: 40px;
+  --rl-track-w: 156px;
+  --rl-track-h: 22px;
+  gap: 10px;
+  padding: 18px 22px 14px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-lg);
+  background: var(--glass-strong);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  box-shadow: var(--shadow-3), var(--rim);
+}
+
+.rl--chip .rl__art {
+  gap: 10px;
+}
+
+.rl--chip .rl__label {
+  font-size: var(--fs-14);
+}
+
+/* Inside a status card's emblem: the card's own sizes. */
+.rl--emblem {
+  --rl-mark: 46px;
+  --rl-track-w: 168px;
+  --rl-track-h: 22px;
+  gap: 10px;
+}
+
+.rl--emblem .rl__art::before {
+  display: none;
+}
+
+/* Motion. The halves part along the cut and come back to rest, which is as
+   close as they ever get: the splice stays open. The strokes draw in first. */
+@media (prefers-reduced-motion: no-preference) {
+  .rl:not(.motion-still *) .rl__mark path {
+    stroke-dasharray: 1;
+    animation: ld-draw 760ms var(--ease-out) both;
+  }
+
+  .rl:not(.motion-still *) .rl__mark .mark-half--l path:last-child {
+    animation-delay: 110ms;
+  }
+
+  .rl:not(.motion-still *) .rl__mark .mark-half--r path:first-child {
+    animation-delay: 220ms;
+  }
+
+  .rl:not(.motion-still *) .rl__mark .mark-half--r path:last-child {
+    animation-delay: 330ms;
+  }
+
+  .rl:not(.motion-still *) .rl__mark .mark-half--l {
+    animation: ld-half-l 2.4s var(--ease-in-out) 900ms infinite;
+  }
+
+  .rl:not(.motion-still *) .rl__mark .mark-half--r {
+    animation: ld-half-r 2.4s var(--ease-in-out) 900ms infinite;
+  }
+
+  .rl:not(.motion-still *) :is(.rl__played, .rl__played .rl__wave, .rl__rail) {
+    animation: 2.6s linear infinite;
+  }
+
+  .rl:not(.motion-still *) .rl__played {
+    animation-name: ld-open;
+  }
+
+  .rl:not(.motion-still *) .rl__played .rl__wave {
+    animation-name: ld-hold;
+  }
+
+  .rl:not(.motion-still *) .rl__rail {
+    animation-name: ld-cross;
+  }
+}
+
+@keyframes ld-open {
+  to {
+    transform: translateX(0);
+  }
+}
+
+@keyframes ld-hold {
+  to {
+    transform: translateX(0);
+  }
+}
+
+@keyframes ld-cross {
+  to {
+    transform: translateX(100%);
+  }
+}
+
+/* ── Skeletons ──────────────────────────────────────────────────────────── */
+
+/*
+ * A bar where text, a number or a control will be. Inline by default, so a
+ * bar inside the real element (a <p>, a <dd>) keeps that element's own line
+ * box: the page's sizes come from the page's own type.
+ */
+.skel {
+  --skel-ink: color-mix(in srgb, var(--color-text) 8%, transparent);
+  position: relative;
+  display: inline-block;
+  width: var(--w, 100%);
+  max-width: 100%;
+  height: var(--h, 0.62em);
+  vertical-align: middle;
+  border-radius: 5px;
+  background: var(--skel-ink);
+  overflow: hidden;
+}
+
+/* Lines of a paragraph: each bar takes exactly one line box. */
+.skel-lines {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.skel-lines > .skel {
+  display: block;
+  margin-block: calc((1lh - var(--h, 0.62em)) / 2);
+}
+
+/* A control's footprint (a button, a field). */
+.skel--box {
+  display: block;
+  height: var(--h, 44px);
+  border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--color-text) 4%, transparent);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+/* The sheen: faint gold light crossing each bar on the slant of the logo's
+   cut, never a grey template shimmer. */
+@media (prefers-reduced-motion: no-preference) {
+  .skel:not(.motion-still *)::after {
+    content: "";
+    position: absolute;
+    inset: -40% auto -40% 0;
+    width: 140px;
+    background: linear-gradient(104deg, transparent 30%, color-mix(in srgb, var(--color-accent) 26%, transparent) 50%, transparent 70%);
+    transform: translateX(-160px);
+    animation: skel-sheen 1.9s var(--ease-in-out) 300ms infinite;
+  }
+}
+
+@keyframes skel-sheen {
+  70%,
+  100% {
+    transform: translateX(min(110vw, 1600px));
+  }
+}

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { IconCard, IconKey, IconLevels, IconUser } from "../ds/icons";
+import { LinkPending } from "../shell/LinkPending";
 
 const LINKS = [
   { href: "/account", label: "บัญชีของฉัน", Icon: IconUser },
@@ -22,6 +23,7 @@ export function AccountMenuLinks() {
     <Link key={href} href={href} prefetch={false} aria-current={pathname === href ? "page" : undefined}>
       <Icon size={16} />
       {label}
+      <LinkPending />
     </Link>
   ));
 }

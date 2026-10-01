@@ -115,6 +115,48 @@ html[data-theme="dark"] .lvl i[data-on][data-hot] {
   }
 }
 
+/* An unlit meter (the account skeleton's): one element, its segments drawn
+   as a background — the same rows, 3px gaps and 80% tick as the real meter's
+   unlit state, without the 62 segment elements a LevelMeter carries. */
+.lvl__blank {
+  position: relative;
+  display: block;
+  height: 100%;
+  --lvl-n: 28;
+  --lvl-hot: 22;
+  background: linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--color-text) 8%, transparent) calc(100% - 3px),
+      transparent 0
+    )
+    0 0 / calc((100% + 3px) / var(--lvl-n)) 100% repeat-x;
+}
+
+@container (max-width: 459px) {
+  .lvl__blank {
+    --lvl-n: 20;
+    --lvl-hot: 16;
+  }
+}
+
+@container (max-width: 319px) {
+  .lvl__blank {
+    --lvl-n: 14;
+    --lvl-hot: 11;
+  }
+}
+
+.lvl__blank::before {
+  content: "";
+  position: absolute;
+  top: -6px;
+  bottom: -6px;
+  left: calc((100% + 3px) * var(--lvl-hot) / var(--lvl-n) - 2px);
+  width: 1px;
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--color-danger) 55%, transparent);
+}
+
 .meter-row {
   display: flex;
   justify-content: space-between;

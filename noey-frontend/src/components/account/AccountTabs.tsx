@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useRef } from "react";
 import { IconCard, IconKey, IconLevels, IconUser } from "../ds/icons";
 import { keepThai } from "../ds/ThaiText";
+import { LinkPending } from "../shell/LinkPending";
 
 /*
  * One name and one icon per destination, the same as the header's account
@@ -43,6 +44,7 @@ export function AccountTabs() {
           <Icon size={16} className="tabs__icon" />
           <span className="tabs__label">{keepThai(label)}</span>
           <span className="tabs__short">{short}</span>
+          <LinkPending />
         </Link>
       ))}
     </nav>

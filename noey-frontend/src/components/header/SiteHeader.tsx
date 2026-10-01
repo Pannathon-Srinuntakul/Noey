@@ -107,9 +107,9 @@ export function SiteHeader() {
                     <span className="auth-name" />
                     {/* Shown only on a phone or a tablet (ComputerOnly's own rule). */}
                     <ComputerOnly />
-                    <Link href="/account" className="btn btn-secondary btn-lg" prefetch={false}>
+                    <PageLink href="/account" className="btn btn-secondary btn-lg" prefetch={false}>
                       บัญชีของฉัน
-                    </Link>
+                    </PageLink>
                     <a href={EDITOR_OPEN_PATH} className="btn btn-primary btn-lg">
                       เปิดห้องตัดต่อ
                     </a>

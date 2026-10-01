@@ -3,15 +3,16 @@
 import { useActionState } from "react";
 import { resendVerificationAction } from "@/app/actions/account";
 import type { ActionState } from "@/lib/messages";
+import { PendingButton } from "../ui/PendingButton";
 
 /** POST /auth/resend-verification: 202 sent / 409 already verified / 429 / 503. */
 export function ResendVerificationButton({ variant = "secondary" }: { variant?: "secondary" | "primary" }) {
   const [state, action, pending] = useActionState<ActionState | undefined>(resendVerificationAction, undefined);
   return (
     <form action={action} className="inline-form">
-      <button type="submit" className={`btn btn-${variant} btn-sm`} disabled={pending || !!state?.ok} aria-busy={pending || undefined}>
-        {pending ? "กำลังส่ง…" : "ส่งลิงก์ยืนยันอีกครั้ง"}
-      </button>
+      <PendingButton className={`btn btn-${variant} btn-sm`} disabled={pending || !!state?.ok} busy={pending} busyLabel="กำลังส่ง…">
+        ส่งลิงก์ยืนยันอีกครั้ง
+      </PendingButton>
       <div aria-live="polite">
         {state?.success ? <p className="form-success" role="status">{state.success}</p> : null}
         {state?.error ? <p className="form-error" role="alert">{state.error}</p> : null}

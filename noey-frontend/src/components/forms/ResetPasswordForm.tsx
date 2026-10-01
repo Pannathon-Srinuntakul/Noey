@@ -5,6 +5,7 @@ import { useActionState } from "react";
 import { resetPasswordAction } from "@/app/actions/auth";
 import type { ActionState } from "@/lib/messages";
 import { submitKeepingValues } from "./keepValues";
+import { PendingButton } from "../ui/PendingButton";
 
 /** New password + confirmation -> POST /auth/reset-password (via a Server Action). */
 export function ResetPasswordForm({ token }: { token: string }) {
@@ -66,9 +67,9 @@ export function ResetPasswordForm({ token }: { token: string }) {
           ) : null}
         </div>
       ) : null}
-      <button type="submit" className="btn btn-primary btn-block btn-lg" disabled={pending} aria-busy={pending || undefined}>
-        {pending ? "กำลังบันทึก…" : "บันทึกรหัสผ่านใหม่"}
-      </button>
+      <PendingButton className="btn btn-primary btn-block btn-lg" disabled={pending} busy={pending} busyLabel="กำลังบันทึก…">
+        บันทึกรหัสผ่านใหม่
+      </PendingButton>
     </form>
   );
 }

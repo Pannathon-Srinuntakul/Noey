@@ -1,0 +1,46 @@
+/*
+ * Loading states (LOADING_PROMPT.md): what every page needs at first paint.
+ *
+ * Nothing here may cost a marketing page its first paint, so this file holds
+ * only what must be true before anything waits: the header ruler's waiting
+ * parts stay hidden, and a button's two labels share one cell. The rest:
+ *
+ * - loading-core.css (the wait clock, the shared keyframes) and
+ *   loading-deferred.css (the header ruler while a page is on its way, a
+ *   link's or a button's pending mark, "กำลังเปิดห้องตัดต่อ") — linked by the
+ *   header once the page is up (useEditorOpening in HeaderClient: at idle, or
+ *   at the first click or key press), so they never block a first paint;
+ * - render-loading.css (the route loading states: the centre piece, the
+ *   skeletons) — with loading-core.css, bundled into the pages that can
+ *   show one.
+ *
+ * The rules all of them follow are at the top of loading-deferred.css.
+ */
+
+/* The ruler's waiting parts are drawn by the client; until their styles are
+   in, they are not shown. */
+.stl__scrub,
+.stl__wait {
+  display: none;
+}
+
+/* A submit button waiting on its answer: the same size, its own label until
+   150 ms have passed and then its "กำลัง…" label (both share one cell, so the
+   width never changes), disabled against a second press, aria-busy. It keeps
+   its colours — busy is not unavailable. */
+.pbtn {
+  position: relative;
+}
+
+.pbtn__labels {
+  display: grid;
+  justify-items: center;
+}
+
+.pbtn__labels > span {
+  grid-area: 1 / 1;
+}
+
+.pbtn__labels > span + span {
+  visibility: hidden;
+}

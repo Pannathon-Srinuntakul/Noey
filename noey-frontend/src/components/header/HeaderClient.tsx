@@ -4,8 +4,12 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useLayoutEffect, type CSSProperties, type ReactNode } from "react";
 import { AUTH_HINT_EVENT, applyAuthHint } from "@/lib/client/auth-hint";
+import { showEditorCard } from "@/lib/client/editor-card";
+import { EDITOR_OPEN_PATH } from "@/lib/editor-handoff";
+import { EDITOR_OPENING_TEXT } from "@/lib/loading";
 import { THEME_STORAGE_KEY } from "@/lib/prepaint";
 import { IconMoon, IconSun } from "../ds/icons";
+import { LinkPending } from "../shell/LinkPending";
 
 function resolveTheme(): "light" | "dark" {
   try {
@@ -118,6 +122,7 @@ export function NavLinks({
               </span>
             ) : null}
             {link.label}
+            <LinkPending />
           </Link>
         );
       })}
@@ -153,6 +158,7 @@ export function PageLink({
       data-magnetic={magnetic ? "" : undefined}
     >
       {children}
+      <LinkPending />
     </Link>
   );
 }
@@ -164,6 +170,9 @@ export function PageLink({
  */
 export function HeaderDisclosures() {
   const pathname = usePathname();
+  // The editor-opening card rides on this component (no client component of
+  // its own: one more would be one more reference in every page's payload).
+  useEditorOpening();
 
   useEffect(() => {
     for (const details of document.querySelectorAll<HTMLDetailsElement>("details[data-header-disclosure][open]")) {
@@ -193,4 +202,92 @@ export function HeaderDisclosures() {
   }, []);
 
   return null;
+}
+
+/**
+ * "กำลังเปิดห้องตัดต่อ" (shell/EditorOpening.tsx; used by HeaderDisclosures,
+ * below): a plain left click on any link to EDITOR_OPEN_PATH puts the render
+ * card on the page (lib/client/editor-card.ts builds it, so no page's HTML
+ * carries it) until the browser leaves. The link is not touched — no preventDefault, no prefetch — and a
+ * click that opens a new tab or window is left alone. The card goes on
+ * `pagehide` (leaving), on `pageshow` (back from the editor, restored from the
+ * back-forward cache), on Escape (the visitor stopped the navigation), and
+ * after 20 s if the navigation went nowhere. A polite status line, there from
+ * the start and empty, says "กำลังเปิดห้องตัดต่อ" to screen readers.
+ */
+function useEditorOpening() {
+  // The waiting styles (loading-core.css, loading-deferred.css) load once
+  // the page is up — at idle, or at the first click or key press if that
+  // comes sooner — so they never hold up a first paint. They are linked as
+  // files (`new URL`: emitted as they are, not bundled), so loading them
+  // later adds nothing to any page's HTML or first scripts.
+  useEffect(() => {
+    let loaded = false;
+    const load = () => {
+      if (loaded) return;
+      loaded = true;
+      for (const href of [
+        new URL("../../styles/parts/loading-core.css", import.meta.url).href,
+        new URL("../../styles/parts/loading-deferred.css", import.meta.url).href,
+      ]) {
+        const link = document.createElement("link");
+        link.rel = "stylesheet";
+        link.href = href;
+        document.head.append(link);
+      }
+    };
+    // Safari has no requestIdleCallback.
+    const idleApi = typeof window.requestIdleCallback === "function";
+    const idle = idleApi ? window.requestIdleCallback(load, { timeout: 2500 }) : window.setTimeout(load, 1200);
+    document.addEventListener("pointerdown", load, { once: true, capture: true });
+    document.addEventListener("keydown", load, { once: true, capture: true });
+    return () => {
+      if (idleApi) window.cancelIdleCallback(idle);
+      else window.clearTimeout(idle);
+      document.removeEventListener("pointerdown", load, { capture: true });
+      document.removeEventListener("keydown", load, { capture: true });
+    };
+  }, []);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    const status = document.createElement("span");
+    status.className = "sr-only";
+    status.setAttribute("role", "status");
+    status.setAttribute("aria-live", "polite");
+    status.setAttribute("data-editor-status", "");
+    document.body.append(status);
+    let safety = 0;
+    const clear = () => {
+      window.clearTimeout(safety);
+      root.removeAttribute("data-editor-opening");
+      document.querySelector("body > .edopen")?.remove();
+      status.textContent = "";
+    };
+    const onClick = (event: MouseEvent) => {
+      if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      const link = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>("a[href]") : null;
+      if (!link || link.getAttribute("href") !== EDITOR_OPEN_PATH || (link.target && link.target !== "_self") || link.hasAttribute("download")) return;
+      root.setAttribute("data-editor-opening", "");
+      status.textContent = EDITOR_OPENING_TEXT;
+      showEditorCard();
+      window.clearTimeout(safety);
+      safety = window.setTimeout(clear, 20_000);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") clear();
+    };
+    document.addEventListener("click", onClick);
+    document.addEventListener("keydown", onKey);
+    window.addEventListener("pagehide", clear);
+    window.addEventListener("pageshow", clear);
+    return () => {
+      clear();
+      status.remove();
+      document.removeEventListener("click", onClick);
+      document.removeEventListener("keydown", onKey);
+      window.removeEventListener("pagehide", clear);
+      window.removeEventListener("pageshow", clear);
+    };
+  }, []);
 }

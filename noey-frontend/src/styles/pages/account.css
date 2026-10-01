@@ -1470,3 +1470,121 @@ form.acct-form--edit:not([data-dirty]) .acct-form__submit.btn-primary:hover {
 .acct-quota .account-card:has(> .acct-quota__limit--storage) {
   align-self: start;
 }
+
+/* ── While the account or a tab loads (AccountSkeleton) ─────────────────── */
+
+/* The greeting before the account is read: the name the header already
+   shows (the pre-paint script's variable), so it does not change on arrival. */
+html[data-auth-name] .acct-greet::before {
+  content: " " var(--noey-greeting, "");
+}
+
+.acct-skel {
+  position: relative;
+}
+
+/* One skeleton per tab in the markup; the current tab's is shown. */
+.acct-skel__tab {
+  display: none;
+}
+
+.acct-page__panel:has(.tabs a[href="/account"][aria-current="page"]) .acct-skel__tab[data-tab="overview"],
+.acct-page__panel:has(.tabs a[href="/account/quota"][aria-current="page"]) .acct-skel__tab[data-tab="quota"],
+.acct-page__panel:has(.tabs a[href="/account/billing"][aria-current="page"]) .acct-skel__tab[data-tab="billing"],
+.acct-page__panel:has(.tabs a[href="/account/profile"][aria-current="page"]) .acct-skel__tab[data-tab="profile"],
+.acct-page__panel:not(:has(.tabs a[aria-current="page"])) .acct-skel__tab[data-tab="overview"],
+.acct-skel__tab--only {
+  display: grid;
+}
+
+/* The centre piece floats over the cards: in their middle, or high enough
+   to be on screen when the tab is taller than the screen. */
+.acct-skel__centre {
+  position: absolute;
+  z-index: 2;
+  left: 50%;
+  top: min(50%, 240px);
+  translate: -50% -50%;
+}
+
+/* While the cards stack in one column (phones, small tablets), floated it
+   would cover a card's title strip whatever its height, so the centre piece
+   becomes a strip in the flow above the cards — the mark beside the words,
+   the waveform and the clock under them. */
+@media (max-width: 759px) {
+  .rl.acct-skel__centre {
+    position: static;
+    translate: none;
+    margin-bottom: 12px;
+    grid-template-columns: auto minmax(0, 280px) auto;
+    grid-template-areas:
+      "mark label label"
+      "mark track tc";
+    justify-content: start;
+    align-items: center;
+    justify-items: start;
+    gap: 6px 14px;
+    padding: 12px 16px;
+    text-align: start;
+  }
+
+  .acct-skel__centre .rl__art {
+    display: contents;
+  }
+
+  .acct-skel__centre .rl__art::before {
+    display: none;
+  }
+
+  .acct-skel__centre .rl__mark {
+    grid-area: mark;
+  }
+
+  .acct-skel__centre .rl__track {
+    grid-area: track;
+    width: 100%;
+  }
+
+  .acct-skel__centre .rl__tc {
+    grid-area: tc;
+  }
+
+  .acct-skel__centre .rl__label {
+    grid-area: label;
+  }
+}
+
+.acct-skel__label {
+  display: block;
+  margin-bottom: 7px;
+  font-size: var(--fs-13);
+  line-height: 1.5;
+}
+
+/* In a column that sizes its items to their content, bars with no text in
+   them would shrink to nothing: these take the column's width. */
+.acct-skel__fill {
+  justify-self: stretch;
+}
+
+/* The note's icon column stays (the bars start where its words do). */
+.acct-hero .acct-skel__note {
+  padding-left: 42px;
+}
+
+.acct-skel__note .skel-lines {
+  flex: 1;
+}
+
+.acct-skel__mix {
+  display: block;
+  margin-top: 6px;
+}
+
+.acct-skel__list li {
+  padding-left: 0;
+}
+
+.acct-skel__list li::before {
+  display: none;
+}

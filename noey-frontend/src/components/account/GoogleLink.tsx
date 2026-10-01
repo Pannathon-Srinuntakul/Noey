@@ -6,6 +6,7 @@ import { unlinkGoogleAction } from "@/app/actions/account";
 import type { ActionState } from "@/lib/messages";
 import { GoogleButton } from "../auth/GoogleButton";
 import { keepThai } from "../ds/ThaiText";
+import { PendingButton } from "../ui/PendingButton";
 import { TURNSTILE_SITE_KEY, TurnstileWidget } from "../forms/TurnstileWidget";
 
 function Feedback({ state }: { state: ActionState | undefined }) {
@@ -77,9 +78,9 @@ export function GoogleLinkPanel({
           {keepThai("บัญชีนี้ยังไม่มีรหัสผ่าน ตั้งรหัสผ่านก่อนจึงจะยกเลิกการเชื่อมต่อได้ ไม่อย่างนั้นจะเข้าสู่ระบบไม่ได้อีก")}
         </p>
       ) : null}
-      <button type="submit" className="btn btn-secondary acct-form__submit" disabled={pending || !hasPassword}>
-        {pending ? "กำลังยกเลิก…" : "ยกเลิกการเชื่อมต่อ"}
-      </button>
+      <PendingButton className="btn btn-secondary acct-form__submit" disabled={pending || !hasPassword} busy={pending} busyLabel="กำลังยกเลิก…">
+        ยกเลิกการเชื่อมต่อ
+      </PendingButton>
       {noticeView}
       <Feedback state={state} />
     </form>
@@ -101,9 +102,9 @@ export function SetPasswordByEmail({ email }: { email: string }) {
         <strong>{email}</strong>
       </p>
       <TurnstileWidget siteKey={TURNSTILE_SITE_KEY} resetKey={state} />
-      <button type="submit" className="btn btn-primary acct-form__submit" disabled={pending || !!state?.ok}>
-        {pending ? "กำลังส่ง…" : "ส่งลิงก์ตั้งรหัสผ่าน"}
-      </button>
+      <PendingButton className="btn btn-primary acct-form__submit" disabled={pending || !!state?.ok} busy={pending} busyLabel="กำลังส่ง…">
+        ส่งลิงก์ตั้งรหัสผ่าน
+      </PendingButton>
       <Feedback state={state} />
     </form>
   );

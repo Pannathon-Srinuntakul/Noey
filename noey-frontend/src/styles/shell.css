@@ -194,7 +194,7 @@ html[data-scrolled] .hdr__row {
 }
 
 .brand__tagline {
-  font-size: 11.5px;
+  font-size: var(--fs-12);
   font-weight: 400;
   color: var(--gold-ink);
   white-space: nowrap;
@@ -975,10 +975,6 @@ html:has(.menu[open]) {
 }
 
 @media (max-width: 420px) {
-  .brand__tagline {
-    font-size: 10.5px;
-  }
-
   .hdr__tools > .auth-area .btn {
     padding-inline: 14px;
     font-size: var(--fs-14);
