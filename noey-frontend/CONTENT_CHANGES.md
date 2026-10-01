@@ -677,6 +677,15 @@ An independent review scored the calculator 7.0; these are its fixes.
   range line, "ความยาวต่อคลิป ตั้งได้ 1–30 นาที" (1–120 in the speech modes), is
   now read to screen readers only — the ruler shows the range.
 
+## 30. /pricing clip track: the third review round (2026-10-01)
+
+No wording changed. The track's ruler now marks every five minutes on the
+30-minute scale and every quarter hour on the two-hour one ("00:05:00",
+"00:15:00", …), showing only the round ones where the track is narrow; the
+track has its own full-width row; and a ceiling the clip runs past is marked
+with a small ✕ on the clip instead of a line through its name (a line through
+Thai cuts the vowels).
+
 ## Text added (not replacing anything)
 
 Only labels, no claims:

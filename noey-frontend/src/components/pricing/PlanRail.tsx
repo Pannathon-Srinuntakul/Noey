@@ -30,7 +30,7 @@ import {
 import { IconArrowLeft, IconArrowRight, IconMinus, IconPlus } from "../ds/icons";
 import { Waveform } from "../ds/Waveform";
 import { keepThai } from "../ds/ThaiText";
-import { minutesAt, minutesForKey } from "./clipTrack";
+import { isTap, laneGesture, minutesAt, minutesForKey, rulerMarks } from "./clipTrack";
 import { cutsWordText, type CutsWordKind } from "./CutsCount";
 
 /** Slider resolution. */
@@ -188,9 +188,14 @@ function ClipTrack({
   const lane = useRef<HTMLDivElement>(null);
   const frame = useRef(0);
   const pending = useRef<number | null>(null);
+  // The press in progress: where it landed, the length it started from, and
+  // what it has become — a press on the lane is not a drag until it moves
+  // clearly sideways, so a vertical swipe that starts here still scrolls the
+  // page (touch-action: pan-y) and changes nothing.
+  const gesture = useRef<{ id: number; x: number; y: number; from: number; dragging: boolean } | null>(null);
   const [dragging, setDragging] = useState(false);
   const longest = maxClipMinutes(mode);
-  const marks = longest > 60 ? [0, 30, 60, 90, 120] : [0, 10, 20, 30];
+  const marks = rulerMarks(longest);
   const share = Math.min(1, minutes / longest);
   // The timecode rides inside the block once the block can hold it.
   const inside = share >= 0.3;
@@ -223,34 +228,87 @@ function ClipTrack({
     return box ? minutesAt(clientX - box.left, box.width, longest) : minutes;
   }
 
+  const handle = () => lane.current?.querySelector<HTMLElement>("[role=slider]") ?? null;
+
+  function startDrag(element: HTMLElement, pointerId: number) {
+    element.setPointerCapture(pointerId);
+    setDragging(true);
+    handle()?.focus({ preventScroll: true });
+  }
+
+  function endDrag(element: HTMLElement, pointerId: number) {
+    if (element.hasPointerCapture(pointerId)) element.releasePointerCapture(pointerId);
+    setDragging(false);
+  }
+
   return (
     <div
-      className={longest > 60 ? "cliptrack cliptrack--long" : "cliptrack"}
+      className="cliptrack"
       data-dragging={dragging ? "" : undefined}
       data-disabled={disabled ? "" : undefined}
       style={{ ["--w" as string]: share, ["--units" as string]: longest > 60 ? longest / 5 : longest }}
       onPointerDown={(event) => {
-        if (disabled || event.button !== 0) return;
-        event.preventDefault();
-        event.currentTarget.setPointerCapture(event.pointerId);
-        setDragging(true);
-        report(at(event.clientX));
-        lane.current?.querySelector<HTMLElement>("[role=slider]")?.focus({ preventScroll: true });
+        if (disabled || event.button !== 0 || gesture.current) return;
+        // On the handle a press is a drag at once (its touch-action is none);
+        // anywhere else it waits to see which way it goes.
+        const onHandle = (event.target as HTMLElement).closest(".cliptrack__handle") !== null;
+        gesture.current = { id: event.pointerId, x: event.clientX, y: event.clientY, from: minutes, dragging: onHandle };
+        if (onHandle) {
+          event.preventDefault();
+          startDrag(event.currentTarget, event.pointerId);
+        }
       }}
       onPointerMove={(event) => {
-        if (dragging) report(at(event.clientX));
+        const press = gesture.current;
+        if (!press || press.id !== event.pointerId) return;
+        if (!press.dragging) {
+          const way = laneGesture(event.clientX - press.x, event.clientY - press.y);
+          if (way === "undecided") return;
+          if (way === "scroll") {
+            gesture.current = null;
+            return;
+          }
+          press.dragging = true;
+          startDrag(event.currentTarget, event.pointerId);
+        }
+        report(at(event.clientX));
       }}
       onPointerUp={(event) => {
-        if (!dragging) return;
-        event.currentTarget.releasePointerCapture(event.pointerId);
-        setDragging(false);
+        const press = gesture.current;
+        if (!press || press.id !== event.pointerId) return;
+        gesture.current = null;
+        if (press.dragging) {
+          endDrag(event.currentTarget, event.pointerId);
+          return;
+        }
+        // A tap on the lane moves the end there.
+        if (isTap(event.clientX - press.x, event.clientY - press.y)) {
+          report(at(event.clientX));
+          handle()?.focus({ preventScroll: true });
+        }
       }}
-      onPointerCancel={() => setDragging(false)}
+      onPointerCancel={(event) => {
+        // The browser took the gesture (a scroll): put back the length the
+        // drag started from.
+        const press = gesture.current;
+        gesture.current = null;
+        if (!press?.dragging) return;
+        cancelAnimationFrame(frame.current);
+        frame.current = 0;
+        pending.current = null;
+        if (press.from !== minutes) onChange(press.from);
+        endDrag(event.currentTarget, event.pointerId);
+      }}
     >
       <div className="cliptrack__ruler" aria-hidden="true">
         {marks.map((mark) => (
-          <span key={mark} className="cliptrack__mark tc" style={{ ["--at" as string]: mark / longest }}>
-            {timecode(mark)}
+          <span
+            key={mark.minutes}
+            className="cliptrack__mark tc"
+            data-rank={mark.rank}
+            style={{ ["--at" as string]: mark.minutes / longest }}
+          >
+            {timecode(mark.minutes)}
           </span>
         ))}
       </div>
@@ -531,76 +589,77 @@ export function PlanRail({
           <label className="picker__label" htmlFor={lengthId} id={lengthLabelId}>
             ความยาวคลิปดิบของคุณ
           </label>
-          <div className="cliplen__body">
-            <div className="cliplen__row">
-              <button
-                type="button"
-                className="btn btn-secondary btn-icon cliplen__step"
-                onClick={() => !atMin && commitLength(choice.minutes - 1)}
-                disabled={!live}
-                aria-disabled={atMin || undefined}
-                aria-controls={lengthId}
-                aria-label="สั้นลง 1 นาที"
-              >
-                <IconMinus />
-              </button>
-              <input
-                id={lengthId}
-                className="input num cliplen__input"
-                type="number"
-                inputMode="numeric"
-                min={CLIP_MINUTES.min}
-                max={longest}
-                step={1}
-                value={draft}
-                disabled={!live}
-                aria-label="พิมพ์ความยาวคลิปดิบเป็นนาที"
-                aria-describedby={lengthNoteId}
-                onChange={(event) => {
-                  const text = event.target.value;
-                  setDraft(text);
-                  const value = Number(text);
-                  // Applied as typed when it is a length the page takes;
-                  // anything else waits for the field to lose focus, then
-                  // snaps into range.
-                  if (text.trim() !== "" && Number.isInteger(value) && value >= CLIP_MINUTES.min && value <= longest) {
-                    choose({ minutes: value }, { lengthSet: true });
-                  }
-                }}
-                onBlur={() => commitLength(draft.trim() === "" ? choice.minutes : Number(draft))}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") commitLength(draft.trim() === "" ? choice.minutes : Number(draft));
-                }}
-              />
-              <button
-                type="button"
-                className="btn btn-secondary btn-icon cliplen__step"
-                onClick={() => !atMax && commitLength(choice.minutes + 1)}
-                disabled={!live}
-                aria-disabled={atMax || undefined}
-                aria-controls={lengthId}
-                aria-label="ยาวขึ้น 1 นาที"
-              >
-                <IconPlus />
-              </button>
-              <span className="cliplen__unit">นาที</span>
-            </div>
-            <ClipTrack
-              minutes={choice.minutes}
-              mode={choice.mode}
+          <div className="cliplen__row">
+            <button
+              type="button"
+              className="btn btn-secondary btn-icon cliplen__step"
+              onClick={() => !atMin && commitLength(choice.minutes - 1)}
               disabled={!live}
-              labelledBy={lengthLabelId}
-              onChange={(minutes) => {
-                setDraft(String(minutes));
-                choose({ minutes }, { lengthSet: true });
+              aria-disabled={atMin || undefined}
+              aria-controls={lengthId}
+              aria-label="สั้นลง 1 นาที"
+            >
+              <IconMinus />
+            </button>
+            <input
+              id={lengthId}
+              className="input num cliplen__input"
+              type="number"
+              inputMode="numeric"
+              min={CLIP_MINUTES.min}
+              max={longest}
+              step={1}
+              value={draft}
+              disabled={!live}
+              aria-label="พิมพ์ความยาวคลิปดิบเป็นนาที"
+              aria-describedby={lengthNoteId}
+              onChange={(event) => {
+                const text = event.target.value;
+                setDraft(text);
+                const value = Number(text);
+                // Applied as typed when it is a length the page takes;
+                // anything else waits for the field to lose focus, then
+                // snaps into range.
+                if (text.trim() !== "" && Number.isInteger(value) && value >= CLIP_MINUTES.min && value <= longest) {
+                  choose({ minutes: value }, { lengthSet: true });
+                }
+              }}
+              onBlur={() => commitLength(draft.trim() === "" ? choice.minutes : Number(draft))}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") commitLength(draft.trim() === "" ? choice.minutes : Number(draft));
               }}
             />
+            <button
+              type="button"
+              className="btn btn-secondary btn-icon cliplen__step"
+              onClick={() => !atMax && commitLength(choice.minutes + 1)}
+              disabled={!live}
+              aria-disabled={atMax || undefined}
+              aria-controls={lengthId}
+              aria-label="ยาวขึ้น 1 นาที"
+            >
+              <IconPlus />
+            </button>
+            <span className="cliplen__unit">นาที</span>
           </div>
-          {/* The range, for the field: the track above draws it for the eye. */}
+          {/* The range, for the field: the track below draws it for the eye. */}
           <p className="sr-only" id={lengthNoteId}>
             {`ความยาวต่อคลิป ตั้งได้ ${CLIP_MINUTES.min}–${longest} นาที`}
           </p>
         </div>
+        {/* The clip on its track: its own row, the full width of the
+            calculator, so the scale has room (about 10px a minute on the
+            two-hour scale on a laptop). */}
+        <ClipTrack
+          minutes={choice.minutes}
+          mode={choice.mode}
+          disabled={!live}
+          labelledBy={lengthLabelId}
+          onChange={(minutes) => {
+            setDraft(String(minutes));
+            choose({ minutes }, { lengthSet: true });
+          }}
+        />
         {/* ระดับละเอียด exists only in ตัดฉากเด่น. In the other modes a line
             saying so takes the group's place in the same cell, so nothing
             below moves. */}
