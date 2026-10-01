@@ -9,8 +9,9 @@
 #      reason.
 #
 #   2. Server-only values (API_URL, CONTACT_EMAIL, *_SITE_VERIFICATION,
-#      NEXT_SERVER_ACTIONS_ENCRYPTION_KEY) are read at RUN time — pass them to
-#      the container, never bake them in here.
+#      NEXT_SERVER_ACTIONS_ENCRYPTION_KEY, BLOG_REVALIDATE_SECRET,
+#      PRICES_REVALIDATE_SECRET) are read at RUN time — pass them to the
+#      container, never bake them in here.
 
 # Base images are pinned to a manifest-list digest (resolves on amd64 and arm64),
 # not a moving tag: a push to main is a production deploy, so the base must not
@@ -29,9 +30,14 @@ ARG NEXT_PUBLIC_SITE_URL=https://noeystudio.com
 # a build arg once the editor has its own domain.
 ARG NEXT_PUBLIC_APP_URL=https://noey-frontend-production.up.railway.app
 ARG NEXT_PUBLIC_TURNSTILE_SITE_KEY=
+# The blog's image origin (BLOG_CONTRACT.md): next.config.ts turns it into
+# the one next/image remote pattern at BUILD time. The default is the
+# backend's own default, so production needs nothing here.
+ARG BLOG_MEDIA_PUBLIC_URL=https://api.noeystudio.com/blog/media
 ENV NEXT_PUBLIC_SITE_URL=$NEXT_PUBLIC_SITE_URL \
     NEXT_PUBLIC_APP_URL=$NEXT_PUBLIC_APP_URL \
     NEXT_PUBLIC_TURNSTILE_SITE_KEY=$NEXT_PUBLIC_TURNSTILE_SITE_KEY \
+    BLOG_MEDIA_PUBLIC_URL=$BLOG_MEDIA_PUBLIC_URL \
     NEXT_TELEMETRY_DISABLED=1
 
 COPY --from=deps /app/node_modules ./node_modules

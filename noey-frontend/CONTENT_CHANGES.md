@@ -759,6 +759,37 @@ points to the calculator (`/pricing#pricing-plans-title`).
   ไม่เท่ากันตามโหมดและความยาวคลิปดิบ ตัวเลขจริงจึงต่างจากตัวเลขตั้งต้นนี้ได้มาก
   หน้าราคามีตัวคำนวณให้เลือกโหมดและความยาวคลิปดิบเอง: [link]".
 
+## 32. The blog: /blog, its categories, tags and posts (2026-10-01)
+
+New pages; nothing that existed was reworded or removed. Every new visible
+string is below (source: `lib/blog.ts` `BLOG_COPY`, unless noted). No claim
+is new: the call to try the product reuses the site's own sign-up lines, and
+the guide notes under a post are the notes the guides already give each
+other. No AI vendor is named. The posts themselves come from the blog API
+(BLOG_CONTRACT.md) and are not site copy.
+
+| Where | Text added |
+| --- | --- |
+| Header, menu sheet, footer R1 | "บทความ" (a sixth section, between คู่มือใช้งาน and เกี่ยวกับเรา) |
+| /guide, "อ่านต่อนอกคู่มือ" | a fifth card: "บทความ" — "เรื่องการตัดคลิปสั้น ซับไทย และการทำคลิปขายของ นอกเหนือจากวิธีใช้" |
+| /blog | H1 "บทความจากห้องตัดต่อ"; lead "เรื่องการตัดคลิปสั้น ซับไทย เสียง และการทำคลิปขายของ สำหรับครีเอเตอร์และแม่ค้าที่ถ่ายคลิปเอง อยากได้วิธีใช้ Noey Studio ทีละขั้น อ่านที่ คู่มือใช้งาน"; title "บทความตัดคลิปสั้นและซับไทย \| Noey Studio"; description "บทความจาก Noey Studio เรื่องการตัดคลิปสั้นด้วย AI ซับไทย เสียงในคลิป และการทำคลิปรีวิวขายของบน TikTok สำหรับครีเอเตอร์และแม่ค้าที่ถ่ายคลิปเอง" |
+| Listings | stamp "N บทความ · อัปเดตล่าสุด <date>"; filter "หมวดบทความ" with "ทั้งหมด"; "ล่าสุด" on the newest post; "อ่าน N นาที"; pagination "เลขหน้า", "หน้าก่อน", "หน้าถัดไป", "หน้า N"; "ติดตามบทความผ่าน RSS/Atom" |
+| Category / tag pages | "บทความหมวด<name>" (lead: the category's own description from the API); "บทความแท็ก <name>", "บทความทั้งหมดที่ติดแท็ก “<name>” เรียงจากล่าสุด", crumb "แท็ก <name>" |
+| Empty state | "ยังไม่มีบทความในแทร็กนี้"; "ยังไม่มีบทความเผยแพร่ ระหว่างนี้อ่านคู่มือใช้งานที่ตอบคำถามที่คนถามบ่อยไว้แล้วได้" (no post yet) or "หมวดนี้ยังไม่มีบทความ ลองดูบทความหมวดอื่น หรืออ่านคู่มือใช้งาน" (a category without posts); buttons "ไปที่คู่มือใช้งาน", "ดูบทความทั้งหมด" |
+| API down | "ตอนนี้ยังโหลดบทความไม่ได้"; "ระบบดึงบทความไม่สำเร็จชั่วคราว ลองใหม่อีกครั้งในอีกสักครู่ ระหว่างนี้อ่านคู่มือใช้งานได้ตามปกติ"; buttons "ลองใหม่", "ไปที่คู่มือใช้งาน"; the Markdown twin's 503 "ตอนนี้ยังโหลดบทความไม่ได้ ลองใหม่อีกครั้งในอีกสักครู่" |
+| A post | meta line "โดย Noey Studio · เผยแพร่ <date> · อัปเดตล่าสุด <date> (only when changed on a later day) · อ่าน N นาที"; contents "หัวข้อในบทความ"; "แท็ก"; "คำถามที่พบบ่อย (FAQ)"; "บทความที่เกี่ยวข้อง"; "อ่านต่อในคู่มือใช้งาน"; "กลับไปหน้าบทความทั้งหมด"; a link out ends with the screen-reader text " (เปิดในแท็บใหม่)"; a table's scroll region is named "ตาราง"; GFM footnotes: "เชิงอรรถ", "กลับไปที่เนื้อหา (เชิงอรรถ N)" |
+| A post, the box at its end | "ลองใช้ Noey Studio" (the spec's own title), then the site's existing lines and buttons: "สมัครแล้วได้เครดิตทดลองฟรีทันที ไม่ต้องผูกบัตร ใช้หมดแล้วค่อยเลือกแพลนรายเดือน", "เริ่มใช้ฟรี", and links "ดูว่าระบบทำอะไรได้บ้าง" (/scope), "ดูราคา" (/pricing) |
+| Listings, closing band | the home page's own "ลองตัดคลิปแรกวันนี้" + the same sign-up line and "เริ่มใช้ฟรี" |
+| Share images (`lib/og-copy.ts`) | blog card: "บทความ" / "บทความจากห้องตัดต่อ" / "ตัดคลิป ซับไทย เสียง และคลิปขายของ สำหรับคนถ่ายคลิปเอง", alt "บทความจาก Noey Studio"; a post without a cover: "บทความ · <category>" over its title |
+| /llms.txt | "- [บทความ](…/blog): <the blog description> · Atom: …/blog/feed.xml", a section "## บทความล่าสุด" (the newest 20 posts with their Markdown twins), "- [ฟีดบทความ](…/blog/feed.xml): บทความทั้งหมด เรียงจากล่าสุด" |
+| /blog/<slug>.md | header lines "หน้าเว็บ", "เผยแพร่ · อัปเดตล่าสุด", "ผู้เขียน", "หมวด", "แท็ก", "เวลาอ่าน"; sections "## คำถามที่พบบ่อย", "## บทความที่เกี่ยวข้อง"; 404 "ไม่พบบทความนี้" |
+
+Decoration hidden from assistive technology: the slate on a post without a
+cover ("SCENE", "TAKE 01", its category and title, a track of clips and the
+reading time as a timecode), "PROGRAM" / "LATEST" over the newest post,
+"BIN · NN CLIPS · 01/02" over the others, "ALL" / "V1"–"V4" track labels on
+the categories, "TAKE 01 · YOUR FOOTAGE" on the closing box.
+
 ## Text added (not replacing anything)
 
 Only labels, no claims:
