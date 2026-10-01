@@ -21,9 +21,11 @@ export function FeatureVisual({ index }: { index: number }) {
     return (
       <div className="fv fv--app" aria-hidden="true">
         {/* At rest the playhead sits in the selected scene, clear of the
-            ruler's 0:00 (playing, it sweeps the cut from the start). */}
-        <AppScreen width={1024} height={253} crop={{ x: 0, y: 0, w: 690, h: 253 }}>
-          <TimelineBlock windowWidth={1024} time={sceneStillTime(2)} selected={2} run />
+            ruler's 0:00 (playing, it sweeps the cut from the start). The
+            window is the picture's own width, so the editor's fitted zoom
+            lays the whole cut inside it — never cropped mid-scene. */}
+        <AppScreen width={690} height={253} crop={{ x: 0, y: 0, w: 690, h: 253 }}>
+          <TimelineBlock windowWidth={690} time={sceneStillTime(2)} selected={2} run />
         </AppScreen>
         <MockLive />
       </div>

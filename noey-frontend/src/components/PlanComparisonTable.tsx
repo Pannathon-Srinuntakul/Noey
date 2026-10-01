@@ -14,7 +14,16 @@ import { keepThaiProse } from "./ds/ThaiProse";
  * (the page on wide screens, the table's own box on narrow ones), and the
  * row and column under the pointer light up like a selection in the editor.
  */
-export function PlanComparisonTable({ table, labelledBy }: { table: PriceTable; labelledBy: string }) {
+export function PlanComparisonTable({
+  table,
+  labelledBy,
+  footnote = true,
+}: {
+  table: PriceTable;
+  labelledBy: string;
+  /** The basis of the clip counts under the table — off where the page says it already (/pricing). */
+  footnote?: boolean;
+}) {
   return (
     <div className="cmp">
       {/* Where the table scrolls sideways (narrow screens), say so above it:
@@ -48,7 +57,7 @@ export function PlanComparisonTable({ table, labelledBy }: { table: PriceTable; 
               {TIERS.map((tier) => {
                 const full = strikePrice(table, tier);
                 return (
-                  <td key={tier} className="c num">
+                  <td key={tier} className={PLAN_COPY[tier].recommended ? "c num cmp__rec" : "c num"}>
                     {full ? (
                       <s className="price-strike">
                         <span className="sr-only">{BETA_STRIKE_LABEL} </span>
@@ -64,7 +73,12 @@ export function PlanComparisonTable({ table, labelledBy }: { table: PriceTable; 
               <tr key={row.label}>
                 <th scope="row">{keepThaiProse(row.label)}</th>
                 {row.values.map((value, index) => (
-                  <td key={TIERS[index]} className={[row.numeric ? "c num" : "c", value === "—" ? "cmp__none" : null].filter(Boolean).join(" ")}>
+                  <td
+                    key={TIERS[index]}
+                    className={[row.numeric ? "c num" : "c", value === "—" ? "cmp__none" : null, PLAN_COPY[TIERS[index]].recommended ? "cmp__rec" : null]
+                      .filter(Boolean)
+                      .join(" ")}
+                  >
                     {value === "มี" ? (
                       // A tick reads faster than fifty "มี"; the word stays for screen readers.
                       <>
@@ -82,7 +96,7 @@ export function PlanComparisonTable({ table, labelledBy }: { table: PriceTable; 
         </table>
       </div>
       {/* The clip counts in the table are estimates; say on what. */}
-      <p className="table-note">{keepThaiProse(CLIPS_FOOTNOTE)}</p>
+      {footnote ? <p className="table-note">{keepThaiProse(CLIPS_FOOTNOTE)}</p> : null}
       {isBetaPriced(table) ? <p className="table-note">{keepThaiProse(BETA_PRICE_NOTE)}</p> : null}
     </div>
   );

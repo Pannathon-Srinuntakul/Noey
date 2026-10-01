@@ -60,6 +60,14 @@
   opacity: var(--o, 0.5);
 }
 
+/* Day theme: the beige fill read as a smudge on the light page — an empty
+   frame with a defined gold edge instead. */
+html:not([data-theme="dark"]) .hero-bg__frame {
+  border-color: color-mix(in srgb, var(--color-accent) 75%, transparent);
+  background: color-mix(in srgb, var(--panel) 35%, transparent);
+  box-shadow: none;
+}
+
 /* The frames keep to the edges and the corners: the headline, the lead and
    the call to action are never drawn over. */
 .hero-bg__frame--1 {
@@ -891,10 +899,15 @@
   right: 12px;
 }
 
-/* The browser window starts below the label, in the card's own padding, as
-   the other two cards' pictures do. */
+/* Every picture starts below its label, in the card's own padding: the
+   label never sits on the app (the script panel's คัดลอก, the window's frame). */
 .bento__card--3 .fv--browser {
   margin-top: 46px;
+}
+
+.bento__card--1 .fv--app,
+.bento__card--2 .fv--app {
+  padding: 44px 14px 14px;
 }
 
 .minis__tag {

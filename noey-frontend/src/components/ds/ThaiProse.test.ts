@@ -59,6 +59,19 @@ describe("keepThaiProse", () => {
     expect(kept(keepThaiProse("อัปเดตล่าสุด 26 กันยายน 2569 โดยทีมงาน"))).toContain("26 กันยายน 2569");
   });
 
+  it("never ends a line on และ, การ or ตาม in a client component's text", () => {
+    const joined = (node: ReactNode) => runs(node).map(([text]) => text).join("");
+    // Before a space: a no-break space; glued to the next word: a word joiner.
+    expect(joined(keepThai("โปรเจกต์ สคริปต์ และ สไตล์ที่บันทึกไว้"))).toContain("และ\u00a0สไตล์");
+    expect(joined(keepThai("ไม่มีการคืนเงินในรอบนี้"))).toContain("การ\u2060คืน");
+    expect(joined(keepThai("จ่ายตามจำนวนที่ใช้"))).toContain("ตาม\u2060จำนวน");
+    // Not inside a longer word (a vowel or a mark follows), and never inside a kept phrase.
+    expect(joined(keepThai("ราคาการ์ดใบนี้"))).not.toContain("\u2060");
+    expect(kept(keepThai("ข้อมูลการชำระเงินถูกเก็บ"))).toContain("ข้อมูลการชำระเงิน");
+    // The same text on every render: plain string work, no segmenter.
+    expect(joined(keepThai("ยกเลิก และ ยอมรับ"))).toBe(joined(keepThai("ยกเลิก และ ยอมรับ")));
+  });
+
   it("puts a no-break space before ๆ", () => {
     expect(runs(keepThaiProse("ประโยคสั้น ๆ ให้อ่าน")).map(([text]) => text).join("")).toBe("ประโยคสั้น ๆ ให้อ่าน");
     expect(runs(keepThai("สั้น ๆ")).map(([text]) => text).join("")).toBe("สั้น ๆ");

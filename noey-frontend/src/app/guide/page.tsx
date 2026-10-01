@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { Fragment } from "react";
 import { Breadcrumb } from "@/components/Breadcrumb";
 import { JsonLd } from "@/components/JsonLd";
 import { ClipCard } from "@/components/ds/ClipCard";
@@ -107,8 +108,15 @@ export default function GuideIndexPage() {
                         </Link>
                       </h2>
                       <p className="bin__answer">{keepThaiProse(doc.answer)}</p>
+                      {/* Each topic whole: a line breaks only between topics, after a "·". */}
                       <p className="bin__meta">
-                        หัวข้อในหน้านี้: {keepThaiProse(doc.sections.map((section) => section.title).join(" · "))}
+                        หัวข้อในหน้านี้:{" "}
+                        {doc.sections.map((section, at) => (
+                          <Fragment key={section.id}>
+                            {at > 0 ? "\u00a0· " : null}
+                            <span className="bin__topic">{section.title}</span>
+                          </Fragment>
+                        ))}
                       </p>
                     </div>
                   </article>

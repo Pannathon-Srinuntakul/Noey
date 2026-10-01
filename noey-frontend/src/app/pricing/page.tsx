@@ -91,7 +91,8 @@ function priceList(table: PriceTable): string {
   });
   const list = paid.length > 1 ? `${paid.slice(0, -1).join(", ")} และ ${paid[paid.length - 1]}` : paid.join("");
   const clips = clipsLadderSentence(PAID_TIERS);
-  return `ใช้หมดแล้วเลือกแพลนรายเดือนได้ ${paid.length} ระดับ ได้แก่ ${list} ต่อเดือน โดยได้จำนวนคลิปต่อเดือน ${clips} (${CLIPS_FOOTNOTE})`;
+  // The basis of the counts (CLIPS_FOOTNOTE) is said once, under the picker.
+  return `ใช้หมดแล้วเลือกแพลนรายเดือนได้ ${paid.length} ระดับ ได้แก่ ${list} ต่อเดือน โดยได้จำนวนคลิปต่อเดือน ${clips}`;
 }
 
 /**
@@ -201,7 +202,7 @@ export default async function PricingPage() {
               {keepThaiProse("ทุกแพลนได้ดราฟต์แรกจากการคัดช็อตเหมือนกัน แล้วยังต้องเกลาต่อเองในไทม์ไลน์ ระบบเหมาะกับคลิปสั้นที่โครงไม่ซับซ้อน ไม่ใช่งานโปรดักชันที่ต้องแทรกภาพหรือตัดซ้อนหลายชั้น")}
             </p>
           </SectionHeader>
-          <PlanComparisonTable table={table} labelledBy="compare-title" />
+          <PlanComparisonTable table={table} labelledBy="compare-title" footnote={false} />
         </div>
       </section>
 

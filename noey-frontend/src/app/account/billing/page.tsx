@@ -15,7 +15,7 @@ import {
   PAID_TIERS,
   PLAN_COPY,
   TIERS,
-  clipsHeadline,
+  clipsHighLine,
   displayPrice,
   isBetaPriced,
   isPaidTier,
@@ -35,6 +35,9 @@ export const metadata: Metadata = privatePageMetadata("แพลนและก�
 
 /** A plan's place in the ladder, as /pricing's cards number it (P0 … P6). */
 const reelOf = (tier: Tier) => `P${TIERS.indexOf(tier)}`;
+
+/** A plan's monthly clips as /pricing's cards print them ("ตัดได้ราว 30 คลิป / เดือน"). */
+const clipsSpec = (tier: PaidTier) => `${CUTS_APPROX_PREFIX} ${APPROX_CUTS_PER_MONTH[tier]} คลิป / เดือน`;
 
 /** A plan's storage, from the comparison table's own row (the only place it is stated per plan). */
 const STORAGE_ROW = COMPARISON_ROWS.find((row) => row.label === "พื้นที่เก็บงานบนบัญชี");
@@ -92,7 +95,14 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
     name: PLAN_COPY[tier].name,
     price: displayPrice(table, tier),
     fullPrice: strikePrice(table, tier),
-    specs: [clipsHeadline(tier), `ฟุตเทจ ${FOOTAGE_PER_PROJECT[tier]}ต่อโปรเจกต์`, storageOf(tier)].filter((spec): spec is string => !!spec),
+    // Pro and up also state their ระดับละเอียด count, as a fact of its own (a
+    // plan bought for that setting states both — lib/plans.ts).
+    specs: [
+      clipsSpec(tier),
+      clipsHighLine(tier),
+      `ฟุตเทจ ${FOOTAGE_PER_PROJECT[tier]}ต่อโปรเจกต์`,
+      storageOf(tier) ? `เก็บได้ ${storageOf(tier)}` : null,
+    ].filter((spec): spec is string => !!spec),
     recommended: !!PLAN_COPY[tier].recommended,
     current: tier === currentTier && !cancelScheduled,
   }));
@@ -109,6 +119,7 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
           unit: planTier === "free" ? "คลิป" : "คลิป / เดือน",
           caption: planTier === "free" ? FREE_CLIPS_CAPTION : null,
         },
+        high: clipsHighLine(planTier),
         basis: CLIPS_BASIS_SHORT,
         features: PLAN_COPY[planTier].features,
       }

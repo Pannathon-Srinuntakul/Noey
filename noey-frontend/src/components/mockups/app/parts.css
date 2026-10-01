@@ -64,7 +64,9 @@
 /* A strip is cut from a lane that runs on: where the cut crosses a clip, the
    lane fades out instead of ending in half a word. */
 .ammini--subs .am-view,
-.ammini--music .am-view {
+.ammini--music .am-view,
+.ammini--convert .am-view,
+.ammini--frame .am-view {
   -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 44px), transparent);
   mask-image: linear-gradient(90deg, #000 calc(100% - 44px), transparent);
 }

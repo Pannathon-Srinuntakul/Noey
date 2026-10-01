@@ -49,6 +49,8 @@ const squash = (text) =>
     .toLowerCase()
     .replace(/[“”]/g, '"')
     .replace(/[‘’]/g, "'")
+    // keepThai's word joiners (after "และ", "การ", "ตาม") are invisible glue, not text.
+    .replace(/\u2060/g, "")
     .replace(/\s+/g, "");
 
 // ─── (a) + (b): strings in the source ────────────────────────────────────────

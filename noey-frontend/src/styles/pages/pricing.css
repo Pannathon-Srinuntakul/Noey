@@ -395,8 +395,14 @@
     margin: 0;
   }
 
-  /* Two feature columns only where each gets a readable width. */
+  /* Two feature columns only where each gets a readable width; on a small
+     laptop the middle column keeps its phrases whole ("ทดลองใช้ครั้งเดียว",
+     "ใช้หมดแล้วเลือกแพลนต่อ"). */
   @media (max-width: 1279px) {
+    .plan--full[data-tier="free"] {
+      grid-template-columns: minmax(0, 0.7fr) minmax(260px, 1fr) minmax(0, 1.2fr) auto;
+    }
+
     .plan--full[data-tier="free"] > .plan__features {
       grid-template-columns: minmax(0, 1fr);
     }
@@ -444,14 +450,17 @@
 
 /* Every plan's price and clip count in a sentence, under the cards that
    show them: the text twin of the cards, quiet. */
+/* Every plan's price and clips in one sentence, at reading size (a 13px
+   grey line read as a footnote). */
 .pricing-summary {
   max-width: var(--prose-max);
   margin: 22px 0 0;
   padding-top: 16px;
   border-top: 1px dashed var(--line-2);
-  font-size: var(--fs-14);
-  line-height: 1.75;
-  color: var(--ink-3);
+  font-size: var(--fs-16);
+  font-weight: 400;
+  line-height: 1.85;
+  color: var(--ink-2);
 }
 
 /* ── How the quota works ────────────────────────────────────────────────── */

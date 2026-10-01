@@ -3,9 +3,9 @@ import { formatBytes, formatShortDate, formatThaiDate, isoDate, toDate } from ".
 
 describe("formatBytes", () => {
   it("picks the unit like the backend does", () => {
-    expect(formatBytes(10 * 1024 ** 3)).toBe("10.0 GB");
+    expect(formatBytes(10 * 1024 ** 3)).toBe("10 GB");
     expect(formatBytes(644245094)).toBe("614.4 MB");
-    expect(formatBytes(2048)).toBe("2.0 KB");
+    expect(formatBytes(2048)).toBe("2 KB");
     expect(formatBytes(512)).toBe("512 B");
     expect(formatBytes(-1)).toBe("—");
   });

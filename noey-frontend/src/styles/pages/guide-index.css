@@ -71,6 +71,10 @@
   line-height: 1.8;
 }
 
+.bin__topic {
+  white-space: nowrap;
+}
+
 .clip__body .bin__meta {
   margin-top: auto;
   padding-top: 12px;
@@ -235,4 +239,38 @@ html[data-theme="dark"] .bin-thumb__wave path {
   flex-wrap: wrap;
   gap: 12px;
   margin-top: clamp(28px, 3vw, 40px);
+}
+
+/* Phones: "อ่านต่อนอกคู่มือ" as compact rows and its two buttons stacked full
+   width — the same as the end of every guide. */
+@media (max-width: 640px) {
+  .guide-more .clip__strip {
+    display: none;
+  }
+
+  .guide-more .clip__body {
+    gap: 4px;
+    padding: 14px 16px;
+  }
+
+  .guide-more .clip__title {
+    font-size: var(--fs-16);
+  }
+
+  .guide-more .clip__body p {
+    font-size: var(--fs-14);
+    line-height: 1.6;
+  }
+
+  .guide-more .link-grid {
+    gap: 8px;
+  }
+
+  .guide-more__foot {
+    flex-direction: column-reverse;
+  }
+
+  .guide-more__foot .btn {
+    width: 100%;
+  }
 }

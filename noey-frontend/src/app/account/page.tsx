@@ -5,14 +5,14 @@ import { LevelMeter } from "@/components/ds/LevelMeter";
 import { Waveform } from "@/components/ds/Waveform";
 import { ComputerOnly } from "@/components/ComputerOnly";
 import { NoeyMark } from "@/components/NoeyMark";
-import { needsPaymentAttention, subscriptionStatusLabel } from "@/lib/billing";
-import { formatBytes } from "@/lib/format";
+import { hasLiveSubscription, needsPaymentAttention, subscriptionStatusLabel } from "@/lib/billing";
+import { formatBytes, formatShortDate } from "@/lib/format";
 import { planDisplayName } from "@/lib/plans";
 import { privatePageMetadata } from "@/lib/seo";
 import { loadAccountData } from "@/lib/server/account-data";
 import { EDITOR_OPEN_PATH } from "@/lib/editor-handoff";
 import { keepThaiProse } from "@/components/ds/ThaiProse";
-import { limitTone } from "@/lib/usage-limits";
+import { limitLabel, limitTone } from "@/lib/usage-limits";
 
 export const metadata: Metadata = privatePageMetadata("บัญชีของฉัน");
 
@@ -30,6 +30,13 @@ export default async function AccountAppPage({ searchParams }: { searchParams: P
   let quota = "—";
   if (usage?.unlimited) quota = "ไม่จำกัด";
   else if (typeof usage?.usage_pct === "number") quota = `ใช้ไป ${Math.round(usage.usage_pct)}%`;
+  // The window the number is about, by its name on the quota tab: the only
+  // one a paid plan has ("Monthly limit"), or the fullest when there are more.
+  const fullest = [...(usage?.limits ?? [])].sort((a, b) => b.used_pct - a.used_pct)[0];
+  const quotaName = !usage?.unlimited && fullest ? limitLabel(fullest) : "โควตารอบนี้";
+  // Under the plan: when it renews, or until when a cancelled one runs.
+  const periodEnd = hasLiveSubscription(billing) ? formatShortDate(billing?.current_period_end) : null;
+  const renewal = periodEnd ? (billing?.cancel_at_period_end ? `ใช้ได้ถึง ${periodEnd}` : `ต่ออายุ ${periodEnd}`) : null;
   const quotaPct = !usage?.unlimited && typeof usage?.usage_pct === "number" ? usage.usage_pct : null;
   // The same warning tones as the quota tab (80% near, 95% full).
   const quotaTone = quotaPct === null ? "ok" : limitTone(quotaPct);
@@ -94,14 +101,17 @@ export default async function AccountAppPage({ searchParams }: { searchParams: P
               </dd>
               {/* A failed charge is said here too, not only on the billing tab
                   (the same sentence the billing tab shows). */}
+              {/* A second <dd> for the same term (a <p> is not allowed in a <dl>'s group). */}
               {needsPaymentAttention(billing?.status) ? (
-                <p className="acct-summary__warn">
+                <dd className="acct-summary__warn">
                   {keepThaiProse(`${subscriptionStatusLabel(billing?.status)} อัปเดตบัตรได้ที่การ์ดการชำระเงิน`)}
-                </p>
+                </dd>
+              ) : renewal ? (
+                <dd className="acct-summary__sub">{keepThaiProse(renewal)}</dd>
               ) : null}
             </div>
             <div>
-              <dt>โควตารอบนี้</dt>
+              <dt>{quotaName}</dt>
               <dd className={quotaTone === "ok" ? "num" : `num num--${quotaTone}`}>
                 <Link href="/account/quota" className="acct-summary__link">
                   {quota}

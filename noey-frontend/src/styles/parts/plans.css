@@ -322,8 +322,23 @@
   background: var(--panel);
 }
 
+/* Frame-wide, the plan columns equal (the first row sets the widths): the
+   table never runs past its rounded frame, and no plan column is narrower
+   than its neighbours. */
 .cmp__table {
+  width: 100%;
+  table-layout: fixed;
   font-size: var(--fs-14);
+}
+
+.cmp__corner {
+  width: 210px;
+}
+
+/* The recommended plan's column, faintly tinted top to bottom. */
+.cmp__table .cmp__rec,
+.cmp__table thead .cmp__plan--recommended {
+  background-color: color-mix(in srgb, var(--color-accent) 6%, var(--panel));
 }
 
 .cmp__table th,
@@ -458,6 +473,10 @@
     padding: 12px 10px;
   }
 
+  .cmp__corner {
+    width: 170px;
+  }
+
   .cmp__table td {
     min-width: 74px;
   }
@@ -471,6 +490,10 @@
   .cmp__table th,
   .cmp__table td {
     padding: 11px 8px;
+  }
+
+  .cmp__corner {
+    width: 140px;
   }
 
   .cmp__table td {
@@ -508,6 +531,10 @@
     min-width: 760px;
   }
 
+  .cmp__corner {
+    width: 150px;
+  }
+
   .cmp__table thead th {
     top: 0;
   }
@@ -524,6 +551,10 @@
     .cmp__table tbody th[scope="row"] {
       min-width: 136px;
       max-width: 136px;
+    }
+
+    .cmp__corner {
+      width: 136px;
     }
   }
 

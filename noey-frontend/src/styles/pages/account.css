@@ -646,11 +646,26 @@
   padding: 2px;
 }
 
+/* The plan's renewal under its name: the cell carries a second line, as the
+   two cells beside it carry their meters. */
+.acct-summary .kv dd.acct-summary__sub {
+  flex-basis: 100%;
+  margin: 0;
+  text-align: start;
+  font-size: var(--fs-13);
+  font-weight: 400;
+  line-height: 1.6;
+  color: var(--ink-3);
+}
+
+.acct-summary .kv dd.acct-summary__warn,
 .acct-summary__warn {
   flex-basis: 100%;
   margin: 0;
   font-size: var(--fs-13);
+  font-weight: 400;
   line-height: 1.6;
+  text-align: start;
   color: var(--danger);
 }
 
@@ -659,8 +674,27 @@
 .acct-quota__limit {
   display: grid;
   gap: 8px;
-  padding-bottom: 14px;
-  border-bottom: 1px dashed var(--line);
+}
+
+/* A rule between two rows, never under the last one. */
+.acct-quota__limit + .acct-quota__limit {
+  padding-top: 14px;
+  border-top: 1px dashed var(--line);
+}
+
+/* Near or at the limit: where more quota comes from, said quietly. */
+.acct-quota__more {
+  margin: 0;
+  font-size: var(--fs-13);
+  font-weight: 400;
+  line-height: 1.6;
+}
+
+.acct-quota__more a {
+  color: var(--gold-ink);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--color-accent) 50%, transparent);
+  text-underline-offset: 3px;
 }
 
 .acct-quota__limit .meter-row {
@@ -876,8 +910,18 @@
 .plan-usage__basis {
   margin: 0;
   font-size: var(--fs-12);
+  font-weight: 400;
   line-height: 1.6;
   color: var(--ink-3);
+}
+
+/* Pro and up: the count at ระดับละเอียด, under the ordinary one (as /pricing's cards). */
+.plan-usage__high {
+  margin: 0;
+  font-size: var(--fs-13);
+  font-weight: 400;
+  line-height: 1.6;
+  color: var(--ink-2);
 }
 
 /* ── This billing cycle, as a clip on a lane (BillingPanel) ─────────────── */
@@ -913,8 +957,10 @@
   margin-top: 22px;
   border: 1px solid var(--line-2);
   border-radius: 5px;
+  /* A tick at every tenth: one tile a tenth wide, repeated — a repeating
+     gradient with percentage stops dropped a tick at some widths. */
   background:
-    repeating-linear-gradient(90deg, transparent 0 calc(10% - 1px), var(--line) calc(10% - 1px) 10%),
+    linear-gradient(90deg, transparent calc(100% - 1px), var(--line) calc(100% - 1px)) 0 0 / 10% 100% repeat-x,
     var(--well);
 }
 
@@ -969,6 +1015,7 @@
   justify-content: space-between;
   gap: 12px;
   font-size: var(--fs-12);
+  font-weight: 400;
   color: var(--ink-3);
 }
 
@@ -1168,9 +1215,10 @@
     grid-column: 1 / -1;
   }
 
-  /* Level with the field's box, not its label. */
+  /* Level with the field's box, not its label, and as tall as it. */
   .acct-form--inline > .acct-form__submit {
     align-self: end;
+    min-height: 48px;
   }
 }
 
@@ -1314,7 +1362,7 @@
   padding-left: 12px;
   border-left: 2px solid var(--line-2);
   font-size: var(--fs-13);
-  font-weight: 300;
+  font-weight: 400;
   line-height: 1.75;
   color: var(--ink-3);
   text-wrap: pretty;

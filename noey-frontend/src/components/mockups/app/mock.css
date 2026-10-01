@@ -383,8 +383,11 @@ html[data-theme="dark"] .am,
 
 /* The app's wordmark face is a serif (never loaded, so the browser's default
    serif) — drawn here in the site's serif fallback. */
+/* The app sets its wordmark in a display face this site does not load; a
+   bare "serif" fell back to Times. The site's heading face stands in. */
 .am-display {
-  font-family: serif;
+  font-family: var(--font-heading);
+  font-weight: 600;
 }
 
 /* ─── States the choreography switches between ────────────────────────────

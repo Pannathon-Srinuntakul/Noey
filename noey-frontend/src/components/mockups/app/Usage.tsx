@@ -32,7 +32,8 @@ export function UsageCard() {
         <p className="text-item font-semibold text-ink">แผน Pro</p>
         <span className="flex-1" />
         <span className="text-[13px] tabular-nums text-muted">ทำพร้อมกันได้ 2 งาน</span>
-        <span className="text-[13.5px] text-accent">เปลี่ยนแผน</span>
+        {/* The app's link, drawn in the muted ink: in a picture it must not read as clickable. */}
+        <span className="text-[13.5px] text-muted">เปลี่ยนแผน</span>
       </div>
       <div className="mt-4 flex flex-col gap-4">
         <MeterRow name="โควตารายเดือน" value="ใช้ไป 38%" pct={38} line="รีเซ็ต 13 ต.ค." />

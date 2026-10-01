@@ -89,6 +89,20 @@ const KEEP_TOGETHER = [
   "ผ่าน Chrome",
   "Safari 26 ขึ้นไป",
   "ยังใช้บนมือถือ",
+  // The modes' names, and phrases the guides split (final review).
+  "ตัดฉากเด่น",
+  "ตัดช่วงเงียบ",
+  "ตัดไฮไลต์จากคลิปยาว",
+  "ติดตั้งอะไร",
+  "เกณฑ์ที่ 1",
+  "เกณฑ์ที่ 2",
+  "เกณฑ์ที่ 3",
+  "เกณฑ์ที่ 4",
+  "เกณฑ์ที่ 5",
+  "ทีละตัว",
+  "สคริปต์ AI",
+  "โหมดไฮไลต์",
+  "ระดับละเอียด",
   "เสร็จแล้ว",
   "เริ่มใช้งาน",
   "ลบเองได้",
@@ -214,13 +228,15 @@ const KEEP_TOGETHER = [
   "ต่ออายุในอีก",
   "ใช้ได้อีก",
   "จุดตัดแม่นขึ้น",
+  "แพลนฟรี",
 ];
 
 /** A number and its unit stay on one line ("10 GB", "499 บาท", "30 นาที"), and so
  * does a plan name with the value after it ("Starter 20 นาที"), an estimate
- * with its "ราว" ("ราว 22 คลิป") and a limit with its "ภายใน" ("ภายใน 10 GB"). */
+ * with its "ราว" ("ราว 22 คลิป", "Pro ราว 30 คลิป") and a limit with its
+ * "ภายใน" ("ภายใน 10 GB"). */
 const NUMBER_UNIT =
-  "(?:(?:ฟรี|Lite|Starter|Pro|Studio|Agency|Max|ราว|ภายใน) )?\\d[\\d,.]*\\s(?:GB|MB|นาที|วินาที|บาท|คลิป|โปรเจกต์|งาน|วัน|ชั่วโมง|เดือน|ไฟล์|ปี)";
+  "(?:(?:ฟรี|Lite|Starter|Pro|Studio|Agency|Max) )?(?:(?:ระดับละเอียด)?(?:ราว|ภายใน) )?\\d[\\d,.]*\\s(?:GB|MB|นาที|วินาที|บาท|คลิป|โปรเจกต์|งาน|วัน|ชั่วโมง|เดือน|ไฟล์|ปี)";
 
 /** A date stays on one line: "31 ธ.ค. 2026", "26 กันยายน 2569", "13 ต.ค.". */
 const DATE =
@@ -241,22 +257,44 @@ const PATTERN = new RegExp(
 export const glueMarks = (text: string) => text.replace(/ ([ๆ·—])/g, "\u00a0$1");
 
 /**
+ * Words that lean on the next one — a line must not end right after them:
+ * "และ", "การ", "ตาม" ("สคริปต์ และ / สไตล์", "ไม่มีการ / คืนเงิน"). Before a
+ * space, the space becomes a no-break space; glued to the next Thai word, a
+ * word joiner (U+2060, invisible) goes between them. Plain string work, the
+ * same on the server and in the browser, so the text hydrates as rendered.
+ * (keepThaiProse, server-only, glues its own list by segmenting the text.)
+ */
+const LEANING = /(และ|การ|ตาม)( (?=[\u0E01-\u0E2E\u0E40-\u0E44])|(?=[\u0E01-\u0E2E\u0E40-\u0E44]))/g;
+
+export const glueLeaning = (text: string) =>
+  text.replace(LEANING, (_match, word: string, space: string) => `${word}${space ? "\u00a0" : "\u2060"}`);
+
+/**
  * Thai text with those words and number–unit pairs wrapped so a line never
  * ends inside them. The text is unchanged apart from the no-break spaces
- * before ๆ, "·" and "—" (the wrappers are plain spans), so copy, search and screen
- * readers see the same words.
+ * before ๆ, "·" and "—" and after a leaning word, and the invisible word
+ * joiners after one (the wrappers are plain spans), so copy, search and
+ * screen readers see the same words.
  */
 export function keepThai(source: string): ReactNode {
   const text = glueMarks(source);
   const parts = text.split(PATTERN);
-  if (parts.length === 1) return text;
+  if (parts.length === 1) return glueLeaning(text);
+  // The leaning words are glued in the text between the kept runs only (a
+  // joiner inside a kept phrase would stop it matching); one at the end of a
+  // stretch is glued to the run after it by looking at that run's first letter.
+  const between = (part: string, index: number) => {
+    const next = parts[index + 1]?.[0] ?? "";
+    const glued = glueLeaning(part + next);
+    return next ? glued.slice(0, -next.length) : glued;
+  };
   return parts.map((part, index) =>
     index % 2 === 1 ? (
       <span key={index} className="kt">
         {part}
       </span>
     ) : part ? (
-      <Fragment key={index}>{part}</Fragment>
+      <Fragment key={index}>{between(part, index)}</Fragment>
     ) : null,
   );
 }

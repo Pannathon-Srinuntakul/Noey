@@ -452,9 +452,30 @@ The editor's own gate names "Chrome หรือ Edge เวอร์ชัน�
   → "คอมทั่วไปที่รัน Chrome หรือ Edge เวอร์ชันใหม่ หรือ Safari 26 ขึ้นไปได้ก็พอ …".
 - Structured data (`operatingSystem`): "Web browser (Chrome, Edge)" → "Web browser (Chrome, Edge, Safari 26+)".
 
+## 24. Account: the last review round
+
+- /account/billing, the plan picker: each row's price and clips are spaced as
+  /pricing prints them — "99 บาท/เดือน" → "99 บาท / เดือน", "ตัดได้ราว 4 คลิป/เดือน"
+  → "ตัดได้ราว 4 คลิป / เดือน" — and Pro and up add their ระดับละเอียด count as
+  a fact of its own ("ระดับละเอียดราว 20 คลิป", lib/plans.ts: a plan bought for
+  that setting states both). The storage fact is named: "3 GB" → "เก็บได้ 3 GB".
+- Storage sizes print a whole number whole: "10.0 GB" → "10 GB" (as /pricing
+  writes it); a fraction keeps its one decimal ("3.7 GB").
+- /account, the summary: the quota row is named by its window, as the quota
+  tab names it — "โควตารอบนี้" → "Monthly limit" (with more than one window,
+  the fullest one's name; "โควตารอบนี้" stays where the account has none).
+
 ## Text added (not replacing anything)
 
 Only labels, no claims:
+
+- /account, the summary: under the plan, its renewal date as the billing tab
+  says it — "ต่ออายุ 13 ต.ค. 2026", or "ใช้ได้ถึง 13 ต.ค. 2026" once cancelled.
+- /account/billing, the plan card: Pro and up show their ระดับละเอียด count
+  under the monthly count ("ระดับละเอียดราว 20 คลิป", `clipsHighLine`), as
+  their /pricing cards do.
+- /account/quota: under a window at 80% or more, "ต้องการโควตาเพิ่ม" and a link,
+  "ดูแพลนและการชำระเงิน".
 
 - "ภาพจำลองการทำงาน" / "ภาพจำลอง" on every UI illustration (hero editor,
   sign-in stage, step illustrations, the three feature pictures and the six

@@ -56,7 +56,8 @@ export function formatBytes(bytes: number): string {
     ["MB", 1024 ** 2],
     ["KB", 1024],
   ] as const) {
-    if (bytes >= step) return `${(bytes / step).toFixed(1)} ${unit}`;
+    // One decimal, but a whole number reads whole ("10 GB", as /pricing writes it).
+    if (bytes >= step) return `${(bytes / step).toFixed(1).replace(/\.0$/, "")} ${unit}`;
   }
   return `${bytes} B`;
 }

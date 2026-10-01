@@ -36,6 +36,8 @@ export interface PlanCardParts {
   /** The "เบต้า −50%" chip beside the struck price (a discounted plan, during the beta). */
   beta: boolean;
   usage: { prefix: string; count: number; unit: string; caption: string | null };
+  /** Pro and up: the count at ระดับละเอียด ("ระดับละเอียดราว 20 คลิป"), as /pricing's cards state it. */
+  high: string | null;
   basis: string;
   features: readonly string[];
 }
@@ -197,6 +199,7 @@ export function BillingPanel(props: BillingPanelProps) {
                   {plan.usage.prefix} <span className="num plan-usage__count">{plan.usage.count}</span> {plan.usage.unit}
                   {plan.usage.caption ? <span className="plan-usage__caption">{keepThai(` · ${plan.usage.caption}`)}</span> : null}
                 </p>
+                {plan.high ? <p className="plan-usage__high">{keepThai(plan.high)}</p> : null}
                 <p className="plan-usage__basis">{plan.basis}</p>
               </div>
             ) : null}
@@ -361,7 +364,7 @@ export function BillingPanel(props: BillingPanelProps) {
                     ) : (
                       <span className="plan-option__price">
                         {option.fullPrice ? <s className="price-strike">{option.fullPrice}</s> : null}
-                        {`${option.price} บาท/เดือน`}
+                        {`${option.price} บาท / เดือน`}
                       </span>
                     )}
                     {option.current ? <span className="tag tag-neutral plan-option__tag">แพลนปัจจุบัน</span> : null}

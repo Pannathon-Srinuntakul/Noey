@@ -80,6 +80,12 @@ export default async function QuotaPage() {
                     {limit.active ? <ResetClock at={limit.resets_at} /> : null}
                   </p>
                 )}
+                {/* Near or at the limit (80%+): where more comes from, quietly. */}
+                {tone !== "ok" && !neverResets(limit) ? (
+                  <p className="acct-quota__more">
+                    ต้องการโควตาเพิ่ม <Link href="/account/billing">ดูแพลนและการชำระเงิน</Link>
+                  </p>
+                ) : null}
               </div>
             );
           })

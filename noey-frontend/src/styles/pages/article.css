@@ -513,18 +513,33 @@ html[data-theme="dark"] .article .prose {
   aspect-ratio: 690 / 253;
 }
 
-/* A strip cut from a lane: centred in a short frame. */
+/* A strip cut from a lane, on a stage of its own: drawn half again as large
+   as the frame's width would hold it, centred, its ends fading (it is a cut
+   from a lane that runs on, as on the home page's strips). */
 .guide-visual--strip .guide-visual__frame {
   display: flex;
   align-items: center;
   justify-content: center;
-  height: clamp(84px, 10vw, 120px);
-  padding: 14px 18px;
+  height: clamp(150px, 15vw, 210px);
+  padding: 14px 0;
 }
 
-/* A whole card or window brings its own frame. */
+.guide-visual--strip .ammini {
+  justify-content: center;
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 40px, #000 calc(100% - 40px), transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 40px, #000 calc(100% - 40px), transparent);
+}
+
+.guide-visual--strip .ammini .am-view {
+  width: calc(min(100cqw, 100cqh * var(--am-cw) / var(--am-ch)) * 1.5);
+}
+
+/* A whole card or window brings its own frame — and its own corners: the
+   frame neither draws nor clips. */
 .guide-visual--card .guide-visual__frame {
+  overflow: visible;
   border: 0;
+  border-radius: 0;
   background: none;
   box-shadow: none;
 }

@@ -67,8 +67,8 @@ export function PriceCards({ table, variant }: { table: PriceTable; variant: "ho
             </li>
           ))}
         </ol>
-        {/* Said once for the page; each card carries only the short basis. */}
-        <p className="clip-note clip-note--grid">{keepThaiProse(CLIPS_FOOTNOTE)}</p>
+        {/* The basis of every count is said once, under the clips picker
+            above (PlanRail's footnote); each card carries only the short one. */}
         {/* The legend for the tag three of the cards carry: the tag itself,
             then what it means. */}
         <p className="price-extra">
@@ -98,14 +98,7 @@ export function PriceCards({ table, variant }: { table: PriceTable; variant: "ho
             return (
               <div key={tier} className="price-more__item">
                 <div className="price-more__name">
-                  {/* The reel number too: with it the home page shows the
-                      whole ladder, P0 to P6, not a P0 → P2 jump. */}
-                  <span className="price-more__plan">
-                    <span className="trk tc" aria-hidden="true">
-                      {REEL[tier]}
-                    </span>
-                    {PLAN_COPY[tier].name}
-                  </span>
+                  <span className="price-more__plan">{PLAN_COPY[tier].name}</span>
                   <span className="num price-more__mult">{clipsHeadline(tier)}</span>
                 </div>
                 {high ? <p className="num price-more__high">{keepThaiProse(high)}</p> : null}
@@ -156,9 +149,14 @@ function PriceCard({ tier, table, size }: { tier: Tier; table: PriceTable; size:
   return (
     <article className={classes.join(" ")} data-tier={tier} aria-labelledby={`plan-${size}-${tier}`}>
       <div className="plan__head">
-        <span className="trk tc" aria-hidden="true">
-          {REEL[tier]}
-        </span>
+        {/* The reel number on /pricing, where the whole ladder is in view; the
+            home strip shows four plans out of order with the ladder's others
+            below, so codes there read as gaps. */}
+        {detailed ? (
+          <span className="trk tc" aria-hidden="true">
+            {REEL[tier]}
+          </span>
+        ) : null}
         <h3 className="plan__name" id={`plan-${size}-${tier}`}>
           {copy.name}
         </h3>
