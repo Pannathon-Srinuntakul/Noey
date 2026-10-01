@@ -11,6 +11,7 @@
  * dropped rather than rendered half-broken, and a cover is only kept when
  * its URL is one the page may load (https, or the configured media base).
  */
+import { visualSrc } from "./blog-media";
 import type { FaqItem } from "./faq";
 import { SITE_NAME } from "./site";
 
@@ -171,10 +172,35 @@ export interface BlogRelated {
   publishedAt: string;
 }
 
+/** A picture in the body (the API's `media` list, in reading order). */
+export type BlogMedia =
+  | { type: "image"; url: string; alt: string; width: number | null; height: number | null }
+  | {
+      type: "video";
+      url: string;
+      posterUrl: string | null;
+      alt: string;
+      width: number | null;
+      height: number | null;
+      durationSec: number | null;
+    }
+  | {
+      type: "visual";
+      id: string;
+      /** Built here from the id and the configured embed origin (lib/blog-media.ts). */
+      src: string;
+      alt: string;
+      caption: string;
+      width: number;
+      height: number;
+      animated: boolean;
+    };
+
 export interface BlogPost extends BlogPostSummary {
   contentMd: string;
   faq: FaqItem[];
   related: BlogRelated[];
+  media: BlogMedia[];
 }
 
 export interface BlogListPage {
@@ -325,7 +351,44 @@ function mapFaq(value: unknown): FaqItem[] {
     .slice(0, 10);
 }
 
-export function mapPost(value: unknown, mediaBase: string | null): BlogPost | null {
+/** Media of the store only (an image elsewhere is never a body picture), at most 60. */
+export function mapMedia(value: unknown, mediaBase: string | null, embedOrigin: string | null): BlogMedia[] {
+  if (!Array.isArray(value)) return [];
+  const out: BlogMedia[] = [];
+  for (const item of value.slice(0, 60)) {
+    if (!isObject(item)) continue;
+    const alt = text(item.alt, 300);
+    if (item.type === "visual") {
+      const src = visualSrc(item.id, embedOrigin);
+      const width = dimension(item.width);
+      const height = dimension(item.height);
+      if (!src || !width || !height || typeof item.id !== "string") continue;
+      out.push({ type: "visual", id: item.id, src, alt, caption: text(item.caption, 300), width, height, animated: item.animated === true });
+      continue;
+    }
+    if (item.type !== "image" && item.type !== "video") continue;
+    const url = mediaBase ? allowedImageUrl(item.url, mediaBase) : null;
+    if (!url || !mediaBase || !isUnderMediaBase(url, mediaBase)) continue;
+    if (item.type === "image") {
+      out.push({ type: "image", url: url.toString(), alt, width: dimension(item.width), height: dimension(item.height) });
+      continue;
+    }
+    const poster = allowedImageUrl(item.poster_url, mediaBase);
+    const duration = typeof item.duration_sec === "number" && Number.isFinite(item.duration_sec) && item.duration_sec > 0 ? item.duration_sec : null;
+    out.push({
+      type: "video",
+      url: url.toString(),
+      posterUrl: poster && isUnderMediaBase(poster, mediaBase) ? poster.toString() : null,
+      alt,
+      width: dimension(item.width),
+      height: dimension(item.height),
+      durationSec: duration,
+    });
+  }
+  return out;
+}
+
+export function mapPost(value: unknown, mediaBase: string | null, embedOrigin: string | null = null): BlogPost | null {
   const summary = mapPostSummary(value, mediaBase);
   if (!summary || !isObject(value)) return null;
   const contentMd = typeof value.content_md === "string" ? value.content_md.slice(0, 100_000) : "";
@@ -336,7 +399,7 @@ export function mapPost(value: unknown, mediaBase: string | null): BlogPost | nu
         .filter((item): item is BlogRelated => item !== null && item.slug !== summary.slug)
         .slice(0, 3)
     : [];
-  return { ...summary, contentMd, faq: mapFaq(value.faq), related };
+  return { ...summary, contentMd, faq: mapFaq(value.faq), related, media: mapMedia(value.media, mediaBase, embedOrigin) };
 }
 
 export function mapListPage(value: unknown, mediaBase: string | null): BlogListPage | null {

@@ -220,6 +220,39 @@ function imageObject(image: JsonLdImage): JsonLdNode {
   };
 }
 
+export interface JsonLdVideo {
+  name: string;
+  description: string;
+  contentUrl: string;
+  thumbnailUrl: string;
+  uploadDate: string;
+  width?: number | null;
+  height?: number | null;
+  /** Seconds. */
+  duration?: number | null;
+}
+
+/** ISO 8601 duration of whole seconds: 5.4 → "PT5S", 75 → "PT1M15S". */
+export function isoDuration(seconds: number): string {
+  const total = Math.max(1, Math.round(seconds));
+  const minutes = Math.floor(total / 60);
+  return `PT${minutes ? `${minutes}M` : ""}${total % 60 || !minutes ? `${total % 60}S` : ""}`;
+}
+
+function videoObject(video: JsonLdVideo): JsonLdNode {
+  return {
+    "@type": "VideoObject",
+    name: video.name,
+    description: video.description,
+    contentUrl: video.contentUrl,
+    thumbnailUrl: video.thumbnailUrl,
+    uploadDate: video.uploadDate,
+    ...(video.width ? { width: video.width } : {}),
+    ...(video.height ? { height: video.height } : {}),
+    ...(video.duration ? { duration: isoDuration(video.duration) } : {}),
+  };
+}
+
 export interface BlogPostingInput {
   path: string;
   headline: string;
@@ -229,6 +262,10 @@ export interface BlogPostingInput {
   dateModified: string;
   /** The post's cover, or the generated share image when it has none. */
   image: JsonLdImage;
+  /** Real images in the body (media-library pictures), after the cover. HTML visuals are not images. */
+  bodyImages?: readonly JsonLdImage[];
+  /** Library clips in the body. */
+  videos?: readonly JsonLdVideo[];
   section?: string;
   keywords?: readonly string[];
   /** The Blog the post belongs to (named in full: the post's page does not carry the Blog node). */
@@ -248,7 +285,8 @@ export function blogPostingNode(input: BlogPostingInput): JsonLdNode {
     url,
     headline: input.headline,
     description: input.description,
-    image: imageObject(input.image),
+    image: input.bodyImages?.length ? [input.image, ...input.bodyImages].map(imageObject) : imageObject(input.image),
+    ...(input.videos?.length ? { video: input.videos.map(videoObject) } : {}),
     inLanguage: LANG,
     datePublished: input.datePublished,
     dateModified: input.dateModified,

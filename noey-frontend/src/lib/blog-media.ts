@@ -50,3 +50,39 @@ export function blogMediaCspOrigin(base: string | null): string | null {
   const url = new URL(base);
   return url.protocol === "https:" ? null : url.origin;
 }
+
+// ─── In-article visuals (BLOG_CONTRACT.md, "Changes" 2026-10-02) ────────────
+//
+// A post's `::visual[alt](id)` is HTML the backend serves from its own
+// cookieless origin (BLOG_EMBED_PUBLIC_URL, https://embed.noeystudio.com) and
+// the page shows in `<iframe sandbox="allow-scripts">`. The site builds the
+// URL itself from the id — never from a URL in the API answer — and CSP
+// `frame-src` gains exactly this origin.
+
+export const DEFAULT_BLOG_EMBED_PUBLIC_URL = "https://embed.noeystudio.com";
+const VISUAL_ID = /^[0-9a-f]{32}$/;
+
+/**
+ * The embed origin, normalised; null when unusable. https only, unless
+ * BLOG_EMBED_ALLOW_HTTP=1 (local testing against a backend on http://…).
+ */
+export function blogEmbedOrigin(
+  raw: string | undefined = process.env.BLOG_EMBED_PUBLIC_URL,
+  allowHttp: boolean = process.env.BLOG_EMBED_ALLOW_HTTP === "1",
+): string | null {
+  const value = (raw ?? "").trim() || DEFAULT_BLOG_EMBED_PUBLIC_URL;
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return null;
+  }
+  if (url.username || url.password || url.search || url.hash) return null;
+  if (url.protocol !== "https:" && !(allowHttp && url.protocol === "http:")) return null;
+  return url.origin;
+}
+
+/** `<origin>/visual/<id>` for a well-formed id; null otherwise. */
+export function visualSrc(id: unknown, origin: string | null): string | null {
+  return origin && typeof id === "string" && VISUAL_ID.test(id) ? `${origin}/visual/${id}` : null;
+}

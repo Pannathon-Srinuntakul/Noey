@@ -15,7 +15,7 @@ import {
   type BlogSlug,
   type BlogTag,
 } from "../blog";
-import { blogMediaBase } from "../blog-media";
+import { blogEmbedOrigin, blogMediaBase } from "../blog-media";
 import { API_URL } from "./config";
 
 /**
@@ -158,7 +158,7 @@ export async function getBlogPost(slug: string): Promise<BlogResult<BlogPost | n
     : await getJson(`/blog/posts/${slug}`, BLOG_POST_REVALIDATE, ["blog", `blog:${slug}`]);
   if (status === 404) return { ok: true, data: null };
   if (status !== 200) return { ok: false };
-  const post = mapPost(body, mediaBase());
+  const post = mapPost(body, mediaBase(), blogEmbedOrigin());
   // A 200 whose body is not a usable post, or is another post: not this page's.
   if (!post) return { ok: false };
   return { ok: true, data: post.slug === slug ? post : null };

@@ -90,6 +90,14 @@ export function absolutizeMarkdownLinks(markdown: string): string {
   return markdown.replace(/(\]\()(\/(?!\/)[^)\s]*)/g, (_, open: string, path: string) => `${open}${absoluteUrl(path)}`);
 }
 
+/**
+ * A `::visual[alt](id)` line is HTML drawn in the page, not something a
+ * Markdown reader can show: the twin says what it pictures instead.
+ */
+export function describeVisuals(markdown: string): string {
+  return markdown.replace(/^ {0,3}::visual\[([^\]\n]*)\]\([0-9a-f]{32}\)[ \t]*$/gm, (_, alt: string) => `*[ภาพประกอบ: ${alt.trim() || "ภาพ"}]*`);
+}
+
 const date = (iso: string) => iso.slice(0, 10);
 
 /** /blog/<slug>.md — the post as its page shows it: header, answer, body, FAQ, related reading. */
@@ -105,7 +113,7 @@ export function buildPostMarkdown(post: BlogPost): string {
     `- เวลาอ่าน: ${post.readingMinutes} นาที`,
     "",
     ...(post.excerpt ? [`> ${post.excerpt}`, ""] : []),
-    absolutizeMarkdownLinks(post.contentMd.trim()),
+    absolutizeMarkdownLinks(describeVisuals(post.contentMd.trim())),
     "",
   ];
   if (post.faq.length) {

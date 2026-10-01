@@ -14,6 +14,15 @@
  *
  * GitHub-flavoured Markdown: tables, task lists, strikethrough, autolinks
  * and footnotes.
+ *
+ * Pictures beyond plain images (BLOG_CONTRACT.md, "Changes" 2026-10-02):
+ *  - `::visual[alt](id)` alone in its paragraph is an HTML visual. Markdown
+ *    reads it as the text "::visual" followed by a link; after sanitising,
+ *    such a paragraph becomes a `<div data-visual="<id>" data-alt="…">`
+ *    placeholder that ArticleBody draws as the sandboxed iframe. Anything
+ *    else that merely looks like it stays plain text.
+ *  - `![alt](….mp4)` is a library video; the first one in the post is marked
+ *    `data-first-video` (it alone preloads metadata).
  */
 import type { Element, ElementContent, Root, RootContent } from "hast";
 import { toString } from "hast-util-to-string";
@@ -93,12 +102,36 @@ function uniqueId(base: string, used: Set<string>): string {
   return id;
 }
 
+const VISUAL_ID = /^[0-9a-f]{32}$/;
+
+/** The id of a `::visual[alt](id)` paragraph, with its alt text; null for any other node. */
+export function visualOf(node: RootContent | ElementContent): { id: string; alt: string } | null {
+  if (!isElement(node, "p")) return null;
+  const content = node.children.filter((child) => !isBlank(child));
+  if (content.length !== 2) return null;
+  const [marker, link] = content;
+  if (marker.type !== "text" || marker.value.trim() !== "::visual" || !isElement(link, "a")) return null;
+  const id = link.properties?.href;
+  if (typeof id !== "string" || !VISUAL_ID.test(id)) return null;
+  return { id, alt: toString(link).trim() };
+}
+
+/** A video in a post is an image node whose URL ends in .mp4. */
+export function isVideoSrc(src: unknown): boolean {
+  return typeof src === "string" && /\.mp4$/i.test(src.split(/[?#]/)[0]);
+}
+
 /**
  * A paragraph that holds nothing but one image becomes that image, marked
- * standalone (drawn as a figure): a <figure> may not sit inside a <p>.
+ * standalone (drawn as a figure): a <figure> may not sit inside a <p>. A
+ * `::visual` paragraph becomes the visual's placeholder.
  */
 function liftStandaloneImages(nodes: RootContent[]): RootContent[] {
   return nodes.map((node) => {
+    const visual = visualOf(node);
+    if (visual) {
+      return { type: "element", tagName: "div", properties: { dataVisual: visual.id, dataAlt: visual.alt }, children: [] } as Element;
+    }
     if (!isElement(node, "p")) return node;
     const content = node.children.filter((child) => !isBlank(child));
     if (content.length === 1 && isElement(content[0], "img")) {
@@ -107,6 +140,20 @@ function liftStandaloneImages(nodes: RootContent[]): RootContent[] {
     }
     return node;
   });
+}
+
+/** Marks the first video of the post (in reading order) — the one that preloads metadata. */
+function markFirstVideo(nodes: readonly (RootContent | ElementContent)[], state = { done: false }): void {
+  for (const node of nodes) {
+    if (state.done) return;
+    if (node.type !== "element") continue;
+    if (node.tagName === "img" && isVideoSrc(node.properties?.src)) {
+      node.properties = { ...node.properties, dataFirstVideo: "" };
+      state.done = true;
+      return;
+    }
+    markFirstVideo(node.children, state);
+  }
 }
 
 /** Elements whose text is code or drawing, never prose. */
@@ -145,7 +192,10 @@ export function wrapThaiRuns(node: Root | Element): void {
 export function articleParts(markdown: string): ArticleParts {
   const root = markdownToHast(markdown);
   wrapThaiRuns(root);
-  const nodes = liftStandaloneImages(root.children).filter((node) => node.type !== "doctype" && !isBlank(node));
+  // Visual placeholders and the first video, before the parts are cut up.
+  const lifted = liftStandaloneImages(root.children);
+  markFirstVideo(lifted);
+  const nodes = lifted.filter((node) => node.type !== "doctype" && !isBlank(node));
   const used = new Set<string>();
   const parts: ArticleParts = { answer: null, intro: [], sections: [], toc: [] };
   let sub = 0;

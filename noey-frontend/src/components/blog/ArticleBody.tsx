@@ -4,12 +4,14 @@ import Link from "next/link";
 import type { ComponentProps, ReactNode } from "react";
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
 import { IconExternal } from "@/components/ds/icons";
-import { allowedImageUrl, isUnderMediaBase } from "@/lib/blog";
+import { allowedImageUrl, isUnderMediaBase, type BlogMedia } from "@/lib/blog";
 import { blogMediaBase } from "@/lib/blog-media";
-import { linkTarget } from "@/lib/blog-markdown";
+import { isVideoSrc, linkTarget } from "@/lib/blog-markdown";
 import { blogImageSize } from "@/lib/server/blog-images";
 import { SITE_URL } from "@/lib/site";
 import { isOptimizable } from "./BlogImage";
+import { BlogVideo } from "./BlogVideo";
+import { BlogVisual } from "./BlogVisual";
 import { FigureImage } from "./FigureImage";
 
 /**
@@ -19,6 +21,10 @@ import { FigureImage } from "./FigureImage";
  * images are next/image at their real size (no layout shift) and give way
  * to a plain frame when the file does not load (FigureImage), tables scroll
  * inside their frame on a phone. Server component; no raw HTML anywhere.
+ *
+ * The post's `media` list (BLOG_CONTRACT.md) gives every body picture its
+ * size up front: images, library videos (BlogVideo) and HTML visuals
+ * (BlogVisual — a `::visual` placeholder from lib/blog-markdown.ts).
  */
 
 const SITE_HOSTS = [new URL(SITE_URL).host.toLowerCase(), "noeystudio.com", "www.noeystudio.com"];
@@ -49,18 +55,45 @@ function MarkdownLink({ href, children, className, ...rest }: ComponentProps<"a"
   );
 }
 
-type ImageProps = ComponentProps<"img"> & { "data-standalone"?: string; "data-eager"?: string };
+type ImageProps = ComponentProps<"img"> & { "data-standalone"?: string; "data-eager"?: string; "data-first-video"?: string };
 
 const FIGURE_SIZES = "(min-width: 1200px) 660px, (min-width: 720px) 660px, calc(100vw - 32px)";
 
-async function MarkdownImage({ src, alt, title, "data-standalone": standalone, "data-eager": eager }: ImageProps) {
+async function MarkdownImage({
+  src,
+  alt,
+  title,
+  "data-standalone": standalone,
+  "data-eager": eager,
+  "data-first-video": firstVideo,
+  media,
+}: ImageProps & { media: MediaIndex }) {
   const base = blogMediaBase();
   const url = allowedImageUrl(src, base);
   if (!url) return null;
-  // Only the media store's own files are fetched to read their size: an
-  // image elsewhere is never requested by this server.
-  const size = base && isUnderMediaBase(url, base) ? await blogImageSize(url.toString()) : null;
+  const known = media.byUrl.get(url.toString());
   const text = typeof alt === "string" ? alt : "";
+  if (isVideoSrc(url.pathname)) {
+    // A clip is only ever one of the store's own files, drawn as its own figure.
+    if (!base || !isUnderMediaBase(url, base)) return null;
+    const video = known?.type === "video" ? known : null;
+    return (
+      <BlogVideo
+        src={url.toString()}
+        poster={video?.posterUrl ?? null}
+        alt={text}
+        caption={typeof title === "string" && title ? title : text}
+        width={video?.width ?? null}
+        height={video?.height ?? null}
+        first={firstVideo !== undefined}
+        inline={standalone === undefined}
+      />
+    );
+  }
+  // The size the API reported, else read from the file — only the media
+  // store's own files are fetched: an image elsewhere is never requested here.
+  const listed = known?.type === "image" && known.width && known.height ? { width: known.width, height: known.height } : null;
+  const size = listed ?? (base && isUnderMediaBase(url, base) ? await blogImageSize(url.toString()) : null);
   const picture = (
     <FigureImage
       src={url.toString()}
@@ -97,18 +130,55 @@ function MarkdownPre(props: ComponentProps<"pre">) {
   return <pre {...props} tabIndex={0} />;
 }
 
-const COMPONENTS: Partial<Components> = {
+/** The post's media list, looked up by URL (images, videos) and id (visuals). */
+export interface MediaIndex {
+  byUrl: Map<string, BlogMedia>;
+  byVisual: Map<string, Extract<BlogMedia, { type: "visual" }>>;
+}
+
+export function mediaIndex(media: readonly BlogMedia[] = []): MediaIndex {
+  const index: MediaIndex = { byUrl: new Map(), byVisual: new Map() };
+  for (const item of media) {
+    if (item.type === "visual") index.byVisual.set(item.id, item);
+    else index.byUrl.set(item.url, item);
+  }
+  return index;
+}
+
+/** A `<div data-visual>` placeholder → the visual; any other div as it is. */
+function MarkdownDiv({ media, ...props }: ComponentProps<"div"> & { "data-visual"?: string; "data-alt"?: string; media: MediaIndex }) {
+  const id = props["data-visual"];
+  if (id === undefined) return <div {...props} />;
+  const visual = media.byVisual.get(id);
+  // An id the API does not list (deleted, or never made) draws nothing.
+  if (!visual) return null;
+  return (
+    <BlogVisual
+      src={visual.src}
+      alt={(props["data-alt"] ?? "").trim() || visual.alt}
+      caption={visual.caption}
+      width={visual.width}
+      height={visual.height}
+    />
+  );
+}
+
+const BASE_COMPONENTS: Partial<Components> = {
   pre: MarkdownPre as Components["pre"],
   a: MarkdownLink as Components["a"],
-  img: MarkdownImage as unknown as Components["img"],
   table: MarkdownTable as Components["table"],
 };
 
-/** Hast content → React, with the site's components. */
-export function renderHast(content: Element | ElementContent[] | Root): ReactNode {
+/** Hast content → React, with the site's components; `media` = the post's media list. */
+export function renderHast(content: Element | ElementContent[] | Root, media: MediaIndex = mediaIndex()): ReactNode {
   const root: Root =
     "type" in content && content.type === "root"
       ? content
       : { type: "root", children: Array.isArray(content) ? content : [content as Element] };
-  return toJsxRuntime(root, { Fragment, jsx, jsxs, components: COMPONENTS, passNode: false });
+  const components: Partial<Components> = {
+    ...BASE_COMPONENTS,
+    img: ((props: ImageProps) => <MarkdownImage {...props} media={media} />) as unknown as Components["img"],
+    div: ((props: ComponentProps<"div">) => <MarkdownDiv {...props} media={media} />) as unknown as Components["div"],
+  };
+  return toJsxRuntime(root, { Fragment, jsx, jsxs, components, passNode: false });
 }

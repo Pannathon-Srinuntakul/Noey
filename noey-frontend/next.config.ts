@@ -1,6 +1,6 @@
 import type { NextConfig } from "next";
 import { PHASE_PRODUCTION_BUILD } from "next/constants";
-import { blogMediaBase, blogMediaCspOrigin, blogMediaRemotePattern } from "./src/lib/blog-media";
+import { blogEmbedOrigin, blogMediaBase, blogMediaCspOrigin, blogMediaRemotePattern } from "./src/lib/blog-media";
 import { STATIC_CSP_SOURCE, staticContentSecurityPolicy } from "./src/lib/csp";
 import { sentryDsn, sentryIngestOrigin } from "./src/lib/sentry-config";
 
@@ -28,11 +28,17 @@ if (process.env.BLOG_MEDIA_PUBLIC_URL && !blogMedia) {
   console.warn("[noey] BLOG_MEDIA_PUBLIC_URL is not an http(s) URL without a query: blog images will not be optimised.");
 }
 const blogMediaPattern = blogMediaRemotePattern(blogMedia);
+// Where in-article visuals are framed from (BLOG_EMBED_PUBLIC_URL, read at
+// BUILD time like the media base; http only with BLOG_EMBED_ALLOW_HTTP=1).
+const blogEmbed = blogEmbedOrigin();
+if (process.env.BLOG_EMBED_PUBLIC_URL && !blogEmbed) {
+  console.warn("[noey] BLOG_EMBED_PUBLIC_URL is not usable (https, or http with BLOG_EMBED_ALLOW_HTTP=1): visuals will not show.");
+}
 
 // The CSP itself lives in src/lib/csp.ts (static policy here, nonce policy
 // in src/proxy.ts for /account and /checkout).
 const sentryOrigin = sentryIngestOrigin(sentryDsn());
-const contentSecurityPolicy = staticContentSecurityPolicy(sentryOrigin, blogMediaCspOrigin(blogMedia));
+const contentSecurityPolicy = staticContentSecurityPolicy(sentryOrigin, blogMediaCspOrigin(blogMedia), blogEmbed);
 
 // Blog listings: the public URL (`/blog?page=N`) is served by a static param
 // route (app/blog/page/[page], …/category/[slug]/page/[page], …/tag/…).
@@ -62,7 +68,11 @@ const nextConfig: NextConfig = {
   poweredByHeader: false,
   // Frozen at build time, like the image patterns built from it, so the
   // server's "may this image be optimised?" can never disagree with them.
-  env: { BLOG_MEDIA_PUBLIC_URL: blogMedia ?? "" },
+  env: {
+    BLOG_MEDIA_PUBLIC_URL: blogMedia ?? "",
+    BLOG_EMBED_PUBLIC_URL: blogEmbed ?? "",
+    BLOG_EMBED_ALLOW_HTTP: process.env.BLOG_EMBED_ALLOW_HTTP === "1" ? "1" : "",
+  },
   images: {
     remotePatterns: blogMediaPattern ? [blogMediaPattern] : [],
     qualities: [75],
