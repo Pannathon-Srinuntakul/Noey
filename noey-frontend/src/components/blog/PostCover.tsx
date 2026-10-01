@@ -24,7 +24,7 @@ const MAX_RATIO = 21 / 9;
  * `hero`: the post's own page, at the picture's shape when it is a sensible
  * one, fetched first.
  */
-export function PostCover({ post, variant, sizes }: { post: CoverPost; variant: "card" | "feature" | "hero"; sizes: string }) {
+export function PostCover({ post, variant, sizes, eager }: { post: CoverPost; variant: "card" | "feature" | "hero"; sizes: string; eager?: boolean }) {
   const cover = post.cover;
   if (!cover) {
     return (
@@ -51,7 +51,7 @@ export function PostCover({ post, variant, sizes }: { post: CoverPost; variant: 
   }
   return (
     <figure className={`cover cover--${variant}`}>
-      <CoverImage {...common} alt={variant === "hero" ? cover.alt : ""} fill eager={variant !== "card"} />
+      <CoverImage {...common} alt={variant === "hero" ? cover.alt : ""} fill eager={eager ?? variant !== "card"} />
     </figure>
   );
 }

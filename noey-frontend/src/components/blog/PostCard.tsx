@@ -34,6 +34,7 @@ export function PostCard({
   titleAs: Title = "h2",
   variant = "card",
   sizes,
+  eagerCover,
 }: {
   post: CardPost;
   /** The category's track label (V1, V2 …), from its place in the category list. */
@@ -41,6 +42,8 @@ export function PostCard({
   titleAs?: "h2" | "h3";
   variant?: "card" | "feature" | "compact";
   sizes?: string;
+  /** The first picture on a page with no featured post: fetched at once, like the feature's. */
+  eagerCover?: boolean;
 }) {
   const minutes = post.readingMinutes;
   const share = minutes ? Math.min(1, minutes / LENGTH_SCALE_MIN) : null;
@@ -50,6 +53,7 @@ export function PostCard({
         <PostCover
           post={post}
           variant={variant === "feature" ? "feature" : "card"}
+          eager={eagerCover}
           sizes={sizes ?? (variant === "feature" ? "(min-width: 1024px) 720px, calc(100vw - 32px)" : "(min-width: 1100px) 400px, (min-width: 700px) 50vw, calc(100vw - 32px)")}
         />
       )}

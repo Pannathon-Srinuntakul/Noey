@@ -124,9 +124,9 @@ export function BlogListing({
                   <span className="blog-bin__rule" />
                 </div>
                 <ul className="blog-grid" data-reveal="stagger">
-                  {rest.map((post) => (
+                  {rest.map((post, index) => (
                     <li key={post.slug}>
-                      <PostCard post={post} track={tracks.get(post.category.slug)} />
+                      <PostCard post={post} track={tracks.get(post.category.slug)} eagerCover={!featured && index === 0} />
                     </li>
                   ))}
                 </ul>
