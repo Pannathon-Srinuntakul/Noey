@@ -10,10 +10,11 @@ from packages.core.settings import (
     is_loopback_host,
 )
 from packages.email.message import Address, Mailer
+from packages.email.resend import ResendMailer
 from packages.email.sendgrid import SendGridMailer
 from packages.email.smtp import DEFAULT_PORTS, SECURITY_MODES, SmtpMailer
 
-TRANSPORTS = ("sendgrid", "smtp")
+TRANSPORTS = ("sendgrid", "resend", "smtp")
 
 
 def _transport(s: Settings) -> str:
@@ -42,11 +43,14 @@ def email_config_problem(settings: Settings | None = None) -> str | None:
     s = settings or get_settings()
     transport = _transport(s)
     if transport not in TRANSPORTS:
-        return "email is misconfigured on this server (EMAIL_TRANSPORT must be sendgrid or smtp)"
+        return "email is misconfigured on this server (EMAIL_TRANSPORT must be sendgrid, resend or smtp)"
     if transport == "smtp":
         problem = _smtp_problem(s)
         if problem:
             return problem
+    elif transport == "resend":
+        if not (s.resend_api_key or "").strip():
+            return "email is not configured on this server (RESEND_API_KEY is not set)"
     elif not (s.sendgrid_api_key or "").strip():
         return "email is not configured on this server (SENDGRID_API_KEY is not set)"
     if not (s.email_from_address or "").strip():
@@ -70,6 +74,11 @@ def contact_config_problem(settings: Settings | None = None) -> str | None:
 @lru_cache(maxsize=1)
 def _mailer_for(api_key: str, from_address: str, from_name: str) -> SendGridMailer:
     return SendGridMailer(api_key, Address(from_address, from_name))
+
+
+@lru_cache(maxsize=1)
+def _resend_mailer_for(api_key: str, from_address: str, from_name: str) -> ResendMailer:
+    return ResendMailer(api_key, Address(from_address, from_name))
 
 
 @lru_cache(maxsize=1)
@@ -108,6 +117,12 @@ def get_mailer(settings: Settings | None = None) -> Mailer | None:
             (s.smtp_username or "").strip() or None,
             s.smtp_password or None,
             s.smtp_timeout_sec,
+            (s.email_from_address or "").strip(),
+            s.email_from_name.strip() or "Noey Studio",
+        )
+    if _transport(s) == "resend":
+        return _resend_mailer_for(
+            (s.resend_api_key or "").strip(),
             (s.email_from_address or "").strip(),
             s.email_from_name.strip() or "Noey Studio",
         )

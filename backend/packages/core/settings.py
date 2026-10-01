@@ -591,10 +591,13 @@ class Settings(BaseSettings):
     #: Unverified, non-admin accounts cannot START paid AI work (403) — see
     #: services/api/ai_gate.py for the endpoints it covers.
     require_verified_email_for_ai: bool = True
-    #: Which transport delivers mail: ``sendgrid`` (HTTP API, SENDGRID_API_KEY)
-    #: or ``smtp`` (any provider's SMTP relay, the SMTP_* settings below).
+    #: Which transport delivers mail: ``sendgrid`` (HTTP API, SENDGRID_API_KEY),
+    #: ``resend`` (HTTP API, RESEND_API_KEY) or ``smtp`` (any provider's SMTP relay, the SMTP_* settings below).
     #: Everything else — templates, the 503 when unconfigured — is shared.
     email_transport: str = "sendgrid"
+    #: EMAIL_TRANSPORT=resend: Resend's HTTP API key (packages/email/resend.py).
+    #: Railway cannot reach SMTP relays from this plan; HTTPS works.
+    resend_api_key: str | None = None
 
     # --- SMTP transport (EMAIL_TRANSPORT=smtp) — docs/email-sendgrid.md §SMTP ---
     smtp_host: str | None = None
