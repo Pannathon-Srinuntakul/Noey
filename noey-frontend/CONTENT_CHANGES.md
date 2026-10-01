@@ -759,6 +759,37 @@ points to the calculator (`/pricing#pricing-plans-title`).
   ไม่เท่ากันตามโหมดและความยาวคลิปดิบ ตัวเลขจริงจึงต่างจากตัวเลขตั้งต้นนี้ได้มาก
   หน้าราคามีตัวคำนวณให้เลือกโหมดและความยาวคลิปดิบเอง: [link]".
 
+## 32. Loading states (LOADING_PROMPT.md, 2026-10-01)
+
+No sentence was reworded or removed. What a visitor can now read while
+waiting:
+
+- "กำลังโหลด" — every route loading state (the account, /verify-email,
+  /checkout/success), in its `role="status"` line, and on the header ruler's
+  tag under reduced motion (decoration there; the ruler is hidden from
+  assistive technology).
+- "กำลังเปิดห้องตัดต่อ" — the render card from a click on "เปิดห้องตัดต่อ"
+  until the editor opens, and the polite status line screen readers hear.
+- The forms' existing "กำลัง…" labels ("กำลังเข้าสู่ระบบ…", "กำลังส่ง…",
+  "กำลังบันทึก…", "กำลังสมัคร…", "กำลังดำเนินการ…", "กำลังไปหน้าชำระเงิน…",
+  "กำลังยกเลิก…", "กำลังเปิด…", "กำลังเปลี่ยน…", "กำลังลบบัญชี…") are unchanged;
+  they now replace the button's label 150 ms after the press, so a quick
+  answer shows none of them. The plan dialog's "เปลี่ยนบัตร" / "เพิ่มบัตรเครดิต"
+  button keeps its own words while it waits.
+- Decoration, hidden from assistive technology: the loading card's and the
+  render card's title strip says "RENDERING" (the word the pending status
+  card already used), and both count the wait on a timecode
+  (`00:00:01:12`) — real elapsed time, never a percentage. The account
+  skeletons show the cards' existing strip names ("ห้องตัดต่อ", "สรุปบัญชี",
+  "รอบปัจจุบัน", "งานที่ใช้โควตาในรอบนี้", "แพลนปัจจุบัน", "การชำระเงิน",
+  "ข้อมูลส่วนตัว", "ความปลอดภัย") and the status skeletons their task
+  ("ยืนยันอีเมล", "การชำระเงิน"); everything else in a skeleton is a bar.
+- /account while the account is read: the greeting shows the name the header
+  already shows ("สวัสดี คุณ<name>", from the sign-in cookie), then the
+  backend's.
+- The phone menu's "บัญชีของฉัน" button marks itself as the current page on
+  /account, as the sheet's other buttons do on theirs.
+
 ## Text added (not replacing anything)
 
 Only labels, no claims:
