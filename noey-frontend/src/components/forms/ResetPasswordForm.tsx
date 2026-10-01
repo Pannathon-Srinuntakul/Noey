@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useActionState } from "react";
 import { resetPasswordAction } from "@/app/actions/auth";
 import type { ActionState } from "@/lib/messages";
+import { submitKeepingValues } from "./keepValues";
 
 /** New password + confirmation -> POST /auth/reset-password (via a Server Action). */
 export function ResetPasswordForm({ token }: { token: string }) {
@@ -11,7 +12,8 @@ export function ResetPasswordForm({ token }: { token: string }) {
   const errors = state?.fieldErrors ?? {};
 
   return (
-    <form action={action} className="stack">
+    // Checked by the server action (the rule, the two fields matching), in Thai under each field.
+    <form action={action} onSubmit={submitKeepingValues(action)} className="stack" noValidate>
       {/* The token only travels back to our own server; the action never logs or echoes it. */}
       <input type="hidden" name="token" value={token} />
       <input type="text" name="username" autoComplete="username" hidden readOnly />

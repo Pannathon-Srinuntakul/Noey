@@ -164,6 +164,14 @@ const KEEP_TOGETHER = [
   "ถ่ายไม่ใช่ปัญหา",
   "ขอบคุณที่ทักมา",
   "ช้ากว่า",
+  "เนื้อหาที่ AI สร้างขึ้น",
+  "หยุดให้บริการ",
+  "ชื่อหรืออีเมลของคุณ",
+  "คลิปยาว",
+  "ทีละงาน",
+  "ทีละบรรทัด",
+  "ลงคลิป",
+  "ถูกถามซ้ำ",
   // Home, /scope, /pricing (final review): phrases a narrow column split.
   "แบบไหน",
   "แก้เอง",
@@ -192,17 +200,30 @@ const KEEP_TOGETHER = [
   "ตั้งแต่ต้นจนจบ",
   "สวยกว่า",
   "เกลางาน",
+  // Account pages (final review): phrases the account cards split.
+  "ส่วนการสร้างโปรเจกต์",
+  "อยู่ในห้องตัดต่อ",
+  "บนเว็บทั้งหมด",
+  "“เข้าสู่ระบบด้วย Google” ได้",
+  "จะแสดงรายละเอียด",
+  "ต่ออายุในอีก",
+  "ใช้ได้อีก",
+  "จุดตัดแม่นขึ้น",
 ];
 
 /** A number and its unit stay on one line ("10 GB", "499 บาท", "30 นาที"), and so
- * does a plan name with the value after it ("Starter 20 นาที") and an estimate
- * with its "ราว" ("ราว 22 คลิป"). */
+ * does a plan name with the value after it ("Starter 20 นาที"), an estimate
+ * with its "ราว" ("ราว 22 คลิป") and a limit with its "ภายใน" ("ภายใน 10 GB"). */
 const NUMBER_UNIT =
-  "(?:(?:ฟรี|Lite|Starter|Pro|Studio|Agency|Max|ราว) )?\\d[\\d,.]*\\s(?:GB|MB|นาที|วินาที|บาท|คลิป|โปรเจกต์|งาน|วัน|ชั่วโมง|เดือน|ไฟล์|ปี)";
+  "(?:(?:ฟรี|Lite|Starter|Pro|Studio|Agency|Max|ราว|ภายใน) )?\\d[\\d,.]*\\s(?:GB|MB|นาที|วินาที|บาท|คลิป|โปรเจกต์|งาน|วัน|ชั่วโมง|เดือน|ไฟล์|ปี)";
+
+/** A date stays on one line: "31 ธ.ค. 2026", "26 กันยายน 2569", "13 ต.ค.". */
+const DATE =
+  "\\d{1,2} (?:ม\\.ค\\.|ก\\.พ\\.|มี\\.ค\\.|เม\\.ย\\.|พ\\.ค\\.|มิ\\.ย\\.|ก\\.ค\\.|ส\\.ค\\.|ก\\.ย\\.|ต\\.ค\\.|พ\\.ย\\.|ธ\\.ค\\.|มกราคม|กุมภาพันธ์|มีนาคม|เมษายน|พฤษภาคม|มิถุนายน|กรกฎาคม|สิงหาคม|กันยายน|ตุลาคม|พฤศจิกายน|ธันวาคม)(?: \\d{4})?";
 
 const escape = (word: string) => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const PATTERN = new RegExp(
-  `(${NUMBER_UNIT}|${[...KEEP_TOGETHER].sort((a, b) => b.length - a.length).map(escape).join("|")})`,
+  `(${DATE}|${NUMBER_UNIT}|${[...KEEP_TOGETHER].sort((a, b) => b.length - a.length).map(escape).join("|")})`,
   "g",
 );
 

@@ -54,6 +54,11 @@ describe("keepThaiProse", () => {
     expect(kept(keepThaiProse("เมื่อเป็นการเปลี่ยนแปลงสาระสำคัญ")).some((run) => run.startsWith("เป็นการ"))).toBe(true);
   });
 
+  it("keeps a date on one line", () => {
+    expect(kept(keepThai("ราคาเบต้าสิ้นสุด 31 ธ.ค. 2026 รอบบิลถัดไป"))).toContain("31 ธ.ค. 2026");
+    expect(kept(keepThaiProse("อัปเดตล่าสุด 26 กันยายน 2569 โดยทีมงาน"))).toContain("26 กันยายน 2569");
+  });
+
   it("puts a no-break space before ๆ", () => {
     expect(runs(keepThaiProse("ประโยคสั้น ๆ ให้อ่าน")).map(([text]) => text).join("")).toBe("ประโยคสั้น ๆ ให้อ่าน");
     expect(runs(keepThai("สั้น ๆ")).map(([text]) => text).join("")).toBe("สั้น ๆ");

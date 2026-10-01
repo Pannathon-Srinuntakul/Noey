@@ -173,11 +173,18 @@
 
 /* ── Contact, held beside the story ─────────────────────────────────────── */
 
-/* Under the story (tablet widths) the card keeps a form's width, on the
-   page's own margin (the rail has ended above it). */
+/* Under the story (tablet widths) the card runs the page's width (the rail
+   has ended above it), its form in two columns. */
 @media (min-width: 640px) and (max-width: 1099px) {
-  .about-contact {
-    max-width: 640px;
+  /* The card runs the content width, name and email side by side. */
+  #contact form.stack {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: 16px;
+  }
+
+  #contact form.stack > :not(:nth-child(-n + 2)) {
+    grid-column: 1 / -1;
   }
 }
 
@@ -334,6 +341,18 @@
   color: var(--ink-2);
 }
 
+.locked__text a {
+  color: var(--gold-ink);
+  font-weight: 500;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--color-accent) 55%, transparent);
+  text-underline-offset: 4px;
+}
+
+.locked__text a:hover {
+  text-decoration-color: currentColor;
+}
+
 @media (prefers-reduced-motion: no-preference) {
   .locked[data-reveal-state="in"] .locked__lock {
     animation: lock-shut 520ms var(--ease-out) both;
@@ -419,6 +438,7 @@
 }
 
 #contact .form-success {
+  width: 100%;
   padding: 14px 16px 14px 18px;
   border: 1px solid color-mix(in srgb, var(--color-success) 55%, transparent);
   border-left: 4px solid var(--success);

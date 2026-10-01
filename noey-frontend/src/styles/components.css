@@ -679,7 +679,11 @@
   border-top: 1px solid var(--line);
 }
 
+/* The answer starts where the question does: the cue has a set width, and
+   the answer's indent is the row's padding + that width + the gap. */
 .faq {
+  --faq-pad: 4px;
+  --faq-cue: 32px;
   border-bottom: 1px solid var(--line);
 }
 
@@ -691,7 +695,7 @@
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 16px;
-  padding: 22px 4px;
+  padding: 22px var(--faq-pad);
   cursor: pointer;
   transition: background-color var(--dur-2) ease;
 }
@@ -705,6 +709,7 @@
 }
 
 .faq__cue {
+  width: var(--faq-cue);
   color: var(--ink-3);
 }
 
@@ -756,7 +761,7 @@
 }
 
 .faq__a {
-  padding: 0 44px 24px calc(4px + 16px + 3.2em);
+  padding: 0 44px 24px calc(var(--faq-pad) + var(--faq-cue) + 16px);
   font-size: var(--fs-16);
   line-height: 1.85;
   color: var(--ink-2);
@@ -767,8 +772,12 @@
   margin: 0;
 }
 
+.faq-list--compact .faq {
+  --faq-pad: 2px;
+}
+
 .faq-list--compact .faq summary {
-  padding: 18px 2px;
+  padding-block: 18px;
 }
 
 .faq-list--compact .faq__q {
@@ -1394,9 +1403,10 @@
     margin-left: calc(-53% - 16px);
   }
 
-  /* The ruler's times at a legible size; the first is outside the crop. */
+  /* The ruler's times at a legible size (their tops still inside the
+     drawing); the first is outside the crop. */
   .nf__tc {
-    font-size: 13px;
+    font-size: 12px;
   }
 
   .nf__tc:first-of-type {
@@ -1485,8 +1495,26 @@
     box-shadow: none;
   }
 
-  .status .btn.status__editor:hover {
+  .status .btn.status__editor:hover,
+  .menu__foot .auth-in .btn-primary:hover {
     --btn-bg: var(--gold-softer);
+  }
+
+  /* The menu sheet's own editor button, likewise (its note sits above it). */
+  .menu__foot .auth-in .btn-primary {
+    --btn-bg: color-mix(in srgb, var(--panel) 70%, transparent);
+    --btn-ink: var(--ink);
+    --btn-line: var(--gold);
+    --btn-handle: var(--gold);
+    font-weight: 500;
+    box-shadow: none;
+  }
+
+  .menu__foot .computer-only {
+    grid-column: 1 / -1;
+    width: 100%;
+    margin: 0;
+    text-align: start;
   }
 
   /* The header bar's "เปิดห้องตัดต่อ" opens an editor this device cannot run:

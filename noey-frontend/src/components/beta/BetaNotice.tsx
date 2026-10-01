@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import {
+  BETA_END_LABEL,
   BETA_NOTICE_DISMISS,
   BETA_NOTICE_NEVER,
   BETA_NOTICE_STORAGE_KEY,
@@ -136,6 +137,14 @@ export function BetaNotice({ betaPriced }: { betaPriced: boolean }) {
       className="beta-sheet"
       maxWidth={580}
       title={copy.title}
+      strip={
+        <>
+          <span className="dialog-strip__rec" />
+          <span className="tc">BETA</span>
+          <span className="dialog-strip__rule" />
+          <span className="dialog-strip__task">ถึง {BETA_END_LABEL}</span>
+        </>
+      }
     >
       <ol className="beta-points">
         {copy.points.map((point) => (

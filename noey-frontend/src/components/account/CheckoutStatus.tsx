@@ -85,7 +85,7 @@ export function CheckoutStatus({ initial }: { initial: BillingSnapshot | null })
         eyebrow={EYEBROW}
         title={TITLE}
         role="status"
-        readout="100%"
+        readout={`${planDisplayName(view.plan).toUpperCase()} · 100%`}
         footer={<ComputerOnly />}
         actions={
           <>

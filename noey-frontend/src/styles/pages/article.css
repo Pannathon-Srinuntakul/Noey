@@ -50,11 +50,21 @@
   padding: 4px 4px 12px 0;
 }
 
-/* Below 1200px (phones, tablets, small laptops): the contents bar sticks
-   under the header for the whole article and the text gets the full width —
-   the plan table fits beside a rail only from 1200px. (A block layout: in a
-   one-column grid the bar's own row would hold it in place.) */
-@media (max-width: 1199px) {
+/* A small laptop (960–1199px): a narrower rail, so the text keeps the page's
+   left edge under the title (centred under a left-aligned title it had two
+   left edges; flush left without the rail it left a third of the screen
+   empty). The plan table scrolls inside the column there. */
+@media (min-width: 960px) and (max-width: 1199px) {
+  .article-layout {
+    grid-template-columns: 236px minmax(0, 1fr);
+    gap: 40px;
+  }
+}
+
+/* Below 960px (phones, tablets): the contents bar sticks under the header
+   for the whole article and the text gets the full width. (A block layout:
+   in a one-column grid the bar's own row would hold it in place.) */
+@media (max-width: 959px) {
   .article-layout {
     display: block;
   }
@@ -242,11 +252,10 @@ html[data-theme="dark"] .article .prose {
   }
 }
 
-/* Under 1200px, with the contents in a bar instead of a rail, the column
-   and its bar are centred: flush left, they left a third of the screen
-   empty for the whole article. A wide table (the plan limits) steps out of
-   the column to the page's width, centred on it. */
-@media (min-width: 720px) and (max-width: 1199px) {
+/* Tablets (720–959px), with the contents in a bar instead of a rail: the
+   column and its bar are centred. A wide table (the plan limits) steps out
+   of the column to the page's width, centred on it. */
+@media (min-width: 720px) and (max-width: 959px) {
   .article-page .article-layout {
     max-width: 660px;
     margin-inline: auto;
@@ -459,7 +468,7 @@ html[data-theme="dark"] .article .prose {
   color: var(--ink-3);
 }
 
-@media (max-width: 1199px) {
+@media (max-width: 959px) {
   .toc__mobile {
     display: block;
   }

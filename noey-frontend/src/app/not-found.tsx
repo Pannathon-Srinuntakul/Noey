@@ -40,8 +40,12 @@ const A = clipsOf(AUDIO);
  * per tick or bar: the root not-found tree travels in every page's RSC
  * payload, so its size is paid on every page load.
  */
-// The ticks stop short of the time readout at the top right (.nf__readout): none runs under it.
-const TICKS_PATH = Array.from({ length: 48 }, (_, index) => `M${50 + index * 12} ${index % 5 === 0 ? 8 : 13}V18`).join("");
+// The ruler at the drawing's own time scale (91 units a second): a tick every
+// tenth of a second, a taller one on each second, all of them below the
+// times' baseline so no tick runs through a digit. They run the lane's whole
+// length; the time readout's box covers the last few on a desktop.
+const SECOND = 91;
+const TICKS_PATH = Array.from({ length: 73 }, (_, index) => `M${(54 + index * (SECOND / 10)).toFixed(1)} ${index % 10 === 0 ? 11 : 14.5}V18`).join("");
 const WAVE_PATH = (() => {
   const mid = (AUDIO.top + AUDIO.bottom) / 2;
   return waveform(132, 53)
@@ -76,9 +80,10 @@ function MissingClip() {
       {/* Ruler */}
       <line x1="50" y1="18" x2="716" y2="18" className="nf__rule" />
       <path d={TICKS_PATH} className="nf__tick" />
-      {/* 91 units a second: the hole's centre sits at 00:00:04:04. */}
+      {/* 91 units a second: the hole's centre sits at 00:00:04:04. Each time
+          starts just right of its second's tick. */}
       {[0, 2, 4].map((second) => (
-        <text key={second} x={54 + second * 91} y="10" className="nf__tc">
+        <text key={second} x={57 + second * SECOND} y="9" className="nf__tc">
           {`00:00:0${second}:00`}
         </text>
       ))}

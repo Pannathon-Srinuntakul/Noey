@@ -101,7 +101,13 @@ const PRINCIPLES = [
   },
   {
     title: "ไฟล์และงานเป็นของผู้ใช้",
-    text: "ดาวน์โหลดไฟล์ที่เรนเดอร์แล้วได้ตลอด และรายละเอียดเรื่องข้อมูลกับสิทธิในผลงานอยู่ในหน้าความเป็นส่วนตัวและเงื่อนไขการใช้งาน",
+    text: "ดาวน์โหลดไฟล์ที่เรนเดอร์แล้วได้ตลอด และรายละเอียดเรื่องข้อมูลกับสิทธิในผลงานอยู่ใน",
+    // The two pages it names are links, as every other page the about page names.
+    after: (
+      <>
+        <Link href={PAGES.privacy.path}>หน้าความเป็นส่วนตัว</Link>และ<Link href={PAGES.terms.path}>เงื่อนไขการใช้งาน</Link>
+      </>
+    ),
   },
 ] as const;
 
@@ -187,7 +193,10 @@ export default function AboutPage() {
                 <div className="locked__clip">
                   <div className="locked__copy">
                     <strong className="locked__title">{keepThaiProse(principle.title)}</strong>
-                    <span className="locked__text">{keepThaiProse(principle.text)}</span>
+                    <span className="locked__text">
+                      {keepThaiProse(principle.text)}
+                      {"after" in principle ? principle.after : null}
+                    </span>
                   </div>
                   <Waveform bars={40} seed={index * 5 + 11} className="locked__wave" still />
                 </div>

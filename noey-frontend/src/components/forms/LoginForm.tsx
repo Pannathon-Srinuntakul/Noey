@@ -4,6 +4,7 @@ import { useActionState, useState } from "react";
 import { forgotPasswordAction, loginAction } from "@/app/actions/auth";
 import type { ActionState } from "@/lib/messages";
 import { Dialog } from "../ui/Dialog";
+import { submitKeepingValues } from "./keepValues";
 import { SearchParam } from "./SearchParam";
 import { TURNSTILE_SITE_KEY, TurnstileWidget } from "./TurnstileWidget";
 
@@ -19,7 +20,7 @@ function ForgotPasswordDialog({ open, onClose }: { open: boolean; onClose: () =>
       maxWidth={440}
       description={<p style={{ margin: 0 }}>กรอกอีเมลที่ใช้สมัคร เราจะส่งลิงก์ตั้งรหัสผ่านใหม่ไปให้</p>}
     >
-      <form action={action}>
+      <form action={action} onSubmit={submitKeepingValues(action)} noValidate>
         <div className="field">
           <label htmlFor="f-email">อีเมล</label>
           <input
@@ -63,7 +64,8 @@ export function LoginForm() {
 
   return (
     <>
-      <form action={action} className="stack">
+      {/* Checked by the server action ("กรอกอีเมลและรหัสผ่านให้ครบ"), not by the browser's English bubbles. */}
+      <form action={action} onSubmit={submitKeepingValues(action)} className="stack" noValidate>
         {/* `?next=` goes back to the Server Action, which re-validates it (never trusted as-is). */}
         <SearchParam name="next" render={(next) => <input type="hidden" name="next" value={next ?? ""} />} />
         <div className="field">

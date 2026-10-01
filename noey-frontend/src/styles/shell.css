@@ -881,10 +881,12 @@ html[data-auth="in"] .menu__foot .auth-in {
 
 .menu__foot .auth-signout {
   grid-column: 1 / -1;
+  justify-self: start;
 }
 
+/* Its words line up with the name above it. */
 .menu__foot .auth-signout .btn {
-  width: 100%;
+  margin-left: -14px;
 }
 
 .menu__theme {
@@ -1131,6 +1133,7 @@ html:has(.menu[open]) {
 
   .beta-sheet .dialog-inner {
     --dialog-pad: 20px;
+    --dialog-pad-top: 26px;
     padding: 26px 20px calc(20px + env(safe-area-inset-bottom));
   }
 }

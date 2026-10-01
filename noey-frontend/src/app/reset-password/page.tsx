@@ -43,8 +43,8 @@ export default async function ResetPasswordPage({ searchParams }: { searchParams
       <div className="wrap">
         <StatusCard
           tone="danger"
-          eyebrow="รหัสผ่าน"
-          title="ตั้งรหัสผ่านใหม่"
+          eyebrow="ตั้งรหัสผ่านใหม่"
+          title="ลิงก์นี้ใช้ไม่ได้แล้ว"
           role="alert"
           actions={
             <Link href="/login?forgot=1" className="btn btn-primary btn-lg">

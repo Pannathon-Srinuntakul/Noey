@@ -1155,6 +1155,7 @@ dialog.dialog {
   border-radius: var(--r-lg);
   box-shadow: var(--shadow-3);
   overflow: auto;
+  scroll-timeline: --dialog-scroll block;
 }
 
 dialog.dialog::backdrop {
@@ -1224,6 +1225,55 @@ dialog.dialog::backdrop {
   padding-right: 44px;
 }
 
+/* A panel title strip across the top (as the status cards and the contact
+   card have): a recording light, a word, a rule, what it is about. The close
+   button then sits in the strip's row. */
+.dialog-strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 52px;
+  margin: calc(var(--dialog-pad-top, var(--dialog-pad)) * -1) calc(var(--dialog-pad) * -1) 20px;
+  padding: 0 calc(var(--dialog-pad) + 48px) 0 var(--dialog-pad);
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--color-text) 3%, transparent);
+  color: var(--ink-3);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+}
+
+.dialog-strip .tc {
+  color: var(--gold-ink);
+  font-weight: 600;
+}
+
+.dialog-strip__rec {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--gold);
+  box-shadow: 0 0 0 3px var(--gold-soft);
+}
+
+.dialog-strip__rule {
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, var(--line-2), transparent);
+}
+
+.dialog-strip__task {
+  flex: none;
+  font-size: var(--fs-12);
+  font-weight: 500;
+  letter-spacing: 0;
+  color: var(--ink-2);
+}
+
+.dialog-inner:has(> .dialog-strip) .dialog-close {
+  top: 8px;
+}
+
 /* On the content's right edge, level with the title's first line. */
 .dialog-close {
   position: absolute;
@@ -1284,8 +1334,6 @@ dialog.dialog::backdrop {
   padding: 14px var(--dialog-pad) clamp(18px, 3vw, 26px);
   border-top: 1px solid var(--line);
   background: var(--bg);
-  /* Raised over what scrolls under it: the list reads as going on below. */
-  box-shadow: 0 -16px 28px -20px color-mix(in srgb, var(--color-neutral-900) 55%, transparent);
 }
 
 /* Content scrolling under the footer fades out instead of being sliced. */
@@ -1298,6 +1346,47 @@ dialog.dialog::backdrop {
   height: 32px;
   background: linear-gradient(transparent, var(--bg));
   pointer-events: none;
+  opacity: 0;
+}
+
+/* Only while there is more below: the footer is raised over what scrolls
+   under it and the content fades into it, both gone at the end of the
+   scroll. A dialog that does not scroll has no active timeline, so neither
+   shows (a shadow over nothing read as a smudge). */
+@supports (animation-timeline: scroll()) {
+  .dialog-actions {
+    animation: dialog-more linear both;
+    animation-timeline: --dialog-scroll;
+  }
+
+  .dialog-actions::before {
+    animation: dialog-more-fade linear both;
+    animation-timeline: --dialog-scroll;
+  }
+}
+
+@keyframes dialog-more {
+  from {
+    box-shadow: 0 -16px 28px -20px color-mix(in srgb, var(--color-neutral-900) 55%, transparent);
+  }
+  92% {
+    box-shadow: 0 -16px 28px -20px color-mix(in srgb, var(--color-neutral-900) 55%, transparent);
+  }
+  to {
+    box-shadow: 0 -16px 28px -20px transparent;
+  }
+}
+
+@keyframes dialog-more-fade {
+  from {
+    opacity: 1;
+  }
+  92% {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
 }
 
 /* A "don't show again" box in the footer: left, beside the button. */

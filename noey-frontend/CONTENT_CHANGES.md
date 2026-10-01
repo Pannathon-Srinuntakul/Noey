@@ -269,7 +269,9 @@ New: "รหัสผ่าน" on /reset-password (the visitor is not signed in
 - Every status card: the eyebrow ("การชำระเงิน", "ยืนยันอีเมล", "รหัสผ่าน",
   "ลบบัญชี") moved from above the title onto the card's title strip.
 - The beta notice: the "เบต้า" chip beside its title is gone (the title
-  begins "ช่วงเบต้า").
+  begins "ช่วงเบต้า"); the dialog opens with a panel title strip instead —
+  "BETA" and "ถึง 31 ธ.ค. 2026" (the beta's own end date, `BETA_END_LABEL`),
+  decoration hidden from assistive technology.
 
 ## 19. Account: one name per place, one label per field, one date format
 
@@ -328,6 +330,46 @@ New: "รหัสผ่าน" on /reset-password (the visitor is not signed in
   tablets), its last part, "ใช้ได้เฉพาะบนคอมผ่าน Chrome หรือ Edge", is not
   repeated under the note.
 
+## 21. Sign-in pages and /about: the final review
+
+- /reset-password with a broken link: the card's title "ตั้งรหัสผ่านใหม่" →
+  "ลิงก์นี้ใช้ไม่ได้แล้ว" (it repeated the form's title over a dead link);
+  "ตั้งรหัสผ่านใหม่" moved to the card's title strip.
+- /signup: the password field's placeholder "อย่างน้อย 8 ตัวอักษร" became a
+  hint under the field (as on /reset-password; a placeholder vanishes while
+  typing). A taken email is said once, in full, under the email field —
+  "อีเมลนี้มีบัญชีอยู่แล้ว เข้าสู่ระบบด้วยอีเมลนี้ได้เลย" — instead of the short
+  form there and the long one again above the button.
+- /about, the fifth principle: "…รายละเอียดเรื่องข้อมูลกับสิทธิในผลงานอยู่ในหน้า
+  ความเป็นส่วนตัวและเงื่อนไขการใช้งาน" — same words, the two pages it names are
+  now links. Old source string: "ดาวน์โหลดไฟล์ที่เรนเดอร์แล้วได้ตลอด และรายละเอียดเรื่องข้อมูลกับสิทธิในผลงานอยู่ในหน้าความเป็นส่วนตัวและเงื่อนไขการใช้งาน".
+- Sign-in forms (/login, /signup, the forgot-password dialog,
+  /reset-password): empty or short fields are answered by the forms' own Thai
+  messages (the server's checks) instead of the browser's English bubbles,
+  and a failed submit keeps what was typed.
+
+## 22. Account: the final review
+
+- /account/billing, the plan card is drawn from /pricing's card for the same
+  plan, with its words from `plans.ts`: the reel number ("P3"), the
+  "เบต้า −50%" chip beside the struck price, the clips line ("ตัดได้ราว 22 คลิป
+  / เดือน", "~คลิปดิบ 5 นาที") and /pricing's feature bullets instead of the
+  account-only ones. So, for Pro: "เก็บโปรเจกต์ไม่จำกัดจำนวน · 10 GB" →
+  "จำนวนโปรเจกต์ไม่จำกัด ภายใน 10 GB", and "ทำงาน AI พร้อมกันได้ 2 งาน" is
+  listed as on /pricing. The free plan shows its price, "0 บาท", as on /pricing.
+- /account/billing, the plan picker: every row states the same three facts —
+  clips a month, footage per project, storage — where each row had its own
+  summary (Pro's was "ตัดได้ราว 22 คลิป/เดือน · วิเคราะห์ระดับละเอียด · 10 GB",
+  Studio's "ตัดได้ราว 45 คลิป/เดือน · ทำงานพร้อมกัน 3 งาน · 30 GB"), so the plans
+  compare down the list; the held plan's " · แพลนปัจจุบัน" became a tag,
+  "แพลนปัจจุบัน"; each row carries its reel number. The beta line above the
+  rows keeps its words, with the "เบต้า" badge of the strip on /pricing.
+- /account/profile, change password: "อย่างน้อย 8 ตัวอักษร" moved from the new
+  password's placeholder to a hint under it (as on /signup and
+  /reset-password).
+- /account/quota: "ทำงาน AI พร้อมกันได้ N งาน" moved from the windows' card to
+  the jobs' card (the same words).
+
 ## Text added (not replacing anything)
 
 Only labels, no claims:
@@ -356,7 +398,7 @@ Only labels, no claims:
   on hover or focus reuse the home page's own words — "แก้ทับได้ทุกช็อต",
   "พากย์เสียง พร้อมสคริปต์จาก AI", "ใส่เพลงประกอบ", "ซับไทยอัตโนมัติ",
   "AI ตัดคลิปให้อัตโนมัติ".
-- /about: the contact form's name field has a placeholder like its other two
+- /about and /signup: the name field has a placeholder like the other
   fields, "ชื่อที่ให้เราเรียก".
 - /about: once the contact form has sent, the form gives way to its
   confirmation and a "ส่งอีกข้อความ" button (the empty form with a gold send
@@ -372,14 +414,23 @@ Only labels, no claims:
   four tabs ("…", "ข้อมูลส่วนตัว").
 - /account/billing: the plan's price under its name, as /pricing prints it
   ("499 บาท / เดือน", the regular price struck through during the beta).
+- /account/billing, the payment card: this billing cycle drawn as a clip on a
+  lane, from the subscription's own period end (every plan bills monthly, so
+  the cycle began a month before it): "รอบบิลนี้", "ต่ออายุในอีก 12 วัน" (or,
+  once cancelled, "ใช้ได้อีก 12 วัน"), the playhead's "วันนี้", the cycle's two
+  dates ("13 ก.ย.", "13 ต.ค." / "ใช้ได้ถึง 13 ต.ค."). Before a first
+  subscription the card says where the card comes from: "บัตรจะผูกกับบัญชีตอน
+  ชำระเงินครั้งแรก".
+- /account on a phone or a tablet: the computer-only note (§12) above the
+  editor card's "เปิดห้องตัดต่อ", which steps back to an outline there.
 - The computer-only note (§12) also under the actions after an email is
   verified and after a payment, whose next step is the editor.
 - Each guide shows the part of the editor it is about, labelled as a picture:
   "ภาพจำลอง · ไทม์ไลน์หลังระบบตัดร่างแรก", "ภาพจำลอง · เลนคำบรรยายไทยในไทม์ไลน์",
   "ภาพจำลอง · สลับฉากเป็นช็อตสำรอง", "ภาพจำลอง · ยืดหดความยาวฉากในไทม์ไลน์",
   "ภาพจำลอง · ห้องตัดต่อบนเว็บ", "ภาพจำลอง · การ์ดโควตาในหน้าตั้งค่า".
-- Decorative readouts, hidden from assistive technology: "100%" under the
-  checkout card's render bar, "SENT" on the contact form's confirmation, the
+- Decorative readouts, hidden from assistive technology: the plan and "100%"
+  after the checkout card's render bar ("PRO · 100%"), "SENT" on the contact form's confirmation, the
   status cards' title strip (a state word as a render queue prints it —
   "DONE", "EXPORT", "FAILED", "READY", "RENDERING", "END") and the 404's
   running time display.

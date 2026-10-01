@@ -1,8 +1,10 @@
 import Link from "next/link";
 import { EDITOR_OPEN_PATH } from "@/lib/editor-handoff";
 import { NAV_LINKS } from "@/lib/site";
+import { AccountMenuLinks } from "../account/AccountMenuLinks";
 import { SignOutButton } from "../account/SignOutButton";
-import { IconCard, IconChevronDown, IconKey, IconLevels, IconUser } from "../ds/icons";
+import { ComputerOnly } from "../ComputerOnly";
+import { IconChevronDown, IconUser } from "../ds/icons";
 import { NoeyMark } from "../NoeyMark";
 import { ScrollTimeline } from "../shell/ScrollTimeline";
 import { AuthHintSync, HeaderDisclosures, NavLinks, PageLink, ThemeToggle } from "./HeaderClient";
@@ -74,23 +76,10 @@ export function SiteHeader() {
                     <span className="auth-name" />
                   </div>
                   {/* The account's four tabs, with the tabs' icons (AccountTabs) — the
-                      first row names the whole account here, so it gets the person. */}
-                  <Link href="/account" prefetch={false}>
-                    <IconUser size={16} />
-                    บัญชีของฉัน
-                  </Link>
-                  <Link href="/account/quota" prefetch={false}>
-                    <IconLevels size={16} />
-                    โควตาและลิมิต
-                  </Link>
-                  <Link href="/account/billing" prefetch={false}>
-                    <IconCard size={16} />
-                    แพลนและการชำระเงิน
-                  </Link>
-                  <Link href="/account/profile" prefetch={false}>
-                    <IconKey size={16} />
-                    ข้อมูลส่วนตัว
-                  </Link>
+                      first row names the whole account here, so it gets the person.
+                      The tab being viewed is marked (a client component: the
+                      header itself stays static). */}
+                  <AccountMenuLinks />
                   <SignOutButton className="auth-signout" icon />
                 </div>
               </details>
@@ -115,6 +104,8 @@ export function SiteHeader() {
                   </div>
                   <div className="auth-area auth-in">
                     <span className="auth-name" />
+                    {/* Shown only on a phone or a tablet (ComputerOnly's own rule). */}
+                    <ComputerOnly />
                     <Link href="/account" className="btn btn-secondary btn-lg" prefetch={false}>
                       บัญชีของฉัน
                     </Link>

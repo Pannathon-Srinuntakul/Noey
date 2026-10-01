@@ -6,6 +6,7 @@ import { signupAction } from "@/app/actions/auth";
 import type { ActionState } from "@/lib/messages";
 import { PLAN_COPY, isPaidTier } from "@/lib/plans";
 import { GoogleSignInForm, OrDivider } from "../auth/GoogleSignInForm";
+import { submitKeepingValues } from "./keepValues";
 import { SearchParam } from "./SearchParam";
 import { TURNSTILE_SITE_KEY, TurnstileWidget } from "./TurnstileWidget";
 import { keepThai } from "../ds/ThaiText";
@@ -14,6 +15,11 @@ export function SignupForm({ googleEnabled = false }: { googleEnabled?: boolean 
   const [state, action, pending] = useActionState<ActionState | undefined, FormData>(signupAction, undefined);
 
   const errors = state?.fieldErrors ?? {};
+  // A taken email comes back twice (under the field, and as the form's
+  // message with what to do next): said once, in full, under the field.
+  const emailTaken = !!errors.email && !!state?.error?.startsWith(errors.email);
+  const emailError = emailTaken ? state?.error : errors.email;
+  const formError = emailTaken ? undefined : state?.error;
   // The design gates sign-up on an explicit tick of the terms and privacy
   // notice; the server action checks the same field.
   const [agreed, setAgreed] = useState(false);
@@ -70,7 +76,8 @@ export function SignupForm({ googleEnabled = false }: { googleEnabled?: boolean 
       ) : null}
       <GoogleSignInForm from="signup" agreed={agreed} enabled={googleEnabled} />
       {googleEnabled ? <OrDivider label="หรือสมัครด้วยอีเมล" /> : null}
-      <form id="signup-form" action={action} className="stack">
+      {/* Checked by the server action, whose messages are Thai and shown under each field. */}
+      <form id="signup-form" action={action} onSubmit={submitKeepingValues(action)} className="stack" noValidate>
         <SearchParam name="plan" render={(plan) => <input type="hidden" name="plan" value={isPaidTier(plan) ? plan : ""} />} />
         <div className="field">
           <label htmlFor="s-name">ชื่อ</label>
@@ -79,6 +86,7 @@ export function SignupForm({ googleEnabled = false }: { googleEnabled?: boolean 
             name="name"
             className="input"
             type="text"
+            placeholder="ชื่อที่ให้เราเรียก"
             autoComplete="name"
             maxLength={60}
             defaultValue={state?.values?.name}
@@ -102,12 +110,12 @@ export function SignupForm({ googleEnabled = false }: { googleEnabled?: boolean 
             autoComplete="email"
             required
             defaultValue={state?.values?.email}
-            aria-invalid={errors.email ? true : undefined}
-            aria-describedby={errors.email ? "s-email-error" : undefined}
+            aria-invalid={emailError ? true : undefined}
+            aria-describedby={emailError ? "s-email-error" : undefined}
           />
-          {errors.email ? (
+          {emailError ? (
             <p className="field-error" id="s-email-error">
-              {errors.email}
+              {emailError}
             </p>
           ) : null}
         </div>
@@ -118,13 +126,15 @@ export function SignupForm({ googleEnabled = false }: { googleEnabled?: boolean 
             name="password"
             className="input"
             type="password"
-            placeholder="อย่างน้อย 8 ตัวอักษร"
             autoComplete="new-password"
             minLength={8}
             required
             aria-invalid={errors.password ? true : undefined}
-            aria-describedby={errors.password ? "s-pass-error" : undefined}
+            aria-describedby={errors.password ? "s-pass-hint s-pass-error" : "s-pass-hint"}
           />
+          <p className="field-hint" id="s-pass-hint">
+            อย่างน้อย 8 ตัวอักษร
+          </p>
           {errors.password ? (
             <p className="field-error" id="s-pass-error">
               {errors.password}
@@ -133,9 +143,9 @@ export function SignupForm({ googleEnabled = false }: { googleEnabled?: boolean 
         </div>
         {/* Turnstile loads only when a site key is configured; eager here so the slot is reserved from the start. */}
         <TurnstileWidget siteKey={TURNSTILE_SITE_KEY} resetKey={state} />
-        {state?.error ? (
+        {formError ? (
           <p className="form-error" role="alert">
-            {state.error}
+            {formError}
           </p>
         ) : null}
         <button
