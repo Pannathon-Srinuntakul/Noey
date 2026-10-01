@@ -58,16 +58,16 @@ class Consume(Enum):
     UNKNOWN = "unknown"  # never issued, expired, or gone — plain refusal
 
 
-def live_key(user_id: int, jti: str) -> str:
-    return f"{PREFIX}{int(user_id)}:{jti}"
+def live_key(user_id: int, jti: str, prefix: str = PREFIX) -> str:
+    return f"{prefix}{int(user_id)}:{jti}"
 
 
-def used_key(user_id: int, jti: str) -> str:
-    return f"{PREFIX}used:{int(user_id)}:{jti}"
+def used_key(user_id: int, jti: str, prefix: str = PREFIX) -> str:
+    return f"{prefix}used:{int(user_id)}:{jti}"
 
 
-def user_set_key(user_id: int) -> str:
-    return f"{PREFIX}u:{int(user_id)}"
+def user_set_key(user_id: int, prefix: str = PREFIX) -> str:
+    return f"{prefix}u:{int(user_id)}"
 
 
 def legacy_key(user_id: int, token: str) -> str:
@@ -146,8 +146,13 @@ def _redis() -> Any:
 
 
 class RedisRefreshStore:
-    def __init__(self, *, client: Any = None) -> None:
+    """`prefix` namespaces the keys: the user refresh tokens use the default;
+    another token family (the blog MCP server's grants, packages/blog/oauth.py)
+    passes its own so its ids can never collide with a user id."""
+
+    def __init__(self, *, client: Any = None, prefix: str = PREFIX) -> None:
         self._client = client
+        self._prefix = prefix
 
     def _r(self) -> Any:
         return self._client if self._client is not None else _redis()
@@ -156,11 +161,11 @@ class RedisRefreshStore:
         ttl = max(1, int(ttl_sec))
         try:
             async with self._r().pipeline(transaction=True) as pipe:
-                pipe.set(live_key(user_id, jti), "1", ex=ttl)
-                pipe.sadd(user_set_key(user_id), jti)
+                pipe.set(live_key(user_id, jti, self._prefix), "1", ex=ttl)
+                pipe.sadd(user_set_key(user_id, self._prefix), jti)
                 # The set outlives its newest member; stale ids in it are
                 # harmless (DEL of a key that is already gone).
-                pipe.expire(user_set_key(user_id), ttl)
+                pipe.expire(user_set_key(user_id, self._prefix), ttl)
                 await pipe.execute()
         except (RedisError, OSError, TimeoutError) as exc:
             raise _unavailable("issue", exc) from exc
@@ -170,9 +175,9 @@ class RedisRefreshStore:
             outcome = await self._r().eval(
                 _CONSUME_LUA,
                 3,
-                live_key(user_id, jti),
-                used_key(user_id, jti),
-                user_set_key(user_id),
+                live_key(user_id, jti, self._prefix),
+                used_key(user_id, jti, self._prefix),
+                user_set_key(user_id, self._prefix),
                 max(1, int(ttl_sec)),
                 jti,
             )
@@ -193,20 +198,20 @@ class RedisRefreshStore:
     async def revoke(self, user_id: int, jti: str) -> None:
         try:
             async with self._r().pipeline(transaction=True) as pipe:
-                pipe.delete(live_key(user_id, jti))
-                pipe.srem(user_set_key(user_id), jti)
+                pipe.delete(live_key(user_id, jti, self._prefix))
+                pipe.srem(user_set_key(user_id, self._prefix), jti)
                 await pipe.execute()
         except (RedisError, OSError, TimeoutError) as exc:
             raise _unavailable("revoke", exc) from exc
 
     async def revoke_all(self, user_id: int) -> int:
         try:
-            members = await self._r().smembers(user_set_key(user_id))
+            members = await self._r().smembers(user_set_key(user_id, self._prefix))
             jtis = [m.decode() if isinstance(m, bytes) else str(m) for m in members]
             async with self._r().pipeline(transaction=True) as pipe:
                 for jti in jtis:
-                    pipe.delete(live_key(user_id, jti))
-                pipe.delete(user_set_key(user_id))
+                    pipe.delete(live_key(user_id, jti, self._prefix))
+                pipe.delete(user_set_key(user_id, self._prefix))
                 results = await pipe.execute()
         except (RedisError, OSError, TimeoutError) as exc:
             raise _unavailable("revoke_all", exc) from exc
@@ -223,7 +228,8 @@ def _unavailable(op: str, exc: BaseException) -> RefreshStoreUnavailable:
 
 
 class MemoryRefreshStore:
-    def __init__(self) -> None:
+    def __init__(self, *, prefix: str = PREFIX) -> None:
+        self._prefix = prefix
         self.live: dict[str, float] = {}  # key → expires (monotonic)
         self.used: dict[str, float] = {}
         self.legacy: dict[str, float] = {}
@@ -238,15 +244,15 @@ class MemoryRefreshStore:
         return True
 
     async def issue(self, user_id: int, jti: str, ttl_sec: int) -> None:
-        self.live[live_key(user_id, jti)] = time.monotonic() + max(1, int(ttl_sec))
+        self.live[live_key(user_id, jti, self._prefix)] = time.monotonic() + max(1, int(ttl_sec))
 
     async def consume(self, user_id: int, jti: str, ttl_sec: int) -> Consume:
-        key = live_key(user_id, jti)
+        key = live_key(user_id, jti, self._prefix)
         if self._alive(self.live, key):
             del self.live[key]
-            self.used[used_key(user_id, jti)] = time.monotonic() + max(1, int(ttl_sec))
+            self.used[used_key(user_id, jti, self._prefix)] = time.monotonic() + max(1, int(ttl_sec))
             return Consume.SPENT
-        if self._alive(self.used, used_key(user_id, jti)):
+        if self._alive(self.used, used_key(user_id, jti, self._prefix)):
             return Consume.REUSED
         return Consume.UNKNOWN
 
@@ -258,10 +264,10 @@ class MemoryRefreshStore:
         return True
 
     async def revoke(self, user_id: int, jti: str) -> None:
-        self.live.pop(live_key(user_id, jti), None)
+        self.live.pop(live_key(user_id, jti, self._prefix), None)
 
     async def revoke_all(self, user_id: int) -> int:
-        prefix = f"{PREFIX}{int(user_id)}:"
+        prefix = f"{self._prefix}{int(user_id)}:"
         gone = [k for k in self.live if k.startswith(prefix)]
         for k in gone:
             del self.live[k]

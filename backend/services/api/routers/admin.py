@@ -18,6 +18,8 @@ GET/PUT /admin/fx                   POST /admin/fx/refresh
 GET  /admin/reconciliation          PUT  /admin/reconciliation/{month}
 GET  /admin/estimate-accuracy       GET/PUT /admin/billing-config
 GET/PUT /admin/circuit-breaker      GET  /admin/audit
+/admin/blog/*                       blog moderation + MCP connectors — routers/admin_blog.py,
+                                    same guard, included by main.py
 
 The admin sees REAL rate-card tokens and baht (users only ever see
 percentages): per-user windows, runs (estimate / actual / charged / cost),
@@ -857,3 +859,4 @@ async def put_plan_prices(
         "changed": [c.tier for c in changes],
         "max_thb": MAX_PRICE_THB,
     }
+
