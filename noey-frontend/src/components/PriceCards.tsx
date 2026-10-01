@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { BETA_BADGE, BETA_STRIKE_LABEL, isBetaActive } from "@/lib/beta";
+import { BETA_BADGE, BETA_DISCOUNT_PERCENT, BETA_STRIKE_LABEL, isBetaActive } from "@/lib/beta";
 import {
   APPROX_CUTS_PER_MONTH,
   CLIPS_BASIS_SHORT,
@@ -68,12 +68,12 @@ export function PriceCards({ table, variant }: { table: PriceTable; variant: "ho
         </ol>
         {/* Said once for the page; each card carries only the short basis. */}
         <p className="clip-note clip-note--grid">{keepThaiProse(CLIPS_FOOTNOTE)}</p>
-        <section className="price-extra" aria-labelledby="price-extra-title">
-          <h2 id="price-extra-title" className="price-extra__title">
-            แพลนเพิ่มเติม
-          </h2>
-          <p className="price-extra__note">{keepThaiProse(EXTRA_NOTE)}</p>
-        </section>
+        {/* The legend for the tag three of the cards carry: the tag itself,
+            then what it means. */}
+        <p className="price-extra">
+          <span className="tag tag-neutral price-extra__tag">แพลนเพิ่มเติม</span>
+          <span className="price-extra__note">{keepThaiProse(EXTRA_NOTE)}</span>
+        </p>
       </>
     );
   }
@@ -96,7 +96,14 @@ export function PriceCards({ table, variant }: { table: PriceTable; variant: "ho
             return (
               <div key={tier} className="price-more__item">
                 <div className="price-more__name">
-                  <span>{PLAN_COPY[tier].name}</span>
+                  {/* The reel number too: with it the home page shows the
+                      whole ladder, P0 to P6, not a P0 → P2 jump. */}
+                  <span className="price-more__plan">
+                    <span className="trk tc" aria-hidden="true">
+                      {REEL[tier]}
+                    </span>
+                    {PLAN_COPY[tier].name}
+                  </span>
                   <span className="num price-more__mult">{clipsHeadline(tier)}</span>
                 </div>
                 <div className="num price-more__price">
@@ -160,12 +167,26 @@ function PriceCard({ tier, table, size }: { tier: Tier; table: PriceTable; size:
         </span>
         <span className="plan__unit">{tier === "free" ? "บาท" : "บาท / เดือน"}</span>
       </div>
-      {beta ? <p className="plan__beta">{BETA_BADGE} · ลด 50% ถึง 31 ธ.ค. 2026 จากนั้นคิดราคาปกติ</p> : null}
-      <div className="plan__usage">
-        <span className="usage-approx">{cutsPrefix}</span>
-        <span className="num usage-mult">{cuts}</span>
-        <span className="usage-caption">{tier === "free" ? `${cutsUnit} · ${FREE_CLIPS_CAPTION}` : cutsUnit}</span>
-      </div>
+      {/* The terms are said in full once, in the strip above the cards
+          (BetaPriceNote); the card shows the struck regular price and this. */}
+      {beta ? (
+        <p className="plan__beta">
+          <span className="tag tag-accent">{`${BETA_BADGE} −${BETA_DISCOUNT_PERCENT}%`}</span>
+        </p>
+      ) : !detailed && isBetaActive() ? (
+        // The home strip's free card keeps the chip's row, unpainted, so the
+        // four cards' rows line up across the strip.
+        <p className="plan__beta plan__beta--blank" aria-hidden="true">
+          <span className="tag">&nbsp;</span>
+        </p>
+      ) : null}
+      <p className="plan__usage">
+        <span className="usage-approx">{cutsPrefix}</span>{" "}
+        <span className="usage-count">
+          <span className="num usage-mult">{cuts}</span> <span className="usage-caption">{cutsUnit}</span>
+        </span>
+        {tier === "free" ? <span className="usage-caption">{keepThaiProse(` · ${FREE_CLIPS_CAPTION}`)}</span> : null}
+      </p>
       <p className="clip-note">{keepThaiProse(CLIPS_BASIS_SHORT)}</p>
       <p className="plan__blurb">{keepThaiProse(detailed ? copy.pricingBlurb : copy.homeBlurb)}</p>
       {detailed ? (

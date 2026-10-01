@@ -6,12 +6,19 @@ import { WordReveal } from "./WordReveal";
  * timecode, then the section's own eyebrow in Thai, then the heading, which
  * comes in word by word. Track and timecode are decoration; the eyebrow and
  * heading are the content.
+ *
+ * `marker` draws the section as a marker on the page's own timeline instead
+ * of a track: the diamond the header's ruler shows for this heading, then the
+ * time the ruler reads when the heading reaches it (ScrollTimeline). A page
+ * that marks every section this way has no track label left to mean two
+ * things on one page.
  */
 export function SectionHeader({
   id,
   title,
   eyebrow,
   track,
+  marker = false,
   timecode,
   as = "h2",
   align = "start",
@@ -24,6 +31,7 @@ export function SectionHeader({
   title: string;
   eyebrow?: ReactNode;
   track?: string;
+  marker?: boolean;
   timecode?: string;
   as?: "h1" | "h2" | "h3";
   align?: "start" | "center";
@@ -35,12 +43,14 @@ export function SectionHeader({
 }) {
   return (
     <div className={["sec-head", align === "center" ? "sec-head--center" : null, className].filter(Boolean).join(" ")}>
-      {track || timecode || eyebrow ? (
+      {track || marker || timecode || eyebrow ? (
         <div className="sec-head__label">
           {track ? (
             <span className="trk tc" aria-hidden="true">
               {track}
             </span>
+          ) : marker ? (
+            <span className="sec-head__marker" aria-hidden="true" />
           ) : null}
           {timecode ? (
             <span className="sec-head__tc tc" aria-hidden="true">

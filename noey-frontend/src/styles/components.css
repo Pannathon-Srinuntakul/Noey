@@ -13,7 +13,7 @@
  *   styles/parts/plans.css   PriceCards + PlanComparisonTable
  *   styles/parts/story.css   FitLists + CtaBand
  *   styles/parts/status.css  StatusCard
- *   styles/parts/level.css   LevelMeter (/pricing, the quota tab)
+ *   styles/parts/level.css   LevelMeter (the account pages)
  *   styles/parts/google.css  GoogleButton + GoogleSignInForm
  *   components/mockups/app/*.css  the editor mock-ups (app.css is generated
  *                             from the editor's own Tailwind: scripts/app-mock-css.mjs)
@@ -179,6 +179,27 @@
   color: var(--ink-3);
 }
 
+/* The section as a marker on the page's timeline: the header ruler's diamond,
+   in a track label's footprint. */
+.sec-head__marker {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 28px;
+  height: 20px;
+  border-radius: 5px;
+  background: var(--gold-soft);
+}
+
+.sec-head__marker::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  rotate: 45deg;
+  border-radius: 1.5px;
+  background: var(--gold-ink);
+}
+
 .sec-head__eyebrow {
   font-size: var(--fs-14);
   font-weight: 500;
@@ -213,6 +234,9 @@
 .phero {
   position: relative;
   padding-bottom: clamp(40px, 6vw, 88px);
+  /* The ruler along the hero's bottom edge is a divider: what follows starts
+     a step below it, never on its ticks. */
+  margin-bottom: clamp(24px, 2.4vw, 32px);
   isolation: isolate;
 }
 
@@ -659,11 +683,13 @@
   border-bottom: 1px solid var(--line);
 }
 
+/* The cue, the question and the toggle share the row's centre line (a
+   question that wraps keeps them beside its middle). */
 .faq summary {
   list-style: none;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: start;
+  align-items: center;
   gap: 16px;
   padding: 22px 4px;
   cursor: pointer;
@@ -679,7 +705,6 @@
 }
 
 .faq__cue {
-  margin-top: 0.55em;
   color: var(--ink-3);
 }
 
@@ -699,7 +724,6 @@
   position: relative;
   width: 28px;
   height: 28px;
-  margin-top: 2px;
   border-radius: 50%;
   border: 1px solid var(--line-2);
   transition:
@@ -795,7 +819,15 @@
 }
 
 .status-page.page-top {
-  padding-top: calc(var(--beta-h) + var(--header-top) + var(--header-h) + clamp(40px, 5vw, 64px));
+  padding-top: calc(var(--beta-h) + var(--header-top) + var(--header-h) + 40px);
+}
+
+/* Off a phone the card keeps clear of the floating header and its ruler, as
+   far as a content page's breadcrumb sits below them. */
+@media (min-width: 600px) {
+  .status-page.page-top {
+    padding-top: calc(var(--beta-h) + var(--header-top) + var(--header-h) + clamp(72px, 8vw, 104px));
+  }
 }
 
 /* Auto margins centre the card but never push a tall one under the header. */
@@ -869,17 +901,21 @@
   align-items: center;
 }
 
+/* Inline, not flex: a link that wraps keeps its arrow right after its last
+   word (a flex row would push the arrow to the far edge of the box). */
 .more-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
+  display: inline;
   font-size: var(--fs-16);
   font-weight: 500;
+  line-height: 1.6;
   color: var(--gold-ink);
   text-decoration: none;
 }
 
 .more-link svg {
+  display: inline-block;
+  margin-left: 10px;
+  vertical-align: -0.2em;
   transition: translate var(--dur-3) var(--ease-out);
 }
 
@@ -1234,11 +1270,11 @@
   stroke-width: 3;
 }
 
-/* The hole: the editor's empty well, hatched, edged with a dashed cut line. */
-/* A little darker than the lanes' well, so it reads as a hole in the light
-   theme too. */
+/* The hole: the editor's empty well, hatched, edged with a dashed cut line.
+   A little darker than the lanes' well, so it reads as a hole in the light
+   theme too, and warm (a neutral grey read as a disabled control). */
 .nf__hole {
-  fill: color-mix(in srgb, var(--color-text) 8%, var(--well));
+  fill: color-mix(in srgb, var(--color-accent) 7%, color-mix(in srgb, var(--color-text) 6%, var(--well)));
   stroke: color-mix(in srgb, var(--color-accent) 55%, transparent);
   stroke-width: 1.2;
   stroke-dasharray: 4 4;
@@ -1249,7 +1285,7 @@
 }
 
 .nf__hatch {
-  stroke: color-mix(in srgb, var(--color-text) 16%, transparent);
+  stroke: color-mix(in srgb, var(--color-accent) 30%, transparent);
   stroke-width: 1;
 }
 
@@ -1350,18 +1386,33 @@
 /* Phones: zoom into the middle of the timeline so the hole and the fall read
    at a legible size, and give the three ways out an even layout. */
 @media (max-width: 560px) {
+  /* The crop opens exactly where the second video clip starts (x 218 of
+     720) at the stage's inner edge — its 16px padding shows the drawing too. */
   .nf__svg {
     width: 175%;
     max-width: none;
-    margin-left: -55%;
+    margin-left: calc(-53% - 16px);
   }
 
+  /* The ruler's times at a legible size; the first is outside the crop. */
+  .nf__tc {
+    font-size: 13px;
+  }
+
+  .nf__tc:first-of-type {
+    display: none;
+  }
+
+  /* The time display moves under the timeline, opposite the label: the
+     ruler's times have the top row to themselves. */
   .nf__readout {
-    top: 8px;
-    right: 10px;
-    padding: 0 6px;
-    font-size: 10px;
-    line-height: 17px;
+    top: auto;
+    right: auto;
+    bottom: 12px;
+    left: 14px;
+    padding: 0 7px;
+    font-size: 10.5px;
+    line-height: 18px;
   }
 
   .nf__links {
@@ -1438,8 +1489,9 @@
     --btn-bg: var(--gold-softer);
   }
 
-  /* …and the header's own editor button is not a third call to the same place. */
-  body:has(main.status-page .computer-only) .hdr__tools > .auth-in > .btn-primary {
+  /* The header bar's "เปิดห้องตัดต่อ" opens an editor this device cannot run:
+     on a phone or a tablet it stays in the menu sheet only. */
+  .hdr__tools > .auth-in > .btn-primary {
     display: none;
   }
 }

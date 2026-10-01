@@ -1,6 +1,6 @@
 /*
  * Story sections shared by the home page and /scope: the fit / misfit lanes
- * (FitLists) and the fade-to-black CTA band (CtaBand). One stylesheet,
+ * (FitLists) and the cut-to-night CTA band (CtaBand). One stylesheet,
  * imported by both components.
  */
 
@@ -53,14 +53,43 @@
 }
 
 /* Clips fill each row of the track: an odd count leaves no hole, the last
-   row's clips simply run longer. */
+   row's clips simply run longer. Columns, not free wrapping: the two lanes'
+   clips line up edge to edge, and a short last row spans the gap. */
 .lane__clips {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 10px;
   margin: 0;
   padding: 0;
   list-style: none;
+}
+
+@media (min-width: 560px) {
+  .lane__clips {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .lane__clip:last-child:nth-child(2n + 1) {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (min-width: 1200px) {
+  .lane__clips {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .lane__clip:last-child:nth-child(2n + 1) {
+    grid-column: auto;
+  }
+
+  .lane__clip:last-child:nth-child(3n + 2) {
+    grid-column: span 2;
+  }
+
+  .lane__clip:last-child:nth-child(3n + 1) {
+    grid-column: 1 / -1;
+  }
 }
 
 .lane__clip {
@@ -74,7 +103,6 @@
   font-size: var(--fs-15);
   line-height: 1.7;
   color: var(--ink);
-  flex: 1 1 min(250px, 100%);
 }
 
 .lane--fit .lane__clip {
@@ -132,7 +160,7 @@
   }
 }
 
-/* ── CTA band: fade to black ────────────────────────────────────────────── */
+/* ── CTA band: cut to night ─────────────────────────────────────────────── */
 
 .cta-band {
   --cta-cut: clamp(26px, 3.4vw, 48px);
@@ -141,8 +169,13 @@
   overflow: hidden;
   background: var(--color-bg);
   color: var(--ink);
-  padding-block: clamp(120px, 14vw, 220px) clamp(96px, 11vw, 168px);
+  padding-block: clamp(108px, 12vw, 184px) clamp(96px, 11vw, 168px);
   text-align: center;
+  /* The scene cuts to the night on the splice's diagonal (the fade below
+     draws the gold seam on the cut). The clip reaches a pixel past the
+     band's bottom: ending on a half pixel, the band would leave a hairline
+     of the page between it and the footer. */
+  clip-path: polygon(0 var(--cta-cut), 100% 0, 100% calc(100% + 1px), 0 calc(100% + 1px));
 }
 
 html[data-theme="dark"] .cta-band {
@@ -155,22 +188,12 @@ html[data-theme="dark"] .cta-band {
   }
 }
 
+/* The cut, in both themes. On a light page a fade to black passed through a
+   flat grey; on a dark one it faded between two near-blacks and read as an
+   empty band before the scene. The seam marks where the night starts. */
 .cta-band__fade {
   position: absolute;
   inset: 0 0 auto;
-  height: 60%;
-  background: linear-gradient(180deg, var(--page-bg), transparent);
-  z-index: -1;
-}
-
-/* On a light page a fade to black passes through a flat grey: the scene cuts
-   to the night on the splice's diagonal instead, with a gold seam on the cut.
-   A dark page keeps the fade. */
-html:not([data-theme="dark"]) .cta-band {
-  clip-path: polygon(0 var(--cta-cut), 100% 0, 100% 100%, 0 100%);
-}
-
-html:not([data-theme="dark"]) .cta-band__fade {
   height: var(--cta-cut);
   background: linear-gradient(
     to bottom right,
@@ -179,18 +202,6 @@ html:not([data-theme="dark"]) .cta-band__fade {
     transparent calc(50% + 1px)
   );
   z-index: 0;
-}
-
-@media (prefers-color-scheme: dark) {
-  html:not([data-theme="light"]) .cta-band {
-    clip-path: none;
-  }
-
-  html:not([data-theme="light"]) .cta-band__fade {
-    height: 60%;
-    background: linear-gradient(180deg, var(--page-bg), transparent);
-    z-index: -1;
-  }
 }
 
 /* The glow sits inside the band and fades out before its edges: cut off by

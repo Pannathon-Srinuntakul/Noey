@@ -1187,10 +1187,11 @@ dialog.dialog::backdrop {
 }
 
 .dialog-inner {
+  --dialog-pad: clamp(22px, 4vw, 34px);
   position: relative;
   display: flex;
   flex-direction: column;
-  padding: clamp(22px, 4vw, 34px);
+  padding: var(--dialog-pad);
 }
 
 /* A rim of gold light along the top edge, fading out at both ends. */
@@ -1223,10 +1224,11 @@ dialog.dialog::backdrop {
   padding-right: 44px;
 }
 
+/* On the content's right edge, level with the title's first line. */
 .dialog-close {
   position: absolute;
-  top: 14px;
-  right: 14px;
+  top: calc(var(--dialog-pad) - 2px);
+  right: var(--dialog-pad);
   display: grid;
   place-items: center;
   width: 36px;
@@ -1270,7 +1272,6 @@ dialog.dialog::backdrop {
 
 /* The actions stay in view at the dialog's foot when its content scrolls. */
 .dialog-actions {
-  --dialog-pad: clamp(22px, 4vw, 34px);
   position: sticky;
   bottom: 0;
   z-index: 1;
@@ -1283,6 +1284,8 @@ dialog.dialog::backdrop {
   padding: 14px var(--dialog-pad) clamp(18px, 3vw, 26px);
   border-top: 1px solid var(--line);
   background: var(--bg);
+  /* Raised over what scrolls under it: the list reads as going on below. */
+  box-shadow: 0 -16px 28px -20px color-mix(in srgb, var(--color-neutral-900) 55%, transparent);
 }
 
 /* Content scrolling under the footer fades out instead of being sliced. */
@@ -1292,7 +1295,7 @@ dialog.dialog::backdrop {
   left: 0;
   right: 0;
   bottom: calc(100% + 1px);
-  height: 22px;
+  height: 32px;
   background: linear-gradient(transparent, var(--bg));
   pointer-events: none;
 }
@@ -1314,15 +1317,16 @@ dialog.dialog::backdrop {
   }
 }
 
-/* A locked action in a dialog's footer steps further back, and the box that
-   unlocks it is drawn as the slot it is waiting on (as on /signup). */
-.dialog-actions .btn-primary:is(:disabled, [aria-disabled="true"]) {
-  opacity: 0.62;
-}
-
-.dialog-actions__consent:has(.agree__box:not(:checked)) .agree__box {
-  outline: 2px dashed color-mix(in srgb, var(--color-accent) 70%, transparent);
-  outline-offset: 2px;
+/* A locked action in a dialog's footer is a solid, muted button — plainly not
+   ready yet, without the dashed outline of an empty slot; the box that
+   unlocks it stays an ordinary checkbox. */
+.dialog-actions .btn:is(.btn-primary, .btn-danger):is(:disabled, [aria-disabled="true"]) {
+  --btn-bg: color-mix(in srgb, var(--color-text) 9%, var(--bg));
+  --btn-ink: var(--ink-3);
+  --btn-line: transparent;
+  border-style: solid;
+  box-shadow: none;
+  opacity: 1;
 }
 
 /* A consent box in the footer sits above the buttons it unlocks. */

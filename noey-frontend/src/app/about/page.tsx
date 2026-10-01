@@ -199,10 +199,11 @@ export default function AboutPage() {
 
       <section className="sect about-faq" aria-labelledby="about-faq-title">
         <div className="wrap">
-          <SectionHeader id="about-faq-title" track="Q" timecode="00:03:12:00" title="คำถามที่พบบ่อยเกี่ยวกับเรา (FAQ)" size="h-2" />
-          <div className="about-faq__list">
-            <FaqList items={ABOUT_FAQ} compact />
-          </div>
+          {/* A no-break space: "(FAQ)" never takes a line of its own. The list
+              runs the page's full width, as on every page with an FAQ, with
+              the same right edge as the principles' tracks above it. */}
+          <SectionHeader id="about-faq-title" track="Q" timecode="00:03:12:00" title={"คำถามที่พบบ่อยเกี่ยวกับเรา (FAQ)"} size="h-2" />
+          <FaqList items={ABOUT_FAQ} compact />
         </div>
       </section>
 

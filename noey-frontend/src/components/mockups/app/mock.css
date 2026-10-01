@@ -108,19 +108,43 @@
   }
 }
 
-/* A sample-footage tile (ui.tsx Tile): one frame of the strip, width-fitted. */
+/* A sample-footage tile (ui.tsx Tile): one frame of the strip, width-fitted.
+   Until the strip arrives (the mock-up nearing the screen) each tile is a
+   warm blank frame — the footage's own amber, not an empty grey or black
+   well that reads as a picture that failed to load. */
 .am-tile {
   display: block;
-  background-color: var(--well);
-  background-image: var(--am-strip, none);
+  background-color: color-mix(in srgb, var(--gold) 22%, var(--well));
+  background-image: var(--am-strip, linear-gradient(170deg, color-mix(in srgb, var(--gold) 30%, transparent), transparent 75%));
   background-repeat: no-repeat;
   background-size: calc(var(--am-tiles) * 100%) auto;
+}
+
+/* The scene's number over its frames: the editor sets it in white with a
+   shadow on its dark ground; over the lighter sample frames (and the light
+   theme) it sits on a dark chip so it stays legible. */
+.am-scene-n {
+  display: inline-block;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: rgb(0 0 0 / 0.58);
+  line-height: 1.3;
+  text-shadow: none;
 }
 
 /* The strip's (versioned) URL comes from AppScreen as --am-strip-src; it is
    attached only once the mock-up nears the screen (MockLive). */
 .am[data-live] {
   --am-strip: var(--am-strip-src);
+}
+
+/* The preview's scene still as its backdrop, from the same moment the strip
+   arrives: until the footage (or the lazy still) shows, the stage is the
+   picture, never a black box that reads as media that failed to load. */
+.am[data-live] .am-poster {
+  background-image: var(--am-poster);
+  background-position: center;
+  background-size: cover;
 }
 
 /* MusicBlock's volume: a native range with accent-color, as Chrome paints it. */

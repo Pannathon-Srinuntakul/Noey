@@ -92,13 +92,17 @@
   rotate: 10deg;
 }
 
+/* Half off the right edge, between the tall frame above it and the call to
+   action's row: clear of the fine print beside the button and of the
+   scene's "ภาพจำลองการทำงาน" label, which rises into the first screen's
+   bottom edge on a wide window. */
 .hero-bg__frame--4 {
   --blur: 0px;
   --o: 0.45;
   width: 230px;
   aspect-ratio: 16 / 9;
-  right: 2%;
-  bottom: 3%;
+  right: -70px;
+  top: 46%;
   rotate: -5deg;
 }
 
@@ -269,6 +273,14 @@
   color: var(--ink-2);
 }
 
+/* Where the computer-only note shows (ComputerOnly.tsx's query), the fine
+   print does not say it a second time. */
+@media (max-width: 767px), (pointer: coarse) {
+  .hero__fine-desk {
+    display: none;
+  }
+}
+
 @media (max-width: 860px) {
   .hero__cols {
     grid-template-columns: 1fr;
@@ -377,13 +389,20 @@
     padding-bottom: 0 !important;
   }
 
+  /* The scene sits just under the header rather than centred in the
+     screen: centring left a band of nothing between the intro, scrolling
+     away, and a scene that had not pinned yet. */
   .hero-scene__sticky {
     position: sticky;
     top: 0;
     height: 100vh;
     display: grid;
-    align-items: center;
-    padding-top: calc(var(--beta-h) + var(--header-top) + var(--header-h));
+    align-items: start;
+    padding-top: calc(var(--beta-h) + var(--header-top) + var(--header-h) + 28px);
+  }
+
+  .hero__intro {
+    padding-bottom: clamp(28px, 3vw, 44px);
   }
 
   /* On a wide, short window the editor (4:3 under its 34px tag) would run
@@ -872,6 +891,12 @@
   right: 12px;
 }
 
+/* The browser window starts below the label, in the card's own padding, as
+   the other two cards' pictures do. */
+.bento__card--3 .fv--browser {
+  margin-top: 46px;
+}
+
 .minis__tag {
   display: flex;
   justify-content: flex-end;
@@ -1026,8 +1051,10 @@
     gap: clamp(24px, 3vw, 40px);
   }
 
+  /* As large as the strip's height allows: each frame is a whole 1024×768
+     window, never cropped, so its size is what makes it legible. */
   .how__step {
-    width: min(520px, 38vw);
+    width: min(620px, 46vw, (100vh - var(--beta-h) - var(--header-top) - var(--header-h) - 260px) * 4 / 3);
   }
 
   .how__progress {
@@ -1057,6 +1084,22 @@
   }
 }
 
+/* Not pinned on a wide screen (reduced motion, a short window, a tablet):
+   one step a row, the window beside its text — three windows side by side
+   were drawn at a third of their size, their text at 4–6px. */
+@media (min-width: 901px) and (not ((min-width: 1024px) and (min-height: 600px) and (prefers-reduced-motion: no-preference))) {
+  .how__steps {
+    grid-template-columns: minmax(0, 1fr);
+    gap: clamp(36px, 4vw, 56px);
+  }
+
+  .how__step {
+    grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr);
+    align-items: center;
+    gap: clamp(28px, 4vw, 64px);
+  }
+}
+
 /* ── Scope teaser, pricing, FAQ ─────────────────────────────────────────── */
 
 .scope-teaser {
@@ -1074,10 +1117,9 @@
   border-top: 1px solid var(--line);
 }
 
-.home-faq__grid {
-  display: grid;
-  gap: 8px;
-  max-width: 980px;
+/* "Read more" links: the last word and the arrow never part. */
+.more-link__end {
+  white-space: nowrap;
 }
 
 

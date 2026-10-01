@@ -20,8 +20,10 @@ export function FeatureVisual({ index }: { index: number }) {
   if (index === 0) {
     return (
       <div className="fv fv--app" aria-hidden="true">
+        {/* At rest the playhead sits in the selected scene, clear of the
+            ruler's 0:00 (playing, it sweeps the cut from the start). */}
         <AppScreen width={1024} height={253} crop={{ x: 0, y: 0, w: 690, h: 253 }}>
-          <TimelineBlock windowWidth={1024} time={0} selected={2} run />
+          <TimelineBlock windowWidth={1024} time={sceneStillTime(2)} selected={2} run />
         </AppScreen>
         <MockLive />
       </div>
@@ -47,7 +49,10 @@ export function FeatureVisual({ index }: { index: number }) {
         </svg>
         app.noeystudio.com
       </div>
-      <AppScreen width={1024} height={768}>
+      {/* The window down to its lanes: the hint line under them is left out
+          of the drawings (unpainted), and its empty 32px row read as a gap
+          between the window and the frame's bottom edge. */}
+      <AppScreen width={1024} height={768} crop={{ x: 0, y: 0, w: 1024, h: 736 }}>
         <EditorScreen windowWidth={1024} time={sceneStillTime(2)} video={<EditorLive />} />
       </AppScreen>
       <MockLive />

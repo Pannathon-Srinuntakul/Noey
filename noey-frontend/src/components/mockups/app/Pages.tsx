@@ -116,15 +116,19 @@ function ProgressState({ index, message, eta }: { index: number; message: string
  * stages). `states` picks which to draw; more than one are stacked for the
  * choreography (data-am-state).
  */
-export const PROGRESS_STATES = [
+const PROGRESS_STATES = [
   { index: 0, message: "กำลังนำเข้าคลิป 3/5…" },
   { index: 1, message: "กำลังย่อวิดีโอให้ AI 4/5…", eta: 3 },
   { index: 1, message: "กำลัง match script กับซีนวิดีโอ…", eta: 2 },
   { index: 2, message: "กำลังตัดซีนที่ 5/8…", eta: 1 },
 ] as const;
 
-/** When each state takes over in the hero (seconds into the beat). */
-const STATE_AT = [0, 1.3, 2.6, 4.0];
+/**
+ * When each drawn state takes over in the hero (seconds into the beat, by
+ * position in `states`). The hero draws the run from 25% on: opening on the
+ * import at 0%, the beat read as a job that had stalled before it started.
+ */
+const STATE_AT = [0, 1.8, 3.6];
 
 export function JobProgress({ states = [2] }: { states?: readonly number[] }) {
   return (

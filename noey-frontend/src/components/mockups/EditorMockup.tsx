@@ -2,7 +2,7 @@ import { AppScreen } from "./app/AppScreen";
 import { DEMO_PICK, EditorScreen } from "./app/Editor";
 import { EditorLive } from "./app/EditorLive";
 import { MockLive } from "./app/MockLive";
-import { JobProgress, PROGRESS_STATES } from "./app/Pages";
+import { JobProgress } from "./app/Pages";
 import { WizardFiles, WizardOutcome, WizardReview } from "./app/Wizard";
 import { Pointer } from "./app/Pointer";
 import { sceneStillTime } from "./sample";
@@ -91,7 +91,8 @@ export function EditorMockup({
             </div>
             <div className="edm__beat edm__beat--2" aria-hidden="true">
               <Screen name="progress">
-                <JobProgress states={PROGRESS_STATES.map((_, i) => i)} />
+                {/* From the AI's first stage to the cut: 25% → 50%. */}
+                <JobProgress states={[1, 2, 3]} />
               </Screen>
             </div>
             <div className="edm__beat edm__beat--3">

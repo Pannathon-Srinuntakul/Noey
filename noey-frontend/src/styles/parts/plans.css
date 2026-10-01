@@ -108,24 +108,32 @@
   font-size: var(--fs-18);
 }
 
-/* Quiet on purpose: the beta strip and the banner above the cards already
-   say it loud; on each card it is the fine print under the price. */
+/* One chip under the price: the strip above the cards says the terms in
+   full, the struck price beside the number shows what returns after. */
 .plan__beta {
   margin: 0;
-  font-size: var(--fs-12);
-  font-weight: 400;
-  line-height: 1.55;
-  color: var(--ink-3);
+  line-height: 1;
 }
 
+.plan__beta--blank {
+  visibility: hidden;
+}
+
+/* Running text, not a flex row: a caption that wraps (the free plan's "ราว 2
+   คลิป · ทดลองใช้ครั้งเดียว ไม่รีเซ็ต" in a narrow column) starts its next line
+   at the left edge instead of hanging under the caption's first word. */
 .plan__usage {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 6px;
   margin-top: 6px;
   padding-top: 12px;
   border-top: 1px dashed var(--line-2);
+  font-size: var(--fs-13);
+  line-height: 1.6;
+  color: var(--ink-3);
+}
+
+/* The number and its unit never part. */
+.usage-count {
+  white-space: nowrap;
 }
 
 .usage-approx {
@@ -136,17 +144,12 @@
 .usage-mult {
   font-size: var(--fs-20);
   font-weight: 600;
+  line-height: 1.2;
   color: var(--gold-ink);
 }
 
-/* The unit stays beside its number: the caption takes the rest of the line
-   and wraps inside it ("คลิป · ทดลองใช้ครั้งเดียว…"), instead of moving
-   whole to a line of its own and leaving the number without its unit. */
 .usage-caption {
-  flex: 1 1 0;
-  min-width: 7em;
   font-size: var(--fs-13);
-  line-height: 1.45;
   color: var(--ink-3);
 }
 
@@ -248,6 +251,12 @@
   border-radius: 12px;
   border: 1px solid var(--line);
   background: var(--panel);
+}
+
+.price-more__plan {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
 /* The count sits under the name on every card: a longer name ("Agency")
@@ -456,7 +465,21 @@
   }
 }
 
+.cmp__hint {
+  display: none;
+}
+
 @media (max-width: 1099px) {
+  .cmp__hint {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 6px;
+    margin: 0 0 10px;
+    font-size: var(--fs-13);
+    color: var(--ink-3);
+  }
+
   /* The plans scroll sideways under a fixed label column, and the right edge
      fades while there are more. Every row shows: no inner vertical scroll. */
   .cmp__scroll {
@@ -476,6 +499,15 @@
     min-width: 118px;
     max-width: 150px;
     font-size: var(--fs-13);
+  }
+
+  /* A phone: the labels get the width to keep their phrases whole
+     ("จำนวนคลิปต่อเดือน", "สลับช็อต และเรนเดอร์ซ้ำ"), not one word a line. */
+  @media (max-width: 480px) {
+    .cmp__table tbody th[scope="row"] {
+      min-width: 136px;
+      max-width: 136px;
+    }
   }
 
   @supports (animation-timeline: scroll()) {

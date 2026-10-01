@@ -161,7 +161,7 @@ export default function ScopePage() {
       {/* ── Fit / misfit: two tracks of equal weight ── */}
       <section className="sect scope-fit" aria-labelledby="scope-fit-title">
         <div className="wrap">
-          <SectionHeader id="scope-fit-title" track="V1" timecode="00:00:36:00" title="เหมาะกับงานแบบไหน">
+          <SectionHeader id="scope-fit-title" marker timecode="00:00:36:00" title="เหมาะกับงานแบบไหน">
             <p>
               {keepThaiProse("เหมาะที่สุดกับคลิปสั้นที่โครงเรื่องไม่ซับซ้อนและเนื้อหาเดินด้วยคำพูด เช่น คลิปรีวิว คลิปพูดหน้ากล้อง และคลิปยาวที่อยากตัดเป็นคลิปสั้น ยังไม่เหมาะกับงานที่ต้องแทรกภาพประกอบตามบท ตัดซ้อนหลายชั้น หรือใช้กราฟิกและโมชันเยอะ")}
             </p>
@@ -173,7 +173,7 @@ export default function ScopePage() {
       {/* ── Time saved: said honestly, with the three-row summary ── */}
       <section className="sect scope-time" aria-labelledby="scope-time-title">
         <div className="wrap scope-time__grid">
-          <SectionHeader id="scope-time-title" track="A1" timecode="00:00:52:12" title="ประหยัดเวลาได้เท่าไหร่">
+          <SectionHeader id="scope-time-title" marker timecode="00:00:52:12" title="ประหยัดเวลาได้เท่าไหร่">
             <p>
               {keepThaiProse("ขึ้นกับฟุตเทจและความละเอียดที่ต้องการ งานที่เคยใช้เวลาไล่ฟุตเทจและพิมพ์ซับเป็นชั่วโมง มักเหลือเวลาเกลาในไทม์ไลน์เป็นสิบนาที แต่ถ้าคลิปต้องแทรกภาพหรือคุมจังหวะละเอียด เวลาที่ประหยัดจะน้อยลงตามส่วน")}
             </p>
@@ -195,8 +195,8 @@ export default function ScopePage() {
 
       {/* ── FAQ ── */}
       <section className="sect scope-faq" aria-labelledby="scope-faq-title">
-        <div className="wrap wrap--narrow">
-          <SectionHeader id="scope-faq-title" track="T1" timecode="00:01:10:00" title="คำถามที่พบบ่อยเรื่องขอบเขต (FAQ)" size="h-2" />
+        <div className="wrap">
+          <SectionHeader id="scope-faq-title" marker timecode="00:01:10:00" title={"คำถามที่พบบ่อยเรื่องขอบเขต\u00a0(FAQ)"} size="h-2" />
           <FaqList items={SCOPE_FAQ} compact />
         </div>
       </section>
@@ -204,7 +204,7 @@ export default function ScopePage() {
       {/* ── Guides, one per job ── */}
       <section className="sect scope-guides" aria-labelledby="scope-guides-title">
         <div className="wrap">
-          <SectionHeader id="scope-guides-title" track="R2" timecode="00:01:24:00" title="อ่านวิธีทำทีละงาน" size="h-2" />
+          <SectionHeader id="scope-guides-title" marker timecode="00:01:24:00" title="อ่านวิธีทำทีละงาน" size="h-2" />
           <ul className="link-grid" data-reveal="stagger">
             {GUIDE_LINKS.map((item, index) => (
               <li key={item.href}>

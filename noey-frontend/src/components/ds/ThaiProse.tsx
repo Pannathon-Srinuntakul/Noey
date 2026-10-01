@@ -30,6 +30,8 @@ import { glueMarks, keepSegments } from "./ThaiText";
 
 const LEANS_ON_NEXT = new Set([
   "ไม่",
+  // ICU returns "ไม่ใช่" as one word, so "ไม่" alone never sees it.
+  "ไม่ใช่",
   "การ",
   "ความ",
   "ผู้",

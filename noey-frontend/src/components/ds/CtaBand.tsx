@@ -4,9 +4,9 @@ import { WordReveal } from "./WordReveal";
 import "../../styles/parts/story.css";
 
 /**
- * The closing scene of a page: a fade to black (the band is a night scene in
- * both themes), the splice mark drawing itself in, then the call to action.
- * It hands straight over to the end-credits footer.
+ * The closing scene of a page: a cut to night on the splice's diagonal (the
+ * band is a night scene in both themes), the splice mark drawing itself in,
+ * then the call to action. It hands straight over to the end-credits footer.
  */
 export function CtaBand({
   id,

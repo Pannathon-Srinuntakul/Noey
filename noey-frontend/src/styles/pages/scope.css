@@ -184,9 +184,11 @@
   gap: clamp(32px, 5vw, 56px);
 }
 
+/* The intro and the step cards under it: a full step apart, so the cards
+   read as the list the intro introduces, not as its last lines. */
 .handoff__part {
   display: grid;
-  gap: 18px;
+  gap: clamp(32px, 4vw, 44px);
 }
 
 .handoff__head {
@@ -282,11 +284,13 @@
   color: var(--ink-2);
 }
 
+/* As wide as the step cards around it: one right edge down the timeline. */
 .handoff__cut {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   gap: 18px;
+  max-width: 880px;
   padding: 18px 20px;
   border-radius: 16px;
   border: 1px solid color-mix(in srgb, var(--color-accent) 50%, transparent);

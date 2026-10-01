@@ -253,6 +253,81 @@ New: "รหัสผ่าน" on /reset-password (the visitor is not signed in
 - Privacy §01 and §02: the items they list are drawn as a list; the words are
   unchanged.
 
+## 18. Status pages: password, checkout, the eyebrow on the title strip
+
+- /reset-password: the button "ตั้งรหัสผ่านใหม่" → "บันทึกรหัสผ่านใหม่" (the
+  page's title already says ตั้งรหัสผ่านใหม่; it said it three times). The
+  line under the title "ตั้งรหัสผ่านใหม่อย่างน้อย 8 ตัวอักษร เสร็จแล้วระบบจะพา
+  เข้าสู่ระบบให้ทันที" → "บันทึกแล้วระบบจะพาเข้าสู่ระบบให้ทันที", and "อย่างน้อย
+  8 ตัวอักษร" moved from the first field's placeholder to a hint under it.
+- /login's forgot-password dialog: title "ตั้งรหัสผ่านใหม่" → "ลืมรหัสผ่าน" (it
+  only emails a link — the error on /account already calls it “ลืมรหัสผ่าน”);
+  its "ปิด" button is gone (the dialog has its ✕ and Escape).
+- /checkout/success, confirmed: "อัปเกรดเป็นแพลน Pro แล้ว" → "แพลน Pro
+  เริ่มใช้งานแล้ว" (under the title "ขอบคุณที่อัปเกรดแพลน", it repeated
+  อัปเกรด…แพลน).
+- Every status card: the eyebrow ("การชำระเงิน", "ยืนยันอีเมล", "รหัสผ่าน",
+  "ลบบัญชี") moved from above the title onto the card's title strip.
+- The beta notice: the "เบต้า" chip beside its title is gone (the title
+  begins "ช่วงเบต้า").
+
+## 19. Account: one name per place, one label per field, one date format
+
+- /account's tab: "ห้องตัดต่อ" → "บัญชีของฉัน", with the person icon instead of
+  the scissors. The header's account menu, the footer and the page's own
+  title already call /account "บัญชีของฉัน"; "ห้องตัดต่อ" is the editor's name
+  (its card on that tab and its button keep it).
+- On a phone the four tabs sit side by side under short names: "บัญชี",
+  "โควตา", "แพลน", "โปรไฟล์" (the full names, cut at the screen's edge, were
+  "แพลนแล…" and a stray "ลิมิต"). From 481px wide the full names are shown.
+- /account/profile, change password: "รหัสผ่านเดิม" → "รหัสผ่านปัจจุบัน", the name
+  the email form and the delete dialog already use for the same password.
+  The email form's password field gets a hint, "ใส่รหัสผ่านเพื่อยืนยันการเปลี่ยนอีเมล".
+- /account/billing, payment card: the "รอบบิลถัดไป" / "ใช้แพลนได้ถึง" row is
+  shown only when the plan card's status line does not already give that
+  date ("ต่ออายุอัตโนมัติ …", "ยกเลิกแล้ว ใช้ได้ถึง …"), and not at all when
+  there is no date (it printed "—").
+- /account/billing dates: "13 ตุลาคม 2569" → "13 ต.ค. 2026" — short month,
+  Common Era year, the calendar of the beta strip and the plan dialog on the
+  same screen ("31 ธ.ค. 2026").
+- /account/billing notices pointed at a button that does not exist (the
+  button on a free account reads "เลือกแพลน"; this was wrong before the
+  redesign too):
+  - "การชำระเงินของแพลนล่าสุดไม่สำเร็จ บัญชีจึงกลับมาใช้แพลนฟรี เลือกแพลนใหม่ได้จากปุ่มอัปเกรดแพลน"
+    → "…เลือกแพลนใหม่ได้จากปุ่ม “เลือกแพลน”"
+  - "สมัครบัญชีเรียบร้อยแล้ว ตอนนี้ใช้แพลนฟรีอยู่ กด “อัปเกรดแพลน” เพื่อไปหน้าชำระเงินของแพลน"
+    → "…กด “เลือกแพลน” เพื่อไปหน้าชำระเงินของแพลน"
+
+## 20. Home, /scope, /pricing: the final review
+
+- /pricing, the opening answer: the hero keeps the free trial and how paying
+  works ("Noey Studio ให้เครดิตทดลองฟรีก้อนเดียวเมื่อสมัคร …", "ชำระด้วยบัตรเครดิต
+  หรือเดบิต เปลี่ยนหรือยกเลิกแพลนได้เองจากหน้าบัญชี"). The sentence listing every
+  plan's price and clip count ("ใช้หมดแล้วเลือกแพลนรายเดือนได้ 6 ระดับ ได้แก่ …")
+  moved, word for word, to just under the plan cards — in the hero it was a
+  wall of numbers above the same numbers. The beta clause that ended the
+  third paragraph, "ราคาที่แสดงคือราคาเบต้า ลด 50% หมดวันที่ 31 ธ.ค. 2026
+  รอบบิลถัดจากนั้นคิดราคาปกติทุกบัญชี รวมคนที่สมัครไว้แล้ว", is gone from the hero:
+  the strip right above the cards says the same terms
+  ("ราคาเบต้า ลด 50% ถึง 31 ธ.ค. 2026 · หลังจากนั้นรอบบิลถัดไปคิดราคาปกติทุกบัญชี
+  รวมคนที่สมัครไว้แล้ว"), and so do the FAQ and the table's note.
+- Each discounted plan card (home and /pricing): the line
+  "เบต้า · ลด 50% ถึง 31 ธ.ค. 2026 จากนั้นคิดราคาปกติ" → a chip, "เบต้า −50%",
+  beside the struck regular price. The terms are said in full once, in the
+  strip above the cards; the line repeated them six times on /pricing.
+- /pricing, under the cards: the "แพลนเพิ่มเติม" heading with nothing under it
+  became a legend — the same tag the three cards carry, then its meaning
+  (the note itself is unchanged).
+- Home: the section eyebrows "ความสามารถหลัก", "วิธีใช้งาน", "ขอบเขตของระบบ"
+  and "ราคา" are gone. Every section on home, /scope and /pricing now opens
+  the same way — a marker and its time on the page's timeline — where home's
+  four had a gold label and the other eleven none.
+- Home, the closing band: "สมัครใช้งาน" → "เริ่มใช้ฟรี", the label of the same
+  link everywhere else on the site.
+- Home, the hero's fine print: where the computer-only note shows (phones,
+  tablets), its last part, "ใช้ได้เฉพาะบนคอมผ่าน Chrome หรือ Edge", is not
+  repeated under the note.
+
 ## Text added (not replacing anything)
 
 Only labels, no claims:
@@ -281,6 +356,8 @@ Only labels, no claims:
   on hover or focus reuse the home page's own words — "แก้ทับได้ทุกช็อต",
   "พากย์เสียง พร้อมสคริปต์จาก AI", "ใส่เพลงประกอบ", "ซับไทยอัตโนมัติ",
   "AI ตัดคลิปให้อัตโนมัติ".
+- /about: the contact form's name field has a placeholder like its other two
+  fields, "ชื่อที่ให้เราเรียก".
 - /about: once the contact form has sent, the form gives way to its
   confirmation and a "ส่งอีกข้อความ" button (the empty form with a gold send
   button invited sending the same message again).
@@ -301,12 +378,25 @@ Only labels, no claims:
   "ภาพจำลอง · ไทม์ไลน์หลังระบบตัดร่างแรก", "ภาพจำลอง · เลนคำบรรยายไทยในไทม์ไลน์",
   "ภาพจำลอง · สลับฉากเป็นช็อตสำรอง", "ภาพจำลอง · ยืดหดความยาวฉากในไทม์ไลน์",
   "ภาพจำลอง · ห้องตัดต่อบนเว็บ", "ภาพจำลอง · การ์ดโควตาในหน้าตั้งค่า".
-- Decorative readouts, hidden from assistive technology: "EXPORT · 100%"
-  under the checkout card's render bar, "SENT" on the contact form's
-  confirmation.
+- Decorative readouts, hidden from assistive technology: "100%" under the
+  checkout card's render bar, "SENT" on the contact form's confirmation, the
+  status cards' title strip (a state word as a render queue prints it —
+  "DONE", "EXPORT", "FAILED", "READY", "RENDERING", "END") and the 404's
+  running time display.
 - /account: when the last charge failed (`past_due`), the summary's plan row
   repeats the billing tab's own sentence, "ตัดบัตรไม่สำเร็จ ระบบจะลองตัดอีกครั้ง
   อัปเดตบัตรได้ที่การ์ดการชำระเงิน", so it is seen without opening that tab.
+- /pricing, the quota rules: under "Weekly limit", "5-hour limit" and
+  "Trial credit", quietly, the editor's own names for them —
+  "โควตารายสัปดาห์", "โควตารอบ 5 ชั่วโมง", "เครดิตทดลองใช้" (web/src
+  `lib/usageLimits.ts`), the names on the quota card drawn just above.
+- The plan comparison table, where it scrolls sideways (narrow screens):
+  "เลื่อนดูทุกแพลน →" above it (decorative, hidden from assistive technology).
+- Decoration, hidden from assistive technology: the home page's six feature
+  clips are tagged by their job ("SUB", "BGM", "TRIM", "SWAP", "IN", "OUT")
+  instead of track numbers, the home page's extra plans carry their reel
+  numbers ("P1", "P5", "P6"), and a section opens with the header ruler's
+  diamond in place of a track label.
 
 No testimonials, client logos, ratings or measured-looking numbers were
 added. The running timecode beside "งานที่กินเวลาที่สุด ไม่ใช่การถ่าย แต่เป็นการตัด"

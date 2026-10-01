@@ -18,13 +18,13 @@ StatusCard, EditorMockup, ScrollTimeline, SpliceDivider, CtaBand, FaqList.
 | `/guide` | The media bin: each guide is a clip whose thumbnail is drawn from the guide itself (a cue per section, a waveform, its file name and length); hovering scrubs it |
 | `/guide/*` (6) | The table of contents as a vertical timeline with a cue per heading and a playhead at your reading position; one polished article layout for all six (callouts, steps, term lists, tables) |
 | `/about` | The story as chapters with timecodes on a rail that fills as you read, the five principles as locked tracks, the contact form held beside the story on a desktop |
-| `/signup`, `/login` | Split screen: a still, plain form beside a viewer panel with the editor playing slowly; phones get the form alone, with the computer-only note |
-| `/reset-password`, `/verify-email` | One status card for every state, with the splice mark and a render bar that is full (done), cut (failed) or running (waiting) |
+| `/signup`, `/login`, `/reset-password` (the form) | Split screen: a still, plain form beside a viewer panel with the editor playing slowly; phones get the form alone, with the computer-only note on the sign-in pages |
+| `/verify-email`, `/reset-password` (a bad link) | One status card for every state: an editor panel's title strip (a recording light, the state as a render queue prints it — DONE, FAILED, READY — and the task), the splice mark, and a render bar that is full with a tick (done), cut with its far piece dropped (failed) or running (waiting) |
 | `/account` (+ quota, billing, profile) | The account as one editor panel: panel tabs along its edge, the editor card as the page's hero with "เปิดห้องตัดต่อ" the strongest button, quota bars as audio level meters that fill on load |
 | `/checkout/success` | "Render complete": the render bar fills and the tick lands after it — no confetti |
 | `/account-deleted` | The quiet status card: calm, plain, one way back |
 | `/terms`, `/privacy` | The guides' reading layout and timeline table of contents with the least motion on the site |
-| 404 | A timeline with one clip missing; the playhead runs up and drops into the gap |
+| 404 | A timeline with one clip missing; the playhead runs up and drops into the gap while its time display counts to 00:00:04:04 |
 | `global-error` | The same status card in the accent colour over a render bar cut in two |
 | Social cards (`opengraph-image`) | The timeline motif in the site's colours and fonts |
 
@@ -175,9 +175,18 @@ turntable and sharp rack-focus shots but failed the serum-drops macro (flat
 smears) and the flat-lay (liquid in a lying bottle, hard box reflections,
 dough-like pebbles) — those two shots were replaced by the label/collar
 macro and the bottle-with-carton shot, and the rack focus got a gentler,
-quicker pull. FOOTAGE_REVIEW_RESULT
+quicker pull. The third review **passed, narrowly**: pedestal, turntable,
+carton and rack focus read as real; the macro is real-looking but
+borderline. Its remaining notes, not fixed: a fizzing grain in the pipette
+(worst in the macro), the liquid's top edge reading like foil in close-up,
+the macro's focus sitting just behind the label's front, a bright rim on the
+glass's right edge in the macro, and the first third of a second of the rack
+focus (6.58–6.9 s), where the bottle is still a soft double image.
 
-Files in `public/footage/`: FOOTAGE_SIZES
+Files in `public/footage/`: 1.07 MB in all, under the 4 MB budget — the cut
+as `edit.webm` (438 KB) and `edit.mp4` (516 KB; a browser fetches one of the
+two), eight scene stills and three backup-shot stills as AVIF + WebP (129 KB
+together, each 3.5–9 KB) and the filmstrip sprite `strip.webp` (14 KB).
 
 Performance rules: no video loads until its mock-up is near the screen
 (`preload="none"`, sources added on demand); it plays only on screen, with its

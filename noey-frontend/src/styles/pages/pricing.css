@@ -228,7 +228,8 @@
   left: calc(8px + (100% - 16px) * var(--at, 0));
   translate: -50% 0;
   font-size: 11.5px;
-  color: var(--ink-3);
+  /* ink-2: at 11.5px the lighter ink fell to about 3.5:1 on the light panel. */
+  color: var(--ink-2);
   white-space: nowrap;
   transition: color var(--dur-2) ease;
 }
@@ -269,8 +270,15 @@
     grid-template-columns: 1fr;
   }
 
+  /* The readout takes the track's full width under it. */
+  .picker__out {
+    flex: 1 1 100%;
+  }
+
+  /* The arrows stay on a phone too: with the rail's fading right edge they
+     say there are more plans to the side. */
   .plan-rail__nav {
-    display: none;
+    margin-bottom: -10px;
   }
 
   /* Too close to name them all: Lite, Pro and Max keep their names, the
@@ -414,23 +422,35 @@
     var(--panel);
 }
 
+/* The legend for the "แพลนเพิ่มเติม" tag on three of the cards: the same tag,
+   then what it means. */
 .price-extra {
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
-  gap: 6px 14px;
-  margin-top: 14px;
+  align-items: center;
+  gap: 6px 12px;
+  margin: 14px 0 0;
 }
 
-.price-extra__title {
-  margin: 0;
-  font-size: var(--fs-16);
-  font-weight: 600;
+.price-extra__tag {
+  flex: none;
 }
 
 .price-extra__note {
-  margin: 0;
   font-size: var(--fs-14);
+  line-height: 1.6;
+  color: var(--ink-3);
+}
+
+/* Every plan's price and clip count in a sentence, under the cards that
+   show them: the text twin of the cards, quiet. */
+.pricing-summary {
+  max-width: var(--prose-max);
+  margin: 22px 0 0;
+  padding-top: 16px;
+  border-top: 1px dashed var(--line-2);
+  font-size: var(--fs-14);
+  line-height: 1.75;
   color: var(--ink-3);
 }
 
@@ -505,6 +525,16 @@
   font-size: var(--fs-14);
   font-weight: 600;
   color: var(--gold-ink);
+}
+
+/* The editor's own name for the window, quietly under its English key. */
+.rule-list__editor {
+  display: block;
+  margin-top: 2px;
+  font-size: var(--fs-12);
+  font-weight: 400;
+  line-height: 1.5;
+  color: var(--ink-3);
 }
 
 @media (max-width: 560px) {

@@ -61,14 +61,37 @@ const FEATURES = [
   },
 ];
 
+// Each clip's label names the job its demo shows, the way an editor tags a
+// clip — not a track number: V1–V3 on this page are the three tracks above.
 const MINI_CARDS: ReadonlyArray<{ title: string; body: string; demo: MicroKind; track: string }> = [
-  { title: "ซับไทยอัตโนมัติ", body: "ซับขึ้นตามเสียงพูดจริง เลือกฟอนต์ ขนาด และตำแหน่งได้", demo: "subs", track: "T1" },
-  { title: "ใส่เพลงประกอบ", body: "เลือกท่อนที่จะใช้ ปรับระดับเสียง และถอดออกได้ทุกเมื่อ", demo: "music", track: "A2" },
-  { title: "ไทม์ไลน์แก้มือ", body: "ย้าย ยืดหด ลบ ทำซ้ำ พร้อมย้อนกลับได้ทุกขั้น", demo: "trim", track: "V1" },
-  { title: "สลับช็อตในฉากเดิม", body: "ไม่ชอบภาพไหน เปลี่ยนเป็นเทกอื่นได้โดยจังหวะไม่เสีย", demo: "swap", track: "V2" },
+  { title: "ซับไทยอัตโนมัติ", body: "ซับขึ้นตามเสียงพูดจริง เลือกฟอนต์ ขนาด และตำแหน่งได้", demo: "subs", track: "SUB" },
+  { title: "ใส่เพลงประกอบ", body: "เลือกท่อนที่จะใช้ ปรับระดับเสียง และถอดออกได้ทุกเมื่อ", demo: "music", track: "BGM" },
+  { title: "ไทม์ไลน์แก้มือ", body: "ย้าย ยืดหด ลบ ทำซ้ำ พร้อมย้อนกลับได้ทุกขั้น", demo: "trim", track: "TRIM" },
+  { title: "สลับช็อตในฉากเดิม", body: "ไม่ชอบภาพไหน เปลี่ยนเป็นเทกอื่นได้โดยจังหวะไม่เสีย", demo: "swap", track: "SWAP" },
   { title: "รับไฟล์จากมือถือและกล้อง", body: "ฟอร์แมตที่เบราว์เซอร์เปิดไม่ได้ ระบบแปลงให้ก่อนเริ่มงาน", demo: "convert", track: "IN" },
   { title: "ได้ไฟล์พร้อมลง", body: "วิดีโอแนวตั้ง 1080×1920 ดาวน์โหลดแล้วลง TikTok, Reels หรือ Shorts ได้เลย", demo: "frame", track: "OUT" },
 ];
+
+/** The hero's fine print; its last part says again what the computer-only note says on a phone. */
+const HERO_FINE = "สมัครแล้วได้เครดิตทดลองฟรี · ไม่ต้องผูกบัตร · ใช้ได้เฉพาะบนคอมผ่าน Chrome หรือ Edge";
+const HERO_FINE_CUT = HERO_FINE.lastIndexOf(" · ");
+
+/**
+ * A "read more" link whose arrow stays with its last word when the text
+ * wraps (on a phone the arrow would otherwise start a line of its own).
+ */
+function MoreLink({ href, children }: { href: string; children: string }) {
+  const cut = children.lastIndexOf(" ");
+  return (
+    <Link href={href} className="more-link">
+      {children.slice(0, cut + 1)}
+      <span className="more-link__end">
+        {children.slice(cut + 1)}
+        <IconArrowRight size={18} />
+      </span>
+    </Link>
+  );
+}
 
 const STEPS = [
   {
@@ -164,7 +187,11 @@ export default async function HomePage() {
                 </Link>
               </div>
               <ComputerOnly />
-              <p className="hero__fine">{keepThaiProse("สมัครแล้วได้เครดิตทดลองฟรี · ไม่ต้องผูกบัตร · ใช้ได้เฉพาะบนคอมผ่าน Chrome หรือ Edge")}</p>
+              <p className="hero__fine">
+                {keepThaiProse(HERO_FINE.slice(0, HERO_FINE_CUT))}
+                {/* Where the computer-only note shows (phones), it already said this. */}
+                <span className="hero__fine-desk">{keepThaiProse(HERO_FINE.slice(HERO_FINE_CUT))}</span>
+              </p>
               <p className="hero__fine hero__honest">{keepThaiProse("ระบบทำร่างแรกให้ ไม่ได้ตัดจบแทนคุณ งานที่เหลือยังแก้เองในไทม์ไลน์")}</p>
               <p className="stamp">
                 อัปเดตล่าสุด <time dateTime={home.updated}>{formatThaiDate(home.updated)}</time>
@@ -240,7 +267,7 @@ export default async function HomePage() {
       <section className="sect problem" aria-labelledby="problem-title">
         <div className="wrap problem__grid">
           <div className="problem__head">
-            <SectionHeader id="problem-title" track="A1" title={"งานที่กินเวลาที่สุด\nไม่ใช่การถ่าย แต่เป็นการตัด"} soft={[1]} />
+            <SectionHeader id="problem-title" marker timecode="00:00:18:00" title={"งานที่กินเวลาที่สุด\nไม่ใช่การถ่าย แต่เป็นการตัด"} soft={[1]} />
             <div className="problem__clock" data-play="" aria-hidden="true">
               <span className="problem__clock-dot" />
               <span className="problem__clock-tc" />
@@ -263,7 +290,7 @@ export default async function HomePage() {
       {/* ── 4. Features: a bento of the three big ones, then six clips with their own demos ── */}
       <section id="features" className="sect features" aria-labelledby="features-title">
         <div className="wrap">
-          <SectionHeader id="features-title" track="V2" timecode="00:00:42:10" eyebrow="ความสามารถหลัก" title="สามอย่างที่ทำให้งานเสร็จเร็วขึ้นจริง">
+          <SectionHeader id="features-title" marker timecode="00:00:42:10" title="สามอย่างที่ทำให้งานเสร็จเร็วขึ้นจริง">
             <p>
               {keepThaiProse("ความสามารถหลักมีสามอย่าง คือตัดคลิปอัตโนมัติจากสิ่งที่พูดจริง เขียนสคริปต์พากย์ภาษาไทยให้เอาไปอัดเสียงได้ทันที และใส่ซับไทยตามเสียงพูด ทั้งสามอย่างทำงานในเบราว์เซอร์โดยไม่ต้องติดตั้งโปรแกรม")}
             </p>
@@ -313,7 +340,7 @@ export default async function HomePage() {
             <div className="how__viewport">
               <div className="how__track" data-scene-track="">
                 <div className="how__intro">
-                  <SectionHeader id="how-title" track="V3" timecode="00:01:08:00" eyebrow="วิธีใช้งาน" title="สามขั้นตอน จบในหน้าเดียว">
+                  <SectionHeader id="how-title" marker timecode="00:01:08:00" title="สามขั้นตอน จบในหน้าเดียว">
                     <p>
                       {keepThaiProse("ขั้นตอนใช้งานมีสามขั้น คือลากฟุตเทจเข้ามา เลือกโหมดและความยาวที่ต้องการ แล้วดูผล เกลาในไทม์ไลน์ และดาวน์โหลดไฟล์ วิดีโอแนวตั้ง 1080×1920 การแก้และเรนเดอร์ซ้ำทำได้ไม่จำกัดครั้งโดยไม่กินโควตา")}
                     </p>
@@ -352,17 +379,14 @@ export default async function HomePage() {
       {/* ── 6. Scope: what fits and what does not, side by side at equal weight ── */}
       <section className="sect scope-teaser" aria-labelledby="scope-title">
         <div className="wrap">
-          <SectionHeader id="scope-title" track="V4" timecode="00:01:36:12" eyebrow="ขอบเขตของระบบ" title="ระบบคัดช็อตให้ ไม่ได้ตัดจบแทนคุณ">
+          <SectionHeader id="scope-title" marker timecode="00:01:36:12" title="ระบบคัดช็อตให้ ไม่ได้ตัดจบแทนคุณ">
             <p>
               {keepThaiProse("สิ่งที่ได้กลับมาคือร่างแรก — ช็อตที่คัดมาแล้ว เรียงลำดับไว้ พร้อมซับไทย จากนั้นยังต้องเข้าไปเกลาจังหวะและลำดับเองในไทม์ไลน์เกือบทุกครั้ง ส่วนที่ประหยัดคือเวลานั่งไล่ฟุตเทจทีละช่วงและพิมพ์ซับเอง ไม่ใช่การตัดต่อทั้งกระบวนการ")}
             </p>
           </SectionHeader>
           <FitLists fits={HOME_FITS} misfits={HOME_MISFITS} fitTitle="เหมาะกับงานแบบนี้" misfitTitle="ยังทำให้ไม่ได้" headingLevel="h3" />
           <p className="section-more">
-            <Link href={PAGES.scope.path} className="more-link">
-              อ่านขอบเขตแบบละเอียด ทำอะไรได้ ทำอะไรไม่ได้
-              <IconArrowRight size={18} />
-            </Link>
+            <MoreLink href={PAGES.scope.path}>อ่านขอบเขตแบบละเอียด ทำอะไรได้ ทำอะไรไม่ได้</MoreLink>
           </p>
         </div>
       </section>
@@ -370,7 +394,7 @@ export default async function HomePage() {
       {/* ── 7. Pricing ── */}
       <section className="sect home-pricing" aria-labelledby="pricing-title">
         <div className="wrap">
-          <SectionHeader id="pricing-title" track="A2" timecode="00:02:04:00" eyebrow="ราคา" title="เริ่มฟรี แล้วค่อยขยับตามปริมาณงาน">
+          <SectionHeader id="pricing-title" marker timecode="00:02:04:00" title="เริ่มฟรี แล้วค่อยขยับตามปริมาณงาน">
             <p>
               {keepThaiProse("ทุกแพลนได้ไทม์ไลน์ ซับไทย และการเรนเดอร์แบบไม่จำกัดครั้ง ที่ต่างกันคือจำนวนคลิปที่ AI ตัดให้ต่อเดือน ความยาวฟุตเทจต่อโปรเจกต์ และพื้นที่เก็บงาน")}
             </p>
@@ -378,37 +402,30 @@ export default async function HomePage() {
           <BetaPriceNote table={table} />
           <PriceCards table={table} variant="home" />
           <p className="section-more">
-            <Link href="/pricing" className="more-link">
-              ดูทั้ง 7 แพลน รวม Lite, Agency และ Max
-              <IconArrowRight size={18} />
-            </Link>
+            <MoreLink href="/pricing">ดูทั้ง 7 แพลน รวม Lite, Agency และ Max</MoreLink>
           </p>
         </div>
       </section>
 
       {/* ── 8. FAQ ── */}
       <section className="sect home-faq" aria-labelledby="faq-title">
-        <div className="wrap home-faq__grid">
-          <SectionHeader id="faq-title" track="T1" timecode="00:02:31:08" title="คำถามที่พบบ่อย (FAQ)" />
-          <div>
-            <FaqList items={HOME_FAQ} />
-            <p className="section-more">
-              <Link href={PAGES.guide.path} className="more-link">
-                อ่านคู่มือใช้งานแบบละเอียด ทั้งการตัดคลิป ซับไทย และหน้าช่วยเหลือ
-                <IconArrowRight size={18} />
-              </Link>
-            </p>
-          </div>
+        <div className="wrap">
+          {/* A no-break space: "(FAQ)" never takes a line of its own. */}
+          <SectionHeader id="faq-title" marker timecode="00:02:31:08" title={"คำถามที่พบบ่อย (FAQ)"} />
+          <FaqList items={HOME_FAQ} />
+          <p className="section-more">
+            <MoreLink href={PAGES.guide.path}>อ่านคู่มือใช้งานแบบละเอียด ทั้งการตัดคลิป ซับไทย และหน้าช่วยเหลือ</MoreLink>
+          </p>
         </div>
       </section>
 
-      {/* ── 9. Fade to black ── */}
+      {/* ── 9. Cut to night ── */}
       <CtaBand
         id="cta-title"
         title="ลองตัดคลิปแรกวันนี้"
         actions={
           <Link href="/signup" className="btn btn-primary btn-lg" data-magnetic="">
-            สมัครใช้งาน
+            เริ่มใช้ฟรี
           </Link>
         }
       >

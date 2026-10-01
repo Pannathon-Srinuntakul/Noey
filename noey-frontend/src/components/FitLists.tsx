@@ -26,8 +26,10 @@ export function FitLists({
     <div className="lanes" data-reveal="lanes">
       <div className="lane lane--fit">
         <div className="lane__head">
-          <span className="trk tc" aria-hidden="true">
-            V1
+          {/* The lane's own mark, as its clips carry it: no track number,
+              which on the home page would collide with the V1–V3 tracks. */}
+          <span className="trk" aria-hidden="true">
+            <IconCheck size={13} />
           </span>
           <Heading className="lane__title">{fitTitle}</Heading>
         </div>
@@ -44,8 +46,8 @@ export function FitLists({
       </div>
       <div className="lane lane--misfit">
         <div className="lane__head">
-          <span className="trk tc" aria-hidden="true">
-            V2
+          <span className="trk" aria-hidden="true">
+            <IconMinus size={13} />
           </span>
           <Heading className="lane__title">{misfitTitle}</Heading>
         </div>

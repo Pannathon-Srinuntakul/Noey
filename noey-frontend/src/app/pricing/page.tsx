@@ -23,7 +23,7 @@ import {
   softwareApplicationNode,
   webPageNode,
 } from "@/lib/jsonld";
-import { BETA_PRICE_AFTER, BETA_PRICE_LINE } from "@/lib/beta";
+import { BETA_PRICE_LINE } from "@/lib/beta";
 import {
   APPROX_CUTS_PER_MONTH,
   CLIPS_FOOTNOTE,
@@ -69,29 +69,40 @@ export async function generateMetadata(): Promise<Metadata> {
 }
 
 /**
- * Answer-first block: the prices themselves, in three short quotable
- * paragraphs — the free trial, the monthly plans, how paying works.
+ * Answer-first: the free trial and how paying works open the page, in two
+ * short quotable paragraphs; every plan's price and clip count is said in
+ * one sentence under the cards (`priceList`), where the cards have just
+ * shown them — in the hero it was a wall of numbers above the same numbers.
+ * The beta terms are said once, in the strip above the cards (BetaPriceNote).
  */
-function answer(table: PriceTable): string[] {
+function answer(): string[] {
+  return [
+    `Noey Studio ให้เครดิตทดลองฟรีก้อนเดียวเมื่อสมัคร ตัดได้ ${clipsHeadline("free")} ไม่ต้องผูกบัตร`,
+    "ชำระด้วยบัตรเครดิตหรือเดบิต เปลี่ยนหรือยกเลิกแพลนได้เองจากหน้าบัญชี",
+  ];
+}
+
+/** Every monthly plan's price and clip count in one sentence (the cards' text twin). */
+function priceList(table: PriceTable): string {
   const paid = PAID_TIERS.flatMap((tier) => {
     const price = displayPrice(table, tier);
     return price ? [`${PLAN_COPY[tier].name} ${price} บาท`] : [];
   });
   const list = paid.length > 1 ? `${paid.slice(0, -1).join(", ")} และ ${paid[paid.length - 1]}` : paid.join("");
-  const beta = isBetaPriced(table) ? ` ราคาที่แสดงคือราคาเบต้า ลด 50% ${BETA_PRICE_AFTER}` : "";
   const clips = clipsLadderSentence(PAID_TIERS);
-  return [
-    `Noey Studio ให้เครดิตทดลองฟรีก้อนเดียวเมื่อสมัคร ตัดได้ ${clipsHeadline("free")} ไม่ต้องผูกบัตร`,
-    `ใช้หมดแล้วเลือกแพลนรายเดือนได้ ${paid.length} ระดับ ได้แก่ ${list} ต่อเดือน โดยได้จำนวนคลิปต่อเดือน ${clips} (${CLIPS_FOOTNOTE})`,
-    `ชำระด้วยบัตรเครดิตหรือเดบิต เปลี่ยนหรือยกเลิกแพลนได้เองจากหน้าบัญชี${beta}`,
-  ];
+  return `ใช้หมดแล้วเลือกแพลนรายเดือนได้ ${paid.length} ระดับ ได้แก่ ${list} ต่อเดือน โดยได้จำนวนคลิปต่อเดือน ${clips} (${CLIPS_FOOTNOTE})`;
 }
 
-/** The rules of the quota, one per row of the example card. */
-const QUOTA_RULES: ReadonlyArray<{ key: string; text: string }> = [
-  { key: "Weekly limit", text: "ทุกแพลนรายเดือน นับ 7 วันจากงานแรกของรอบ ใช้ได้เมื่อไหร่ก็ได้ในสัปดาห์" },
-  { key: "5-hour limit", text: "Pro ขึ้นไป อีกชั้นหนึ่งกันการใช้งานหนักต่อเนื่อง รีเซ็ต 5 ชั่วโมงหลังงานแรกของรอบ" },
-  { key: "Trial credit", text: `แพลนฟรี ได้เครดิตทดลองก้อนเดียวตอนสมัคร ตัดได้ ${clipsHeadline("free")} ไม่รีเซ็ตรายเดือน` },
+/**
+ * The rules of the quota, one per row of the example card. The windows keep
+ * their English names (lib/usage-limits.ts); under each, quietly, the name
+ * the editor's own quota card gives it (web/src/lib/usageLimits.ts) — the
+ * card drawn just above says "โควตารายสัปดาห์", not "Weekly limit".
+ */
+const QUOTA_RULES: ReadonlyArray<{ key: string; editor?: string; text: string }> = [
+  { key: "Weekly limit", editor: "โควตารายสัปดาห์", text: "ทุกแพลนรายเดือน นับ 7 วันจากงานแรกของรอบ ใช้ได้เมื่อไหร่ก็ได้ในสัปดาห์" },
+  { key: "5-hour limit", editor: "โควตารอบ 5 ชั่วโมง", text: "Pro ขึ้นไป อีกชั้นหนึ่งกันการใช้งานหนักต่อเนื่อง รีเซ็ต 5 ชั่วโมงหลังงานแรกของรอบ" },
+  { key: "Trial credit", editor: "เครดิตทดลองใช้", text: `แพลนฟรี ได้เครดิตทดลองก้อนเดียวตอนสมัคร ตัดได้ ${clipsHeadline("free")} ไม่รีเซ็ตรายเดือน` },
   { key: "บอกก่อนเริ่ม", text: "ระบบบอกก่อนเริ่มทุกครั้งว่างานนี้ใช้โควตาเท่าไหร่ จึงไม่มีการหักเกินโดยไม่รู้ตัว" },
   { key: "ไม่กินโควตา", text: "การแก้ไทม์ไลน์ การสลับช็อต และการเรนเดอร์ซ้ำ ทำได้ไม่จำกัด" },
   { key: "งานหนัก", text: "ฟุตเทจยาวและโหมดพากย์ใหม่ใช้ปริมาณมากกว่างานปกติ เพราะต้องถอดเสียงและวางแผนมากขึ้น" },
@@ -120,7 +131,7 @@ export default async function PricingPage() {
         className="phero--pricing"
         crumb={<Breadcrumb trail={TRAIL} />}
         title="เลือกตามปริมาณงาน"
-        lead={answer(table).map((text) => (
+        lead={answer().map((text) => (
           <p key={text.slice(0, 12)} className="pricing-answer">
             {keepThaiProse(text)}
           </p>
@@ -146,12 +157,13 @@ export default async function PricingPage() {
           <PlanRail plans={railPlans} initial={APPROX_CUTS_PER_MONTH.pro} footnote={CLIPS_FOOTNOTE} freeNote={`${PLAN_COPY.free.name}: ${FREE_CLIPS_CAPTION}`}>
             <PriceCards table={table} variant="full" />
           </PlanRail>
+          <p className="pricing-summary">{keepThaiProse(priceList(table))}</p>
         </div>
       </section>
 
       <section className="sect quota" aria-labelledby="quota-title">
         <div className="wrap quota__grid">
-          <SectionHeader id="quota-title" track="A1" timecode="00:00:48:00" title="โควตาคิดยังไง" size="h-2">
+          <SectionHeader id="quota-title" marker timecode="00:00:48:00" title="โควตาคิดยังไง" size="h-2">
             <p>
               {keepThaiProse("เรานับเป็นจำนวนคลิปที่ AI ตัดให้ต่อเดือน เพราะงานหนักของแต่ละคลิปคือการถอดเสียงและการวางแผนตัด ซึ่งใช้กำลังใกล้เคียงกันไม่ว่าฟุตเทจจะยาวแค่ไหน ตัวเลขบนการ์ดคิดจากคลิปดิบ 5 นาที คลิปที่ยาวกว่าหรือระดับละเอียดใช้โควตามากกว่า และ หน้าตั้งค่าแสดงเป็นเปอร์เซ็นต์ของรอบที่เหลือ")}
             </p>
@@ -163,7 +175,10 @@ export default async function PricingPage() {
             <ul className="rule-list">
               {QUOTA_RULES.map((rule) => (
                 <li key={rule.key}>
-                  <span className="num rule-list__key">{rule.key}</span>
+                  <span className="num rule-list__key">
+                    {rule.key}
+                    {rule.editor ? <span className="rule-list__editor">{rule.editor}</span> : null}
+                  </span>
                   <span>{keepThaiProse(rule.text)}</span>
                 </li>
               ))}
@@ -175,7 +190,7 @@ export default async function PricingPage() {
       <section className="sect compare" aria-labelledby="compare-title">
         <div className="wrap">
           {/* What differs between plans, and what does not, said where the table shows it. */}
-          <SectionHeader id="compare-title" track="V1" timecode="00:01:12:00" title="ตารางเทียบแพลน" size="h-2">
+          <SectionHeader id="compare-title" marker timecode="00:01:12:00" title="ตารางเทียบแพลน" size="h-2">
             <p>
               {keepThaiProse("เครื่องมือเหมือนกันทุกแพลน สิ่งที่ต่างคือจำนวนคลิปที่ AI ตัดให้ต่อเดือน ความยาวฟุตเทจที่รับต่อโปรเจกต์ ความละเอียดการวิเคราะห์ และพื้นที่เก็บโปรเจกต์บนบัญชี งานที่กินกำลังมากที่สุดคือการถอดเสียงกับการวางแผนตัด จึงเป็นตัวกำหนดราคา ส่วนการแก้ในไทม์ไลน์และการเรนเดอร์ซ้ำ ไม่จำกัดทุกแพลน")}
             </p>
@@ -188,8 +203,8 @@ export default async function PricingPage() {
       </section>
 
       <section className="sect pricing-faq" aria-labelledby="pricing-faq-title">
-        <div className="wrap wrap--narrow">
-          <SectionHeader id="pricing-faq-title" track="T1" timecode="00:01:40:00" title="คำถามเรื่องราคา (FAQ)" size="h-2" />
+        <div className="wrap">
+          <SectionHeader id="pricing-faq-title" marker timecode="00:01:40:00" title={"คำถามเรื่องราคา\u00a0(FAQ)"} size="h-2" />
           <FaqList items={pricingFaq(isBetaPriced(table))} compact />
         </div>
       </section>

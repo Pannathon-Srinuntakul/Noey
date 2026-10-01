@@ -134,9 +134,64 @@ const KEEP_TOGETHER = [
   "ใช้งานหนัก",
   "ใบเสร็จ",
   "รหัสผ่านใหม่",
+  "กู้คืนไม่ได้",
+  "กู้คืน",
+  "ใช้งานต่อ",
+  "กลับเป็น",
+  "ยกเลิกการเชื่อมต่อ",
+  "เชื่อมต่อ",
+  "หลังจากนั้น",
+  "พร้อมกัน",
+  "โดยอัตโนมัติ",
+  "การใช้งาน",
+  "ประมวลรัษฎากร",
+  "มีผลทันที",
+  "มีผล",
+  "ไม่ต้องติดตั้งโปรแกรม",
+  "สร้างโปรเจกต์",
+  "โดยไม่ต้องพิมพ์รหัสผ่าน",
+  "จากเครื่องนั้น",
   "ลิงก์ยืนยันใหม่",
   "บัญชีเดียวกันนี้",
   "ใช้งานจริง",
+  "ตกเป็นโมฆะ",
+  "จ่ายเงิน",
+  "ข้อมูลการชำระเงิน",
+  "โปรเจกต์ในเบราว์เซอร์",
+  "ให้บริการ",
+  "ดูคลิปให้จบ",
+  "อาจต้อง",
+  "ถ่ายไม่ใช่ปัญหา",
+  "ขอบคุณที่ทักมา",
+  "ช้ากว่า",
+  // Home, /scope, /pricing (final review): phrases a narrow column split.
+  "แบบไหน",
+  "แก้เอง",
+  "ไม่กี่นาที",
+  "ไม่กี่ไฟล์",
+  "ใช้หมดแล้ว",
+  "ทีละช่วง",
+  "ฉากเดียว",
+  "ถี่ขึ้น",
+  "แม่นขึ้น",
+  "ครั้งเดียว",
+  "พร้อมกันได้",
+  "ต่อเดือน",
+  "สลับช็อต",
+  "เรนเดอร์ซ้ำ",
+  "คำถามที่พบบ่อย",
+  "ยังแก้เอง",
+  "ช่วงพูดพลาด",
+  "ไม่ใช่สุ่มตัด",
+  "อยู่ครบ",
+  "ยังอยู่ครบ",
+  "พื้นที่เก็บโปรเจกต์",
+  "ต่อเนื่อง",
+  "ใช้งานต่อเนื่อง",
+  "ใช้ไม่ได้",
+  "ตั้งแต่ต้นจนจบ",
+  "สวยกว่า",
+  "เกลางาน",
 ];
 
 /** A number and its unit stay on one line ("10 GB", "499 บาท", "30 นาที"), and so
@@ -152,16 +207,17 @@ const PATTERN = new RegExp(
 );
 
 /**
- * Marks that never start a line: the repeat mark ๆ ("สั้น ๆ") and the "·"
- * between the items of a run ("ฟรี 10 นาที · Lite 10 นาที"). The space before
- * each becomes a no-break space, which keeps it on the word before it.
+ * Marks that never start a line: the repeat mark ๆ ("สั้น ๆ"), the "·"
+ * between the items of a run ("ฟรี 10 นาที · Lite 10 นาที") and the dash that
+ * opens an aside ("คลิปสั้น — ฟังฟุตเทจ"). The space before each becomes a
+ * no-break space, which keeps it on the word before it.
  */
-export const glueMarks = (text: string) => text.replace(/ ([ๆ·])/g, "\u00a0$1");
+export const glueMarks = (text: string) => text.replace(/ ([ๆ·—])/g, "\u00a0$1");
 
 /**
  * Thai text with those words and number–unit pairs wrapped so a line never
  * ends inside them. The text is unchanged apart from the no-break spaces
- * before ๆ and "·" (the wrappers are plain spans), so copy, search and screen
+ * before ๆ, "·" and "—" (the wrappers are plain spans), so copy, search and screen
  * readers see the same words.
  */
 export function keepThai(source: string): ReactNode {

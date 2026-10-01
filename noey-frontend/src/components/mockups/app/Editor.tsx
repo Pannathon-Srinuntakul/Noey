@@ -147,7 +147,8 @@ export function PreviewPane({
       data-am-stage=""
     >
       <div
-        className="absolute inset-0 h-full w-full overflow-hidden rounded-xl bg-black"
+        className="am-poster absolute inset-0 h-full w-full overflow-hidden rounded-xl bg-black"
+        style={{ "--am-poster": `url("${sceneStill(scene).webp}")` } as CSSProperties}
         aria-hidden="true"
       >
         <Still
@@ -491,9 +492,59 @@ function SceneBlock({
         className="pointer-events-none sticky z-20 pb-0.5 pl-1.5 text-[13px] font-semibold tabular-nums text-white [text-shadow:0_1px_2px_rgba(0,0,0,0.8)]"
         style={{ left: HEADER_COL_PX + 4 }}
       >
-        {index + 1}
+        <span className="am-scene-n">{index + 1}</span>
       </span>
     </li>
+  );
+}
+
+/** The timeline's ruler row (TimelineRuler): the time every 5 s, a tick every second. */
+function RulerRow({ px, width }: { px: number; width: number }) {
+  const { majors, minors } = rulerTicks(px, SAMPLE_CUT_SECONDS);
+  return (
+    <div className="flex" style={{ height: RULER_PX }}>
+      <div
+        className="sticky left-0 z-40 h-full shrink-0 bg-ground"
+        style={{ width: HEADER_COL_PX }}
+      />
+      <div
+        className="relative h-full shrink-0 border-b border-divider"
+        style={{ width, height: RULER_PX }}
+      >
+        {majors.map((t) => (
+          <span
+            key={t}
+            className="absolute top-0.5 text-[13px] leading-none tabular-nums text-ink-3"
+            style={
+              t === 0
+                ? { left: 0 }
+                : {
+                    left: t * px,
+                    transform: "translateX(calc(-100% - 4px))",
+                  }
+            }
+          >
+            {fmtTime(t)}
+          </span>
+        ))}
+        {majors.map((t) =>
+          t === 0 ? null : (
+            <span
+              key={`M${t}`}
+              className="absolute bottom-0 h-1.5 w-px bg-border"
+              style={{ left: t * px }}
+            />
+          ),
+        )}
+        {minors.map((t) => (
+          <span
+            key={`m${t}`}
+            className="absolute bottom-0 h-1 w-px bg-border-faint"
+            style={{ left: t * px }}
+          />
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -521,7 +572,6 @@ export function Lanes({
   interactive?: boolean;
 }) {
   const contentW = contentWidth(windowWidth, px);
-  const { majors, minors } = rulerTicks(px, SAMPLE_CUT_SECONDS);
   const selectedLine = SAMPLE_SCENES[selected].line;
   const x = HEADER_COL_PX + time * px;
   const head = {
@@ -546,49 +596,7 @@ export function Lanes({
         style={{ width: HEADER_COL_PX + contentW }}
         aria-hidden="true"
       >
-        <div className="flex" style={{ height: RULER_PX }}>
-          <div
-            className="sticky left-0 z-40 h-full shrink-0 bg-ground"
-            style={{ width: HEADER_COL_PX }}
-          />
-          <div
-            className="relative h-full shrink-0 border-b border-divider"
-            style={{ width: contentW, height: RULER_PX }}
-          >
-            {majors.map((t) => (
-              <span
-                key={t}
-                className="absolute top-0.5 text-[13px] leading-none tabular-nums text-ink-3"
-                style={
-                  t === 0
-                    ? { left: 0 }
-                    : {
-                        left: t * px,
-                        transform: "translateX(calc(-100% - 4px))",
-                      }
-                }
-              >
-                {fmtTime(t)}
-              </span>
-            ))}
-            {majors.map((t) =>
-              t === 0 ? null : (
-                <span
-                  key={`M${t}`}
-                  className="absolute bottom-0 h-1.5 w-px bg-border"
-                  style={{ left: t * px }}
-                />
-              ),
-            )}
-            {minors.map((t) => (
-              <span
-                key={`m${t}`}
-                className="absolute bottom-0 h-1 w-px bg-border-faint"
-                style={{ left: t * px }}
-              />
-            ))}
-          </div>
-        </div>
+        <RulerRow px={px} width={contentW} />
 
         <TrackRow
           height={IMG_LANE_PX}
@@ -1079,7 +1087,10 @@ export function LaneCrop({
     );
   });
   return (
-    <div className={cn("relative", kind === "trim" ? "pt-7" : "pt-1")}>
+    <div className={cn("relative", kind === "trim" ? "pt-1.5" : "pt-1")}>
+      {/* Trim: the lane under the timeline's own ruler, as in the app — the
+          drag readout pops up over it (an empty band read as a missing row). */}
+      {kind === "trim" ? <RulerRow px={px} width={width} /> : null}
       <TrackRow
         height={IMG_LANE_PX}
         label={

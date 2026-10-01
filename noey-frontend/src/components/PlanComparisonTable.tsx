@@ -1,7 +1,7 @@
 import { BETA_PRICE_NOTE, BETA_STRIKE_LABEL } from "@/lib/beta";
 import { CLIPS_FOOTNOTE, COMPARISON_ROWS, PLAN_COPY, TIERS, displayPrice, isBetaPriced, strikePrice, type PriceTable } from "@/lib/plans";
 import "../styles/parts/plans.css";
-import { IconCheck } from "./ds/icons";
+import { IconArrowRight, IconCheck } from "./ds/icons";
 import { keepThaiProse } from "./ds/ThaiProse";
 
 /**
@@ -17,6 +17,12 @@ import { keepThaiProse } from "./ds/ThaiProse";
 export function PlanComparisonTable({ table, labelledBy }: { table: PriceTable; labelledBy: string }) {
   return (
     <div className="cmp">
+      {/* Where the table scrolls sideways (narrow screens), say so above it:
+          the fading right edge alone was easy to miss. */}
+      <p className="cmp__hint" aria-hidden="true">
+        เลื่อนดูทุกแพลน
+        <IconArrowRight size={14} />
+      </p>
       {/* Named by the table's caption: the section around it is already
           named by the heading, and two landmarks would share one name. */}
       <div className="cmp__scroll" role="region" aria-labelledby={`${labelledBy}-caption`} tabIndex={0}>
