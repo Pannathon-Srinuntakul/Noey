@@ -21,8 +21,8 @@ from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.billing import estimate as estimator
+from packages.billing import guard, runs, wallet
 from packages.billing import limits as plan_limits_mod
-from packages.billing import runs, wallet
 from packages.billing.accounts import get_account
 from packages.db.models.core_auth import User
 from packages.db.models.llm_usage import LlmUsageLog
@@ -214,7 +214,8 @@ async def estimate_usage(
     user = auth.user
     if plan_limits_mod.is_unlimited(user):
         return {
-            "fits": "plan", "pct": {}, "wallet_satang": 0, "binding": None,
+            "fits": "plan", "full": False, "overage_too_large": False, "pct": {}, "wallet_satang": 0,
+            "binding": None,
             "resets_at": None, "resets": True, "unlimited": True,
         }
 
@@ -236,8 +237,16 @@ async def estimate_usage(
         if account is not None:
             spare = await wallet.balance(db, auth.user_id, now) - int(account.wallet_reserved_satang or 0)
         fits = "wallet" if spare >= wallet_satang else "none"
+    # The two refusals a start can still meet (services/api/billing_start.py,
+    # owner 2026-10-01). ``fits`` is ADVICE — whether the run may go past what
+    # is left and pause / carry an overage; ``full`` and ``overage_too_large``
+    # are the gates, both lifted by a balance the user allows.
+    state = await runs.start_window(db, user, now)
+    too_large = guard.overage_refusal(state, est.tokens, allow_wallet=False)
     return {
         "fits": fits,
+        "full": bool(state is not None and state.full),
+        "overage_too_large": too_large is not None,
         "pct": pct,
         "wallet_satang": wallet_satang,
         "binding": tightest.key if tightest else None,

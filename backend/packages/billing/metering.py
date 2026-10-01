@@ -26,6 +26,9 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Literal
@@ -65,6 +68,24 @@ def _base_row(ctx: UsageCtx) -> dict[str, Any]:
     }
 
 
+_absorbed: ContextVar[bool] = ContextVar("billing_absorbed_usage", default=False)
+
+
+@contextmanager
+def absorbed_usage() -> Iterator[None]:
+    """Requests made inside are OURS to pay: recorded in full (what the vendor
+    billed, ``cost_thb``, for the books) with status ``absorbed`` and ZERO
+    rate-card tokens, so nothing is charged to the user. Used for the one
+    automatic retry after an answer truncated at the model's own output
+    limit (packages/llm/gateway.py, owner 2026-10-01) — a retry that exists
+    only because of the cap."""
+    token = _absorbed.set(True)
+    try:
+        yield
+    finally:
+        _absorbed.reset(token)
+
+
 def llm_row(
     ctx: UsageCtx,
     *,
@@ -77,15 +98,16 @@ def llm_row(
     inp = max(0, int(input_tokens or 0))
     cached = min(max(0, int(cached_tokens or 0)), inp)
     out = max(0, int(output_tokens or 0))
+    absorbed = _absorbed.get()
     return {
         **_base_row(ctx),
         "feature": ctx.feature,
         "model": (model or "")[:128],
-        "status": status,
+        "status": "absorbed" if absorbed else status,
         "input_tokens": inp,
         "cached_tokens": cached,
         "output_tokens": out,
-        "tokens": rate_card.tokens_for_llm(model, inp, cached, out),
+        "tokens": 0 if absorbed else rate_card.tokens_for_llm(model, inp, cached, out),
     }
 
 

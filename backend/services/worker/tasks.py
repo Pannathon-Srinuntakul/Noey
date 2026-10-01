@@ -685,6 +685,14 @@ def billed_task(*, terminal: bool = True) -> Any:
                 outcome = "our_failure"
                 await _mark_stopped(job_id, exc, kwargs=kwargs)
                 return {"stopped": True, "code": exc.code}
+            except guard.OutputTruncated:
+                # A required answer hit the per-call SAFETY cap twice (once
+                # more one thinking level down — packages/llm/gateway.py). The
+                # task's own handler has already left the project in a
+                # retryable error with the message; billed like any call — no
+                # refund, owner 2026-10-01 — under an outcome of its own.
+                outcome = "safety_cap"
+                raise
             except UserInputError:
                 outcome = "user_error"
                 raise

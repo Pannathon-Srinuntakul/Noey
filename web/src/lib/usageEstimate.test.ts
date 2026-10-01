@@ -48,28 +48,39 @@ describe('estimateRequestFor', () => {
 })
 
 describe('startDecision', () => {
-  const est = (fits: UsageEstimate['fits'], unlimited = false): UsageEstimate => ({
+  const est = (
+    fits: UsageEstimate['fits'],
+    gate: Partial<Pick<UsageEstimate, 'full' | 'overage_too_large' | 'unlimited'>> = {}
+  ): UsageEstimate => ({
     fits,
     pct: { weekly: 50 },
     wallet_satang: fits === 'wallet' ? 500 : 0,
     binding: 'weekly',
     resets_at: null,
-    unlimited
+    unlimited: false,
+    ...gate
   })
 
   it('goes when it fits, or when nothing is known', () => {
     expect(startDecision(est('plan'), false)).toBe('go')
     expect(startDecision(null, false)).toBe('go')
-    expect(startDecision(est('none', true), false)).toBe('go')
+    expect(startDecision(est('none', { unlimited: true, full: true }), false)).toBe('go')
   })
 
-  it('asks before spending the balance', () => {
-    expect(startDecision(est('wallet'), false)).toBe('ask_wallet')
-    expect(startDecision(est('wallet'), true)).toBe('go')
+  it('goes when the run is merely bigger than what is left (owner, 2026-10-01)', () => {
+    // The estimate is advice: it starts, pauses at 100 % and the overage carries.
+    expect(startDecision(est('none'), false)).toBe('go')
+    expect(startDecision(est('wallet'), false)).toBe('go')
   })
 
-  it('blocks before upload when nothing can pay', () => {
-    expect(startDecision(est('none'), false)).toBe('blocked')
-    expect(startDecision(est('none'), true)).toBe('blocked')
+  it('asks before spending the balance on a refused start', () => {
+    expect(startDecision(est('wallet', { full: true }), false)).toBe('ask_wallet')
+    expect(startDecision(est('wallet', { full: true }), true)).toBe('go')
+    expect(startDecision(est('wallet', { overage_too_large: true }), false)).toBe('ask_wallet')
+  })
+
+  it('blocks before upload when a gate refuses it and nothing can pay', () => {
+    expect(startDecision(est('none', { full: true }), false)).toBe('blocked')
+    expect(startDecision(est('none', { overage_too_large: true }), true)).toBe('blocked')
   })
 })

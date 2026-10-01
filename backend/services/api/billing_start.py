@@ -8,9 +8,16 @@ order:
    that request can hold at the chosen ความละเอียด → 422
    ``footage_over_limit`` (packages/billing/plan_features.py);
 1. a run too big for an enforced window even when the window is EMPTY → 422
-   ``run_too_large``. This is the only quota check left before starting, and
-   it is about impossibility, not about having enough left: waiting for the
-   reset or topping up would not make it work;
+   ``run_too_large`` — about the plan's size, not about what is left (no
+   advertised footage cap can reach it today);
+1b. the window ALREADY at 100 % → 402 ``limit_reached`` with ``full: true``
+   (``guard.quota_full_refusal``), and a run expected to go past what is left
+   by more than ``billing_max_overage_ratio`` of the window → 402
+   ``overage_too_large`` (``guard.overage_refusal``) — each unless the user
+   allowed a balance that carries it, and never for a resume. Within that,
+   an estimate bigger than what is left is only a warning (owner, 2026-10-01:
+   the estimate is advice; the run pauses at 100 % and its in-flight overage
+   carries into the next period);
 2. circuit breaker open → 503 ``service_paused`` (admin/unlimited exempt);
 3. a Free account → per-IP / per-device limits → 429 ``free_tier_limited``
    (checked here, but the run is COUNTED against them only after the row is
@@ -41,8 +48,9 @@ from typing import Any
 from fastapi import HTTPException, Request
 from sqlalchemy import text
 
-from packages.billing import free_tier, guard, plan_features, runs
+from packages.billing import free_tier, guard, plan_features, runs, wallet
 from packages.billing import limits as limits_mod
+from packages.billing.accounts import lock_account
 from packages.billing.estimate import Estimate
 from packages.core.logging import get_logger
 from packages.db.session import get_sessionmaker
@@ -63,8 +71,14 @@ async def start_paid_run(
     mode: str | None = None,
     engine: str | None = None,
     precision: str | None = None,
+    resuming: bool = False,
 ) -> str:
-    """Open a paid run for ``auth``'s user and return the ``run_id``."""
+    """Open a paid run for ``auth``'s user and return the ``run_id``.
+
+    ``resuming`` — ``POST /videos/{uid}/resume`` continuing a paused stage.
+    It is exempt from the 100 %-full refusal: resuming IS the way forward
+    after a reset, an upgrade or a top-up, and on a window still full the
+    resumed run simply pauses again before its first call, costing nothing."""
     user = auth.user
     unlimited = limits_mod.is_unlimited(user)
     free = not unlimited and str(user.plan or "free") == "free"
@@ -81,6 +95,19 @@ async def start_paid_run(
     too_large = plan_features.check_run_size(user, estimate.tokens)
     if too_large is not None:
         raise HTTPException(status_code=422, detail=too_large)
+    if not unlimited and not resuming:
+        # Owner, 2026-10-01. The estimate is advice — a run that outgrows what
+        # is left goes ahead, pauses at 100 % and carries its in-flight
+        # overage into the next period — with two refusals for NEW work:
+        # the window is already at 100 %, or the run is expected to go past
+        # what is left (less what runs already in flight still expect to
+        # spend) by more than ``billing_max_overage_ratio`` of it. Checked
+        # here first, so a refusal costs nothing, and again under the account
+        # lock where the run is opened (``_refuse_on_quota``), so two starts
+        # at the same instant cannot both see the same headroom.
+        async with get_sessionmaker()() as session:
+            await session.execute(text("SET search_path TO core, public"))
+            await _refuse_on_quota(session, user, estimate, allow_wallet=allow_wallet)
     if not unlimited and await guard.breaker_open():
         raise HTTPException(
             status_code=503, detail={"code": "service_paused", "message": guard.SERVICE_PAUSED_MESSAGE}
@@ -102,6 +129,9 @@ async def start_paid_run(
     try:
         async with get_sessionmaker()() as session:
             await session.execute(text("SET search_path TO core, public"))
+            if not unlimited and not resuming:
+                await lock_account(session, int(user.id))
+                await _refuse_on_quota(session, user, estimate, allow_wallet=allow_wallet)
             run = await runs.open_run(
                 session, user=user, tenant_id=auth.tenant_id, estimate=estimate,
                 allow_wallet=allow_wallet, job_id=job_id, reference_id=reference_id,
@@ -116,6 +146,18 @@ async def start_paid_run(
             await free_tier.unclaim_run(ip=ip, device=device)
         raise
     return run_id
+
+
+async def _refuse_on_quota(session: Any, user: Any, estimate: Estimate, *, allow_wallet: bool) -> None:
+    """402 when the window is already at 100 %, or when the run is expected to
+    go too far past what is left for new work (guard.quota_full_refusal /
+    guard.overage_refusal)."""
+    state = await runs.start_window(session, user)
+    refusal = guard.quota_full_refusal(
+        state, allow_wallet=allow_wallet, need_satang=wallet.satang_for_tokens(estimate.tokens),
+    ) or guard.overage_refusal(state, estimate.tokens, allow_wallet=allow_wallet)
+    if refusal is not None:
+        raise HTTPException(status_code=402, detail=refusal)
 
 
 async def release_run(run_id: str) -> None:

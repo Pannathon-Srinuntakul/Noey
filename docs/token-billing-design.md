@@ -307,6 +307,11 @@ Called in each route in `ai_gate.AI_ROUTES` after request validation and before 
 
 **Out of quota mid-run** is a pause, not a failure — see §6.2.
 
+> **Superseded 2026-10-01 (§24):** the table below is the 2026-09-26 rule. Every outcome now keeps
+> what the run was charged as it went (actual usage, past 100 % when a call in flight crossed it — the
+> excess carries into the next period), except `our_failure` / `orphaned` (refunded); the new
+> `safety_cap` outcome is billed. No more `min(actual, ceiling)` / `min(actual, estimate)`.
+
 Settle `runs.settle(run_id, outcome)` (worker `finally`, sync `plan-dub` inline) charges the DIFFERENCE between what the outcome says the user owes and what the run already paid as it went, and refunds the rest:
 
 | outcome | owed |
@@ -321,6 +326,11 @@ Settle `runs.settle(run_id, outcome)` (worker `finally`, sync `plan-dub` inline)
 Sweeper (worker cron, every 10 min): runs `queued`/`running` with `lease_until < now − 10 min` or `created_at < now − job_timeout` → settle `orphaned`.
 
 ### 6.2 Layer 2 — per-call guard (gateway hook)
+
+> **Superseded 2026-10-01 (§24):** step 3's ceiling check no longer applies to required calls (only to
+> optional ones), `max_tokens` is the fixed per-call safety cap (the model's own maximum for the
+> single-call steps), a required call is refused only when the window has NOTHING left, and an answer
+> truncated at the cap is retried once a thinking level down before it fails as `safety_cap`.
 
 `UsageCtx` gains `run_id`, `job_id`, `ceiling`, and a mutable `RunMeter` (`spent`, `inflight_max`) shared by all calls of the task (covers `asyncio.gather`).
 
@@ -577,6 +587,7 @@ Pure functions over `(session, user, account)`, Stripe-independent, each audited
 | 2026-09-26 | The plan's window is enforced in the per-call guard: the task reads `runs.quota_snapshot` once at start and `guard.admit` raises `QuotaExhausted` (`code="limit_reached"`, a `RunBudgetExceeded` subclass) before the call that would pass it. The worker writes `paused:true` + window facts on the job row and puts the project in `paused_quota` (one of `videos_local.RESTARTABLE_STATUSES`); the run settles `limit_stop`. A stale snapshot only delays the pause by one call | With no hold at start, the window has to be held where the spending happens. Running out of quota must not destroy work the user already paid for — a pause with a resume is worth more than a correct-looking error |
 | 2026-09-26 | The one surviving pre-flight quota check is `plan_features.check_run_size` → 422 `run_too_large`, measured against the plan's BIGGEST enforced window. `runs.windows_for_run` leaves a window smaller than the run out of both the stop and the charge | Pro's 5-hour window is 40 % of its weekly one, so an hour of footage outgrows it however empty it is; stopping on it would make the run unstartable forever, and the plan's own answer (§2) is to let a started run finish and count the overshoot. A run past EVERY window is impossible, and no reset or top-up changes that — hence 422, not 402 |
 | 2026-09-26 | Footage cap for `limits.VIDEO_CALL_MODES` (dub_first, highlight) = `min(VIDEO_CALL_FOOTAGE_CAP_SEC, MODEL_INPUT_CONTEXT_TOKENS × FOOTAGE_CONTEXT_SHARE ÷ VIDEO_TOKENS_PER_SEC[precision])` → 1 h Standard, ~44 min High; unlimited accounts skip the owner's hour but not the context ceiling. `check_footage` returns `by_precision` so the Thai message names the knob that actually moves the cap | The owner asked for "1 hour on dub_first", and one number cannot be right for both precisions: an hour is 360 k tokens at Standard but 1.08 M at High, past the model's input context. Deriving it from the two constants keeps them from drifting apart |
+| 2026-10-01 | **The usage-limit model (§24).** The estimate is advice: no call is refused or output-capped by it; a required call goes out while the window has anything left, is charged its actual usage in full (past 100 % allowed), and the NEXT call pauses the run (`paused_quota`, resumable). The excess carries into the window's next period (`usage_accounts.overage_tokens` / `overage_window`, migration `1ec5322f9851`); Free's waits for an upgrade; a cancellation keeps it dormant. Settle keeps what was charged for every outcome but `our_failure` / `orphaned`. New start refusals: window already at 100 % (402 `limit_reached` + `full`, also on project creation) and a run expected past what is left (in-flight runs counted) by more than `BILLING_MAX_OVERAGE_RATIO` × window (402 `overage_too_large`), both re-checked under the account lock, both waived by an allowed balance, neither applied to a resume. Per-call output cap = the model's own maximum (single-call steps) or 16k (small calls); a truncated required answer is retried once a thinking level down at our cost, then fails as `safety_cap` (billed). Guard prices video at the measured 66/330 tok/s. Estimate e3: Scout's cut plan priced at 15k output | Run `b8ad8c25`: the estimate-derived `max_tokens` (~29.4k) cut off a legitimate 29,464-token answer and the user paid 164,756 tokens for no cut. Owner: "like a chat AI's usage limit", no refunds for it, and two guards against a user at 99 % starting a huge job on overage |
 | 2026-10-01 | The per-plan `footage_sec` ladder (10/10/20/30 min) caps `VIDEO_CALL_MODES` (ตัดฉากเด่น) only. The speech modes (`limits.SPEECH_MODES`: talking_head, speech_scenes, speech_highlights) get `limits.SPEECH_FOOTAGE_SEC` = 2 h on every plan, and their refusal says "ของโหมดนี้" instead of blaming the plan. `GET /usage/me.features` gains `speech_footage_sec` | Owner: the ladder was sized on what a cut costs; applying it to the speech modes was a side effect of the 2026-09-30 refit (before it, Pro and up had 2 h). Cost stays bounded by `check_run_size`: talking_head fits every plan at 2 h; speech_highlights stops at about 19 min on Free and 76 min on Lite |
 
 ---
@@ -854,3 +865,100 @@ Built after the workflow (docs/design/editor-limits.md §2–§6; docs/token-bil
   (footage / storage / projects — block "ถัดไป" and start) and the locked music row, MusicLane lock.
 - **Desktop** (files present): same `api.ts` additions, byte-identical `lib/planLadder.ts` (+test), `PlansCard`,
   `PlanChangeDialog`, SettingsPage wiring, UsageCard link. The rest is PARITY.md.
+
+## 24. The usage-limit model (owner, 2026-10-01) — supersedes §6.1's settle table, §6.2's stop rules, §9.2-9.3
+
+Trigger: production run `b8ad8c25` (Free, dub_first, Pro engine = gemini-3.8-flash at thinking level
+high, Standard, 331.8 s). Estimate 164,756, ceiling 197,708. The guard sent the one cut call with
+`max_tokens` = "what is left under the ceiling" ≈ 29.4k (`(197,708 − 43.7k × 1.035) / 5.175`; the
+guard priced the 331.8 s of video at 100 tok/s against a real ~66). The model thought for 29,464
+output tokens, hit that cap (`finish_reason = "length"`), the run settled `limit_stop` and the user
+was charged 164,756 (36.6 % of the trial credit) for no cut. Two earlier runs of the same shape wrote
+19,477 and 19,097 and finished. The owner's answer is a model "like a chat AI's usage limit":
+
+**The estimate is advice.** Nothing compares a call's or a run's estimate with what is left, and
+nothing caps a call's output by it. `ai_runs.ceiling_tokens` (still estimate × 1.2) is now only the
+line OPTIONAL calls (the dub bounds-correction retry) are held to, so a retry never doubles a run.
+
+**Per call** (`guard.admit`): a required call is sent while the plan's window — plus the balance the
+user allowed this run — has ANYTHING left. The call in flight always completes and its answer is
+kept; it is charged its actual usage, in full (`runs.apply_charge`): on the window up to its headroom,
+then on the allowed balance, then past 100 % (a window can end at e.g. 106 %). After it, if nothing is
+left, the NEXT call is not sent: `QuotaExhausted` → `paused_quota`, resume ticket stamped, settle
+`limit_stop` (charged what it used). The unit of stopping is one vendor call; nothing aborts a call
+mid-thought (that would lose all of its work and be paid again on resume). Calls of one `gather` are
+all admitted while anything is left; a paused meter re-raises the SAME `QuotaExhausted` to every later
+call (`RunMeter.stop_exc`), so a sibling cannot turn the pause into a bare stop.
+
+**The overage carries** (`usage_accounts.overage_tokens` / `overage_window`, migration
+`1ec5322f9851`, autogenerated against a scratch DB at `df3fde09f064`): the tokens charged past 100 %
+open the window's NEXT period (106 % → the next month starts at 6 %) — `runs.apply_carry` makes it real
+under the account lock at the first charge of the new period, and `runs.enforced_windows` shows it
+before that (`carry_target`). Free's `lifetime` never resets: its overage opens the first paid window
+after an upgrade, or is absorbed if that never happens. A cancellation or downgrade to Free does NOT
+drop it: it stays dormant (never charged against the trial credit, never billed as money) and opens the
+first paid window of the next subscription. A run allowed to spend the balance pays its excess there and
+carries nothing. A refund (`our_failure`) takes the overage back with it. An admin window reset clears
+it. `GET /admin/users/{id}` `limits` shows `overage_tokens` / `overage_window`.
+
+**Settle** (`runs.charge_for`): every outcome keeps exactly what the run was charged as it went —
+`ok`, `user_cancel`, `user_error`, `limit_stop`, and the new `safety_cap` — except our own failures
+(`our_failure`, `orphaned`), which are refunded within the daily refund cap (past it: kept as charged).
+No `min(actual, ceiling)` / `min(actual, estimate)` any more.
+
+**Start refusals** (`services/api/billing_start.py`; checked first without a lock, then again under the
+account lock where the run opens, so two starts at the same instant cannot share one headroom; a
+resume — `POST /videos/{uid}/resume` — is exempt from both):
+- the window ALREADY at 100 % → 402 `{"code":"limit_reached","full":true, window, resets, resets_at,
+  wallet_can_cover, wallet_satang, message}` (`guard.quota_full_refusal`), unless the user allowed a
+  balance they have; the same refusal stops `POST /videos/local` (a new project would only upload
+  footage to be refused). The generic file sync (`PUT /files`, `/uploads`) is NOT gated: it saves
+  renders of work already done, which costs no AI.
+- the run expected to go past what is left FOR NEW WORK (headroom − Σ max(0, estimate − actual) of the
+  user's runs already in flight) by more than `BILLING_MAX_OVERAGE_RATIO` (0.25) × the window's size →
+  402 `{"code":"overage_too_large", …same keys}` (`guard.overage_refusal`), unless the allowed balance
+  covers everything past what is left. Owner's worry: a user at 99 % starting an hour of footage to take
+  it mostly on overage, or Pro…Max opening 2-5 slots that each take the whole allowance.
+- `run_too_large` stays (a run bigger than the plan's largest enforced window even when empty): it is
+  about the plan's size, not what is left, and no advertised footage cap can reach it today.
+
+`POST /usage/estimate` adds `full` and `overage_too_large` (booleans — the two gates); `fits` stays
+advice. The web wizard blocks on the gates only (`usageEstimate.startDecision`) and otherwise warns
+"งานนี้อาจใช้เกินโควตา ส่วนที่เกินจะนับรวมในรอบถัดไป"; a meter past 100 % reads "ใช้เกินโควตา 6% ·
+จะนับรวมในรอบถัดไป" (`usageLimits.overageLine`).
+
+**Output cap = runaway protection, never a budget** (`estimate.ModeProfile.output_cap`,
+`guard.safety_cap`): for the single calls a step rests on (cut plan, re-cut, speech selector + span
+trims) it is `MODEL_MAX` — the model's own maximum output from LiteLLM's model metadata
+(`llm.config.model_max_output_tokens`; gemini-3.8-flash, gemini-3.7-flash and gemini-3.1-pro-preview all
+65,536, matching ai.google.dev/gemini-api/docs/models/gemini-3.8-flash and …/gemini-3.7-flash). The
+inherently small calls (effects placement p99 1,916, style distillation 900, plan-dub ~3.1k) keep
+16,000. Gemini counts thinking inside `max_output_tokens` (ai.google.dev/gemini-api/docs/thinking).
+Thinking BUDGETS were looked at and rejected: Gemini 3 is controlled by `thinking_level`;
+`thinking_budget` is only "supported for backward compatibility" and cannot be sent with it
+(ai.google.dev/gemini-api/docs/gemini-3), and LiteLLM 1.100.1 maps `reasoning_effort` to
+`thinkingLevel` and does not forward `budget_tokens` for Gemini 3 at all
+(`vertex_and_google_ai_studio_gemini.py:_map_thinking_param`).
+
+**A required answer that still ends with `finish_reason = "length"`** is retried ONCE by the gateway
+(`gateway._with_truncation_retry`), one thinking level down (high → medium → low,
+`llm.config.lower_effort`) with `CONCISE_RETRY_NOTE` appended to the system prompt. The first attempt is
+charged as it cost; the retry exists only because of the cap and is ours: recorded in full with
+`cost_thb` but `status="absorbed"`, `tokens=0` (`metering.absorbed_usage`). A second truncation raises
+`guard.OutputTruncated` (`run_guard_safety_cap_hit` / `llm_truncated_twice`, both error-level): the task
+leaves the project in a retryable error with `OUTPUT_TRUNCATED_MESSAGE` and the run settles
+`safety_cap` (billed, no refund). The synchronous plan-dub answers 502 `{"code":"output_truncated"}`.
+
+**Admission math is honest**: the guard prices a video part at the vendor's MEASURED rate
+(`estimate.VENDOR_VIDEO_TOKENS_PER_SEC` = 66 standard / 330 high; the estimate keeps 100 / 300, which
+also size the one-request footage caps). Since admission no longer compares prices with what is left,
+this only affects the in-flight sum and the timed-out-attempt input charge.
+
+**Estimate e3**: the engine-tiered cut plan (`analyze_video`) is priced at its own thinking depth —
+Pro (high) 24,000 output, Scout (medium) 15,000 (`CUT_PLAN_OUTPUT_TOKENS_MEDIUM`, from
+`scripts/effort_ab.py` 2026-09-29: 22,892 vs 12,428 thinking tokens). Without it the overage refusal's
+"try Scout" changed nothing it measured. Footage length is deliberately not an output term: the six
+production outputs do not follow it, and segment count is set by the script, not the footage.
+
+Kept intact: the circuit breaker (layer 3), `run_too_large`, `footage_over_limit`, the free-tier caps,
+the daily refund cap, and the resume machinery (§6.2's pause rows still describe the pause itself).

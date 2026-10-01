@@ -7,20 +7,27 @@ of each call — never from anything in this file. Nothing is reserved at start
 (owner, 2026-09-26), so a wrong number here moves no money on a run that
 succeeds.
 
-What it really drives, in order of how much it matters:
+**The estimate is ADVICE** (owner, 2026-10-01 — the "chat AI usage limit"
+model). No call is refused, and no call's output is capped, because of it:
+a run is sent call after call while the plan's window has anything left and
+pauses at 100 % (packages/billing/guard.py). What it still drives:
 
 1. **The figure the clients show before a run starts** — "งานนี้ใช้ประมาณ 5%"
    (``POST /usage/estimate``, ``GET /videos/{uid}/resume``). This is the one
    live job the number has.
-2. **The run's ceiling**, ``ceil(estimate × 1.2)``: ``guard.admit`` refuses any
-   call whose budget would take the run past it, and a FAILED run is charged
-   at most the ceiling (``runs.charge_for``). So an estimate that is too LOW
-   kills a run partway through — which is why the fan-out kind below
-   deliberately over-counts.
-3. **``guard.meter_for_run``'s ``default_max_output``** — the profile's
-   ``max_output`` becomes the ``max_tokens`` of every call in the run that
-   sets none of its own.
-4. ``plan_features.check_run_size``, a refusal that today no plan can reach:
+2. **The run's ceiling**, ``ceil(estimate × 1.2)`` — now only the line an
+   OPTIONAL call (a quality retry) is held to, so a retry never doubles a run.
+   Required calls ignore it.
+3. **The overage gate at start** (``guard.overage_refusal``): a NEW run
+   expected to go past what is left by more than
+   ``BILLING_MAX_OVERAGE_RATIO`` of the window is refused — the one place
+   the estimate still refuses anything, and the reason it must not be
+   inflated.
+4. **The in-flight price of a call** (``guard.call_budget`` reads the
+   profile's ``max_output`` as what a call is expected to write). The output
+   a call MAY write is the profile's ``output_cap`` (the model's own maximum
+   for the single-call steps), which has nothing to do with the estimate.
+5. ``plan_features.check_run_size``, a refusal that today no plan can reach:
    every advertised footage cap prices well under every enforced window
    (tests/test_plan_features.py, tests/test_estimate.py).
 
@@ -96,7 +103,7 @@ from typing import Any, Literal
 
 from packages.billing import rate_card
 
-ESTIMATOR_VERSION = "e2"
+ESTIMATOR_VERSION = "e3"
 CEILING_RATIO = 1.2
 
 VIDEO_TOKENS_PER_SEC: dict[str, int] = {"standard": 100, "high": 300}
@@ -184,6 +191,13 @@ class ModeProfile:
     model: ModelRole = "engine"
     #: A per-item second pass, when the run fans out.
     fanout: FanoutPass | None = None
+    #: The per-call SAFETY cap: ``max_tokens`` (output + thinking — Gemini
+    #: counts thought tokens inside max_output_tokens) for every call of the
+    #: run that sets none. Runaway protection only; deliberately independent
+    #: of the estimate and of what is left of the quota (2026-10-01).
+    #: ``MODEL_MAX`` = the model's own maximum output, read from LiteLLM's
+    #: model metadata at call time (``llm.config.model_max_output_tokens``).
+    output_cap: int = 16_000
 
 
 #: What a cut-planning call really produces, thinking included (2026-09-29).
@@ -196,6 +210,66 @@ class ModeProfile:
 #: shorter, so leaving them at 8,000 would keep under-estimating two of the
 #: three paths that spend the most.
 CUT_PLAN_OUTPUT_TOKENS = 24_000
+
+#: The same cut plan at thinking level MEDIUM — the Scout (lite) engine's
+#: (quality.engine_effort). scripts/effort_ab.py, 2026-09-29, two of the
+#: owner's clips, eight runs: 12,428 thinking tokens at medium against 22,892
+#: at high; the answer itself (the edit script) is ~2-3k either way, so
+#: ~15,000 in all. Pricing Scout at Pro's thinking made the advice wrong by
+#: ~45 % of the output term — and made "try Scout" (the overage refusal's
+#: suggestion) a suggestion that changed nothing. e3, 2026-10-01.
+#:
+#: Footage length is deliberately NOT a term (looked at 2026-10-01): the six
+#: production outputs do not follow it (192 s → 17.7k, 136 s → 27.2k, 227 s →
+#: 24.1k, 332 s → 19.1k / 19.5k / 29.5k+), and the prompts explain why — the
+#: number of segments is set by the script / target length, not by how much
+#: footage there is, and each segment's ≤3 alternates scale with segments
+#: too. More footage gives the model more to LOOK at (input, already priced
+#: per second), not more to write.
+CUT_PLAN_OUTPUT_TOKENS_MEDIUM = 15_000
+
+
+def cut_plan_output_for(engine: str | None) -> int:
+    """Expected output of the engine-tiered cut plan (``analyze_video``):
+    Pro's high thinking or Scout's medium. Anything below medium is priced as
+    medium — no measurement, and over- beats under-stating the advice."""
+    from packages.video import quality
+
+    effort = (quality.engine_effort(engine) or "").strip().lower()
+    return CUT_PLAN_OUTPUT_TOKENS if effort in ("high", "max", "xhigh", "") else CUT_PLAN_OUTPUT_TOKENS_MEDIUM
+
+#: ── per-call safety caps (``ModeProfile.output_cap``, 2026-10-01) ──────────
+#: Runaway protection, never a budget — an answer cut off at one has no use
+#: at all.
+#:
+#: ``MODEL_MAX`` (0): the model's OWN maximum output, for the single calls a
+#: whole step rests on — the cut plan (analyze-video / analyze-frames), the
+#: AI re-cut, the speech selector and its span trims. Any number of ours
+#: below it could make a legitimately large job (long footage, many cuts,
+#: alternates, long thinking) impossible on every plan. Read from LiteLLM's
+#: model metadata, not typed in: gemini-3.8-flash, gemini-3.7-flash and
+#: gemini-3.1-pro-preview all report max_output_tokens 65,536 (LiteLLM
+#: 1.100.1), matching Google's model pages ("Output token limit 65,536",
+#: ai.google.dev/gemini-api/docs/models/gemini-3.8-flash and …/gemini-3.7-flash).
+#: Measured cut-plan outputs, thinking included: 17,732 / 27,216 / 24,141
+#: (2026-09-29), 19,477 / 19,097 / 29,464+ (2026-10-01; the last one cut off
+#: at the old estimate-derived cap).
+MODEL_MAX = 0
+#: The inherently small calls: effects placement (output p99 1,916, n=272 —
+#: three arrays of a few numbers each, the schema allows nothing else), style
+#: distillation (p99 900), plan-dub's cut list (p99 ~3.1k) — 2026-09-22
+#: profile. 16,000 is 5-17x the worst seen; an answer that long is a runaway.
+DEFAULT_OUTPUT_CAP = 16_000
+
+#: Video tokens per second the VENDOR really bills, measured — what the per-
+#: call guard prices a video part at (``vendor_video_tokens``). Standard
+#: (~1 fps): 24,496 input tokens on a 291.7 s proxy less its ~6k prompt
+#: (packages/video/quality.py, 2026-09-07) = 63.4/s; production run b8ad8c25
+#: (2026-10-01): 27,673 input on 331.8 s ≈ 65/s after its prompt. High (5 fps):
+#: 328.2-329.0/s on three production runs (docs/unit-economics.md §4.1).
+#: ``VIDEO_TOKENS_PER_SEC`` (100 / 300) stays the ESTIMATE's figure — it also
+#: sizes the one-request footage caps (limits.py) — so the advice is unchanged.
+VENDOR_VIDEO_TOKENS_PER_SEC: dict[str, int] = {"standard": 66, "high": 330}
 
 #: Transcript tokens the speech planners read per second of audio. Deliberately
 #: generous for Thai: Scribe returns roughly 3-4 syllables a second and Gemini
@@ -226,12 +300,15 @@ MIN_EXPECTED_PICKS = 3
 MAX_EXPECTED_PICKS = 24
 
 MODE_PROFILES: dict[str, ModeProfile] = {
-    "analyze_video": ModeProfile(prompt_in=6_000, max_output=CUT_PLAN_OUTPUT_TOKENS, uses_video=True),
+    "analyze_video": ModeProfile(prompt_in=6_000, max_output=CUT_PLAN_OUTPUT_TOKENS, uses_video=True,
+                                   output_cap=MODEL_MAX),
     "analyze_frames": ModeProfile(
-        prompt_in=6_000, max_output=CUT_PLAN_OUTPUT_TOKENS, uses_frames=True, model="vision"
+        prompt_in=6_000, max_output=CUT_PLAN_OUTPUT_TOKENS, uses_frames=True, model="vision",
+        output_cap=MODEL_MAX,
     ),
     "reedit": ModeProfile(
-        prompt_in=6_000, max_output=CUT_PLAN_OUTPUT_TOKENS, uses_video=True, model="reedit"
+        prompt_in=6_000, max_output=CUT_PLAN_OUTPUT_TOKENS, uses_video=True, model="reedit",
+        output_cap=MODEL_MAX,
     ),
     "plan_dub": ModeProfile(prompt_in=8_000, max_output=4_000, model="text"),
     "voiceover": ModeProfile(prompt_in=8_000, max_output=4_000, model="text"),
@@ -248,7 +325,7 @@ MODE_PROFILES: dict[str, ModeProfile] = {
     "select_scenes": ModeProfile(
         prompt_in=4_000, max_output=4_000,
         transcript_per_sec=TRANSCRIPT_TOKENS_PER_SEC, calls=1,
-        uses_stt=True, model="speech",
+        uses_stt=True, model="speech", output_cap=MODEL_MAX,
     ),
     # speech_highlights: the selector (whole transcript in, a pick list out —
     # 6,000 because that list carries title/why/opensWith/endsWith per pick and
@@ -257,7 +334,7 @@ MODE_PROFILES: dict[str, ModeProfile] = {
     "select_highlights": ModeProfile(
         prompt_in=4_000, max_output=6_000,
         transcript_per_sec=TRANSCRIPT_TOKENS_PER_SEC, calls=1,
-        uses_stt=True, model="speech",
+        uses_stt=True, model="speech", output_cap=MODEL_MAX,
         fanout=FanoutPass(prompt_in=3_000, max_output=2_500),
     ),
     # Legacy: the kind every speech mode used to be priced at. Nothing writes
@@ -271,7 +348,7 @@ MODE_PROFILES: dict[str, ModeProfile] = {
     "transcribe_audio": ModeProfile(
         prompt_in=4_000, max_output=6_000,
         transcript_per_sec=TRANSCRIPT_TOKENS_PER_SEC, calls=1,
-        uses_stt=True, model="speech",
+        uses_stt=True, model="speech", output_cap=MODEL_MAX,
         fanout=FanoutPass(prompt_in=3_000, max_output=2_500),
     ),
     # The server-render chain for talking_head (routers/videos.py). Same shape
@@ -340,9 +417,19 @@ def model_for(role: ModelRole, engine: str | None) -> str:
 
 
 def video_input_tokens(seconds: float, precision: str | None) -> int:
-    """Video tokens for ``seconds`` of footage — also what a video call site
-    passes the per-call guard, since a file part cannot be counted locally."""
+    """Video tokens the ESTIMATE prices ``seconds`` of footage at (the owner's
+    plan figures, 100 / 300 per second)."""
     per_sec = VIDEO_TOKENS_PER_SEC.get(precision or "standard", VIDEO_TOKENS_PER_SEC["standard"])
+    return math.ceil(max(0.0, float(seconds or 0.0)) * per_sec)
+
+
+def vendor_video_tokens(seconds: float, precision: str | None) -> int:
+    """Video tokens the vendor really bills for ``seconds`` of footage at this
+    sampling density (``VENDOR_VIDEO_TOKENS_PER_SEC``) — what the per-call
+    guard prices a video part at, since a file part cannot be counted
+    locally."""
+    rates = VENDOR_VIDEO_TOKENS_PER_SEC
+    per_sec = rates.get(precision or "standard", rates["standard"])
     return math.ceil(max(0.0, float(seconds or 0.0)) * per_sec)
 
 
@@ -405,7 +492,8 @@ def estimate_run(
     elif profile.uses_frames:
         prompt += frame_input_tokens(secs)
 
-    llm = rate_card.tokens_for_llm(chosen, prompt, 0, profile.max_output) * profile.calls
+    output = cut_plan_output_for(engine) if resolved == "analyze_video" else profile.max_output
+    llm = rate_card.tokens_for_llm(chosen, prompt, 0, output) * profile.calls
     fan = profile.fanout
     if fan is not None:
         picks = expected_picks_for(audio) if expected_picks is None else max(0, int(expected_picks))

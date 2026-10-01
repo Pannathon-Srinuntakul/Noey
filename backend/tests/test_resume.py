@@ -367,6 +367,46 @@ async def test_a_resume_that_still_does_not_fit_pauses_again_instead_of_erroring
     assert state["task"] == "analyze_dub_video_local" and state["resumes"] == 1
 
 
+async def test_a_spent_trial_resumes_after_an_upgrade_without_redoing_the_upload(captured):
+    """Owner, 2026-10-01: the Free credit never resets, so the way forward
+    from a trial pause is an upgrade — and then RESUME, from the stage that
+    paused: the same task, the same uploaded proxies, one new run for that
+    stage only. New work, meanwhile, is refused while the credit is spent."""
+    user = await make_user(email("resume"), plan="free")
+    token = await user_token(user)
+    async with client() as c:
+        uid = await _project(c, token, seconds=10)
+        try:
+            await _analyze(c, token, uid)
+            started = list(captured)
+            await db(
+                f"UPDATE {SHARED_DATA_SCHEMA}.video_projects SET status = 'error' WHERE uid = :p", p=uid,
+            )
+            await tasks._mark_stopped(
+                local_job_id(uid), guard.QuotaExhausted(None, window="lifetime"),
+                kwargs={"project_uid": uid, "tenant_slug": "default"}, paused=True,
+            )
+            await _fill_the_window(user, "free")
+            paused = await _row(uid)
+            paused_msg = (await db(
+                f"SELECT error_msg FROM {SHARED_DATA_SCHEMA}.video_projects WHERE uid = :p", p=uid))[0][0]
+            new_project = await c.post(
+                "/videos/local", json={"mode": "dub_first", "clips": [{"id": "c1", "durationSec": 10}]},
+                headers=bearer(token),
+            )
+            await db("UPDATE core.users SET plan = 'lite' WHERE id = :u", u=user)
+            r = await c.post(f"/videos/{uid}/resume", json={}, headers=bearer(token))
+            proxy_kept = (data_root() / "video_outputs" / uid / "proxy").exists()
+        finally:
+            _cleanup(uid)
+    assert paused["status"] == "paused_quota" and "อัปเกรด" in paused_msg
+    assert new_project.status_code == 402 and new_project.json()["detail"]["full"] is True
+    assert r.status_code == 200, r.text
+    assert r.json()["action"] == "server_job" and len(captured) == len(started) + 1
+    assert captured[-1]["fn"] == "analyze_dub_video_local" and proxy_kept
+    assert [k for k, _s, _t in await _runs(user)] == ["analyze_video", "analyze_video"]
+
+
 async def test_a_paused_planning_call_is_handed_back_to_the_client(captured):
     """The one paid stage the client drives itself: the numbers it needs live
     on the user's machine, so the ticket names the call to repeat instead of a

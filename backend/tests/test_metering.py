@@ -89,6 +89,27 @@ async def test_a_replayed_row_is_charged_once():
     assert used[0][0] == row["tokens"]
 
 
+async def test_an_absorbed_retry_is_on_our_books_and_charges_nobody():
+    """The one retry after an answer truncated at the output limit (owner,
+    2026-10-01): the vendor billed it, so it is recorded and priced — but it
+    puts nothing on the user's windows."""
+    ctx = await _ctx()
+    ctx.run_id = await _run(ctx)
+    with metering.absorbed_usage():
+        charged = await metering.record_llm_attempt(
+            ctx, model="gemini-3.8-flash", status="ok", input_tokens=27_673, output_tokens=40_000,
+        )
+    assert charged == 0
+    rows = await db(
+        "SELECT status, tokens, output_tokens, cost_thb FROM core.llm_usage_logs WHERE user_id = :u",
+        u=ctx.user_id,
+    )
+    [(status, tokens, out, cost)] = rows
+    assert (status, tokens, out) == ("absorbed", 0, 40_000) and cost is not None and cost > 0
+    run = await db("SELECT actual_tokens, charged_tokens FROM core.ai_runs WHERE id = :r", r=ctx.run_id)
+    assert run[0][0] == 0 and not run[0][1]
+
+
 async def test_a_failed_attempt_without_usage_is_recorded_unpriced():
     ctx = await _ctx()
     assert await metering.record_llm_attempt(ctx, model="gemini-3.8-flash", status="failed") == 0

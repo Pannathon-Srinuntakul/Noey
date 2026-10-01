@@ -393,6 +393,14 @@ class Settings(BaseSettings):
     #: (capped at its ceiling): a failure we cannot tell from input the user
     #: controls (a timeout on an oversized file) must not be free to repeat.
     billing_free_refunds_per_day: int = 3
+    #: How far past what is left a NEW run may be expected to go, as a share
+    #: of the window's size (owner, 2026-10-01). A run's in-flight overage is
+    #: charged and carried into the next period, so without a bound a user at
+    #: 99 % could start an hour of footage and take most of it on overage.
+    #: Refused at start when ``estimate − left > ratio × window`` (Free: of its
+    #: 450k credit). Resumes are exempt; a balance the user allows can carry
+    #: the excess instead.
+    billing_max_overage_ratio: float = 0.25
     #: Longest style-reference clip accepted (seconds) — cut / effects styles
     #: and the plan-effects reference: every second is billed video input.
     reference_max_sec: int = 1200
