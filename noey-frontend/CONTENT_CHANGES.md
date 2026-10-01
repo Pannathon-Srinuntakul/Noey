@@ -651,6 +651,32 @@ An independent review scored the calculator 7.0; these are its fixes.
 - Per-mode starting length: ตัดไฮไลต์จากคลิปยาว opens on 30 minutes (the others on
   5) until the visitor sets a length.
 
+## 29. /pricing calculator: the second review round (2026-10-01)
+
+- ตัดไฮไลต์จากคลิปยาว's cost line put the padding on the count; it is on the
+  cost per clip, and the count is the cautious side:
+  "…จำนวนไฮไลต์รู้ได้หลังอ่านจบ ตัวเลขของโหมดนี้จึงคิดเผื่อไว้ค่อนข้างสูง" →
+  "…จำนวนไฮไลต์รู้ได้หลังอ่านจบ ระบบจึงประเมินโควตาต่อคลิปของโหมดนี้เผื่อไว้
+  ใช้จริงอาจได้คลิปมากกว่าตัวเลขนี้".
+- "ปัดลง" moved from the start of the picker's note to the basis beside the
+  answer: "คิดจากโหมดตัดฉากเด่น คลิปดิบ 5 นาที · ปัดลง"; the note now starts on
+  its caveat ("คลิปที่ยาวกว่าหรือระดับละเอียดใช้โควตามากกว่า · ระบบบอกก่อน…").
+  `CLIPS_FOOTNOTE` everywhere else is unchanged.
+- The list under the cards: every row is name | price | count, with the
+  ระดับละเอียด count on its own dimmed line ("ระดับละเอียดราว N คลิป", no leading
+  " · "); Lite and Starter say "ไม่มีระดับละเอียด" on that line (hidden, with the
+  others, in the modes without the setting).
+- The raw-clip length is drawn, and set, as a clip on a track: a ruler of
+  timecodes ("00:00:00" … "00:30:00", or to "02:00:00"), the clip as a gold
+  block labelled with its length ("00:05:00"), and a trim handle on its end.
+  In ตัดฉากเด่น the plans' footage ceilings are markers named "ฟรี · Lite",
+  "Starter", "Pro ขึ้นไป" under the legend "เพดานฟุตเทจ"; in the other modes the
+  line under the track reads "ทุกแพลนรับฟุตเทจได้ถึง 2 ชั่วโมง". The handle is a
+  slider named "ความยาวคลิปดิบของคุณ" whose value reads "N นาที"; the number field
+  beside it is named "พิมพ์ความยาวคลิปดิบเป็นนาที" for screen readers, and its
+  range line, "ความยาวต่อคลิป ตั้งได้ 1–30 นาที" (1–120 in the speech modes), is
+  now read to screen readers only — the ruler shows the range.
+
 ## Text added (not replacing anything)
 
 Only labels, no claims:

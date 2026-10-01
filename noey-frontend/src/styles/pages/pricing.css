@@ -131,7 +131,7 @@
 
 @media (min-width: 600px) {
   .plan-rail__bar {
-    grid-template-columns: max-content minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) max-content;
     grid-template-areas: "modes modes" "length fine" "note note" "picker picker" "answer answer" "caveats caveats";
     column-gap: 44px;
   }
@@ -139,7 +139,7 @@
 
 @media (min-width: 900px) {
   .plan-rail__bar {
-    grid-template-columns: max-content max-content minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) max-content max-content;
     grid-template-areas: "modes modes modes" "length fine answer" "note note note" "picker picker picker" "caveats caveats caveats";
   }
 
@@ -147,14 +147,33 @@
 
 /* Before the page's script runs (or without it) the controls are drawn but
    disabled, and look it: nothing seems live while it is dead. */
-.plan-rail__bar[data-idle] :is(.mode-pick__options, .cliplen__row, .seg__options, .picker__track) {
+.plan-rail__bar[data-idle] :is(.mode-pick__options, .cliplen__row, .cliptrack, .seg__options, .picker__track) {
   opacity: 0.55;
 }
 
+/* The three notes differ in length; the box holds the longest, so switching
+   modes moves nothing below it. */
 .rail-setup__note {
+  /* Lines plus the padding and rule below them (border-box). */
+  min-height: calc(2lh + 19px);
   margin-top: -2px;
   padding-bottom: 18px;
   border-bottom: 1px dashed var(--line-2);
+}
+
+@media (max-width: 599px) {
+  .rail-setup__note {
+    min-height: calc(3lh + 19px);
+  }
+}
+
+/* The narrowest phones: the picked mode's footage line and the answer's
+   basis wrap for some modes and not others — hold two lines for both. */
+@media (max-width: 380px) {
+  .mode-pick__current,
+  .rail-answer__basis {
+    min-height: 2lh;
+  }
 }
 
 /* The setting group and the line that stands in for it share one cell, so
@@ -417,10 +436,273 @@
   line-height: 1.5;
 }
 
+/* The field and the clip it draws: side by side where the cell is wide,
+   the track under the field where it is not. */
+.cliplen__body {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 22px;
+}
+
 .cliplen__row {
   display: flex;
+  flex: none;
   align-items: center;
   gap: 6px;
+}
+
+/* ── The raw clip on a track: ruler, lane, the clip as a gold block ─────── */
+
+/* The track is a control: press anywhere to move the clip's end there, drag
+   to trim. touch-action keeps a drag from scrolling the page on a phone. */
+.cliptrack {
+  --w: 0.17;
+  --units: 30;
+  container-type: inline-size;
+  flex: 1 1 260px;
+  display: grid;
+  grid-template-rows: 14px 26px 15px;
+  row-gap: 3px;
+  min-width: 0;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: pointer;
+}
+
+.cliptrack[data-disabled] {
+  cursor: default;
+}
+
+.cliptrack[data-dragging] {
+  cursor: ew-resize;
+}
+
+/* Minute ticks (every five on the two-hour scale) and a longer tick at each
+   timecode. */
+.cliptrack__ruler {
+  position: relative;
+  border-bottom: 1px solid var(--line-2);
+  background:
+    repeating-linear-gradient(90deg, var(--line-3) 0 1px, transparent 1px calc(100% / var(--units))) left bottom / 100% 4px
+      no-repeat;
+}
+
+.cliptrack__mark {
+  position: absolute;
+  top: 0;
+  left: calc(var(--at) * 100%);
+  translate: -50% 0;
+  font-size: 10px;
+  line-height: 1;
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+
+.cliptrack__mark:first-child {
+  translate: 0 0;
+}
+
+.cliptrack__mark:last-child {
+  translate: -100% 0;
+}
+
+.cliptrack__lane {
+  position: relative;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--well);
+}
+
+/* The clip: as long as the minutes set, on the mode's scale; a waveform
+   revealed, not stretched, as it grows; trim handles at both ends. */
+.cliptrack__clip {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  left: 2px;
+  width: max(8px, calc((100% - 4px) * var(--w)));
+  overflow: hidden;
+  border-radius: 6px;
+  background: var(--gold);
+  box-shadow: 0 6px 16px -10px var(--gold-glow);
+  transition: width var(--dur-3) var(--ease-out);
+}
+
+/* The clip's start: a fixed edge. Its end is the handle below. */
+.cliptrack__clip::before {
+  content: "";
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  left: 2px;
+  z-index: 1;
+  width: 3px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--on-gold) 45%, transparent);
+}
+
+/* The trim handle on the clip's end: a 44px target around a bar that sits
+   on the edge; it lights up under the pointer, while dragged and when
+   focused. While dragging, the clip follows the pointer with no easing. */
+.cliptrack__handle {
+  position: absolute;
+  top: 50%;
+  left: calc(2px + max(8px, (100% - 4px) * var(--w)));
+  z-index: 4;
+  width: 44px;
+  height: 44px;
+  translate: -50% -50%;
+  border-radius: 12px;
+  outline: none;
+  cursor: ew-resize;
+  transition: left var(--dur-3) var(--ease-out);
+}
+
+.cliptrack[data-disabled] .cliptrack__handle {
+  cursor: default;
+}
+
+.cliptrack__handle::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 6px;
+  height: 24px;
+  translate: -50% -50%;
+  border-radius: 3px;
+  background: var(--gold-ink);
+  box-shadow: 0 0 0 2px var(--panel);
+  transition:
+    width var(--dur-1) ease,
+    height var(--dur-1) ease,
+    box-shadow var(--dur-1) ease;
+}
+
+.cliptrack:not([data-disabled]) .cliptrack__handle:hover::before,
+.cliptrack[data-dragging] .cliptrack__handle::before {
+  width: 8px;
+  height: 30px;
+  background: var(--gold);
+  box-shadow:
+    0 0 0 2px var(--panel),
+    0 0 0 6px var(--gold-soft);
+}
+
+.cliptrack__handle:focus-visible::before {
+  outline: 2px solid var(--focus);
+  outline-offset: 4px;
+}
+
+.cliptrack[data-dragging] :is(.cliptrack__clip, .cliptrack__handle) {
+  transition: none;
+}
+
+.cliptrack__wave {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  left: 0;
+  width: calc(100% / max(var(--w), 0.02));
+  height: auto;
+}
+
+.cliptrack__wave path {
+  stroke: color-mix(in srgb, var(--on-gold) 26%, transparent);
+}
+
+.cliptrack__tc {
+  position: absolute;
+  top: 50%;
+  left: 10px;
+  z-index: 2;
+  translate: 0 -50%;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--on-gold);
+  white-space: nowrap;
+  transform-origin: left center;
+  transition: scale var(--dur-1) ease;
+}
+
+/* A short clip: the timecode just past its end (and past the handle). */
+.cliptrack__tc--out {
+  left: calc(var(--at) * 100% + 22px);
+  color: var(--ink-2);
+}
+
+/* Trimming: the timecode reads out larger, like the editor's trim readout. */
+.cliptrack:is([data-dragging], :has(.cliptrack__handle:hover, .cliptrack__handle:focus-visible)) .cliptrack__tc {
+  scale: 1.12;
+}
+
+.cliptrack:is([data-dragging], :has(.cliptrack__handle:hover, .cliptrack__handle:focus-visible)) .cliptrack__tc--out {
+  color: var(--gold-ink);
+}
+
+/* ตัดฉากเด่น's footage ceilings: dashed markers across the lane, named
+   under it; a ceiling the clip runs past is crossed out. */
+.cliptrack__cap {
+  position: absolute;
+  top: -4px;
+  bottom: -4px;
+  left: calc(var(--at) * 100%);
+  z-index: 3;
+  border-left: 1px dashed var(--gold-ink);
+}
+
+.cliptrack__cap[data-passed] {
+  border-left-color: var(--ink-3);
+}
+
+/* The end just crossed this ceiling: a small visual tick, nothing else. */
+.cliptrack__cap[data-crossed] {
+  animation: cap-tick var(--dur-3) var(--ease-out);
+}
+
+@keyframes cap-tick {
+  from {
+    border-left-color: var(--gold);
+    scale: 1 1.7;
+  }
+}
+
+.cliptrack__caps {
+  position: relative;
+  font-size: 10.5px;
+  line-height: 15px;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+
+.cliptrack__name {
+  position: absolute;
+  top: 0;
+  left: calc(var(--at) * 100%);
+  translate: -50% 0;
+}
+
+.cliptrack__name:last-child {
+  translate: -100% 0;
+}
+
+.cliptrack__name[data-passed] {
+  color: var(--ink-3);
+  text-decoration: line-through;
+}
+
+.cliptrack__legend {
+  color: var(--ink-3);
+}
+
+/* A short ruler on the two-hour scale keeps its ends and its middle. */
+@container (max-width: 360px) {
+  .cliptrack--long .cliptrack__mark:nth-child(even) {
+    visibility: hidden;
+  }
 }
 
 .cliplen__input {
@@ -898,12 +1180,14 @@
   list-style: none;
 }
 
+/* Every row the same three columns — name | price | count — with the finer
+   count on its own dimmed line under the count, at every width. */
 .price-list__item {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: 4.6em 5.8em minmax(0, 1fr);
   align-items: baseline;
-  gap: 0 10px;
-  padding: 9px 0;
+  column-gap: 12px;
+  padding: 10px 0;
   border-bottom: 1px solid var(--line);
   font-size: var(--fs-14);
   line-height: 1.6;
@@ -911,7 +1195,6 @@
 }
 
 .price-list__plan {
-  min-width: 4.4em;
   font-weight: 600;
   color: var(--ink);
 }
@@ -920,11 +1203,20 @@
   color: var(--ink);
 }
 
+.price-list__cuts {
+  display: grid;
+  min-width: 0;
+}
+
 .price-list__high {
+  display: block;
+  font-size: var(--fs-13);
   color: var(--ink-3);
 }
 
-@media (max-width: 999px) {
+/* Three columns only where the count column fits "ระดับละเอียดราว 179 คลิป"
+   on one line; otherwise two, so every row keeps its two lines. */
+@media (max-width: 1279px) {
   .price-list__items {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }

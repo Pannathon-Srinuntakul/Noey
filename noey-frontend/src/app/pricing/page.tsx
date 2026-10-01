@@ -34,6 +34,7 @@ import {
   CUTS_APPROX_SHORT,
   CUTS_OVER_FOOTAGE_SHORT,
   CUTS_SHORT_OF_BUDGET,
+  CUTS_NO_FINE,
   CLIP_MINUTES,
   PAID_TIERS,
   PLAN_COPY,
@@ -121,15 +122,22 @@ function PriceList({ table }: { table: PriceTable }) {
                     <CutsNumber className="num" value={APPROX_CUTS_PER_MONTH[tier]} /> <CutsWord word="unit" />
                   </span>
                 </CutsCount>
+                {/* The finer count on its own dimmed line; a plan without the
+                    setting says so, so every row has the same two lines
+                    (both hidden in the modes without the setting). */}
                 {high ? (
                   <CutsCount tier={tier} precision="high" className="price-list__high">
-                    {` · ระดับ${PRECISION_NAMES.high}`}
+                    {`ระดับ${PRECISION_NAMES.high}`}
                     <span className="kt">
                       {`${CUTS_APPROX_SHORT} `}
                       <CutsNumber className="num" value={high} /> คลิป
                     </span>
                   </CutsCount>
-                ) : null}
+                ) : (
+                  <span className="price-list__high" data-cuts-row="high">
+                    {CUTS_NO_FINE}
+                  </span>
+                )}
               </span>
             </li>
           );

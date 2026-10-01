@@ -3,9 +3,14 @@
 import { useEffect, useId, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import {
   CLIP_MINUTES,
+  CUTS_ROUNDING,
   CUT_MODE_WORDS,
   DEFAULT_CLIP_MINUTES,
   DEFAULT_CUT_MODE,
+  FOOTAGE_MINUTES,
+  PLAN_COPY,
+  SPEECH_FOOTAGE,
+  TIERS,
   PRECISION_NAMES,
   clampClipMinutes,
   clipsBasis,
@@ -23,7 +28,9 @@ import {
   type Tier,
 } from "@/lib/plans";
 import { IconArrowLeft, IconArrowRight, IconMinus, IconPlus } from "../ds/icons";
+import { Waveform } from "../ds/Waveform";
 import { keepThai } from "../ds/ThaiText";
+import { minutesAt, minutesForKey } from "./clipTrack";
 import { cutsWordText, type CutsWordKind } from "./CutsCount";
 
 /** Slider resolution. */
@@ -62,7 +69,7 @@ const MODE_NOTE: Record<CutMode, string> = {
   talking_head: "ใช้แค่การถอดเสียง ไม่มีขั้นที่ AI ดูภาพหรืออ่านเนื้อหา จึงใช้โควตาน้อยที่สุดในสามโหมด",
   dub_first: "AI ดูฟุตเทจทุกวินาทีแล้วเขียนสคริปต์ ยิ่งคลิปยาว หรือเลือกระดับละเอียด (แพลน Pro ขึ้นไป) ยิ่งใช้โควตามาก",
   speech_highlights:
-    "ถอดเสียงแล้วให้ AI อ่านทั้งคลิปและเกลาทีละไฮไลต์ จำนวนไฮไลต์รู้ได้หลังอ่านจบ ตัวเลขของโหมดนี้จึงคิดเผื่อไว้ค่อนข้างสูง",
+    "ถอดเสียงแล้วให้ AI อ่านทั้งคลิปและเกลาทีละไฮไลต์ จำนวนไฮไลต์รู้ได้หลังอ่านจบ ระบบจึงประเมินโควตาต่อคลิปของโหมดนี้เผื่อไว้ ใช้จริงอาจได้คลิปมากกว่าตัวเลขนี้",
 };
 
 /** In place of the setting where the mode has none, so nothing below moves. */
@@ -138,6 +145,182 @@ function markFit(tier: Tier | null) {
   }
 }
 
+/** "00:05:00" — the editor's timecode for a whole number of minutes. */
+const timecode = (minutes: number) =>
+  `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}:00`;
+
+/**
+ * ตัดฉากเด่น's footage ceilings as markers on the ruler: one per distinct
+ * ceiling, named by its plans ("ฟรี · Lite", "Starter", "Pro ขึ้นไป").
+ */
+const CEILINGS = [...new Set(TIERS.map((tier) => FOOTAGE_MINUTES[tier]))].map((minutes) => {
+  const names = TIERS.filter((tier) => FOOTAGE_MINUTES[tier] === minutes).map((tier) => PLAN_COPY[tier].name);
+  return { minutes, label: names.length > 2 ? `${names[0]} ขึ้นไป` : names.join(" · ") };
+});
+
+/**
+ * The raw-clip length as the editor draws a clip — and set the way the editor
+ * trims one: a ruler with timecodes, a lane, and the clip as a gold block as
+ * long as the minutes set, on the scale of the mode's longest clip (30 or 120
+ * minutes). Drag the clip's end (its trim handle) or press anywhere on the
+ * track to move the end there; whole minutes, clamped to the mode's range.
+ * The handle is the focusable control (role="slider", named by the field's
+ * label); the −/+ field beside it stays for typing an exact number.
+ *
+ * In ตัดฉากเด่น the plans' footage ceilings sit on the lane as markers, and a
+ * ceiling the clip runs past is crossed out (with a small tick as the end
+ * crosses it); in the other modes the line under the lane says they take two
+ * hours on every plan.
+ */
+function ClipTrack({
+  minutes,
+  mode,
+  disabled,
+  labelledBy,
+  onChange,
+}: {
+  minutes: number;
+  mode: CutMode;
+  disabled: boolean;
+  labelledBy: string;
+  onChange: (minutes: number) => void;
+}) {
+  const lane = useRef<HTMLDivElement>(null);
+  const frame = useRef(0);
+  const pending = useRef<number | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const longest = maxClipMinutes(mode);
+  const marks = longest > 60 ? [0, 30, 60, 90, 120] : [0, 10, 20, 30];
+  const share = Math.min(1, minutes / longest);
+  // The timecode rides inside the block once the block can hold it.
+  const inside = share >= 0.3;
+  const ceilings = mode === "dub_first" ? CEILINGS : [];
+  // The length before the last change, to tick a ceiling the end just crossed
+  // (React's "information from previous renders" pattern; no tick on load).
+  const [shown, setShown] = useState(minutes);
+  const [from, setFrom] = useState(minutes);
+  if (shown !== minutes) {
+    setFrom(shown);
+    setShown(minutes);
+  }
+
+  // A drag reports at most once a frame: the counts across the page follow
+  // without a storm of renders.
+  function report(next: number) {
+    pending.current = next;
+    if (frame.current) return;
+    frame.current = requestAnimationFrame(() => {
+      frame.current = 0;
+      if (pending.current !== null) onChange(pending.current);
+      pending.current = null;
+    });
+  }
+
+  useEffect(() => () => cancelAnimationFrame(frame.current), []);
+
+  function at(clientX: number) {
+    const box = lane.current?.getBoundingClientRect();
+    return box ? minutesAt(clientX - box.left, box.width, longest) : minutes;
+  }
+
+  return (
+    <div
+      className={longest > 60 ? "cliptrack cliptrack--long" : "cliptrack"}
+      data-dragging={dragging ? "" : undefined}
+      data-disabled={disabled ? "" : undefined}
+      style={{ ["--w" as string]: share, ["--units" as string]: longest > 60 ? longest / 5 : longest }}
+      onPointerDown={(event) => {
+        if (disabled || event.button !== 0) return;
+        event.preventDefault();
+        event.currentTarget.setPointerCapture(event.pointerId);
+        setDragging(true);
+        report(at(event.clientX));
+        lane.current?.querySelector<HTMLElement>("[role=slider]")?.focus({ preventScroll: true });
+      }}
+      onPointerMove={(event) => {
+        if (dragging) report(at(event.clientX));
+      }}
+      onPointerUp={(event) => {
+        if (!dragging) return;
+        event.currentTarget.releasePointerCapture(event.pointerId);
+        setDragging(false);
+      }}
+      onPointerCancel={() => setDragging(false)}
+    >
+      <div className="cliptrack__ruler" aria-hidden="true">
+        {marks.map((mark) => (
+          <span key={mark} className="cliptrack__mark tc" style={{ ["--at" as string]: mark / longest }}>
+            {timecode(mark)}
+          </span>
+        ))}
+      </div>
+      <div ref={lane} className="cliptrack__lane">
+        <div className="cliptrack__clip" aria-hidden="true">
+          <Waveform still bars={72} seed={11} className="cliptrack__wave" />
+          {inside ? <span className="cliptrack__tc tc">{timecode(minutes)}</span> : null}
+        </div>
+        {inside ? null : (
+          <span className="cliptrack__tc cliptrack__tc--out tc" aria-hidden="true" style={{ ["--at" as string]: share }}>
+            {timecode(minutes)}
+          </span>
+        )}
+        {ceilings.map((ceiling) => {
+          const passed = minutes > ceiling.minutes;
+          const crossed = from > ceiling.minutes !== passed;
+          // Keyed on the side the end is on, so crossing replays the tick.
+          return (
+            <span
+              key={`${ceiling.minutes}-${passed}`}
+              className="cliptrack__cap"
+              aria-hidden="true"
+              data-passed={passed ? "" : undefined}
+              data-crossed={crossed ? "" : undefined}
+              style={{ ["--at" as string]: ceiling.minutes / longest }}
+            />
+          );
+        })}
+        <span
+          className="cliptrack__handle"
+          role="slider"
+          tabIndex={disabled ? -1 : 0}
+          aria-labelledby={labelledBy}
+          aria-valuemin={CLIP_MINUTES.min}
+          aria-valuemax={longest}
+          aria-valuenow={minutes}
+          aria-valuetext={`${minutes} นาที`}
+          aria-disabled={disabled || undefined}
+          onKeyDown={(event) => {
+            if (disabled) return;
+            const next = minutesForKey(event.key, minutes, longest);
+            if (next === null) return;
+            event.preventDefault();
+            if (next !== minutes) onChange(next);
+          }}
+        />
+      </div>
+      <div className="cliptrack__caps" aria-hidden="true">
+        {ceilings.length ? (
+          <>
+            <span className="cliptrack__legend">เพดานฟุตเทจ</span>
+            {ceilings.map((ceiling) => (
+              <span
+                key={ceiling.minutes}
+                className="cliptrack__name"
+                data-passed={minutes > ceiling.minutes ? "" : undefined}
+                style={{ ["--at" as string]: ceiling.minutes / longest }}
+              >
+                {ceiling.label}
+              </span>
+            ))}
+          </>
+        ) : (
+          <span className="cliptrack__legend">{`ทุกแพลนรับฟุตเทจได้ถึง ${SPEECH_FOOTAGE}`}</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // False on the server and while hydrating, true once the page's script runs:
 // the controls stay disabled until then, so nothing looks live while it is dead.
 const noSubscribe = () => () => {};
@@ -203,6 +386,7 @@ export function PlanRail({
   const noteId = useId();
   const lengthId = useId();
   const lengthNoteId = useId();
+  const lengthLabelId = useId();
   const setting = settingOf(choice);
   const counts = countsFor(plans, choice);
   const fit = fitTier(wanted, choice.minutes, choice.mode, setting);
@@ -344,63 +528,77 @@ export function PlanRail({
         {/* The steppers are aria-disabled at an end rather than disabled, so a
             keyboard user who just pressed one keeps their focus. */}
         <div className="cliplen">
-          <label className="picker__label" htmlFor={lengthId}>
+          <label className="picker__label" htmlFor={lengthId} id={lengthLabelId}>
             ความยาวคลิปดิบของคุณ
           </label>
-          <div className="cliplen__row">
-            <button
-              type="button"
-              className="btn btn-secondary btn-icon cliplen__step"
-              onClick={() => !atMin && commitLength(choice.minutes - 1)}
+          <div className="cliplen__body">
+            <div className="cliplen__row">
+              <button
+                type="button"
+                className="btn btn-secondary btn-icon cliplen__step"
+                onClick={() => !atMin && commitLength(choice.minutes - 1)}
+                disabled={!live}
+                aria-disabled={atMin || undefined}
+                aria-controls={lengthId}
+                aria-label="สั้นลง 1 นาที"
+              >
+                <IconMinus />
+              </button>
+              <input
+                id={lengthId}
+                className="input num cliplen__input"
+                type="number"
+                inputMode="numeric"
+                min={CLIP_MINUTES.min}
+                max={longest}
+                step={1}
+                value={draft}
+                disabled={!live}
+                aria-label="พิมพ์ความยาวคลิปดิบเป็นนาที"
+                aria-describedby={lengthNoteId}
+                onChange={(event) => {
+                  const text = event.target.value;
+                  setDraft(text);
+                  const value = Number(text);
+                  // Applied as typed when it is a length the page takes;
+                  // anything else waits for the field to lose focus, then
+                  // snaps into range.
+                  if (text.trim() !== "" && Number.isInteger(value) && value >= CLIP_MINUTES.min && value <= longest) {
+                    choose({ minutes: value }, { lengthSet: true });
+                  }
+                }}
+                onBlur={() => commitLength(draft.trim() === "" ? choice.minutes : Number(draft))}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") commitLength(draft.trim() === "" ? choice.minutes : Number(draft));
+                }}
+              />
+              <button
+                type="button"
+                className="btn btn-secondary btn-icon cliplen__step"
+                onClick={() => !atMax && commitLength(choice.minutes + 1)}
+                disabled={!live}
+                aria-disabled={atMax || undefined}
+                aria-controls={lengthId}
+                aria-label="ยาวขึ้น 1 นาที"
+              >
+                <IconPlus />
+              </button>
+              <span className="cliplen__unit">นาที</span>
+            </div>
+            <ClipTrack
+              minutes={choice.minutes}
+              mode={choice.mode}
               disabled={!live}
-              aria-disabled={atMin || undefined}
-              aria-controls={lengthId}
-              aria-label="สั้นลง 1 นาที"
-            >
-              <IconMinus />
-            </button>
-            <input
-              id={lengthId}
-              className="input num cliplen__input"
-              type="number"
-              inputMode="numeric"
-              min={CLIP_MINUTES.min}
-              max={longest}
-              step={1}
-              value={draft}
-              disabled={!live}
-              aria-describedby={lengthNoteId}
-              onChange={(event) => {
-                const text = event.target.value;
-                setDraft(text);
-                const value = Number(text);
-                // Applied as typed when it is a length the page takes;
-                // anything else waits for the field to lose focus, then
-                // snaps into range.
-                if (text.trim() !== "" && Number.isInteger(value) && value >= CLIP_MINUTES.min && value <= longest) {
-                  choose({ minutes: value }, { lengthSet: true });
-                }
-              }}
-              onBlur={() => commitLength(draft.trim() === "" ? choice.minutes : Number(draft))}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") commitLength(draft.trim() === "" ? choice.minutes : Number(draft));
+              labelledBy={lengthLabelId}
+              onChange={(minutes) => {
+                setDraft(String(minutes));
+                choose({ minutes }, { lengthSet: true });
               }}
             />
-            <button
-              type="button"
-              className="btn btn-secondary btn-icon cliplen__step"
-              onClick={() => !atMax && commitLength(choice.minutes + 1)}
-              disabled={!live}
-              aria-disabled={atMax || undefined}
-              aria-controls={lengthId}
-              aria-label="ยาวขึ้น 1 นาที"
-            >
-              <IconPlus />
-            </button>
-            <span className="cliplen__unit">นาที</span>
           </div>
-          <p className="picker__note" id={lengthNoteId}>
-            {keepThai(`ความยาวต่อคลิป ตั้งได้ ${CLIP_MINUTES.min}–${longest} นาที`)}
+          {/* The range, for the field: the track above draws it for the eye. */}
+          <p className="sr-only" id={lengthNoteId}>
+            {`ความยาวต่อคลิป ตั้งได้ ${CLIP_MINUTES.min}–${longest} นาที`}
           </p>
         </div>
         {/* ระดับละเอียด exists only in ตัดฉากเด่น. In the other modes a line
@@ -454,6 +652,7 @@ export function PlanRail({
           </output>
           <p className="rail-answer__basis">
             <span className="kt">{basisHead}</span> <span className="kt">{basisTail}</span>
+            <span className="kt">{`\u00a0· ${CUTS_ROUNDING}`}</span>
           </p>
         </div>
         <p className="picker__note rail-setup__note">{keepThai(MODE_NOTE[choice.mode])}</p>

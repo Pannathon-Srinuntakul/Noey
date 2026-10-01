@@ -191,7 +191,8 @@ describe("the calculator's words", () => {
   it("states the setting in the basis when the count is at ระดับละเอียด", () => {
     expect(clipsBasis(5, "dub_first", "high")).toBe("คิดจากโหมดตัดฉากเด่น ระดับละเอียด คลิปดิบ 5 นาที");
     expect(clipsBasis(5, "talking_head", "high")).toBe("คิดจากโหมดตัดช่วงเงียบ คลิปดิบ 5 นาที");
-    expect(`${clipsBasis(5)} ${clipsCaveats()}`).toBe(CLIPS_FOOTNOTE);
+    expect(`${clipsBasis(5)} ปัดลง · ${clipsCaveats()}`).toBe(CLIPS_FOOTNOTE);
+    for (const mode of CUT_MODES) expect(clipsCaveats(mode).startsWith("ปัดลง")).toBe(false);
   });
 
   it("opens each mode on its own length", () => {

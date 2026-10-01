@@ -541,13 +541,16 @@ const CLIPS_CAVEAT: Record<CutMode, string> = {
 };
 
 /**
- * Everything a count's footnote says after its basis: "ปัดลง · <caveat> ·
+ * What a count leaves out, after its basis and "ปัดลง": "<caveat> ·
  * ระบบบอกก่อนเริ่มทุกครั้งว่างานนี้ใช้เท่าไหร่". /pricing's calculator states
- * the basis beside its answer and this under the picker.
+ * the basis and "ปัดลง" beside its answer and this under the picker.
  */
 export function clipsCaveats(mode: CutMode = DEFAULT_CUT_MODE): string {
-  return `ปัดลง · ${CLIPS_CAVEAT[mode]} · ระบบบอกก่อนเริ่มทุกครั้งว่างานนี้ใช้เท่าไหร่`;
+  return `${CLIPS_CAVEAT[mode]} · ระบบบอกก่อนเริ่มทุกครั้งว่างานนี้ใช้เท่าไหร่`;
 }
+
+/** How every count is rounded: down, never up. */
+export const CUTS_ROUNDING = "ปัดลง";
 
 /**
  * The whole footnote for a count in `mode` at `minutes`. Every surface without
@@ -555,7 +558,7 @@ export function clipsCaveats(mode: CutMode = DEFAULT_CUT_MODE): string {
  * ตัดฉากเด่น, 5 minutes.
  */
 export function clipsFootnote(minutes: number, mode: CutMode = DEFAULT_CUT_MODE): string {
-  return `${clipsBasis(minutes, mode)} ${clipsCaveats(mode)}`;
+  return `${clipsBasis(minutes, mode)} ${CUTS_ROUNDING} · ${clipsCaveats(mode)}`;
 }
 
 /**
