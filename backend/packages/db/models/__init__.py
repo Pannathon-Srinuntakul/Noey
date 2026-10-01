@@ -22,14 +22,17 @@ from packages.db.models.auth_token import AuthToken
 from packages.db.models.billing import BillingAccount, StripeEvent
 from packages.db.models.blog import (
     BlogAuditLog,
+    BlogBrief,
     BlogCategory,
     BlogImage,
     BlogOAuthClient,
     BlogOAuthGrant,
     BlogOAuthRequest,
+    BlogPlanItem,
     BlogPost,
     BlogPostTag,
     BlogTag,
+    BlogVisual,
 )
 from packages.db.models.core_auth import Job, Membership, Tenant, User
 from packages.db.models.effect_style import EffectStyle
@@ -52,13 +55,16 @@ __all__ = [
     "BillingAccount",
     "BlogAuditLog",
     "BlogCategory",
+    "BlogBrief",
     "BlogImage",
+    "BlogPlanItem",
     "BlogOAuthClient",
     "BlogOAuthGrant",
     "BlogOAuthRequest",
     "BlogPost",
     "BlogPostTag",
     "BlogTag",
+    "BlogVisual",
     "EffectStyle",
     "FxRate",
     "Job",

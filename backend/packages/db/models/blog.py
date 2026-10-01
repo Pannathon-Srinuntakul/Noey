@@ -125,23 +125,148 @@ class BlogPostTag(Base):
     )
 
 
+MEDIA_KINDS = ("image", "video", "file")
+#: Where an asset came from: `upload_image` (MCP, small images), `render_cover`
+#: (MCP, a 1600×900 cover drawn server-side), `library` (the owner's media
+#: library in the admin) or `brand` (the logo, written by the server itself).
+MEDIA_ORIGINS = ("upload", "render_cover", "library", "brand")
+#: The owner's media library categories (list_media's `kind`).
+LIBRARY_CATEGORIES = ("screenshot", "demo", "logo", "file")
+
+
 class BlogImage(Base):
-    """An uploaded image, already re-encoded to WebP (metadata stripped)."""
+    """One stored blog media asset — despite the table name, every kind: an
+    image (WebP, re-encoded), a video (H.264 MP4 + a WebP poster) or a file
+    (PDF, served as a download). Content-addressed: the same bytes are one row.
+    In-article HTML visuals are NOT here — they are `blog_visuals`.
+
+    The table predates video and PDF support; it kept its name so existing
+    rows, URLs and the cover lookup stay valid.
+    """
 
     __tablename__ = "blog_images"
-    __table_args__ = ({"schema": CORE_SCHEMA},)
+    __table_args__ = (
+        CheckConstraint("kind IN ('image', 'video', 'file')", name="kind"),
+        CheckConstraint(
+            "origin IN ('upload', 'render_cover', 'library', 'brand')", name="origin"
+        ),
+        CheckConstraint(
+            "category IS NULL OR category IN ('screenshot', 'demo', 'logo', 'file')", name="category"
+        ),
+        Index("ix_blog_images_origin_category", "origin", "category"),
+        {"schema": CORE_SCHEMA},
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     url: Mapped[str] = mapped_column(String(500))
-    #: Object key: `blog/<sha256 of the encoded file>.webp` — content-addressed.
+    #: Object key: `blog/<sha256 of the stored file>.<webp|mp4|pdf>` — content-addressed.
     key: Mapped[str] = mapped_column(String(300), unique=True)
     mime: Mapped[str] = mapped_column(String(40))
     bytes: Mapped[int] = mapped_column(Integer)
+    #: Pixels of the stored file (images, videos); 0 for a PDF.
     width: Mapped[int] = mapped_column(Integer)
     height: Mapped[int] = mapped_column(Integer)
     alt: Mapped[str] = mapped_column(String(300))
     uploaded_by: Mapped[str] = mapped_column(String(120))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    kind: Mapped[str] = mapped_column(String(16), default="image", server_default="image")
+    origin: Mapped[str] = mapped_column(String(24), default="upload", server_default="upload")
+    #: Library items only (screenshot | demo | logo | file); NULL otherwise.
+    category: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    description: Mapped[str] = mapped_column(String(1000), default="", server_default="")
+    #: Free-form library tags, lowercased: ["editor", "timeline"].
+    tags: Mapped[list] = mapped_column(JSONB, default=list, server_default="[]")
+    #: Videos: the first frame as WebP (its own content-addressed object).
+    poster_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    poster_key: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #: As uploaded or as the writer named it (informational, never a path).
+    filename: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    #: The owner hid it from list_media. The file stays: posts may use it.
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class BlogVisual(Base):
+    """An in-article visual: self-contained HTML/CSS/JS the AI writer made
+    with `create_visual`, stored (never rendered on the server) under the
+    bucket's `visual/` prefix and served from the cookieless embed origin
+    (embed.noeystudio.com/visual/<id>) inside a sandboxed iframe on the site.
+
+    The id is derived from the creator and the stored document, so the bytes
+    behind an id never change (served as immutable)."""
+
+    __tablename__ = "blog_visuals"
+    __table_args__ = ({"schema": CORE_SCHEMA},)
+
+    #: 32 hex chars: sha256(created_by + document)[:32].
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    #: `visual/<id>.html`.
+    key: Mapped[str] = mapped_column(String(300), unique=True)
+    #: The designed canvas size — fixes the aspect ratio on the page.
+    width: Mapped[int] = mapped_column(Integer)
+    height: Mapped[int] = mapped_column(Integer)
+    alt: Mapped[str] = mapped_column(String(300))
+    caption: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    #: Moves (CSS animation / JS). A post may hold at most 3 of these.
+    animated: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    bytes: Mapped[int] = mapped_column(Integer)
+    #: `mcp:<client_id>` — a post may only use visuals of its own connection.
+    created_by: Mapped[str] = mapped_column(String(120), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class BlogBrief(Base):
+    """The owner's writing brief for the AI writer — one row (id = 1), edited in
+    the admin and returned by `get_site_info`."""
+
+    __tablename__ = "blog_brief"
+    __table_args__ = (
+        CheckConstraint("id = 1", name="single_row"),
+        {"schema": CORE_SCHEMA},
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    tone: Mapped[str] = mapped_column(String(1000), default="", server_default="")
+    focus_topics: Mapped[str] = mapped_column(String(2000), default="", server_default="")
+    avoid_topics: Mapped[str] = mapped_column(String(2000), default="", server_default="")
+    length: Mapped[str] = mapped_column(String(500), default="", server_default="")
+    media: Mapped[str] = mapped_column(String(500), default="", server_default="")
+    monthly_note: Mapped[str] = mapped_column(String(2000), default="", server_default="")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_by: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey(f"{CORE_SCHEMA}.users.id", ondelete="SET NULL"), nullable=True
+    )
+
+
+PLAN_STATUSES = ("planned", "writing", "done", "skipped")
+
+
+class BlogPlanItem(Base):
+    """One topic of the owner's ordered content plan. The AI writer takes the
+    first `planned` one; `mark_topic_done` links it to the post it wrote."""
+
+    __tablename__ = "blog_content_plan"
+    __table_args__ = (
+        CheckConstraint("status IN ('planned', 'writing', 'done', 'skipped')", name="status"),
+        Index("ix_blog_content_plan_status_position", "status", "position"),
+        {"schema": CORE_SCHEMA},
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    #: Order in the plan (ascending); the admin rewrites it on reorder.
+    position: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    topic: Mapped[str] = mapped_column(String(200))
+    notes: Mapped[str] = mapped_column(String(1000), default="", server_default="")
+    status: Mapped[str] = mapped_column(String(16), default="planned", server_default="planned")
+    #: The post that covers it (set by mark_topic_done or the admin). Not a
+    #: foreign key on purpose: a slug is what both sides speak, and the post
+    #: row is never deleted anyway.
+    post_slug: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    done_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
 
 class BlogAuditLog(Base):
