@@ -22,7 +22,6 @@ import {
   estimateBlockLine,
   formatBaht,
   limitLabel,
-  TRIAL_CREDIT_ACTION,
   TRIAL_CREDIT_SPENT,
   whenBack,
   type LimitKey,
@@ -290,22 +289,25 @@ export function stagePosition(state: ResumeState): string | null {
 export function pausedHeadline(state: ResumeState): string {
   if (!state.paused) return ''
   if (!state.windowResets) return `หยุดไว้ชั่วคราว — ${TRIAL_CREDIT_SPENT}`
-  return state.window ? `หยุดไว้ชั่วคราว — ${limitLabel(state.window)}หมด` : 'หยุดไว้ชั่วคราว'
+  return state.window
+    ? `หยุดไว้ชั่วคราว — ${limitLabel(state.window)}ใช้ครบ 100% แล้ว`
+    : 'หยุดไว้ชั่วคราว — โควตาใช้ครบแล้ว'
 }
 
 /**
  * When the window that ran out comes back, in the VIEWER's timezone — which
- * the server's own message cannot do. Empty when no time was frozen.
+ * the server's own message cannot do — and that the work then continues
+ * from where it stopped. Empty when no time was frozen.
  *
  * An allowance that never resets (`window_resets: false`) has no such time at
- * all: it says so, and points at the only way forward.
+ * all: it says so, and points at the only way forward — upgrade, then resume.
  */
 export function windowResetLine(state: ResumeState, now: Date = new Date()): string {
-  if (!state.windowResets) return `${TRIAL_CREDIT_SPENT} · ${TRIAL_CREDIT_ACTION}`
+  if (!state.windowResets) return `${TRIAL_CREDIT_SPENT} · อัปเกรดแพลนแล้วกดทำต่อจากจุดที่หยุดไว้`
   const back = whenBack(state.windowResetsAt, now)
   if (!back) return ''
   const label = state.window ? limitLabel(state.window) : 'โควตา'
-  return `${label}จะรีเซ็ต${back.startsWith('อีก') ? '' : ' '}${back}`
+  return `${label}จะรีเซ็ต${back.startsWith('อีก') ? '' : ' '}${back} แล้วทำต่อจากจุดที่หยุดไว้ได้`
 }
 
 /** "ทำต่อจากขั้น: ถอดเสียง" — where continuing picks up. */

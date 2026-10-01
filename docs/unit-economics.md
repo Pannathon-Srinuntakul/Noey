@@ -536,6 +536,52 @@ It would also be **invisible if it happened**, because no STT has ever been
 charged (§3): the three rows in `core.stt_usage_logs` carry zero tokens and
 predate `metering.py`. There is no baseline to notice a 12.5x departure from.
 
+### 4.6 The usage-limit model and what an overage can cost (owner, 2026-10-01)
+
+Decision: **the estimate is advice; the quota is enforced between vendor calls; the call in flight is
+charged in full and its excess carries into the next period** (docs/token-billing-design.md §24). A
+window can therefore end above 100 % (106 % → the next period opens at 6 %); Free's excess waits for an
+upgrade, a cancelled account keeps it dormant for the next subscription. It is never billed as money, so
+the only money at risk is the overage of an account that never comes back — Free that never upgrades,
+or a cancellation that never resubscribes — which we absorb. The one automatic retry after an answer
+truncated at the model's own output limit is also ours (recorded with `status="absorbed"`, 0 tokens):
+at most one cut-plan call, ≈ input + 65,536 × 5.175 ≈ ฿9-10 at the 2027 peg per event, expected to be
+rare (no production answer has come near 65,536; the largest measured is 29,464).
+
+The estimate itself moved to **e3** the same day: the Scout engine's cut plan is priced at its own
+thinking depth, 15,000 output tokens (medium thinking, 12,428 measured) instead of Pro's 24,000 (high,
+22,892) — `scripts/effort_ab.py`, 2026-09-29. Pro's figure is unchanged, so every Pro row in §4.1-4.4
+stands; a Scout cut reads ~46,575 our-tokens cheaper in advice (9,000 × 5.175).
+
+Worst case per plan for ตัดฉากเด่น, our-tokens at the rate card (flash: input 1.035, output 5.175):
+a new run may be expected to go past what is left by at most `BILLING_MAX_OVERAGE_RATIO` (25 %) of the
+window, runs in flight counted (so the plan's slots share that 25 %, not multiply it); on top of that each
+run in flight can write past its own estimate up to the model's maximum output (65,536 tokens, against an
+estimate of 15,000 at Scout) on the plan's longest footage, and the guard prices real input at 66 / 330
+video tokens a second against the estimate's 100 / 300.
+
+| plan | window | slots | longest footage | 25 % allowance | per-run excess over estimate | worst carried overage | ฿ today (฿24.13/1M) | ฿ 2027 (฿50/1M) |
+|---|---|---|---|---|---|---|---|---|
+| Free | 450,000 | 1 | 10 min Standard | 112,500 | 240,410 | 352,910 | ฿8.52 | ฿17.65 |
+| Lite | 800,000 | 1 | 10 min Standard | 200,000 | 240,410 | 440,410 | ฿10.63 | ฿22.02 |
+| Starter | 2,000,000 | 1 | 20 min Standard | 500,000 | 219,296 | 719,296 | ฿17.36 | ฿35.96 |
+| Pro | 5,600,000 | 2 | 30 min High | 1,400,000 | 317,414 | 2,034,828 | ฿49.10 | ฿101.74 |
+| Studio | 12,000,000 | 3 | 30 min High | 3,000,000 | 317,414 | 3,952,241 | ฿95.37 | ฿197.61 |
+| Agency | 26,000,000 | 4 | 30 min High | 6,500,000 | 317,414 | 7,769,655 | ฿187.48 | ฿388.48 |
+| Max | 48,000,000 | 5 | 30 min High | 12,000,000 | 317,414 | 13,587,069 | ฿327.86 | ฿679.35 |
+
+`worst = 0.25 × window + slots × per-run excess`; per-run excess = (real input − estimated input) × 1.035
++ (65,536 − 15,000) × 5.175 on the plan's longest footage. Read it as a ceiling, not an expectation:
+every run would have to start at the edge of the 25 % allowance AND every call think to the model's
+limit, which no measured answer has come within half of. Realistically the overage is what the ONE call
+in flight writes past the line — a cut plan's measured 19-30k output, i.e. ≈ 100-160k our-tokens (฿2.4-3.9
+today). And it is recovered from the next period's allowance unless the account never returns.
+
+Not covered by the table: the speech modes run on the dub model (gemini-3.1-pro-preview, "pro" rates
+1.38 / 8.28) with footage up to 2 h; one selector call at its model maximum is ≈ 65,536 × 8.28 ≈ 0.54M
+our-tokens, and speech_highlights runs its span trims in parallel. Same rules apply (start gate, pause
+before the next call, carry); the per-call ceiling is higher.
+
 ## 5. What is NOT in the cost model yet
 
 These are real money and the admin dashboard does not know about them.

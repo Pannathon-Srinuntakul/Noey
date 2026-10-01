@@ -17,11 +17,30 @@ def test_video_formula_standard_and_high():
     std = est.estimate_run(mode="dub_first", engine="lite", precision="standard", clip_secs=[30, 30])
     high = est.estimate_run(mode="dub_first", engine="lite", precision="high", clip_secs=[30, 30])
     p = est.MODE_PROFILES["analyze_video"]
+    out = est.cut_plan_output_for("lite")
     assert std.kind == "analyze_video" and std.model == lite
-    assert std.tokens == rate_card.tokens_for_llm(lite, 60 * 100 + p.prompt_in, 0, p.max_output)
-    assert high.tokens == rate_card.tokens_for_llm(lite, 60 * 300 + p.prompt_in, 0, p.max_output)
+    assert std.tokens == rate_card.tokens_for_llm(lite, 60 * 100 + p.prompt_in, 0, out)
+    assert high.tokens == rate_card.tokens_for_llm(lite, 60 * 300 + p.prompt_in, 0, out)
     assert std.ceiling == math.ceil(std.tokens * 1.2)
-    assert std.estimator_version == "e2" and std.rate_version == "v1"
+    assert std.estimator_version == "e3" and std.rate_version == "v1"
+
+
+def test_scout_is_priced_at_its_own_thinking_depth(monkeypatch):
+    """e3 (2026-10-01): Scout thinks at medium (12.4k thinking tokens) and
+    Pro at high (22.9k) — scripts/effort_ab.py, 2026-09-29. The estimate
+    used to price both at Pro's, so "try Scout" changed nothing it said."""
+    monkeypatch.setenv("DUB_EFFORT_LITE", "medium")
+    monkeypatch.setenv("DUB_EFFORT_PRO", "high")
+    get_settings.cache_clear()
+    try:
+        assert est.cut_plan_output_for("pro") == est.CUT_PLAN_OUTPUT_TOKENS == 24_000
+        assert est.cut_plan_output_for("lite") == est.CUT_PLAN_OUTPUT_TOKENS_MEDIUM == 15_000
+        pro = est.estimate_run(mode="dub_first", engine="pro", precision="standard", clip_secs=[331.8])
+        scout = est.estimate_run(mode="dub_first", engine="lite", precision="standard", clip_secs=[331.8])
+        assert abs(pro.tokens - 164_756) <= 10  # run b8ad8c25's estimate (footage 331.8x s), unchanged by e3
+        assert pro.tokens - scout.tokens == rate_card.tokens_for_llm(pro.model, 0, 0, 9_000)
+    finally:
+        get_settings.cache_clear()
 
 
 # ── the three speech modes (e2) ──────────────────────────────────────────────
@@ -403,9 +422,37 @@ async def test_admins_are_unlimited():
     async with client() as c:
         r = await c.post("/usage/estimate", json=BODY, headers=bearer(await _token(uid)))
     assert r.json() == {
-        "fits": "plan", "pct": {}, "wallet_satang": 0, "binding": None, "resets_at": None,
-        "resets": True, "unlimited": True,
+        "fits": "plan", "full": False, "overage_too_large": False, "pct": {}, "wallet_satang": 0,
+        "binding": None, "resets_at": None, "resets": True, "unlimited": True,
     }
+
+
+async def test_the_estimate_says_which_start_would_be_refused():
+    """``fits`` is advice; ``full`` and ``overage_too_large`` are the two
+    gates a start can still meet (owner, 2026-10-01) — so the wizard stops
+    before anything uploads."""
+    uid = await make_user(email("est"), plan="free")
+    credit = limits.window_limit("free", "lifetime")
+
+    async def ask(left: int, seconds: float) -> dict:
+        await db(
+            "INSERT INTO core.usage_accounts (user_id, lifetime_started_at, lifetime_used, reserved_tokens) "
+            "VALUES (:u, now(), :m, 0) ON CONFLICT (user_id) DO UPDATE SET lifetime_used = :m, "
+            "lifetime_started_at = now()",
+            u=uid, m=credit - left,
+        )
+        async with client() as c:
+            r = await c.post("/usage/estimate", json=dict(BODY, clips=[{"duration_sec": seconds}]),
+                             headers=bearer(await _token(uid)))
+        assert r.status_code == 200, r.text
+        return r.json()
+
+    small = await ask(50_000, 60)
+    assert (small["fits"], small["full"], small["overage_too_large"]) == ("none", False, False)
+    big = await ask(31_000, 331.8)  # run c3c2e938
+    assert (big["full"], big["overage_too_large"]) == (False, True)
+    spent = await ask(0, 60)
+    assert spent["full"] is True and spent["resets"] is False
 
 
 async def test_estimate_needs_a_login_and_valid_input():

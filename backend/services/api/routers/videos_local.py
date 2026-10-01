@@ -88,7 +88,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.billing import estimate as estimator
-from packages.billing import plan_features, runs
+from packages.billing import guard, plan_features, runs
 from packages.billing import resume as resume_mod
 from packages.core.errors import format_exception_message, validation_error_fields
 from packages.core.logging import get_logger
@@ -599,6 +599,13 @@ async def enforce_new_project(
     refusal = plan_features.check_precision(user, precision)
     if refusal is not None:
         raise HTTPException(403, refusal)
+    # The plan's window ALREADY at 100 % (owner, 2026-10-01): no new project
+    # — its footage would upload only to be refused at the AI start. Existing
+    # projects keep working (editing, rendering and resuming cost nothing);
+    # a balance the user could spend keeps the door open.
+    full = guard.quota_full_refusal(await runs.start_window(session, user), allow_wallet=True)
+    if full is not None:
+        raise HTTPException(402, full)
     if declared_sec is not None:
         # mode + precision decide the cap for the modes that send the whole
         # project to the model in one request — refuse here, before the upload,
@@ -1096,7 +1103,6 @@ async def plan_dub(
         raise HTTPException(404, "edit_script.json หายจาก server") from exc
     edit_script = json.loads(edit_script_file.read_text(encoding="utf-8"))
 
-    from packages.billing import guard
     from packages.video.dub_ai import plan_dub_timeline_cuts
 
     # The only route that calls a model itself: it reserves, meters and
@@ -1172,6 +1178,11 @@ async def plan_dub(
         raise HTTPException(
             503, {"code": "service_paused", "message": guard.SERVICE_PAUSED_MESSAGE},
         ) from exc
+    except guard.OutputTruncated as exc:
+        # The per-call safety cap: billed like any call (owner, 2026-10-01),
+        # nothing to pause on — the answer is a retry.
+        outcome = "safety_cap"
+        raise HTTPException(502, exc.payload()) from exc
     except ValueError as exc:
         outcome = "user_error"
         # Through the SAME funnel the Exception arm below uses. `str(exc)`
@@ -2298,7 +2309,7 @@ async def resume_project(
         job_id = str((state or {}).get("job_id") or local_job_id(uid))
         run_id = await start_paid_run(
             auth, request, est,
-            allow_wallet=allow_wallet, job_id=job_id, reference_id=uid,
+            allow_wallet=allow_wallet, job_id=job_id, reference_id=uid, resuming=True,
             mode=proj.mode, engine=proj.engine, precision=proj.precision,
         )
         async with release_on_error(run_id):

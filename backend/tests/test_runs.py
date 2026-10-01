@@ -336,15 +336,15 @@ def test_the_lifetime_credit_ignores_the_billing_anniversary_entirely():
 
 
 def test_charge_table():
-    run = AiRun(actual_tokens=900, ceiling_tokens=600, estimate_tokens=500)
-    assert runs.charge_for(run, "ok") == 600  # capped at the ceiling
-    assert runs.charge_for(run, "user_cancel") == 600
-    assert runs.charge_for(run, "user_error") == 600
-    assert runs.charge_for(run, "limit_stop") == 500  # never more than the reservation
+    """Owner, 2026-10-01: actual usage — what each call already charged —
+    for every outcome but our own failures. No cap at the estimate or the
+    ceiling: the estimate is advice."""
+    run = AiRun(actual_tokens=900, charged_tokens=900, charged_wallet_satang=0,
+                ceiling_tokens=600, estimate_tokens=500)
+    for outcome in ("ok", "user_cancel", "user_error", "limit_stop", "safety_cap"):
+        assert runs.charge_for(run, outcome) == 900, outcome
     assert runs.charge_for(run, "our_failure") == 0
     assert runs.charge_for(run, "orphaned") == 0
-    small = AiRun(actual_tokens=100, ceiling_tokens=600, estimate_tokens=500)
-    assert runs.charge_for(small, "ok") == 100 and runs.charge_for(small, "limit_stop") == 100
 
 
 # ── open / charge as spent / settle (Postgres) ───────────────────────────────
@@ -418,9 +418,9 @@ async def test_our_failure_refunds_everything_and_keeps_nothing_held():
 
 async def test_refunds_are_capped_per_day_then_failures_are_charged(monkeypatch):
     """A failure we cannot tell from input the user controls must not be free
-    to repeat: past the day's refund allowance a failed run is charged what
-    it used (capped at its ceiling) — and a run that burned nothing never
-    counts towards the allowance."""
+    to repeat: past the day's refund allowance a failed run keeps what it was
+    charged as it went — and a run that burned nothing never counts towards
+    the allowance."""
     from packages.core.settings import get_settings
 
     monkeypatch.setenv("BILLING_FREE_REFUNDS_PER_DAY", "2")
@@ -435,18 +435,24 @@ async def test_refunds_are_capped_per_day_then_failures_are_charged(monkeypatch)
     )
     assert free_fail.status == "refunded"
     assert [(r.status, r.charged_tokens) for r in first] == [("refunded", 0), ("refunded", 0)]
-    assert (capped.status, capped.outcome, capped.charged_tokens) == ("settled", "our_failure", 12_000)
+    assert (capped.status, capped.outcome, capped.charged_tokens) == ("settled", "our_failure", 50_000)
     assert (tomorrow.status, tomorrow.charged_tokens) == ("refunded", 0)
 
 
-async def test_limit_stop_charges_at_most_the_estimate_and_refunds_the_rest():
-    """A run the guard stopped pays what it burned up to the estimate — the
-    overshoot it already charged per call comes back off the windows."""
+async def test_a_paused_run_keeps_what_it_used_even_past_the_estimate():
+    """A run paused on the quota (``limit_stop``) pays its actual usage — the
+    estimate is advice, never a cap (owner, 2026-10-01)."""
     user, tid = await _user("lite")
     run_id = await _open(user, tid, 40_000)
     run = await _settle(run_id, "limit_stop", actual=47_000)
-    assert (run.status, run.charged_tokens) == ("stopped", 40_000)
-    assert (await _account(user.id)).weekly_used == 40_000
+    assert (run.status, run.charged_tokens) == ("stopped", 47_000)
+    assert (await _account(user.id)).weekly_used == 47_000
+
+
+async def test_a_safety_cap_failure_is_billed_not_refunded():
+    user, tid = await _user("lite")
+    run = await _settle(await _open(user, tid, 40_000), "safety_cap", actual=61_000)
+    assert (run.status, run.outcome, run.charged_tokens) == ("settled", "safety_cap", 61_000)
 
 
 async def test_a_full_window_no_longer_refuses_the_start():
@@ -597,10 +603,96 @@ async def test_overshoot_goes_past_100_percent():
     [key] = limits.plan_limits("lite").windows
     budget = limits.window_limit("lite", key)
     run_id = await _open(user, tid, budget - 10)
-    await _settle(run_id, "ok", actual=budget + 5_000)  # within the ceiling (1.2 × estimate)
+    await _settle(run_id, "ok", actual=budget + 5_000)
     acct = await _account(user.id)
     views = runs.enforced_windows("lite", acct, NOW)
     assert views[0].used == budget + 5_000 and views[0].used_pct > 100
+    # The excess is recorded as the overage the next period opens at.
+    assert (acct.overage_tokens, acct.overage_window) == (5_000, key)
+
+
+# ── the carried overage (owner, 2026-10-01) ──────────────────────────────────
+
+async def _set_plan(user_id: int, plan: str) -> None:
+    await db("UPDATE core.users SET plan = :p WHERE id = :u", p=plan, u=user_id)
+
+
+async def test_a_month_that_ends_at_106_percent_opens_the_next_at_6():
+    user, tid = await _user("lite")
+    budget = limits.window_limit("lite", "monthly")
+    over = budget * 6 // 100
+    await _settle(await _open(user, tid, budget), "ok", actual=budget + over)
+    acct = await _account(user.id)
+    [ended] = runs.enforced_windows("lite", acct, NOW)
+    assert ended.used == budget + over and ended.used_pct == 106.0
+    refills = runs.window_resets_at(acct, "monthly", NOW)
+    after = refills + timedelta(seconds=1)
+    # Before anything is charged in the new month, the view already opens at 6 %.
+    [opened] = runs.enforced_windows("lite", acct, after)
+    assert opened.used == over and opened.used_pct == 6.0 and opened.resets_at > refills
+    # The first charge of the new month makes it real, once.
+    await _settle(await _open(user, tid, 1_000, now=after), "ok", actual=1_000, now=after)
+    acct = await _account(user.id)
+    assert acct.monthly_used == over + 1_000 and acct.monthly_started_at == refills
+    assert (acct.overage_tokens, acct.overage_window) == (0, None)
+    [month2] = runs.enforced_windows("lite", acct, after)
+    assert month2.used == over + 1_000
+
+
+async def test_a_refund_takes_the_overage_back_with_it():
+    user, tid = await _user("lite")
+    budget = limits.window_limit("lite", "monthly")
+    await _settle(await _open(user, tid, budget), "ok", actual=budget - 1_000)
+    await _settle(await _open(user, tid, 9_000), "our_failure", actual=9_000)
+    acct = await _account(user.id)
+    assert acct.monthly_used == budget - 1_000 and acct.overage_tokens == 0
+
+
+async def test_the_free_credits_overage_opens_the_first_paid_month():
+    user, tid = await _user("free")
+    credit = limits.window_limit("free", "lifetime")
+    await _settle(await _open(user, tid, credit), "ok", actual=credit + 27_000)
+    acct = await _account(user.id)
+    [trial] = runs.enforced_windows("free", acct, NOW)
+    assert trial.used == credit + 27_000 and trial.headroom < 0  # never resets on its own
+    assert (acct.overage_tokens, acct.overage_window) == (27_000, "lifetime")
+    # Upgrade, in a later billing month: Lite's first month opens at the overage.
+    await _set_plan(int(user.id), "lite")
+    later = NOW + timedelta(days=40)
+    [first_paid] = runs.enforced_windows("lite", acct, later)
+    assert first_paid.key == "monthly" and first_paid.used == 27_000
+    await _settle(await _open(user, tid, 5_000, now=later), "ok", actual=5_000, now=later)
+    acct = await _account(user.id)
+    assert acct.monthly_used == 32_000 and acct.overage_tokens == 0
+
+
+async def test_a_cancellation_keeps_the_overage_for_the_next_subscription():
+    """Owner, 2026-10-01: not dropped — dormant while on Free (never charged
+    against the trial credit, never billed as money), back on resubscribe."""
+    user, tid = await _user("lite")
+    budget = limits.window_limit("lite", "monthly")
+    await _settle(await _open(user, tid, budget), "ok", actual=budget + 40_000)
+    await _set_plan(int(user.id), "free")
+    later = NOW + timedelta(days=40)
+    acct = await _account(user.id)
+    [trial] = runs.enforced_windows("free", acct, later)
+    assert trial.used == budget + 40_000  # the credit's own usage, nothing carried onto it
+    # Making carries real on Free leaves the dormant overage where it is.
+    s = await _session()
+    try:
+        locked = await lock_account(s, int(user.id))
+        runs.roll_windows(locked, later)
+        runs.apply_carry(locked, "free", later)
+        await s.commit()
+    finally:
+        await s.close()
+    acct = await _account(user.id)
+    assert (acct.overage_tokens, acct.overage_window) == (40_000, "monthly")
+    # Subscribing again, a month on: the paid month opens at it.
+    await _set_plan(int(user.id), "lite")
+    again = later + timedelta(days=40)
+    [back] = runs.enforced_windows("lite", acct, again)
+    assert back.used == 40_000
 
 
 async def test_parallel_charges_never_spend_the_same_headroom_twice():
@@ -628,6 +720,7 @@ async def test_the_wallet_carries_the_overflow_only_when_allowed():
     await _settle(plain, "ok", actual=monthly + overflow)
     acct = await _account(user.id)
     assert acct.wallet_balance_satang == 10_000 and acct.monthly_used == monthly + overflow
+    assert (acct.overage_tokens, acct.overage_window) == (overflow, "lifetime")  # carried
 
     user, tid = await _user("free")
     s = await _session()
@@ -640,6 +733,8 @@ async def test_the_wallet_carries_the_overflow_only_when_allowed():
     acct = await _account(user.id)
     assert run.charged_tokens == monthly and run.charged_wallet_satang == need
     assert acct.wallet_balance_satang == 10_000 - need and acct.monthly_used == monthly
+    # The balance paid the excess: nothing carries.
+    assert acct.overage_tokens == 0 and acct.overage_window is None
     ledger = await db("SELECT kind, amount_satang, run_id FROM core.wallet_ledger WHERE user_id = :u ORDER BY id", u=user.id)
     assert [r[0] for r in ledger] == ["purchase", "debit"] and ledger[1][1] == -need and ledger[1][2] == run_id
 

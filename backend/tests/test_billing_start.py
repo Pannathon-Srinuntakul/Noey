@@ -78,10 +78,10 @@ def captured(monkeypatch):
     yield calls
 
 
-async def _project(c, token: str, seconds: float) -> str:
+async def _project(c, token: str, seconds: float, engine: str = "lite") -> str:
     r = await c.post(
         "/videos/local",
-        json={"mode": "dub_first", "clips": [{"id": "c1", "durationSec": seconds}], "engine": "lite"},
+        json={"mode": "dub_first", "clips": [{"id": "c1", "durationSec": seconds}], "engine": engine},
         headers=bearer(token),
     )
     assert r.status_code == 201, r.text
@@ -129,18 +129,22 @@ async def test_a_start_opens_the_run_and_hands_it_to_the_worker(captured):
     assert held == [] or held[0][0] == 0
 
 
-async def test_a_used_up_window_no_longer_refuses_the_start(captured):
-    """The estimate reserved more than a real run spends, so a used-up window
-    refused work that would have fitted. The start goes ahead now; the run
-    pauses mid-way if the quota really does run out."""
-    uid_user = await make_user(email("start"), plan="free")
-    token = await user_token(uid_user)
-    # Free's enforced window is its one-time lifetime credit, fully spent.
+async def _fill_lifetime(user_id: int, left: int) -> None:
+    """Free's enforced window is its one-time lifetime credit; leave ``left``."""
     await db(
         "INSERT INTO core.usage_accounts (user_id, lifetime_started_at, lifetime_used, reserved_tokens) "
-        "VALUES (:u, now(), :m, 0)",
-        u=uid_user, m=limits.window_limit("free", "lifetime"),
+        "VALUES (:u, now(), :m, 0) ON CONFLICT (user_id) DO UPDATE SET lifetime_used = :m, lifetime_started_at = now()",
+        u=user_id, m=limits.window_limit("free", "lifetime") - left,
     )
+
+
+async def test_a_nearly_spent_window_does_not_refuse_the_start(captured):
+    """The estimate is ADVICE (owner, 2026-10-01): with far less left than the
+    run is estimated at — but within the allowed overage — the start goes
+    ahead; the run is sent call by call and pauses at 100 %."""
+    uid_user = await make_user(email("start"), plan="free")
+    token = await user_token(uid_user)
+    await _fill_lifetime(uid_user, left=50_000)  # a 60 s cut is estimated at ~137k
     async with client() as c:
         project = await _project(c, token, 10)
         try:
@@ -149,6 +153,143 @@ async def test_a_used_up_window_no_longer_refuses_the_start(captured):
             _cleanup(project)
     assert r.status_code == 202, r.text
     assert [(k, s) for k, s, *_ in await _open_runs(uid_user)] == [("analyze_video", "queued")]
+
+
+async def test_concurrent_starts_cannot_each_take_the_whole_overage(captured, monkeypatch):
+    """Pro runs two jobs at once. Each new start counts what the runs already
+    in flight still expect to spend as gone, and the check is repeated under
+    the account lock where the run opens — so two starts fired together
+    cannot both see the same headroom. Ratio shrunk to 1 % (56k of Pro's
+    5.6M) so a 10 s Scout cut (~85k) is enough to show it."""
+    import asyncio
+
+    monkeypatch.setenv("BILLING_MAX_OVERAGE_RATIO", "0.01")
+    get_settings.cache_clear()
+    uid_user = await make_user(email("start"), plan="pro")
+    token = await user_token(uid_user)
+    month = limits.window_limit("pro", "monthly")
+    await db(
+        "INSERT INTO core.usage_accounts (user_id, monthly_started_at, monthly_used, monthly_anchor_day, "
+        "reserved_tokens) VALUES (:u, date_trunc('day', now()), :m, EXTRACT(DAY FROM now()), 0) "
+        "ON CONFLICT (user_id) DO UPDATE SET monthly_used = :m, monthly_started_at = date_trunc('day', now()), "
+        "monthly_anchor_day = EXTRACT(DAY FROM now())",
+        u=uid_user, m=month - 100_000,
+    )
+    async with client() as c:
+        first, second = await _project(c, token, 10), await _project(c, token, 10)
+        try:
+            a, b = await asyncio.gather(_analyze(c, token, first), _analyze(c, token, second))
+        finally:
+            _cleanup(first)
+            _cleanup(second)
+    get_settings.cache_clear()
+    codes = sorted([a.status_code, b.status_code])
+    assert codes == [202, 402], (a.text, b.text)
+    refused = a if a.status_code == 402 else b
+    assert refused.json()["detail"]["code"] == "overage_too_large"
+    assert [(k, s) for k, s, *_ in await _open_runs(uid_user)] == [("analyze_video", "queued")]
+
+
+async def test_a_run_far_bigger_than_what_is_left_is_refused_at_start(captured):
+    """Run c3c2e938 (2026-10-01): 31k of the 450k Free credit left, a 5.5-min
+    cut estimated at 164,756 — 133,756 past what is left, more than 25 % of
+    the credit (112,500). Refused BEFORE anything uploads into place or any
+    run opens, and the message says what to do."""
+    uid_user = await make_user(email("start"), plan="free")
+    token = await user_token(uid_user)
+    await _fill_lifetime(uid_user, left=31_000)
+    async with client() as c:
+        project = await _project(c, token, 10, engine="pro")
+        scout = await _project(c, token, 10, engine="lite")
+        try:
+            refused = await _analyze(c, token, project, seconds=331.8, declared=331.8)
+            stored = (data_root() / "video_outputs" / project / "proxy").exists()
+            # The suggestion is real: Scout's estimate (118k, e3) is within it.
+            on_scout = await _analyze(c, token, scout, seconds=331.8, declared=331.8)
+        finally:
+            _cleanup(project)
+            _cleanup(scout)
+    assert on_scout.status_code == 202, on_scout.text
+    assert refused.status_code == 402, refused.text
+    detail = refused.json()["detail"]
+    assert detail["code"] == "overage_too_large" and detail["window"] == "lifetime"
+    assert detail["resets"] is False and "Scout" in detail["message"]
+    assert not any("token" in k for k in detail)
+    assert not stored and len(captured) == 1
+    assert [(k, s) for k, s, *_ in await _open_runs(uid_user)] == [("analyze_video", "queued")]
+
+
+async def test_a_full_window_refuses_new_projects_and_new_runs(captured):
+    """At exactly 100 % nothing NEW starts — not a project (its footage would
+    upload only to be refused) and not a run on an existing one — and the
+    refusal is the trial-credit one, with no reset to wait for."""
+    uid_user = await make_user(email("start"), plan="free")
+    token = await user_token(uid_user)
+    async with client() as c:
+        project = await _project(c, token, 10)  # made while there was credit
+        await _fill_lifetime(uid_user, left=0)
+        try:
+            refused_run = await _analyze(c, token, project, seconds=10)
+            stored = (data_root() / "video_outputs" / project / "proxy").exists()
+            refused_project = await c.post(
+                "/videos/local",
+                json={"mode": "dub_first", "clips": [{"id": "c1", "durationSec": 10}], "engine": "lite"},
+                headers=bearer(token),
+            )
+        finally:
+            _cleanup(project)
+    for r in (refused_run, refused_project):
+        assert r.status_code == 402, r.text
+        detail = r.json()["detail"]
+        assert detail["code"] == "limit_reached" and detail["full"] is True
+        assert detail["window"] == "lifetime" and detail["resets"] is False
+        assert detail["wallet_can_cover"] is False and "อัปเกรด" in detail["message"]
+        assert not any("token" in k for k in detail)
+    assert not stored and captured == [] and await _open_runs(uid_user) == []
+
+
+def _window(headroom: int, *, limit: int = 800_000, wallet_satang: int = 0):
+    from datetime import UTC, datetime
+
+    from packages.billing.runs import StartWindow
+
+    return StartWindow(
+        window="monthly", limit=limit, headroom=headroom,
+        resets_at=datetime(2026, 11, 1, tzinfo=UTC), wallet_satang=wallet_satang,
+    )
+
+
+def test_a_full_window_lets_a_balance_the_user_allowed_carry_new_work():
+    full = _window(0, wallet_satang=5_000)
+    assert guard.quota_full_refusal(None, allow_wallet=False) is None
+    assert guard.quota_full_refusal(_window(1), allow_wallet=False) is None
+    assert guard.quota_full_refusal(full, allow_wallet=True) is None
+    asked = guard.quota_full_refusal(full, allow_wallet=False, need_satang=8_000)
+    assert asked is not None and asked["wallet_can_cover"] is True and asked["wallet_satang"] == 5_000
+    assert asked["resets"] is True and asked["resets_at"] == "2026-11-01T00:00:00Z"
+    broke = guard.quota_full_refusal(_window(-50), allow_wallet=True)  # past 100 %: full too
+    assert broke is not None and broke["wallet_can_cover"] is False
+
+
+def test_the_overage_a_new_run_may_be_expected_to_take_is_a_setting(monkeypatch):
+    from packages.billing import wallet
+
+    # 25 % of an 800k window = 200k past what is left.
+    assert guard.overage_refusal(_window(10_000), 210_000, allow_wallet=False) is None
+    refused = guard.overage_refusal(_window(10_000), 210_001, allow_wallet=False)
+    assert refused is not None and refused["code"] == "overage_too_large"
+    assert refused["wallet_satang"] == wallet.satang_for_tokens(200_001)
+    # A balance the user allows and that covers everything past what is left.
+    rich = _window(10_000, wallet_satang=wallet.satang_for_tokens(200_001))
+    assert guard.overage_refusal(rich, 210_001, allow_wallet=True) is None
+    assert guard.overage_refusal(rich, 210_001, allow_wallet=False) is not None
+    monkeypatch.setenv("BILLING_MAX_OVERAGE_RATIO", "0.5")
+    get_settings.cache_clear()
+    try:
+        assert guard.overage_refusal(_window(10_000), 410_000, allow_wallet=False) is None
+    finally:
+        monkeypatch.delenv("BILLING_MAX_OVERAGE_RATIO")
+        get_settings.cache_clear()
 
 
 async def test_a_run_too_big_for_the_whole_window_is_refused_up_front(captured, monkeypatch):

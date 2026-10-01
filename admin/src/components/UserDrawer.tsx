@@ -51,6 +51,7 @@ export function UserDrawer({
           quota_used_tokens: u.quota_used_tokens, quota_used_pct: u.quota_used_pct,
           wallet_balance_satang: u.wallet_balance_satang ?? 0, pending_plan: u.pending_plan ?? null,
           grace_until: u.grace_until ?? null,
+          overage_tokens: u.overage_tokens ?? 0, overage_window: u.overage_window ?? null,
         }
       : null);
   const eyebrow: React.CSSProperties = { margin: "0 0 12px", fontSize: 12.5, letterSpacing: ".06em", textTransform: "uppercase", color: "var(--color-neutral-600)" };

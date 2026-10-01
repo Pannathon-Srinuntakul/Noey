@@ -203,8 +203,8 @@ describe('stage vocabulary', () => {
 })
 
 describe('what a paused project says', () => {
-  it('names the window that ran out', () => {
-    expect(pausedHeadline(state())).toContain('โควตารอบ 5 ชั่วโมง')
+  it('names the window that ran out and says it is full', () => {
+    expect(pausedHeadline(state())).toBe('หยุดไว้ชั่วคราว — โควตารอบ 5 ชั่วโมงใช้ครบ 100% แล้ว')
   })
 
   it('says nothing for a project that is not paused', () => {
@@ -213,7 +213,9 @@ describe('what a paused project says', () => {
 
   it('writes the reset time in the viewer’s own terms', () => {
     // 1h48m out, so the sentence is a countdown rather than a date.
-    expect(windowResetLine(state(), NOW)).toBe('โควตารอบ 5 ชั่วโมงจะรีเซ็ตอีก 1 ชม. 48 นาที')
+    expect(windowResetLine(state(), NOW)).toBe(
+      'โควตารอบ 5 ชั่วโมงจะรีเซ็ตอีก 1 ชม. 48 นาที แล้วทำต่อจากจุดที่หยุดไว้ได้'
+    )
   })
 
   it('has no reset line when the server froze no time', () => {
@@ -223,7 +225,9 @@ describe('what a paused project says', () => {
   it('does not promise a reset to an allowance that never comes back', () => {
     const s = state({ window: 'monthly', window_resets: false })
     expect(s.windowResets).toBe(false)
-    expect(windowResetLine(s, NOW)).toBe('เครดิตทดลองใช้หมดแล้ว · เปลี่ยนแผนเพื่อใช้ต่อ')
+    expect(windowResetLine(s, NOW)).toBe(
+      'เครดิตทดลองใช้หมดแล้ว · อัปเกรดแพลนแล้วกดทำต่อจากจุดที่หยุดไว้'
+    )
     expect(windowResetLine(s, NOW)).not.toMatch(/รีเซ็ต(อีก| )/)
     expect(pausedHeadline(s)).toBe('หยุดไว้ชั่วคราว — เครดิตทดลองใช้หมดแล้ว')
     // Absent on an older payload means it does reset.

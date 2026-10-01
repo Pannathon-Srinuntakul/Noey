@@ -60,6 +60,52 @@ def model_supports_effort(model: str) -> bool:
     ))
 
 
+_MAX_OUTPUT_CACHE: dict[str, int | None] = {}
+
+
+def model_max_output_tokens(model: str | None) -> int | None:
+    """The model's own maximum output tokens (thinking included, for Gemini),
+    from LiteLLM's model metadata — None when LiteLLM does not know the model
+    (a local one): the caller then sends no ``max_tokens`` at all rather than
+    a guess the provider might refuse. Cached per model id."""
+    key = (model or "").strip()
+    if not key:
+        return None
+    if key not in _MAX_OUTPUT_CACHE:
+        import litellm
+
+        value: int | None = None
+        for candidate in (key, key if "/" in key else f"gemini/{key}"):
+            try:
+                info = litellm.get_model_info(candidate)
+            except Exception:  # noqa: BLE001, S112 — unknown to LiteLLM: try the next spelling
+                continue
+            raw = info.get("max_output_tokens") or info.get("max_tokens")
+            if raw:
+                value = int(raw)
+                break
+        _MAX_OUTPUT_CACHE[key] = value
+    return _MAX_OUTPUT_CACHE[key]
+
+
+#: reasoning_effort, from deepest to shallowest — what a retry after a
+#: truncated answer steps down along (gateway, owner 2026-10-01).
+EFFORT_LADDER: tuple[str, ...] = ("high", "medium", "low")
+
+
+def lower_effort(effort: str | None) -> str | None:
+    """The next thinking level down, or None at the bottom. No effort sent
+    means the provider's default (medium for Gemini 3.x Flash —
+    ai.google.dev/gemini-api/docs/thinking), so the next one down is low."""
+    current = (effort or "medium").strip().lower()
+    if current in ("max", "xhigh"):
+        return "high"
+    if current not in EFFORT_LADDER:
+        return None
+    i = EFFORT_LADDER.index(current)
+    return EFFORT_LADDER[i + 1] if i + 1 < len(EFFORT_LADDER) else None
+
+
 def model_supports_gemini_thinking(model: str) -> bool:
     """True when LiteLLM maps reasoning_effort → Gemini thinking/thinking_level."""
     return "gemini" in model.lower()
