@@ -351,8 +351,7 @@
    pseudo-element on a BROKEN image only, so this covers the broken-image
    glyph with the slate's ground. With JavaScript the slate itself replaces
    the picture (CoverImage). */
-.cover__img::before,
-.blog-figure__img::before {
+.cover__img::before {
   content: "";
   position: absolute;
   inset: 0;
@@ -1032,6 +1031,44 @@
   aspect-ratio: 16 / 9;
   object-fit: contain;
   color: transparent;
+}
+
+/* A picture in a post that did not load: a plain frame of its shape with
+   its description (FigureImage); the caption stays under it. Without
+   JavaScript the same ground is drawn over the broken image, which browsers
+   give a pseudo-element only when it fails. */
+.blog-figure__missing,
+.blog-figure__img::before {
+  border-radius: 12px;
+  background:
+    repeating-linear-gradient(130deg, color-mix(in srgb, var(--color-text) 5%, transparent) 0 2px, transparent 2px 11px),
+    var(--well);
+}
+
+.blog-figure__img::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+}
+
+.blog-figure__missing {
+  display: grid;
+  place-items: center;
+  aspect-ratio: var(--figure-ratio, 16 / 9);
+  padding: 16px;
+  border: 1px solid var(--line);
+}
+
+.blog-figure__missing-text {
+  max-width: 44ch;
+  color: var(--ink-3);
+  font-size: var(--fs-13);
+  line-height: 1.6;
+  text-align: center;
+}
+
+.blog-inline-img__missing {
+  color: var(--ink-3);
 }
 
 .blog-figure figcaption {

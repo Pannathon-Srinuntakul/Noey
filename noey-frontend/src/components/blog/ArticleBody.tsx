@@ -9,13 +9,15 @@ import { blogMediaBase } from "@/lib/blog-media";
 import { linkTarget } from "@/lib/blog-markdown";
 import { blogImageSize } from "@/lib/server/blog-images";
 import { SITE_URL } from "@/lib/site";
-import { BlogImage } from "./BlogImage";
+import { isOptimizable } from "./BlogImage";
+import { FigureImage } from "./FigureImage";
 
 /**
  * Renders a post's sanitised Markdown tree (lib/blog-markdown.ts) with the
  * site's own parts: internal links are client-side links (no nofollow),
  * links out open in a new tab with rel="noopener nofollow" and say so,
- * images are next/image at their real size (no layout shift), tables scroll
+ * images are next/image at their real size (no layout shift) and give way
+ * to a plain frame when the file does not load (FigureImage), tables scroll
  * inside their frame on a phone. Server component; no raw HTML anywhere.
  */
 
@@ -59,24 +61,17 @@ async function MarkdownImage({ src, alt, title, "data-standalone": standalone, "
   // image elsewhere is never requested by this server.
   const size = base && isUnderMediaBase(url, base) ? await blogImageSize(url.toString()) : null;
   const text = typeof alt === "string" ? alt : "";
-  const picture = size ? (
-    <BlogImage
+  const picture = (
+    <FigureImage
       src={url.toString()}
       alt={text}
-      width={size.width}
-      height={size.height}
+      width={size?.width ?? null}
+      height={size?.height ?? null}
       sizes={FIGURE_SIZES}
-      className="blog-figure__img"
       eager={eager !== undefined}
-    />
-  ) : (
-    // eslint-disable-next-line @next/next/no-img-element -- no known size: drawn as it comes, lazily, in a fixed frame
-    <img
-      src={url.toString()}
-      alt={text}
-      loading={eager !== undefined ? "eager" : "lazy"}
-      decoding="async"
-      className="blog-figure__img blog-figure__img--unsized"
+      // Only a measured file from the media store goes through the optimiser.
+      unoptimized={!size || !isOptimizable(url.toString())}
+      inline={standalone === undefined}
     />
   );
   if (standalone === undefined) return <span className="blog-inline-img">{picture}</span>;
