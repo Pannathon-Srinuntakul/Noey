@@ -524,6 +524,17 @@ Only labels, no claims:
   ถอดเสียงทั้งคลิปแล้วอ่านว่าพูดเรื่องอะไรบ้าง · เลือกช่วงที่ดูจบได้ในตัวเอง ตัดเป็นคลิปแยกทีละช่วง ·
   ความยาวและจำนวนคลิปขึ้นกับเนื้อหา ไม่ได้ตั้งไว้ล่วงหน้า · ได้หลายคลิป · เสียงเดิม). Track
   labels "M1"–"M3" are decoration.
+- A new page, /changelog — "มีอะไรใหม่" (owner, 2026-10-01: a changelog instead
+  of a blog). Title "มีอะไรใหม่", lead "ฟีเจอร์ใหม่ การปรับปรุง และการเปลี่ยนแปลงราคาของ
+  Noey Studio เรียงจากล่าสุด", "อัปเดตล่าสุด <date>", month headings, kind tags
+  "ฟีเจอร์ใหม่" / "ปรับปรุง" / "แก้ไข" / "ราคาและแพลน", and a foot link
+  "ติดตามผ่าน RSS/Atom" (`/changelog/feed.xml`). The entries live in
+  `lib/changelog.ts` (one per shipped change: web beat sync, honest clip counts
+  and one monthly limit, Google sign-in and self-service delete, opening the
+  editor signed in, beta pricing, quota in percent and precision tiers,
+  resuming a paused run, long-clip highlight lengths) and are written to the
+  site's honesty rule — only what has shipped, no vendor names. Linked from the
+  footer's R2 column ("มีอะไรใหม่") and llms.txt.
 - /about: once the contact form has sent, the form gives way to its
   confirmation and a "ส่งอีกข้อความ" button (the empty form with a gold send
   button invited sending the same message again).

@@ -243,6 +243,7 @@ export function buildLlmsTxt(table: PriceTable): string {
     `- [หน้าแรก](${absoluteUrl(PAGES.home.path)}): ภาพรวมเครื่องมือ วิธีใช้งาน และคำถามที่พบบ่อย`,
     `- [ทำอะไรได้บ้าง](${absoluteUrl(PAGES.scope.path)}): ขอบเขตของระบบ — ถอดเสียง คัดช็อต เรียงลำดับ ใส่ซับไทยเป็นดราฟต์แรก แล้วคุณเกลาต่อ งานแบบไหนเหมาะและไม่เหมาะ · Markdown: ${absoluteUrl("/scope.md")}`,
     `- [เกี่ยวกับเรา](${absoluteUrl(PAGES.about.path)}): ที่มาของเครื่องมือ และช่องทางติดต่อทีมงาน`,
+    `- [มีอะไรใหม่](${absoluteUrl(PAGES.changelog.path)}): ฟีเจอร์ใหม่ การปรับปรุง และการเปลี่ยนแปลงราคา เรียงจากล่าสุด · Atom: ${absoluteUrl("/changelog/feed.xml")}`,
     `- [สมัครใช้งานฟรี](${absoluteUrl(PAGES.signup.path)}): สมัครแล้วได้เครดิตทดลองฟรีทันที ไม่ต้องผูกบัตร`,
     "",
     "## ติดตามการอัปเดต",

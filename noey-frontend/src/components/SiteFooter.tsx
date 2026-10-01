@@ -67,6 +67,9 @@ export function SiteFooter() {
                   {PAGES[key].label}
                 </Link>
               ))}
+              <Link href={PAGES.changelog.path} prefetch={false}>
+                {PAGES.changelog.label}
+              </Link>
             </nav>
             <nav className="ftr__col" aria-labelledby="footer-account">
               <p className="ftr__heading">

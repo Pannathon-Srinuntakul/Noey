@@ -10,6 +10,7 @@ import { Fragment, type ReactNode } from "react";
  * (ThaiProse.tsx, from the generated thai-glossary.json).
  */
 const KEEP_TOGETHER = [
+  "บอกว่า",
   "โปรเจกต์",
   "ครีเอเตอร์",
   "เรนเดอร์",
