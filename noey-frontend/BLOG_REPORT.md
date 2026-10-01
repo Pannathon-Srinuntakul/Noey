@@ -50,10 +50,30 @@ categories and tags (three public calls):
 
 The pages' `generateMetadata` never throws and returns the 404's own metadata
 (`noindex`, no canonical, no prev/next). The header marks no menu link
-current on a 404 (it reads Next's route tree, the same on the server and in
-the browser), and maps the listings' internal routes back to the address
-bar's (`lib/nav-path.ts`), so its "you are here" never differs between the
-two.
+current on any 404: Next's route tree says so for the 404s Proxy and Next
+route (the same on the server and in the browser), and the 404 page marks
+itself for the header (`NotFoundMark`, `lib/client/not-found-mark.ts`) when a
+page raised it with `notFound()`. The header also maps the listings'
+internal routes back to the address bar's (`lib/nav-path.ts`), so its "you
+are here" never differs between the server and the browser.
+
+**Why a backstop 404 is drawn in the browser.** When Proxy cannot decide
+(the API slow or down) and a page then calls `notFound()`, the response is
+still a 404 with `noindex`, but its HTML is Next's empty error document
+(`<html id="__next_error__">`) and the 404 page appears once JavaScript runs.
+That is how Next 16.3.5 handles a `notFound()` thrown outside a Suspense
+boundary: it is caught as a shell error and answered by
+`getErrorRSCPayload` (next/dist/server/app-render/app-render.js), whose
+document has an empty `<body>`; the browser draws the 404 from the RSC
+payload. Checked on this site in development and production, and with a
+bare test route (a synchronous page that only calls `notFound()`, with and
+without a segment `not-found.tsx`, with and without ISR): the same empty
+document every time. The one way to keep the 404 page in the server HTML
+is a Suspense boundary around the page (`loading.tsx`), but then the status
+is sent as 200 before the throw — a soft 404 — so it was not done. Whenever
+the API answers, Proxy turns the URL away first and the 404 page is server
+rendered (`/blog/category/nope` with the API up: the full 404 page in the
+HTML).
 
 ## What was built, by spec section
 
@@ -278,6 +298,25 @@ a post whose every picture fails: 0 violations.
   fetched at once (it is the largest thing on screen there).
 - Merged `origin/main` (no conflicts; nothing under `noey-frontend/` had
   changed).
+
+## Review round 4 (2026-10-01)
+
+- A failed picture in a post shows its description in the frame without
+  JavaScript too (`.blog-figure__img::after`, which browsers draw only on a
+  broken image). With JavaScript the frame's text is hidden from assistive
+  technology (the frame is a named image), so the description is read once
+  either way (checked in Chromium's accessibility tree).
+- Fixtures: a sixth post, `check-subtitle-blocks-before-render`, with a
+  captioned picture alone in its paragraph (it is drawn as a figure; the
+  fixture image never loads, so it shows the failed state). Checked with
+  JavaScript on and off, light and dark, 390 and 1440 px, and in unit tests.
+- No menu link is current on a 404 raised by a page's own `notFound()`
+  (Proxy letting the request through during an index hang):
+  `/blog/backstop-unknown-zz` → 404, no `aria-current`, console clean.
+  Status stays 404. Moving on from a 404 inside the site marks the new
+  section again.
+- The backstop 404's HTML: see "Why a backstop 404 is drawn in the browser"
+  above.
 
 ## Waiting on the backend
 
