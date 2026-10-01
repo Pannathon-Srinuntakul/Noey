@@ -1112,13 +1112,18 @@
   margin: 1.7em 0;
   border: 1px solid var(--line);
   border-radius: 12px;
-  overflow: hidden;
   background: color-mix(in srgb, var(--color-accent-100) 70%, var(--well));
-  contain: layout paint;
 }
 
+/* The frame's own corners (the figure does not clip: a caption must be free
+   to grow the figure below the aspect-ratio box). */
 .visual iframe {
+  border-radius: 11px;
   transition: opacity 0.35s ease;
+}
+
+.visual:has(figcaption) iframe {
+  border-radius: 11px 11px 0 0;
 }
 
 .visual.is-loading iframe {
@@ -1127,6 +1132,7 @@
 
 .visual figcaption {
   padding: 8px 12px 10px;
+  border-radius: 0 0 11px 11px;
   background: var(--bg);
   border-top: 1px solid var(--line);
   font-size: var(--fs-13);

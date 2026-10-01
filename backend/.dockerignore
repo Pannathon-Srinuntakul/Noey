@@ -6,3 +6,5 @@ __pycache__/
 .ruff_cache/
 scripts/*.png
 .env
+# Installed in the image's own build stage (linux binaries), never copied from a laptop.
+cover_renderer/node_modules

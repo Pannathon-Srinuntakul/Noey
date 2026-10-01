@@ -4,8 +4,10 @@ What a claude.ai connector does, done by the official MCP SDK client over real
 HTTP: discovery (401 → protected-resource metadata → authorization-server
 metadata), Dynamic Client Registration, authorization code + PKCE, the admin
 consent step, token exchange, then the tools — get_site_info → list_posts →
-upload_image → create_post → publish_post — and finally the public read API
-and the site revalidation call (received by a mock site this script runs).
+upload_image → render_cover → create_visual → create_post → publish_post —
+and finally the public read API and the site revalidation call (received by a
+mock site this script runs). scripts/blog_media_e2e.py covers the pictures
+(library, visuals, covers) against the real site in more depth.
 
 The consent click is the one step a browser would do: this script signs in a
 temporary admin straight through the database (local databases only) and
@@ -129,11 +131,12 @@ async def cleanup(user_id: int, slug: str, client_id: str | None) -> None:
                 await conn.execute(text(f'DROP SCHEMA IF EXISTS "tenant_{slug_row}" CASCADE'))
 
 
-def _png() -> str:
+def _small_png() -> str:
+    """A small figure (upload_image takes <= 300 KB of base64)."""
     from PIL import Image
 
     out = io.BytesIO()
-    Image.new("RGB", (1920, 1080), (217, 164, 65)).save(out, format="PNG")
+    Image.new("RGB", (1200, 675), (217, 164, 65)).save(out, format="PNG")
     return base64.b64encode(out.getvalue()).decode()
 
 
@@ -228,11 +231,25 @@ async def run(api: str) -> int:
             step(f"get_site_info: {info['product']['name']}, {len(info['guides'])} guides, {len(info['writing_rules'])} writing rules, prices {info['prices'].get('source')}")
             listed = (await mcp.call_tool("list_posts", {})).structured_content
             step(f"list_posts: {listed['total']} existing posts")
-            up = await mcp.call_tool("upload_image", {"image_base64": _png(), "filename": "cover.png", "alt": "ภาพปกบทความทดสอบ"})
+            up = await mcp.call_tool("upload_image", {"image_base64": _small_png(), "filename": "figure.png", "alt": "ภาพประกอบทดสอบ"})
             assert not up.is_error, up.content
-            cover = up.structured_content
-            step(f"upload_image → {cover['url']} ({cover['width']}×{cover['height']} WebP)")
-            created = await mcp.call_tool("create_post", {"slug": slug, **_article(), "cover_image_url": cover["url"], "cover_alt": "ภาพปก"})
+            figure = up.structured_content
+            step(f"upload_image → {figure['url']} ({figure['width']}×{figure['height']} WebP)")
+            from packages.blog import cover as cover_mod
+            from packages.blog import visual as visual_mod
+
+            ex = cover_mod.example()
+            rc = await mcp.call_tool("render_cover", {"html": ex["html"], "css": ex["css"], "alt": "ภาพปกบทความทดสอบ"})
+            assert not rc.is_error, rc.content
+            cover = rc.structured_content
+            step(f"render_cover → {cover['url']} ({cover['width']}×{cover['height']} WebP)")
+            vx = {k: v for k, v in visual_mod.example().items() if k != "js" or v}
+            vis = await mcp.call_tool("create_visual", vx)
+            assert not vis.is_error, vis.content
+            step(f"create_visual → {vis.structured_content['markdown']}")
+            article = _article()
+            article["content_md"] += f"\n\n## ภาพประกอบ\n\n![ภาพประกอบทดสอบ]({figure['url']})\n\n{vis.structured_content['markdown']}\n"
+            created = await mcp.call_tool("create_post", {"slug": slug, **article, "cover_image_url": cover["url"], "cover_alt": "ภาพปก"})
             assert not created.is_error, created.content
             step(f"create_post → {created.structured_content}")
             published = await mcp.call_tool("publish_post", {"slug": slug})

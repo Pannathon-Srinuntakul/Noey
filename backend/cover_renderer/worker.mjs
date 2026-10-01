@@ -45,6 +45,22 @@ const fonts = fontList.map((f) => ({
   data: readFileSync(join(fontsDir, f.file)),
 }));
 
+/**
+ * satori-html gives an element without children `children: []`, which
+ * satori counts as "more than one child" (an empty <div class="glow"> fails
+ * with the display:flex error). Drop empty child lists; recurse.
+ */
+function clean(node) {
+  if (node && typeof node === "object" && node.props) {
+    const kids = node.props.children;
+    if (Array.isArray(kids)) {
+      if (kids.length === 0) delete node.props.children;
+      else kids.forEach(clean);
+    }
+  }
+  return node;
+}
+
 function out(obj) {
   process.stdout.write(JSON.stringify(obj) + "\n");
 }
@@ -68,7 +84,7 @@ async function render({ html, css, width, height, defaultFont }) {
   const root =
     `<div style="display:flex;position:relative;overflow:hidden;width:${width}px;height:${height}px;` +
     `font-family:'${defaultFont}';color:#201f1d;background:#f3f2f2">${inlined}</div>`;
-  const svg = await satori(toElementTree(root), { width, height, fonts, embedFont: true });
+  const svg = await satori(clean(toElementTree(root)), { width, height, fonts, embedFont: true });
   const png = new Resvg(svg, {
     fitTo: { mode: "width", value: width },
     font: { loadSystemFonts: false },

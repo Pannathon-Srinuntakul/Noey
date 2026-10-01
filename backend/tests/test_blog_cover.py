@@ -84,6 +84,19 @@ async def test_thai_cover_renders_1600x900(tmp_path):
 
 
 @needs_node
+async def test_empty_elements_and_absolute_decoration_render():
+    """An empty decorative <div> (a glow, a dot) must not trip the layout rule."""
+    html = '<div class="bg"><div class="glow"></div><div class="t">ปก</div><div class="t">สอง</div></div>'
+    css = (
+        ".bg{display:flex;flex-direction:column;position:relative;width:1600px;height:900px;background:#171614}"
+        ".glow{position:absolute;right:0;top:0;width:400px;height:400px;border-radius:200px;"
+        "background:radial-gradient(circle,rgba(217,164,65,.5) 0%,rgba(217,164,65,0) 70%)}.t{display:flex;color:#fff;font-size:80px}"
+    )
+    png = await cover.draw(cover.check(html, css))
+    assert png.startswith(b"\x89PNG")
+
+
+@needs_node
 async def test_renderer_errors_are_explained():
     checked = cover.check("<div><span>a</span><span>b</span></div>", "")
     with pytest.raises(cover.CoverError) as e:
