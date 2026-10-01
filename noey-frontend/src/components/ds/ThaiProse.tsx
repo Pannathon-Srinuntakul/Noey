@@ -24,7 +24,29 @@ import { glueMarks, keepSegments } from "./ThaiText";
  * no-break spaces before ๆ and "·"; the wrappers are plain spans.
  */
 
-const LEANS_ON_NEXT = new Set(["ไม่", "การ", "ความ", "ผู้", "ค่า", "ใน", "บน", "โดย", "ผ่าน", "แต่ละ", "หลาย"]);
+const LEANS_ON_NEXT = new Set([
+  "ไม่",
+  "การ",
+  "ความ",
+  "ผู้",
+  "ค่า",
+  "ใน",
+  "บน",
+  "โดย",
+  "ผ่าน",
+  "แต่ละ",
+  "หลาย",
+  "ต่อ",
+  "สัก",
+  "พร้อม",
+  // A number word holds its classifier ("สอง / งาน").
+  "หนึ่ง",
+  "สอง",
+  "สาม",
+  "สี่",
+  "ห้า",
+  "หก",
+]);
 
 /** Glossary words by first character, longest first. */
 const BY_FIRST = new Map<string, string[]>();
@@ -73,11 +95,13 @@ export function keepThaiProse(source: string): ReactNode {
   const runs: { text: string; keep: boolean }[] = [];
   for (let index = 0; index < tokens.length; index++) {
     const token = tokens[index];
-    if (!token.keep && LEANS_ON_NEXT.has(token.text) && tokens[index + 1]?.word) {
+    // A leaning word joins the word after it, whether or not it is itself a
+    // kept word ("แต่ละ" is in the glossary): "แต่ละ / แพลน" never splits.
+    if (LEANS_ON_NEXT.has(token.text) && tokens[index + 1]?.word) {
       let glued = token.text;
       let next = index + 1;
       glued += tokens[next].text;
-      while (!tokens[next].keep && LEANS_ON_NEXT.has(tokens[next].text) && tokens[next + 1]?.word) glued += tokens[++next].text;
+      while (LEANS_ON_NEXT.has(tokens[next].text) && tokens[next + 1]?.word) glued += tokens[++next].text;
       runs.push({ text: glued, keep: true });
       index = next;
     } else if (!token.keep && runs.length > 0 && !runs[runs.length - 1].keep) {

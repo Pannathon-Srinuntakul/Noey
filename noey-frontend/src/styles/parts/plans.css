@@ -317,7 +317,10 @@
   font-size: var(--fs-15);
   font-weight: 600;
   color: var(--ink);
-  border-bottom: 1px solid var(--line-2);
+  /* The header's rule is a shadow, not a border: a sticky cell's border stays
+     behind in a collapsed table, leaving the row without its line. */
+  border-bottom: 0;
+  box-shadow: inset 0 -1px 0 var(--line-2);
 }
 
 .cmp__table thead th:first-child {

@@ -322,6 +322,19 @@
   line-height: 1.6;
 }
 
+/* Phones: the stamp's second part takes its own line, without the dot
+   (a line ending on "·" read as unfinished). */
+@media (max-width: 480px) {
+  .stamp__sep {
+    display: none;
+  }
+
+  .stamp__more {
+    display: block;
+    text-indent: 0;
+  }
+}
+
 .stamp::before {
   content: "";
   display: inline-block;

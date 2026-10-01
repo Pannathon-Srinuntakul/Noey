@@ -50,10 +50,11 @@
   padding: 4px 4px 12px 0;
 }
 
-/* Phones and tablets: the contents bar sticks under the header for the
-   whole article (a block layout: in a one-column grid the bar's own row
-   would hold it in place). */
-@media (max-width: 1023px) {
+/* Below 1200px (phones, tablets, small laptops): the contents bar sticks
+   under the header for the whole article and the text gets the full width —
+   the plan table fits beside a rail only from 1200px. (A block layout: in a
+   one-column grid the bar's own row would hold it in place.) */
+@media (max-width: 1199px) {
   .article-layout {
     display: block;
   }
@@ -217,29 +218,6 @@
 }
 
 /* ── Legal: the quietest page on the site ───────────────────────────────── */
-
-.legal__h2 {
-  display: flex;
-  align-items: baseline;
-  gap: 14px;
-  font-size: clamp(1.1875rem, 1.05rem + 0.6vw, 1.5rem);
-}
-
-.legal__n {
-  flex: none;
-  min-width: 2em;
-  font-size: var(--fs-15);
-  font-weight: 600;
-  color: var(--gold-ink);
-  letter-spacing: 0.04em;
-}
-
-/* Paragraphs hang under the heading text, clear of the section number. */
-@media (min-width: 640px) {
-  .legal__section .prose {
-    padding-inline-start: calc(var(--fs-15) * 2 + 14px);
-  }
-}
 
 .legal-page .wr .wr__w {
   animation: none !important;
@@ -444,12 +422,94 @@
   color: var(--ink-3);
 }
 
-@media (max-width: 1023px) {
+@media (max-width: 1199px) {
   .toc__mobile {
     display: block;
   }
 
   .toc__desk {
     display: none;
+  }
+}
+/* ── The guide's picture: the part of the editor it is about ────────────── */
+
+.guide-visual {
+  position: relative;
+  display: grid;
+  margin: 0;
+  padding-top: 34px;
+}
+
+.guide-visual__frame {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: color-mix(in srgb, var(--panel) 80%, transparent);
+  box-shadow: var(--shadow-2), var(--rim);
+}
+
+/* The label sits above the frame at the right, as over the home page's
+   pictures (inside, it would cover the app's own title strip). */
+.guide-visual__tag {
+  position: absolute;
+  top: 0;
+  right: 0;
+}
+
+/* The timeline block, as large as the frame allows at its own aspect. */
+.guide-visual--wide .guide-visual__frame {
+  aspect-ratio: 690 / 253;
+}
+
+/* A strip cut from a lane: centred in a short frame. */
+.guide-visual--strip .guide-visual__frame {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: clamp(84px, 10vw, 120px);
+  padding: 14px 18px;
+}
+
+/* A whole card or window brings its own frame. */
+.guide-visual--card .guide-visual__frame {
+  border: 0;
+  background: none;
+  box-shadow: none;
+}
+
+.guide-visual--card .fv--browser {
+  margin: 0;
+}
+
+@media (max-width: 960px) {
+  .guide-visual {
+    max-width: 560px;
+  }
+}
+
+/* Phones: the "read next" cards are compact rows (six full cards stacked ran
+   a screen and a half before the call to action). */
+@media (max-width: 640px) {
+  .article__related .clip__strip {
+    display: none;
+  }
+
+  .article__related .clip__body {
+    gap: 4px;
+    padding: 14px 16px;
+  }
+
+  .article__related .clip__title {
+    font-size: var(--fs-16);
+  }
+
+  .article__related .clip__body p {
+    font-size: var(--fs-14);
+    line-height: 1.6;
+  }
+
+  .article__related {
+    gap: 8px;
   }
 }

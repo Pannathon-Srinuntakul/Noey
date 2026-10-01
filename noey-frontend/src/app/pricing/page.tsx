@@ -128,8 +128,8 @@ export default async function PricingPage() {
         meta={
           <p className="stamp">
             อัปเดตล่าสุด <time dateTime={page.updated}>{formatThaiDate(page.updated)}</time>
-            {"\u00a0· "}
-            <span className="kt">ราคาเป็นเงินบาทต่อเดือน</span>
+            <span className="stamp__sep">{"\u00a0· "}</span>
+            <span className="kt stamp__more">ราคาเป็นเงินบาทต่อเดือน</span>
           </p>
         }
       />

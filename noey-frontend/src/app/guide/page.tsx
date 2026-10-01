@@ -121,7 +121,7 @@ export default function GuideIndexPage() {
 
       <section className="sect guide-more" aria-labelledby="scope-links-heading">
         <div className="wrap">
-          <SectionHeader id="scope-links-heading" title="อ่านต่อนอกคู่มือ" size="h-3" />
+          <SectionHeader id="scope-links-heading" track="→" title="อ่านต่อนอกคู่มือ" size="h-3" />
           <ul className="link-grid" data-reveal="stagger">
             {MORE.map((item, index) => (
               <li key={item.href}>

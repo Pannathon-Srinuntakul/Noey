@@ -88,7 +88,9 @@ export function BinThumb({
   return (
     <div
       ref={box}
-      className="bin-thumb"
+      // A dark monitor in both themes: in the day theme the pale strip read as
+      // a loading placeholder.
+      className="bin-thumb theme-night"
       aria-hidden="true"
       style={{ "--gx": `${10 + ((seed * 29) % 60)}%` } as CSSProperties}
     >

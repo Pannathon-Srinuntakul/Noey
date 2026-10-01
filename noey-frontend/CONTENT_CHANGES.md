@@ -297,6 +297,10 @@ Only labels, no claims:
   ("499 บาท / เดือน", the regular price struck through during the beta).
 - The computer-only note (§12) also under the actions after an email is
   verified and after a payment, whose next step is the editor.
+- Each guide shows the part of the editor it is about, labelled as a picture:
+  "ภาพจำลอง · ไทม์ไลน์หลังระบบตัดร่างแรก", "ภาพจำลอง · เลนคำบรรยายไทยในไทม์ไลน์",
+  "ภาพจำลอง · สลับฉากเป็นช็อตสำรอง", "ภาพจำลอง · ยืดหดความยาวฉากในไทม์ไลน์",
+  "ภาพจำลอง · ห้องตัดต่อบนเว็บ", "ภาพจำลอง · การ์ดโควตาในหน้าตั้งค่า".
 - Decorative readouts, hidden from assistive technology: "EXPORT · 100%"
   under the checkout card's render bar, "SENT" on the contact form's
   confirmation.

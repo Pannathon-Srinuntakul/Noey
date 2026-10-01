@@ -7,6 +7,8 @@ import { ClipCard } from "@/components/ds/ClipCard";
 import { IconArrowLeft, IconArrowRight } from "@/components/ds/icons";
 import { PageHero } from "@/components/ds/PageHero";
 import { TimelineToc } from "@/components/ds/TimelineToc";
+import { FeatureVisual, MicroDemo } from "@/components/mockups/client";
+import { UsageMockup } from "@/components/mockups/UsageMockup";
 import { formatThaiDate } from "@/lib/format";
 import type { GuideDoc } from "@/lib/guide";
 import { articleNode, breadcrumbNode, faqPageNode, jsonLdGraph, webPageNode } from "@/lib/jsonld";
@@ -34,6 +36,21 @@ function Bullet({ text }: { text: string }) {
 }
 
 /**
+ * The part of the editor each guide is about, drawn as the home page draws
+ * it (the app's own screens, labelled as a picture): the timeline after the
+ * first cut, the caption lane, a scene swapped for its backup shot, a scene
+ * being trimmed, the whole editor in a browser tab, the quota card.
+ */
+const VISUALS: Record<GuideDoc["key"], { node: ReactNode; label: string; shape: "wide" | "strip" | "card" }> = {
+  guideCut: { node: <FeatureVisual index={0} />, label: "ไทม์ไลน์หลังระบบตัดร่างแรก", shape: "wide" },
+  guideSubtitles: { node: <MicroDemo kind="subs" />, label: "เลนคำบรรยายไทยในไทม์ไลน์", shape: "strip" },
+  guideReview: { node: <MicroDemo kind="swap" />, label: "สลับฉากเป็นช็อตสำรอง", shape: "strip" },
+  guideLongform: { node: <MicroDemo kind="trim" />, label: "ยืดหดความยาวฉากในไทม์ไลน์", shape: "strip" },
+  guideChoose: { node: <FeatureVisual index={2} />, label: "ห้องตัดต่อบนเว็บ", shape: "card" },
+  guideHelp: { node: <UsageMockup />, label: "การ์ดโควตาในหน้าตั้งค่า", shape: "card" },
+};
+
+/**
  * Shared frame for every /guide page.
  *
  * The order is the point: breadcrumb, question as H1, the self-contained
@@ -49,6 +66,7 @@ function Bullet({ text }: { text: string }) {
  */
 export function GuideArticle({ doc, extras }: { doc: GuideDoc; extras?: Record<string, ReactNode> }) {
   const page = PAGES[doc.key];
+  const visual = VISUALS[doc.key];
   const published = publishedDate(doc.key);
   const trail = [
     { name: PAGES.home.label, path: PAGES.home.path },
@@ -87,11 +105,17 @@ export function GuideArticle({ doc, extras }: { doc: GuideDoc; extras?: Record<s
           // Answer-first: 40–60 words that stand on their own.
           <p className="answer">{keepThaiProse(doc.answer)}</p>
         }
+        aside={
+          <figure className={`guide-visual guide-visual--${visual.shape}`} aria-label={`ภาพจำลอง · ${visual.label}`}>
+            <div className="guide-visual__frame">{visual.node}</div>
+            <figcaption className="guide-visual__tag mock-tag">ภาพจำลอง · {visual.label}</figcaption>
+          </figure>
+        }
         meta={
           <p className="stamp">
             อัปเดตล่าสุด <time dateTime={page.updated}>{formatThaiDate(page.updated)}</time>
-            {"\u00a0· "}
-            <span className="kt">เขียนโดย {CONTENT_AUTHOR}</span>
+            <span className="stamp__sep">{"\u00a0· "}</span>
+            <span className="kt stamp__more">เขียนโดย {CONTENT_AUTHOR}</span>
           </p>
         }
       />

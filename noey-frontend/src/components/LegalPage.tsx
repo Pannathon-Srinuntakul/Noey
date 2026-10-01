@@ -75,10 +75,18 @@ export function LegalPage({ pageKey, title, doc }: { pageKey: LegalKey; title: s
         </aside>
         <article className="article legal">
           {doc.sections.map((section, index) => (
-            <section key={section.title} id={sectionId(index)} className="article__section legal__section">
-              <h2 className="article__h2 legal__h2">
-                <span className="num legal__n">{String(index + 1).padStart(2, "0")}</span>
-                <span>{section.title}</span>
+            <section
+              key={section.title}
+              id={sectionId(index)}
+              className="article__section legal__section"
+              aria-labelledby={`${sectionId(index)}-heading`}
+            >
+              {/* Numbered as the guides number their sections: a track cue over the heading. */}
+              <div className="article__cue" aria-hidden="true">
+                <span className="trk tc">{String(index + 1).padStart(2, "0")}</span>
+              </div>
+              <h2 id={`${sectionId(index)}-heading`} className="article__h2">
+                {keepThaiProse(section.title)}
               </h2>
               <div className="prose">
                 {/* Items of one list (the data a policy names, the purposes) read as a list. */}
