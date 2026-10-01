@@ -72,3 +72,38 @@
 .ks-grid--2 {
   grid-template-columns: 1fr;
 }
+
+/* Loading states. */
+.ks-loading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-around;
+  gap: 32px;
+  padding-block: 24px;
+}
+
+.ks-article .phero {
+  padding-top: 0;
+}
+
+.ks-pend-link {
+  position: relative;
+  align-self: center;
+  color: var(--ink-2);
+  text-decoration: none;
+}
+
+.ks-edopen {
+  display: grid;
+  place-items: center;
+  margin-top: 28px;
+}
+
+/* The reduced-motion column: loading.css leaves .motion-still out of its
+   motion rules; this stills everything else (the wait clock still counts). */
+.motion-still *,
+.motion-still *::before {
+  animation: none !important;
+  transition: none !important;
+}

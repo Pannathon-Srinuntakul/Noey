@@ -20,8 +20,15 @@ import { EditorScreen } from "@/components/mockups/app/Editor";
 import { ProjectDetail } from "@/components/mockups/app/Pages";
 import { ShotSwap } from "@/components/mockups/app/ShotSwap";
 import { sceneStillTime } from "@/components/mockups/sample";
+import { AccountPanelSkeleton } from "@/components/account/AccountSkeleton";
+import { ArticleSkeletonBody } from "@/components/shell/ArticleSkeleton";
+import { EditorOpenPanel } from "@/components/shell/EditorOpening";
+import { RenderLoading } from "@/components/shell/RenderLoading";
+import { StatusCardSkeleton } from "@/components/shell/StatusSkeleton";
+import { PendingButton } from "@/components/ui/PendingButton";
 import { HOME_FAQ } from "@/lib/faq";
 import { HOME_FITS, HOME_MISFITS } from "@/lib/scope";
+import "../../styles/pages/account.css";
 import "../../styles/pages/article.css";
 import "./kitchen-sink.css";
 
@@ -35,15 +42,64 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
 };
 
-function Both({ title, children }: { title: string; children: ReactNode }) {
+function Both({ title, children, still = false }: { title: string; children: ReactNode; still?: boolean }) {
   return (
     <section className="ks-row">
       <h2 className="ks-row__title">{title}</h2>
       <div className="ks-row__panes">
-        <div className="ks-pane theme-day">{children}</div>
-        <div className="ks-pane theme-night">{children}</div>
+        <div className={still ? "ks-pane theme-day motion-still" : "ks-pane theme-day"}>{children}</div>
+        <div className={still ? "ks-pane theme-night motion-still" : "ks-pane theme-night"}>{children}</div>
       </div>
     </section>
+  );
+}
+
+/** Every loading state at rest and in motion (LOADING_PROMPT.md). `still`: as reduced motion draws it. */
+function LoadingRows({ still = false }: { still?: boolean }) {
+  const tag = still ? " · reduced motion (still)" : "";
+  return (
+    <>
+      <Both title={`Loading · centre piece (full, chip, emblem)${tag}`} still={still}>
+        <div className="ks-loading">
+          <RenderLoading />
+          <RenderLoading variant="chip" />
+          <RenderLoading variant="emblem" />
+        </div>
+      </Both>
+      <Both title={`Loading · status card skeleton${tag}`} still={still}>
+        <StatusCardSkeleton task="ยืนยันอีเมล" />
+      </Both>
+      <Both title={`Loading · account panel skeleton${tag}`} still={still}>
+        <AccountPanelSkeleton demo />
+      </Both>
+      <Both title={`Loading · article skeleton${tag}`} still={still}>
+        <div className="article-page ks-article">
+          <ArticleSkeletonBody demo />
+        </div>
+      </Both>
+      <Both title={`Loading · pending buttons and links, กำลังเปิดห้องตัดต่อ${tag}`} still={still}>
+        <div className="cta-row">
+          <PendingButton className="btn btn-primary" busy disabled busyLabel="กำลังเข้าสู่ระบบ…">
+            เข้าสู่ระบบ
+          </PendingButton>
+          <PendingButton className="btn btn-secondary" busy disabled busyLabel="กำลังดำเนินการ…">
+            ใช้แพลนนี้ต่อ
+          </PendingButton>
+          <PendingButton className="btn btn-danger" busy disabled busyLabel="กำลังลบบัญชี…">
+            ลบบัญชีถาวร
+          </PendingButton>
+          <a className="ks-pend-link" href="#" aria-busy="true">
+            ราคา
+            <span className="pend" data-on="" aria-hidden="true">
+              <i />
+            </span>
+          </a>
+        </div>
+        <div className="ks-edopen">
+          <EditorOpenPanel demo />
+        </div>
+      </Both>
+    </>
   );
 }
 
@@ -199,6 +255,9 @@ export default function KitchenSinkPage() {
             </StatusCard>
           </div>
         </Both>
+
+        <LoadingRows />
+        <LoadingRows still />
 
         <Both title="Timeline TOC">
           <div style={{ maxWidth: 320 }}>
