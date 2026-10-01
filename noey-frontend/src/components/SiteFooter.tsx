@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { LinkPending } from "./shell/LinkPending";
 import { GUIDE_KEYS, NAV_LINKS, PAGES } from "@/lib/site";
 import { NoeyMark } from "./NoeyMark";
 import { keepThaiProse } from "./ds/ThaiProse";
@@ -52,6 +53,7 @@ export function SiteFooter() {
               {NAV_LINKS.map((link) => (
                 <Link key={link.href} href={link.href} prefetch={false}>
                   {link.label}
+                  <LinkPending />
                 </Link>
               ))}
             </nav>
@@ -65,10 +67,12 @@ export function SiteFooter() {
               {GUIDE_KEYS.map((key) => (
                 <Link key={PAGES[key].path} href={PAGES[key].path} prefetch={false}>
                   {PAGES[key].label}
+                  <LinkPending />
                 </Link>
               ))}
               <Link href={PAGES.changelog.path} prefetch={false}>
                 {PAGES.changelog.label}
+                <LinkPending />
               </Link>
             </nav>
             <nav className="ftr__col" aria-labelledby="footer-account">
@@ -81,6 +85,7 @@ export function SiteFooter() {
               {ACCOUNT_LINKS.map((link) => (
                 <Link key={link.href} href={link.href} prefetch={false} className={link.auth ? `auth-${link.auth}` : undefined}>
                   {link.label}
+                  <LinkPending />
                 </Link>
               ))}
             </nav>

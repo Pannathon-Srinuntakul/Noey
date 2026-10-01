@@ -606,3 +606,44 @@ html[data-theme="dark"] .article .prose {
     white-space: nowrap;
   }
 }
+
+/* ── An article while it loads (ArticleSkeleton) ────────────────────────── */
+
+.article-skel__title {
+  margin: 0;
+}
+
+.article-skel__title .skel {
+  --h: 0.5em;
+}
+
+/* The centre piece stands where the guide's picture will be. */
+.article-skel__aside {
+  display: grid;
+  place-items: center;
+  min-height: 320px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: color-mix(in srgb, var(--panel) 60%, transparent);
+}
+
+/* One column (phones, tablets): above the title's bars, so it is on screen
+   while they wait. */
+@media (max-width: 960px) {
+  .article-skel__aside {
+    order: -1;
+    min-height: 0;
+    padding: 28px 16px 22px;
+  }
+}
+
+.article-skel__toc-bar {
+  display: flex;
+  align-items: center;
+  min-height: 50px;
+  padding: 12px 16px;
+}
+
+.article-page .article__h2 .skel {
+  --h: 0.55em;
+}

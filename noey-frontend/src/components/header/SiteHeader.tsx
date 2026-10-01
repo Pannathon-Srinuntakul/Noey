@@ -6,8 +6,9 @@ import { SignOutButton } from "../account/SignOutButton";
 import { ComputerOnly } from "../ComputerOnly";
 import { IconChevronDown, IconUser } from "../ds/icons";
 import { NoeyMark } from "../NoeyMark";
+import { LinkPending } from "../shell/LinkPending";
 import { ScrollTimeline } from "../shell/ScrollTimeline";
-import { AuthHintSync, HeaderDisclosures, NavLinks, PageLink, ThemeToggle } from "./HeaderClient";
+import { AuthHintSync, EditorOpenWatch, HeaderDisclosures, NavLinks, PageLink, ThemeToggle } from "./HeaderClient";
 
 /**
  * The floating toolbar: logo, the five sections, theme, and the account
@@ -41,6 +42,7 @@ export function SiteHeader() {
               <span className="brand__name">Noey Studio</span>
               <span className="brand__tagline">ตัดคลิปด้วย AI</span>
             </span>
+            <LinkPending />
           </Link>
           <NavLinks links={NAV_LINKS} className="hdr__nav" label="เมนูหลัก" />
           <div className="hdr__tools">
@@ -109,6 +111,7 @@ export function SiteHeader() {
                     <ComputerOnly />
                     <Link href="/account" className="btn btn-secondary btn-lg" prefetch={false}>
                       บัญชีของฉัน
+                      <LinkPending />
                     </Link>
                     <a href={EDITOR_OPEN_PATH} className="btn btn-primary btn-lg">
                       เปิดห้องตัดต่อ
@@ -127,6 +130,7 @@ export function SiteHeader() {
       </div>
       <AuthHintSync />
       <HeaderDisclosures />
+      <EditorOpenWatch />
     </header>
   );
 }

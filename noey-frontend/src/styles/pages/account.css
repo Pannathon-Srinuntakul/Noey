@@ -1470,3 +1470,64 @@ form.acct-form--edit:not([data-dirty]) .acct-form__submit.btn-primary:hover {
 .acct-quota .account-card:has(> .acct-quota__limit--storage) {
   align-self: start;
 }
+
+/* ── While the account or a tab loads (AccountSkeleton) ─────────────────── */
+
+/* The greeting before the account is read: the name the header already
+   shows (the pre-paint script's variable), so it does not change on arrival. */
+html[data-auth-name] .acct-greet::before {
+  content: " " var(--noey-greeting, "");
+}
+
+.acct-skel {
+  position: relative;
+}
+
+/* One skeleton per tab in the markup; the current tab's is shown. */
+.acct-skel__tab {
+  display: none;
+}
+
+.acct-page__panel:has(.tabs a[href="/account"][aria-current="page"]) .acct-skel__tab[data-tab="overview"],
+.acct-page__panel:has(.tabs a[href="/account/quota"][aria-current="page"]) .acct-skel__tab[data-tab="quota"],
+.acct-page__panel:has(.tabs a[href="/account/billing"][aria-current="page"]) .acct-skel__tab[data-tab="billing"],
+.acct-page__panel:has(.tabs a[href="/account/profile"][aria-current="page"]) .acct-skel__tab[data-tab="profile"],
+.acct-page__panel:not(:has(.tabs a[aria-current="page"])) .acct-skel__tab[data-tab="overview"] {
+  display: grid;
+}
+
+/* The centre piece floats over the cards: in their middle, or high enough
+   to be on screen when the tab is taller than the screen. */
+.acct-skel__centre {
+  position: absolute;
+  z-index: 2;
+  left: 50%;
+  top: min(50%, 240px);
+  translate: -50% -50%;
+}
+
+.acct-skel__label {
+  display: block;
+  margin-bottom: 7px;
+  font-size: var(--fs-13);
+  line-height: 1.5;
+}
+
+/* In a column that sizes its items to their content, bars with no text in
+   them would shrink to nothing: these take the column's width. */
+.acct-skel__fill {
+  justify-self: stretch;
+}
+
+.acct-skel__mix {
+  display: block;
+  margin-top: 6px;
+}
+
+.acct-skel__list li {
+  padding-left: 0;
+}
+
+.acct-skel__list li::before {
+  display: none;
+}

@@ -507,3 +507,23 @@ html:not([data-theme="dark"]) .status__halo {
 .status--quiet.status--start .status__meter {
   width: 100%;
 }
+
+/* ── The card while its page loads (StatusSkeleton) ─────────────────────── */
+
+/* The emblem is the loading centre piece (RenderLoading): the mark drawing
+   itself over the waveform, the wait clock, "กำลังโหลด". */
+.status--skel .status__emblem {
+  margin-bottom: 2px;
+}
+
+.status--skel .status__title {
+  width: 100%;
+}
+
+.status--skel .status__body {
+  width: min(100%, 26em);
+}
+
+.status--skel .skel-lines {
+  align-items: center;
+}

@@ -4,8 +4,11 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useLayoutEffect, type CSSProperties, type ReactNode } from "react";
 import { AUTH_HINT_EVENT, applyAuthHint } from "@/lib/client/auth-hint";
+import { EDITOR_OPEN_PATH } from "@/lib/editor-handoff";
+import { EDITOR_OPENING_TEXT } from "@/lib/loading";
 import { THEME_STORAGE_KEY } from "@/lib/prepaint";
 import { IconMoon, IconSun } from "../ds/icons";
+import { LinkPending } from "../shell/LinkPending";
 
 function resolveTheme(): "light" | "dark" {
   try {
@@ -118,6 +121,7 @@ export function NavLinks({
               </span>
             ) : null}
             {link.label}
+            <LinkPending />
           </Link>
         );
       })}
@@ -153,6 +157,7 @@ export function PageLink({
       data-magnetic={magnetic ? "" : undefined}
     >
       {children}
+      <LinkPending />
     </Link>
   );
 }
@@ -189,6 +194,53 @@ export function HeaderDisclosures() {
     return () => {
       document.removeEventListener("keydown", onKey);
       document.removeEventListener("click", onClick);
+    };
+  }, []);
+
+  return null;
+}
+
+/**
+ * "กำลังเปิดห้องตัดต่อ" (shell/EditorOpening.tsx): a plain left click on any
+ * link to EDITOR_OPEN_PATH raises the render card until the browser leaves.
+ * The link is not touched — no preventDefault, no prefetch — and a click
+ * that opens a new tab or window is left alone. The card goes away on
+ * `pagehide` (leaving), on `pageshow` (back from the editor, restored from the
+ * back-forward cache), on Escape (the visitor stopped the navigation), and
+ * after 20 s if the navigation never went anywhere.
+ */
+export function EditorOpenWatch() {
+  useEffect(() => {
+    const root = document.documentElement;
+    const status = document.querySelector<HTMLElement>("[data-editor-status]");
+    let safety = 0;
+    const clear = () => {
+      window.clearTimeout(safety);
+      root.removeAttribute("data-editor-opening");
+      if (status) status.textContent = "";
+    };
+    const onClick = (event: MouseEvent) => {
+      if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      const link = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>("a[href]") : null;
+      if (!link || link.getAttribute("href") !== EDITOR_OPEN_PATH || (link.target && link.target !== "_self") || link.hasAttribute("download")) return;
+      root.setAttribute("data-editor-opening", "");
+      if (status) status.textContent = EDITOR_OPENING_TEXT;
+      window.clearTimeout(safety);
+      safety = window.setTimeout(clear, 20_000);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") clear();
+    };
+    document.addEventListener("click", onClick);
+    document.addEventListener("keydown", onKey);
+    window.addEventListener("pagehide", clear);
+    window.addEventListener("pageshow", clear);
+    return () => {
+      clear();
+      document.removeEventListener("click", onClick);
+      document.removeEventListener("keydown", onKey);
+      window.removeEventListener("pagehide", clear);
+      window.removeEventListener("pageshow", clear);
     };
   }, []);
 

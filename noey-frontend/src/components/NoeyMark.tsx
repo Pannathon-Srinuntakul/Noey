@@ -7,12 +7,18 @@
  *
  * `draw` gives every stroke a unit path length so CSS can draw the mark in
  * (`.mark-draw` in components.css); the geometry is untouched.
+ *
+ * `split` groups the two halves (the left stem with its diagonal, the right
+ * diagonal with its stem) so CSS can move them apart and back to rest — the
+ * loading mark (loading.css). Rest is the closest they ever come: the gap
+ * stays open.
  */
 export function NoeyMark({
   size = 24,
   className,
   title,
   draw = false,
+  split = false,
   strokeWidth,
 }: {
   size?: number | string;
@@ -20,6 +26,8 @@ export function NoeyMark({
   /** Accessible name; omit for a decorative mark next to the wordmark. */
   title?: string;
   draw?: boolean;
+  /** Group the two halves (`.mark-half--l`, `.mark-half--r`) for the loading motion. */
+  split?: boolean;
   /** Override for very large decorative uses (the footer watermark). */
   strokeWidth?: number;
 }) {
@@ -41,10 +49,25 @@ export function NoeyMark({
       focusable="false"
     >
       {title ? <title>{title}</title> : null}
-      <path d="M22 78 V 22" pathLength={pathLength} />
-      <path d="M22 22 L 44 55" pathLength={pathLength} />
-      <path d="M56 45 L 78 78" pathLength={pathLength} />
-      <path d="M78 78 V 22" pathLength={pathLength} />
+      {split ? (
+        <>
+          <g className="mark-half mark-half--l">
+            <path d="M22 78 V 22" pathLength={pathLength} />
+            <path d="M22 22 L 44 55" pathLength={pathLength} />
+          </g>
+          <g className="mark-half mark-half--r">
+            <path d="M56 45 L 78 78" pathLength={pathLength} />
+            <path d="M78 78 V 22" pathLength={pathLength} />
+          </g>
+        </>
+      ) : (
+        <>
+          <path d="M22 78 V 22" pathLength={pathLength} />
+          <path d="M22 22 L 44 55" pathLength={pathLength} />
+          <path d="M56 45 L 78 78" pathLength={pathLength} />
+          <path d="M78 78 V 22" pathLength={pathLength} />
+        </>
+      )}
     </svg>
   );
 }

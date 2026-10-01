@@ -5,6 +5,7 @@ import { BetaNotice } from "@/components/beta/BetaNotice";
 import { SiteFooter } from "@/components/SiteFooter";
 import { SiteHeader } from "@/components/header/SiteHeader";
 import { Atmosphere } from "@/components/shell/Atmosphere";
+import { EditorOpenOverlay } from "@/components/shell/EditorOpening";
 import { MotionRuntime } from "@/components/shell/MotionRuntime";
 import { RouteTransition } from "@/components/shell/RouteTransition";
 import { betaNoticeCopy, shouldShowBetaBanner } from "@/lib/beta";
@@ -15,6 +16,7 @@ import { LOCALE, PAGES, SITE_NAME, SITE_URL } from "@/lib/site";
 import "./globals.css";
 import "../styles/shell.css";
 import "../styles/components.css";
+import "../styles/parts/loading.css";
 
 // Self-hosted by next/font (no request to Google at runtime). Noto Sans Thai
 // is a variable font: one file per subset covers every weight the design uses
@@ -78,6 +80,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
         <RouteTransition>{children}</RouteTransition>
         <SiteFooter />
         <Atmosphere />
+        <EditorOpenOverlay />
         <MotionRuntime />
       </body>
     </html>
