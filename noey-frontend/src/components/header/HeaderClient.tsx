@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { usePathname, useSelectedLayoutSegments } from "next/navigation";
-import { useEffect, useLayoutEffect, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useSyncExternalStore, type CSSProperties, type ReactNode } from "react";
 import { AUTH_HINT_EVENT, applyAuthHint } from "@/lib/client/auth-hint";
+import { isNotFoundMarked, notFoundServerSnapshot, subscribeNotFound } from "@/lib/client/not-found-mark";
 import { NOT_FOUND_SEGMENT, navPathname } from "@/lib/nav-path";
 import { THEME_STORAGE_KEY } from "@/lib/prepaint";
 import { IconMoon, IconSun } from "../ds/icons";
@@ -102,8 +103,12 @@ export function NavLinks({
 }) {
   const pathname = navPathname(usePathname());
   // A 404 is no section's page, whatever its address (/blog?page=99 is not
-  // the blog): no link is marked current on it.
-  const notFound = useSelectedLayoutSegments().includes(NOT_FOUND_SEGMENT);
+  // the blog): no link is marked current on it. Next's route tree says so for
+  // most 404s (the same on the server and in the browser); a page's own
+  // notFound() is told by the 404 page itself (NotFoundMark).
+  const routeNotFound = useSelectedLayoutSegments().includes(NOT_FOUND_SEGMENT);
+  const markedNotFound = useSyncExternalStore(subscribeNotFound, isNotFoundMarked, notFoundServerSnapshot);
+  const notFound = routeNotFound || markedNotFound;
   return (
     <nav aria-label={label} className={className}>
       {links.map((link, index) => {
