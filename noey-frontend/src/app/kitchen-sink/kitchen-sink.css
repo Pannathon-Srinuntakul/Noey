@@ -100,10 +100,14 @@
   margin-top: 28px;
 }
 
-/* The reduced-motion column: loading.css leaves .motion-still out of its
-   motion rules; this stills everything else (the wait clock still counts). */
+/* The reduced-motion column: the loading styles leave .motion-still out of
+   their motion rules; this does to the rest what the site's own
+   reduced-motion rule does (globals.css): every animation and transition
+   over at once, delays kept — the 150 ms appear delay and the buttons'
+   label swap still happen; the wait clock (::after) still counts. */
 .motion-still *,
 .motion-still *::before {
-  animation: none !important;
-  transition: none !important;
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
 }
