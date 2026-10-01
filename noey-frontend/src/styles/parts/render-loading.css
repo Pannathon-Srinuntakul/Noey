@@ -129,7 +129,7 @@
 
 .rl__tc {
   color: var(--gold-ink);
-  font-size: 10.5px;
+  font-size: var(--fs-11);
 }
 
 .rl__label {
