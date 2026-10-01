@@ -85,7 +85,29 @@ file / per shot in parallel. All calls go through `packages/llm` (provider-agnos
 | 10 | Reviser | user's per-shot notes → updates only those shots, re-runs 6–9 for them | strongest model |
 | 11 | Renderer (no AI) | storyboard + assets + graphics → MP4 | compositor + code-graphics renderer |
 
-Call count (estimate, Kitti-sized job: 4-min A-roll → ~80 s, 20 b-roll files, ~38 shots, ~8
+### Consolidated call plan — target 5–10 calls per job (owner, 2026-10-02; supersedes the per-file/per-shot fan-out above)
+Gemini accepts many video/image files in one request with ~1M input tokens (20 b-roll files +
+a 4-min A-roll at 1 fps ≈ 30–40k tokens), so roles are merged:
+1. **Understand** (1 call): all b-roll + A-roll transcript → b-roll index + keep-ranges (silence /
+   flub / retake removal) + 2–3 concepts. User picks a concept.
+2. **Storyboard** (1 call): full shot list + graphic specs + stock queries + SFX/music cues.
+3. **Stock pick** (0–1 call): all shots' search results judged at once.
+4. **Graphics code** (1 call; 2 if the output would pass the 65,536-token limit): every non-template
+   graphic written in one response; template shots need no call.
+5. **Graphics QA** (1 call): sample frames of every graphic at once.
+6. **Graphics fix** (0–1 call): only the failing pieces.
+User checkpoints (the run stops and waits; no call runs until the user acts):
+- after call 1: pick a concept (one or more).
+- after call 2: review the storyboard player (still frames + super text + per-shot notes);
+  either approve, or send notes, which re-run call 2 for the noted shots only (1 call per round).
+  Calls 3–6 and the render start only on approval, so graphics are never written for a
+  storyboard the user will change.
+- after render: per-shot notes again; a note re-runs only the affected stage.
+Total 4–7 per job; each revision round 1–2. Trade-offs: a failed call redoes its whole stage
+(resume keeps finished stages); one call doing several roles may lose some depth — A/B against
+the split pipeline when building. Pro-model use drops to ~4–5 per job (~50 jobs/day at Tier 1).
+
+Call count of the UNMERGED pipeline (for reference; estimate, Kitti-sized job: 4-min A-roll → ~80 s, 20 b-roll files, ~38 shots, ~8
 graphic shots, ~5 stock shots): ~46–54 model calls on a first pass unbatched, ~24–28 with
 batching (photos 10 per analysis call, one stock-pick call for all shots, QA over all graphics in
 1–2 calls). Small job (no b-roll, few graphics): ~8–12. Each revision round: ~4–10. Wall time
