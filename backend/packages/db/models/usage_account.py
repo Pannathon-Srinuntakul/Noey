@@ -59,6 +59,29 @@ class UsageAccount(Base):
     lifetime_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     lifetime_used: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
 
+    #: Rate-card tokens charged PAST 100 % of the enforced window (owner,
+    #: 2026-10-01: a call already in flight is charged in full, so a window
+    #: can end at e.g. 106 %). The overage carries over: when that window
+    #: starts its next period it starts AT this amount (106 % → 6 %), not 0.
+    #: For Free (``lifetime``, never resets) it is applied to the first paid
+    #: window after an upgrade, and simply kept — absorbed — if that never
+    #: happens. A downgrade to Free drops it; it is never billed as money.
+    #: A run allowed to use the top-up balance pays its overage from there
+    #: instead, and nothing is carried. See packages/billing/runs.py.
+    overage_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
+    #: The window ``overage_tokens`` was charged past (``monthly``/``lifetime``…).
+    overage_window: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    #: The same carried excess for the ``weekly`` window, which Pro and up
+    #: enforce BESIDE ``monthly`` (owner, 2026-10-01). Kept apart because one
+    #: call can push both windows past 100 % at once, by different amounts,
+    #: and each carries into its OWN next period: a weekly overage opens the
+    #: next week (the month already counted it, so it is not carried there
+    #: twice). ``overage_tokens`` stays the plan's main window (monthly /
+    #: lifetime). Dropped when the plan no longer enforces a weekly window.
+    weekly_overage_tokens: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default="0"
+    )
+
     #: Σ open reservations held against the plan windows.
     reserved_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
     #: Cache of Σ unexpired wallet lots (packages/billing/wallet.py keeps it).

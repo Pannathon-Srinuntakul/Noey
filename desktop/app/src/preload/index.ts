@@ -88,7 +88,8 @@ export interface LocalProject {
    * paused service) — the error card's reset time and wallet action. Written
    * with `error`; meaningful only while step is 'error'. */
   billingStop?: {
-    code: 'limit_reached' | 'free_tier_limited' | 'service_paused' | 'limit_stop'
+    code:
+      'limit_reached' | 'free_tier_limited' | 'service_paused' | 'limit_stop' | 'overage_too_large'
     window: 'five_hour' | 'weekly' | 'monthly' | 'lifetime' | null
     resetsAt: string | null
     /** False = the allowance never comes back (the Free trial credit), so

@@ -318,6 +318,7 @@ async def _apply(
         status=field(sub, "status") if sub is not None else None,
         period_end=_period_end(sub) if sub is not None else None,
         ending=bool(sub is not None and live and _scheduled_to_end(sub)),
+        cycle_start=_billing_anchor(sub) if sub is not None else None,
     )
     if user.plan != before:
         log.info("billing_plan_changed", user_id=user.id, old=before, new=user.plan)

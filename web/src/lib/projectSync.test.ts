@@ -79,7 +79,9 @@ describe('the back-fill for projects that predate the sync', () => {
     // people refreshed to see their work (production, 2026-09-21).
     expect(SOURCE).toContain('onRestored?.()')
     const jobs = readFileSync(resolve(__dirname, 'jobs.tsx'), 'utf8')
-    expect(jobs).toContain('loading: loading || (restoring && projects.length === 0)')
+    // `restoring` is a count since the ล้างสำเนา pull-back can overlap the
+    // boot restore (2026-10-01).
+    expect(jobs).toContain('loading: loading || (restoring > 0 && projects.length === 0)')
   })
 
   it('always reloads after the restore, even a superseded one', () => {

@@ -4,6 +4,9 @@ import {
   deviceId,
   durationTh,
   estimateBlockLine,
+  OVERAGE_TOO_LARGE_LINE,
+  OVERAGE_TOO_LARGE_WEEKLY_LINE,
+  overageLine,
   estimateLine,
   formatBaht,
   formatPack,
@@ -83,8 +86,10 @@ describe('reset times in the viewer timezone', () => {
   })
 
   it('an inactive window starts at the next use', () => {
-    expect(resetLine('weekly', null, NOW)).toBe('เริ่มนับรอบใหม่เมื่อใช้งานครั้งถัดไป')
-    expect(resetLine('weekly', 'garbage', NOW)).toBe('เริ่มนับรอบใหม่เมื่อใช้งานครั้งถัดไป')
+    // The week is rolling (owner, 2026-10-01): 7 days from the next use.
+    expect(resetLine('weekly', null, NOW)).toBe('เริ่มนับ 7 วันเมื่อใช้งานครั้งถัดไป')
+    expect(resetLine('weekly', 'garbage', NOW)).toBe('เริ่มนับ 7 วันเมื่อใช้งานครั้งถัดไป')
+    expect(resetLine('five_hour', null, NOW)).toBe('เริ่มนับรอบใหม่เมื่อใช้งานครั้งถัดไป')
   })
 
   it('whenBack picks the shape by distance', () => {
@@ -290,7 +295,10 @@ describe('an allowance that never resets (the Free trial credit)', () => {
       unlimited: false
     }
     expect(estimateBlockLine(est, NOW)).toBe(
-      'เครดิตทดลองใช้เหลือไม่พอสำหรับงานนี้ · เปลี่ยนแผนเพื่อใช้ต่อ'
+      'งานนี้อาจใช้เกินเครดิตทดลอง ส่วนที่เกินจะนับรวมเมื่อสมัครแพลน'
+    )
+    expect(estimateBlockLine({ ...est, full: true }, NOW)).toBe(
+      'เครดิตทดลองใช้หมดแล้ว · เปลี่ยนแผนเพื่อใช้ต่อ'
     )
     expect(estimateBlockLine(est, NOW)).not.toMatch(/รอบใหม่/)
   })
@@ -324,15 +332,30 @@ describe('estimate lines', () => {
     expect(estimateLine({ ...base, unlimited: true, pct: {} })).toBeNull()
   })
 
-  it('explains a block and the wallet way out', () => {
+  it('warns — never blocks — when the run may go past what is left', () => {
     expect(estimateBlockLine(base, NOW)).toBeNull()
     const none = { ...base, fits: 'none' as const, resets_at: '2026-09-22T11:00:00Z' }
-    expect(estimateBlockLine(none, NOW)).toBe(
-      'โควตารายสัปดาห์เหลือไม่พอสำหรับงานนี้ · รอบใหม่อีก 1 ชม.'
-    )
+    // Owner, 2026-10-01: it starts, pauses at 100 % and the overage carries.
+    expect(estimateBlockLine(none, NOW)).toBe('งานนี้อาจใช้เกินโควตา ส่วนที่เกินจะนับรวมในรอบถัดไป')
     const wallet = { ...base, fits: 'wallet' as const, wallet_satang: 1234 }
     expect(estimateBlockLine(wallet, NOW)).toBe(
-      'โควตารายสัปดาห์เหลือไม่พอสำหรับงานนี้ — ใช้ยอดเงินคงเหลือ ฿12.34 ทำต่อได้'
+      'งานนี้อาจใช้เกินโควตา ส่วนที่เกินจะนับรวมในรอบถัดไป — หรือใช้ยอดเงินคงเหลือ ฿12.34 จ่ายส่วนที่เกินแทน'
+    )
+    const full = { ...none, full: true }
+    expect(estimateBlockLine(full, NOW)).toBe(
+      'โควตารอบนี้ใช้ครบแล้ว — เริ่มงานใหม่ได้เมื่อรอบใหม่เริ่ม (รอบใหม่อีก 1 ชม.)'
+    )
+    // The strict start gate speaks of the window that binds — the week here.
+    expect(estimateBlockLine({ ...none, overage_too_large: true }, NOW)).toBe(
+      base.binding === 'weekly' ? OVERAGE_TOO_LARGE_WEEKLY_LINE : OVERAGE_TOO_LARGE_LINE
+    )
+  })
+
+  it('shows a meter past 100 % as an overage that carries', () => {
+    const w = { key: 'monthly' as const, used_pct: 106, resets_at: null, active: true }
+    expect(windowLine(w, NOW)).toBe('ใช้เกินโควตา 6% · จะนับรวมในรอบถัดไป')
+    expect(overageLine({ used_pct: 112, resets: false })).toBe(
+      'ใช้เกินเครดิตทดลอง 12% · จะนับรวมเมื่อสมัครแพลน'
     )
   })
 
@@ -401,6 +424,34 @@ describe('refusals', () => {
     expect(jobStopRefusal({ step: 'stopped', code: 'service_paused' })?.code).toBe('service_paused')
     expect(jobStopRefusal({ step: 'stopped' })?.code).toBe('limit_stop')
     expect(jobStopRefusal({ step: 'analyze' })).toBeNull()
+  })
+
+  it('words a run paused on the spent trial credit as an upgrade, not a stop', () => {
+    // Exactly what the worker writes for run c3c2e938's pause (Free, lifetime).
+    const r = jobStopRefusal({
+      step: 'stopped',
+      paused: true,
+      code: 'limit_reached',
+      window: 'lifetime',
+      label: 'Trial credit',
+      resets_at: null,
+      resets: false,
+      wallet_can_cover: false,
+      wallet_satang: 0,
+      message: 'พักงานไว้ก่อน: เครดิตทดลองใช้หมดแล้ว'
+    })!
+    expect(r.code).toBe('limit_reached')
+    expect(refusalMessage(r, NOW)).toBe('เครดิตทดลองใช้หมดแล้ว · เปลี่ยนแผนเพื่อใช้ต่อ')
+    expect(refusalMessage(r, NOW)).not.toMatch(/หยุดแล้ว|ลองใหม่/)
+  })
+
+  it('reads the too-much-overage refusal and keeps the server sentence', () => {
+    const r = parseRefusal({
+      detail: { code: 'overage_too_large', window: 'monthly', message: 'งานนี้ใหญ่กว่า…' }
+    })!
+    expect(r.code).toBe('overage_too_large')
+    expect(refusalMessage(r, NOW)).toBe('งานนี้ใหญ่กว่า…')
+    expect(refusalMessage({ ...r, serverMessage: null }, NOW)).toContain('Scout')
   })
 })
 

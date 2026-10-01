@@ -2,8 +2,13 @@
 
 Owner rules:
 
-- UPGRADE takes effect immediately: ``users.plan`` moves now; the windows keep
-  what was used, so the percentages simply drop under the bigger limits.
+- UPGRADE (Free → paid, or to a higher paid tier) takes effect immediately
+  and starts a NEW billing cycle today (owner, 2026-10-01 — "like Claude":
+  Stripe resets the cycle with ``billing_cycle_anchor=now`` and credits the
+  unused part of the old plan, so the user pays only the difference). The
+  paid windows restart at 0 on that day (``runs.restart_paid_windows``);
+  only a carried overage carries. Trial usage never counts against a paid
+  plan.
 - DOWNGRADE takes effect at the next cycle: ``pending_plan`` is scheduled for
   the end of the paid period; until then the paid-for tier stays.
 - CANCEL keeps the tier until the period ends, then Free (``pending_plan =
@@ -61,19 +66,47 @@ async def _audit(session: AsyncSession, action: str, user: User, actor: dict[str
     )
 
 
+def starts_new_cycle(account: UsageAccount, cycle_start: datetime | None) -> bool:
+    """Does this upgrade begin a new billing cycle — and so restart the paid
+    windows? Yes without a provider date (the mock and admin paths: the
+    change itself is the new cycle). With one — the subscription's
+    ``billing_cycle_anchor`` — only when it is NEWER than the month the
+    account is in: an upgrade reset it to now (Free → paid: the subscription
+    was just created). A plan that comes BACK on an old anchor — a payment
+    recovered after the grace lapsed — is the same cycle and keeps its usage:
+    otherwise a failed card would hand out a fresh month."""
+    if cycle_start is None:
+        return True
+    started = account.monthly_started_at
+    return started is None or cycle_start > started
+
+
 async def upgrade(
-    session: AsyncSession, user: User, tier: str, *, actor: dict[str, Any] | None = None
+    session: AsyncSession,
+    user: User,
+    tier: str,
+    *,
+    actor: dict[str, Any] | None = None,
+    cycle_start: datetime | None = None,
+    now: datetime | None = None,
 ) -> None:
     if user.plan == ENTERPRISE:
         return
+    from packages.billing import runs
+
     account = await lock_account(session, int(user.id))
     before = str(user.plan)
     user.plan = tier
     account.pending_plan = None
     account.pending_plan_at = None
+    restarted = starts_new_cycle(account, cycle_start)
+    if restarted:
+        runs.restart_paid_windows(account, now or _now(), cycle_start)
     await session.flush()
-    await _audit(session, "plan_upgrade", user, actor, {"before": before, "after": tier})
-    log.info("plan_upgraded", user_id=int(user.id), before=before, after=tier)
+    await _audit(
+        session, "plan_upgrade", user, actor, {"before": before, "after": tier, "cycle_restarted": restarted}
+    )
+    log.info("plan_upgraded", user_id=int(user.id), before=before, after=tier, cycle_restarted=restarted)
 
 
 async def schedule_downgrade(
@@ -171,11 +204,15 @@ async def mirror_subscription(
     period_end: datetime | None,
     ending: bool,
     now: datetime | None = None,
+    cycle_start: datetime | None = None,
 ) -> None:
     """Apply what a payment provider's subscription says, by the owner's rules.
 
     ``target`` — the tier the subscription is for (``free`` when there is no
-    live one); ``ending`` — scheduled to cancel at period end.
+    live one); ``ending`` — scheduled to cancel at period end;
+    ``cycle_start`` — the subscription's billing-cycle anchor, which decides
+    whether an upgrade began a new cycle (``starts_new_cycle``). Idempotent:
+    a webhook delivered twice sees the tier already moved and changes nothing.
     """
     if user.plan == ENTERPRISE:
         return
@@ -207,7 +244,7 @@ async def mirror_subscription(
         return
 
     if rank(target) > rank(current):
-        await upgrade(session, user, target)
+        await upgrade(session, user, target, cycle_start=cycle_start, now=at)
     elif rank(target) < rank(current):
         if period_end is not None and period_end > at:
             await schedule_downgrade(session, user, target, period_end)

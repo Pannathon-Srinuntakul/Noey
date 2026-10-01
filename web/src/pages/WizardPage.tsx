@@ -601,6 +601,7 @@ export default function WizardPage({
         limitKey={estimate?.binding ?? null}
         resetsAt={estimate?.resets_at ?? null}
         resets={estimate?.resets !== false}
+        reason={estimate?.full ? 'full' : 'overage'}
         walletSatang={estimate?.fits === 'wallet' ? estimate.wallet_satang : null}
         onClose={() => setQuotaOpen(false)}
         onUseWallet={() => {

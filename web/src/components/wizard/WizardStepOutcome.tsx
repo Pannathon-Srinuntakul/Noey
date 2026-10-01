@@ -7,9 +7,11 @@ import { ENGINE_OPTIONS, PRECISION_OPTIONS } from '../../lib/qualityTiers'
 import {
   UI_MODE_LABEL,
   VOICEOVER_LABEL,
+  backendMode,
   beatSyncOffer,
   captionGate,
   fmtClock,
+  targetCapSec,
   type UiMode,
   type VoiceoverChoice,
   type WizardState
@@ -177,7 +179,8 @@ export function WizardStepOutcome({
   ).hint
   const musicLen = state.music ? state.music.trimOutSec - state.music.trimInSec : null
   // The number the submission will actually send, not a second guess at it.
-  const musicTargetSec = dubTargetDurationSec(state.duration, state.customSec, musicLen)
+  const targetCap = targetCapSec(backendMode(state.uiMode, state.voiceover))
+  const musicTargetSec = dubTargetDurationSec(state.duration, state.customSec, musicLen, targetCap)
   // Where the caption text comes from differs per mode, and getting it wrong
   // is the thing users ask about first (R7 screen 1).
   const captionSourceNote = !isCut
@@ -297,7 +300,7 @@ export function WizardStepOutcome({
                   <input
                     type="number"
                     min={15}
-                    max={600}
+                    max={targetCap}
                     aria-label="ความยาวเป็นวินาที"
                     value={state.customSec}
                     onChange={(e) => patch({ customSec: e.target.value })}

@@ -97,10 +97,14 @@ describe("limits, wallet, breaker, accuracy helpers", async () => {
       studio: 12_000_000, agency: 26_000_000, max: 48_000_000,
     });
     expect(plans.PLAN_LIMITS.free.windows).toEqual(["lifetime"]);
-    for (const k of plans.PAID_KEYS) expect(plans.PLAN_LIMITS[k].windows).toEqual(["monthly"]);
+    for (const k of ["lite", "starter"]) expect(plans.PLAN_LIMITS[k].windows).toEqual(["monthly"]);
+    // Pro and up: a 40 % week beside the month (owner, 2026-10-01).
+    for (const k of ["pro", "studio", "agency", "max"]) {
+      expect(plans.PLAN_LIMITS[k].windows).toEqual(["monthly", "weekly"]);
+    }
     expect(plans.PLAN_LIMITS.max).toMatchObject({ concurrency: 5, storageGb: 100 });
-    // The sub-window arithmetic is still defined for rows that record it.
-    expect(plans.weeklyLimit(4_000_000)).toBe(923_787);
+    expect(plans.weeklyLimit(5_600_000)).toBe(2_240_000);
+    // The 5-hour arithmetic is still defined for rows that record it.
     expect(plans.fiveHourLimit(4_000_000)).toBe(369_514);
   });
 

@@ -47,26 +47,37 @@ The table is sized on the measurement; the estimate only has to be safe.)
 
 ── the three structural rules in the table ──
 
-1. **Every paid plan enforces ``monthly`` and nothing else** (Free enforces
-   its ``lifetime`` credit, which is the same rule with no reset). The 5-hour
-   and weekly sub-windows are gone from every plan.
+1. **One monthly allowance per paid plan, and from Pro up a weekly one
+   beside it** (Free enforces its ``lifetime`` credit, which is the monthly
+   rule with no reset). The 5-hour sub-window is gone from every plan.
 
-   They were there to protect the vendor quota, and that protection already
-   exists elsewhere and works better: packages/billing/vendor_limits.py
-   enforces the real daily Gemini cap globally, and ``concurrency`` bounds how
-   many jobs one account can have in flight. Measured: a Max account burning
-   its whole month in one day is ~600 Flash calls against a 10,000/day Tier-1
-   cap — not close.
+   ``weekly`` (owner, 2026-10-01) = ``WEEKLY_SHARE`` (40 %) of the monthly
+   budget, enforced on Pro, Studio, Agency and Max ALONGSIDE ``monthly`` —
+   whichever is hit first binds. A month is ~4.3 weeks, so 40 % a week lets a
+   steady user spend the whole month by week 3 (40 + 40 + 20) while stopping
+   anyone from draining a big plan's month — and the vendor quota behind it —
+   in a day or two; the plans that run several jobs at once (2-5 slots) are
+   exactly the ones that could. Lite and Starter (one slot, small budgets)
+   keep monthly alone.
 
-   And they actively hurt. Pro's 5-hour window was 369,514 tokens against a
-   777,572-token 30-minute High clip: it could not hold one run, so
-   ``runs.windows_for_run`` skipped it for the big job and it only ever
-   blocked the user's NEXT, smaller job for five hours. Studio's 739,030 was
-   short of that same clip too. Four different window rules across seven plans
-   is also unlearnable; one rule per account is the UX fix.
+   The weekly window is ROLLING from first use (``WINDOW_SECONDS``): it starts
+   at the first charge after the previous week ran out and lasts 7 days —
+   the "chat AI usage limit" shape the owner asked for, and the rule the
+   window code already had for every non-monthly window. It is NOT tied to
+   the billing anniversary: 30/31 days do not divide into weeks, so an
+   anniversary-aligned week would leave a 2-3-day stub every month with a
+   whole 40 % of its own. Its excess carries into ITS next week
+   (``usage_accounts.weekly_overage_tokens``); the month counts every token
+   once, when it was spent.
+
+   The 5-hour window protected the vendor quota, which
+   packages/billing/vendor_limits.py now does globally, and it actively hurt:
+   Pro's was 369,514 tokens against a 777,572-token 30-minute High clip, so
+   it only ever blocked the user's NEXT job for five hours.
 
    ``TRACKED_WINDOWS`` still records all four windows, so nothing about
-   upgrade/downgrade accounting changes.
+   upgrade/downgrade accounting changes, and a Starter account that upgrades
+   to Pro starts with a weekly window that already knows this week's usage.
 
 2. **High ความละเอียด is a Pro-and-up feature** (enforced in
    packages/billing/plan_features.py:check_precision). High is 5.2x the
@@ -110,9 +121,11 @@ from typing import Any, Literal
 
 WindowKey = Literal["five_hour", "weekly", "monthly", "lifetime"]
 
-#: Only ``window_limit`` uses these, and only for windows no plan enforces
-#: today (rule 1 in the module docstring). Kept so the arithmetic is still
-#: defined for a tracked window and for anything that reads one back.
+#: The weekly window's share of the monthly budget, on the plans that
+#: enforce it (rule 1 in the module docstring; owner, 2026-10-01).
+WEEKLY_SHARE = 0.40
+#: Only the unenforced ``five_hour`` window uses these — kept so its
+#: arithmetic is still defined for a tracked window that is read back.
 WEEKS_PER_MONTH = 4.33
 FIVE_HOUR_SHARE = 0.40
 #: How long each window lasts. ``None`` = it never runs out: once started it
@@ -123,8 +136,8 @@ WINDOW_SECONDS: dict[str, int | None] = {
     "monthly": 30 * 86_400,
     "lifetime": None,
 }
-#: The English labels the UI shows. ``five_hour``/``weekly`` are unused by
-#: every current plan but stay here for the rows that still record them.
+#: The English labels the UI shows. ``five_hour`` is unused by every current
+#: plan but stays here for the rows that still record it.
 WINDOW_LABELS: dict[str, str] = {
     "five_hour": "5-hour limit",
     "weekly": "Weekly limit",
@@ -173,8 +186,9 @@ QUEUE_LEAD_FIRST_SEC = 600
 
 # The feature columns mirror what the website promises per plan
 # (noey-frontend/src/lib/plans.ts — the source of truth, owner 2026-09-22).
-# One window rule per account: Free spends a lifetime credit, every paid plan
-# a month (rule 1 in the module docstring). High precision from Pro up
+# Free spends a lifetime credit, every paid plan a month, and Pro and up a
+# week beside it (rule 1 in the module docstring) — the plan's MAIN window
+# (``primary_window``) first. High precision from Pro up
 # (rule 2). Budgets step up faster than prices — the volume discount above.
 # What the page quotes is DERIVED from these budgets (``plan_cuts``,
 # ``plan_cuts_high``, ``plan_cuts_at_cap``), never typed in beside them.
@@ -190,13 +204,13 @@ PLAN_LIMITS: dict[str, PlanLimits] = {
     "starter": PlanLimits(2_000_000, ("monthly",), 1, 5,
                           footage_sec=20 * 60, max_projects=20,
                           high_precision=False),
-    "pro": PlanLimits(5_600_000, ("monthly",), 2, 10,
+    "pro": PlanLimits(5_600_000, ("monthly", "weekly"), 2, 10,
                       footage_sec=30 * 60, queue_lead_sec=QUEUE_LEAD_AHEAD_SEC),
-    "studio": PlanLimits(12_000_000, ("monthly",), 3, 30,
+    "studio": PlanLimits(12_000_000, ("monthly", "weekly"), 3, 30,
                          footage_sec=30 * 60, queue_lead_sec=QUEUE_LEAD_FIRST_SEC),
-    "agency": PlanLimits(26_000_000, ("monthly",), 4, 60,
+    "agency": PlanLimits(26_000_000, ("monthly", "weekly"), 4, 60,
                          footage_sec=30 * 60, queue_lead_sec=QUEUE_LEAD_FIRST_SEC),
-    "max": PlanLimits(48_000_000, ("monthly",), 5, 100,
+    "max": PlanLimits(48_000_000, ("monthly", "weekly"), 5, 100,
                       footage_sec=30 * 60, queue_lead_sec=QUEUE_LEAD_FIRST_SEC),
 }
 
@@ -358,7 +372,7 @@ UNLIMITED_PLANS = frozenset({"enterprise"})
 #: safety cap, not a plan limit.
 UNLIMITED_CONCURRENCY = 5
 #: Every window is tracked for every plan (a settle charges all of them), even
-#: though no plan ENFORCES ``five_hour`` or ``weekly`` any more: the accounting
+#: though no plan ENFORCES ``five_hour`` and only Pro and up ``weekly``: the accounting
 #: has to already be there if one is ever switched back on, or the first
 #: account to get it would start from zero. ``lifetime`` is tracked for paid
 #: plans for a live reason — a user who upgrades and later returns to Free must
@@ -382,11 +396,25 @@ def concurrency_for(user: Any, plan: str | None) -> int:
 
 def window_limit(plan: str | None, window: str) -> int:
     limits = plan_limits(plan)
-    weekly = math.floor(limits.monthly / WEEKS_PER_MONTH)
     if window in ("monthly", "lifetime"):
         return limits.monthly
     if window == "weekly":
-        return weekly
+        return math.floor(limits.monthly * WEEKLY_SHARE)
     if window == "five_hour":
-        return math.floor(weekly * FIVE_HOUR_SHARE)
+        return math.floor(math.floor(limits.monthly / WEEKS_PER_MONTH) * FIVE_HOUR_SHARE)
     raise KeyError(window)
+
+
+def primary_window(plan: str | None) -> WindowKey | None:
+    """The plan's MAIN window — ``monthly`` (paid) or ``lifetime`` (Free): the
+    one ``usage_accounts.overage_tokens`` carries into, and the one a Free
+    credit's overage opens after an upgrade. ``weekly`` is never primary: it
+    is a pace limit inside the month. None for a plan that enforces nothing."""
+    for key in plan_limits(plan).windows:
+        if key != "weekly":
+            return key
+    return None
+
+
+def enforces_weekly(plan: str | None) -> bool:
+    return "weekly" in plan_limits(plan).windows

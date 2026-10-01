@@ -393,6 +393,11 @@ class Settings(BaseSettings):
     #: (capped at its ceiling): a failure we cannot tell from input the user
     #: controls (a timeout on an oversized file) must not be free to repeat.
     billing_free_refunds_per_day: int = 3
+    # BILLING_MAX_OVERAGE_RATIO / BILLING_MAX_OVERAGE_TOKENS (a 25 % / 300k
+    # allowance past what is left at start) were removed 2026-10-01: a new run
+    # now starts only when its estimate FITS what is left (guard.remaining_
+    # refusal). ``extra="ignore"`` above keeps a deployment that still sets
+    # them booting.
     #: Longest style-reference clip accepted (seconds) — cut / effects styles
     #: and the plan-effects reference: every second is billed video input.
     reference_max_sec: int = 1200

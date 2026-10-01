@@ -1,47 +1,50 @@
-"""Guard layers 2 and 3: the per-call job ceiling and the daily circuit breaker.
+"""Guard layers 2 and 3: the per-call quota gate and the daily circuit breaker.
 
-Layer 2 — per-call guard (docs/token-billing-plan.md §4.2). A worker task
-(or the synchronous ``/plan-dub`` route) runs its paid work inside a
-``RunMeter`` (``meter_scope``). Before EVERY model request — first attempt
-and each retry — the gateway asks ``before_llm_call``:
+Layer 2 — per-call guard (docs/token-billing-plan.md §4.2), the "chat AI
+usage limit" model (owner, 2026-10-01). A worker task (or the synchronous
+``/plan-dub`` route) runs its paid work inside a ``RunMeter``
+(``meter_scope``). Before EVERY model request — first attempt and each retry —
+the gateway asks ``before_llm_call``, and the rule is one line:
 
-    spent + in_flight + this_call_max  must stay ≤  ceiling (= estimate × 1.2)
+    send the call while the plan's window (plus any balance the user allowed)
+    still has ANYTHING left; at 100 % stop before the next call — a PAUSE.
 
-``this_call_max`` is the rate-card price of the input counted before sending
-plus the output budget. Text is counted locally, each image part at Gemini's
-flat 258, and video parts from the SECONDS of footage the call site attaches
-(``billing_video_sec`` — every file of the request: source proxies, a preview,
-a style reference — measured on the server, never a length the client
-stated). A call that attaches video without saying how much falls back to the
-run's own footage estimate. Otherwise the call is NOT sent: the meter is
-stopped and ``RunBudgetExceeded`` raised, which ends the task (``limit_stop``:
-the user is charged at most the reservation — runs.charge_for).
+The pre-run estimate is advice. Nothing here compares a call's or a run's
+estimate with what is left, and nothing caps a call's output by it: that is
+exactly what cut off run b8ad8c25 on 2026-10-01 — ``max_tokens`` set to
+"what is left under estimate × 1.2" (~29.4k there) truncated a legitimate
+29,464-token thinking pass, and the user paid 164,756 tokens for no cut.
+The meter carries a ``runs.QuotaSnapshot`` taken when the task began, counts
+down by what each call really cost, and once nothing is left the next call is
+not sent: ``QuotaExhausted`` → the project goes to ``paused_quota`` with the
+window, its reset time and what the balance could cover, and resumes from the
+same stage. The call that crossed 100 % was already sent; its answer is kept
+and its overrun is absorbed (``runs.apply_charge`` charges up to exactly 100 %).
 
-The output budget is the call's ``max_tokens`` when the call site sets one,
-else the run profile's ``max_output`` (estimate.MODE_PROFILES) — the same
-figure the reservation was computed from, so the guard never stops a run the
-estimate allowed. A sent call cannot be stopped midway, so its OUTPUT is what
-could still overrun: for a call that sets no ``max_tokens`` of its own, the
-admission also returns ``max_tokens`` = the output the run can still afford
-(ceiling − spent − in flight − this input, at the model's output rate). That
-is at least the profile's ``max_output`` (admission already checked it fits)
-and truncates only an answer that would have breached the ceiling anyway —
-a runaway 25k-token thinking pass. A call cut off there (``finish_reason ==
-"length"``) is a ``limit_stop`` (``output_truncated``), not our failure.
-Calls running in parallel (``asyncio.gather``) are each capped at what was
-left when THEY were admitted, so together they can exceed the ceiling by at
-most what an earlier one wrote past its own budget.
+What a call is priced at (``call_budget``) still matters for two things: the
+in-flight sum parallel calls share, and the OPTIONAL calls (a quality retry
+the caller can live without — ``optional_call``), which alone stay held to
+the run's ``ceiling`` (= estimate × 1.2) so a retry never turns a run into
+twice the advice. Text is counted locally, each image part at Gemini's flat
+258, and video parts from the SECONDS of footage the call site attaches
+(``billing_video_sec`` — measured on the server, never a length the client
+stated) at the MEASURED vendor rate (``estimate.vendor_video_tokens``, ~66
+tokens/s at Standard — the guard used to price 100/s, which made its own
+arithmetic 50 % pessimistic about every video call).
 
-Speech-to-text is checked the same way per file (``before_stt_clip``), priced
-from the WAV's length; a WAV whose length cannot be read is priced from its
-size (an upper bound), never as zero.
+Output: a call that sets no ``max_tokens`` of its own gets the run profile's
+safety cap (``safety_cap`` — for the single calls a step rests on, the
+MODEL's own maximum output from its metadata, 65,536 on today's Gemini 3.x;
+16k for the inherently small calls), independent of the estimate and of what
+is left. It exists against a runaway, never as a budget. A REQUIRED call that
+still ends there (``finish_reason == "length"``) raises ``OutputTruncated``
+at once — no retry (owner, 2026-10-01) — logged at error level, which ends
+the task as a retryable failure (outcome ``safety_cap``), the call billed like
+any other (no refund). An optional call is skipped.
 
-The same admission also holds the PLAN's window, which since 2026-09-26 is no
-longer reserved at start: the meter carries a ``runs.QuotaSnapshot`` taken
-when the task began and stops before the call that would go past what is left
-(``QuotaExhausted``). That stop is a pause, not a failure — it carries the
-window, its reset time and what the balance would have to cover, so the
-client can offer the top-up and resume.
+Speech-to-text is admitted the same way per file (``before_stt_clip``),
+priced from the WAV's length; a WAV whose length cannot be read is priced from
+its size (an upper bound), never as zero.
 
 Layer 3 — circuit breaker (§4.3). Today's (UTC) recorded vendor spend,
 Σ ``cost_thb``, against the admin's daily cap (``admin_settings`` key
@@ -79,6 +82,13 @@ log = get_logger(__name__)
 CHARS_PER_TOKEN = 3.0
 
 LIMIT_STOP_MESSAGE = "หยุดแล้ว: ถึงขีดจำกัดการใช้งานของงานนี้"
+#: A required answer ran into the per-call safety cap (``OutputTruncated``).
+#: Not the user's doing and not about their quota — say so, and that a retry
+#: is the fix.
+OUTPUT_TRUNCATED_MESSAGE = (
+    "AI ตอบกลับไม่ครบ เพราะคำตอบยาวเกินที่ระบบรับได้ในครั้งเดียว — กดลองใหม่ได้ "
+    "หรือขอความยาวผลลัพธ์ที่สั้นลง"
+)
 SERVICE_PAUSED_MESSAGE = "ระบบหยุดรับงาน AI ชั่วคราว กรุณาลองใหม่ภายหลัง"
 #: A run paused because the plan's window ran out — not an error. The client
 #: adds the reset time in the viewer's own timezone.
@@ -162,6 +172,143 @@ class QuotaExhausted(RunBudgetExceeded):
         }
 
 
+#: New work refused because the window is ALREADY at 100 % (``quota_full_refusal``).
+QUOTA_FULL_MESSAGE = "โควตารอบนี้ใช้ครบ 100% แล้ว — เริ่มงานใหม่ได้เมื่อรอบใหม่เริ่ม หรือเพิ่มโควตา"
+QUOTA_FULL_WEEKLY_MESSAGE = (
+    "โควตาสัปดาห์นี้ใช้ครบ 100% แล้ว — เริ่มงานใหม่ได้เมื่อสัปดาห์ใหม่เริ่ม หรือเพิ่มโควตา"
+)
+QUOTA_FULL_SPENT_MESSAGE = "เครดิตทดลองใช้หมดแล้ว — อัปเกรดแพลนเพื่อเริ่มงานใหม่"
+
+
+#: A new run whose estimate is bigger than what is left (``remaining_refusal``,
+#: owner 2026-10-01). The suggestions are the levers that really shrink the
+#: estimate — footage, the Scout engine (medium thinking), Standard precision
+#: (a fifth of High's per-second rate), a shorter requested result — then
+#: more quota.
+REMAINING_TOO_SMALL_MESSAGE = (
+    "งานนี้ใหญ่กว่าโควตาที่เหลือในรอบนี้ — ลองใช้วิดีโอที่สั้นลง ขอผลลัพธ์ที่สั้นลง เลือกเอนจิน Scout "
+    "หรือความละเอียดมาตรฐาน อัปเกรดแพลน หรือเติมเงินแล้วใช้ยอดเงินคงเหลือ"
+)
+REMAINING_TOO_SMALL_WEEKLY_MESSAGE = (
+    "งานนี้ใหญ่กว่าโควตาที่เหลือของสัปดาห์นี้ — ลองใช้วิดีโอที่สั้นลง ขอผลลัพธ์ที่สั้นลง เลือกเอนจิน Scout "
+    "หรือความละเอียดมาตรฐาน รอสัปดาห์ใหม่ อัปเกรดแพลน หรือเติมเงินแล้วใช้ยอดเงินคงเหลือ"
+)
+REMAINING_TOO_SMALL_SPENT_MESSAGE = (
+    "งานนี้ใหญ่กว่าเครดิตทดลองที่เหลือ — ลองใช้วิดีโอที่สั้นลง ขอผลลัพธ์ที่สั้นลง เลือกเอนจิน Scout "
+    "หรืออัปเกรดแพลน"
+)
+#: The wire code of that refusal. It keeps the name it had when it meant "too
+#: far past what is left" (2026-10-01, 25 % allowance): shipped web and desktop
+#: builds already render it, and the meaning a client acts on — "this new run
+#: is too big for what is left; shrink it, wait, or pay" — did not change.
+REMAINING_REFUSAL_CODE = "overage_too_large"
+
+
+def _window_body(state: Any, code: str, message: str, wallet_satang: int) -> dict[str, Any]:
+    """The refusal keys every client already reads off ``QuotaExhausted``."""
+    from packages.billing.limits import WINDOW_LABELS, window_resets
+    from packages.billing.runs import iso
+
+    spare = int(getattr(state, "wallet_satang", 0) or 0)
+    return {
+        "code": code,
+        "window": state.window,
+        "label": WINDOW_LABELS.get(state.window or "", "limit"),
+        "resets_at": iso(state.resets_at),
+        "resets": window_resets(state.window or ""),
+        "wallet_can_cover": spare > 0 and spare >= wallet_satang,
+        "wallet_satang": max(0, int(wallet_satang)),
+        "message": message,
+    }
+
+
+def quota_full_refusal(
+    state: Any, *, allow_wallet: bool, need_satang: int = 0
+) -> dict[str, Any] | None:
+    """The 402 body for new work on a window that is ALREADY at 100 % — None
+    when there is nothing to refuse (not full, or the user allowed a balance
+    they have to carry it). ``state`` is a ``runs.StartWindow``.
+
+    Same keys as ``QuotaExhausted.payload`` (``code: limit_reached``), so every
+    client renders it with the code it already has, plus ``full: true``."""
+    from packages.billing.limits import window_resets
+
+    if state is None or not state.full:
+        return None
+    spare = int(getattr(state, "wallet_satang", 0) or 0)
+    if allow_wallet and spare > 0:
+        return None
+    if not window_resets(state.window or ""):
+        message = QUOTA_FULL_SPENT_MESSAGE
+    elif state.window == "weekly":
+        message = QUOTA_FULL_WEEKLY_MESSAGE
+    else:
+        message = QUOTA_FULL_MESSAGE
+    if spare > 0:
+        message += WALLET_HINT
+    body = _window_body(state, QuotaExhausted.code, message, min(spare, max(0, int(need_satang))))
+    body["wallet_can_cover"] = spare > 0
+    return {**body, "full": True}
+
+
+def remaining_refusal(state: Any, estimate_tokens: int, *, allow_wallet: bool) -> dict[str, Any] | None:
+    """The STRICT START GATE (owner, 2026-10-01): the 402 body for a NEW run
+    whose pre-run estimate is bigger than what is left of the binding window
+    — None when it fits, or when the user allowed a balance that covers the
+    shortfall (the balance then pays what goes past the window). ``state`` is
+    a ``runs.StartWindow``: the enforced window with the least room (on Pro
+    and up the closer-to-full of weekly / monthly — the run must fit both),
+    less what the user's runs already in flight still expect to spend.
+
+    This replaced a 25 % / 300k allowance past what is left: a run is now only
+    STARTED when it is expected to fit. Once running, the estimate is advice
+    again — a run that turns out bigger keeps going call by call, the call in
+    flight completes and is charged in full, the excess carries into the
+    window's next period, and the run pauses before the next call (§24).
+    Resumes never reach this (``billing_start``)."""
+    from packages.billing import wallet
+    from packages.billing.limits import window_resets
+
+    if state is None:
+        return None
+    left = max(0, int(state.headroom) - int(getattr(state, "in_flight", 0) or 0))
+    short = int(estimate_tokens) - left
+    if short <= 0:
+        return None
+    need = wallet.satang_for_tokens(short)
+    spare = int(getattr(state, "wallet_satang", 0) or 0)
+    if allow_wallet and spare >= need:
+        return None
+    if not window_resets(state.window or ""):
+        message = REMAINING_TOO_SMALL_SPENT_MESSAGE
+    elif state.window == "weekly":
+        message = REMAINING_TOO_SMALL_WEEKLY_MESSAGE
+    else:
+        message = REMAINING_TOO_SMALL_MESSAGE
+    return _window_body(state, REMAINING_REFUSAL_CODE, message, need)
+
+
+class OutputTruncated(Exception):
+    """A REQUIRED call stopped at the per-call safety cap: no usable answer.
+
+    Deliberately not a ``RunBudgetExceeded`` (that would read as a quota
+    stop) and not a pause (waiting or topping up changes nothing — a retry
+    does). It travels like any other failure of the task: the task's own
+    handler marks the project ``error`` (retryable) with this message, and
+    ``billed_task`` settles the run as ``safety_cap`` — charged what it used,
+    like every sent call (owner, 2026-10-01: no refunds for this).
+    """
+
+    code = "output_truncated"
+
+    def __init__(self, run_id: str | None = None) -> None:
+        self.run_id = run_id
+        super().__init__(OUTPUT_TRUNCATED_MESSAGE)
+
+    def payload(self) -> dict[str, Any]:
+        return {"code": self.code, "message": str(self)}
+
+
 class ServicePaused(Exception):
     """The daily circuit breaker is hard-stopped — not sent."""
 
@@ -179,13 +326,23 @@ class RunMeter:
     plain object in a ContextVar, so ``asyncio.gather``ed calls share it)."""
 
     run_id: str
-    #: None = unlimited account: nothing to stop at.
+    #: The line OPTIONAL calls are held to (estimate × 1.2). None = unlimited.
+    #: Required calls are never refused by it (owner, 2026-10-01).
     ceiling: int | None
     spent: int = 0
     in_flight: int = 0
     stopped: bool = False
-    #: Output + thinking budget for a call that sets no max_tokens.
+    #: Output + thinking a call is EXPECTED to write (the estimate's figure):
+    #: what it is priced at in flight. Not what it may write — see output_cap.
     default_max_output: int = 8_000
+    #: The per-call safety cap sent as ``max_tokens`` to a call that sets
+    #: none (``estimate.ModeProfile.output_cap``; ``estimate.MODEL_MAX`` = the
+    #: model's own maximum — ``safety_cap``).
+    output_cap: int = estimator.DEFAULT_OUTPUT_CAP
+    #: The exception that stopped the run, raised again for any later call
+    #: (a sibling of an ``asyncio.gather``), so a quota pause is never turned
+    #: into a bare stop by whichever sibling happens to raise first.
+    stop_exc: BaseException | None = None
     #: Price, in vendor input tokens, of the run's footage — used for a call
     #: that attaches video/image parts (they cannot be counted locally).
     media_input_tokens: int = 0
@@ -204,11 +361,14 @@ class RunMeter:
     estimate: int = 0
 
     def quota_left(self) -> int | None:
-        """Rate-card tokens this task may still spend before the plan window
-        runs out; None when there is no quota to run out of."""
+        """Rate-card tokens left in the plan window (plus the balance the run
+        may use) after what this task has really spent; None when there is no
+        quota to run out of. Calls in flight are NOT subtracted: what decides
+        whether a call is sent is whether anything is left, not whether its
+        price fits (owner, 2026-10-01)."""
         if self.quota is None or getattr(self.quota, "unlimited", False):
             return None
-        return int(self.quota.budget) - (self.spent - self.quota_baseline) - self.in_flight
+        return int(self.quota.budget) - (self.spent - self.quota_baseline)
 
 
 _meter: ContextVar[RunMeter | None] = ContextVar("billing_run_meter", default=None)
@@ -247,13 +407,14 @@ def meter_for_run(run: Any, quota: Any = None) -> RunMeter:
     profile = estimator.MODE_PROFILES.get(str(run.kind))
     media = 0
     if profile is not None and profile.uses_video:
-        media = estimator.video_input_tokens(float(run.media_sec or 0.0), run.precision)
+        media = estimator.vendor_video_tokens(float(run.media_sec or 0.0), run.precision)
     spent = int(run.actual_tokens or 0)
     return RunMeter(
         run_id=str(run.id),
         ceiling=None if run.unlimited else int(run.ceiling_tokens or 0),
         spent=spent,
         default_max_output=profile.max_output if profile else get_settings().llm_max_output_tokens,
+        output_cap=profile.output_cap if profile else estimator.DEFAULT_OUTPUT_CAP,
         media_input_tokens=media,
         kind=str(run.kind),
         unlimited=bool(run.unlimited),
@@ -314,25 +475,46 @@ def input_budget(
     """Vendor input tokens a call may use: its text counted locally, each image
     at Gemini's flat 258, and its video parts from ``video_sec`` — the total
     length of every video file the call attaches, at the sampling density it
-    asks for (``video_precision``). Without ``video_sec`` a call with video
-    parts is priced at the run's own footage estimate."""
+    asks for (``video_precision``), at the vendor's MEASURED per-second rate.
+    Without ``video_sec`` a call with video parts is priced at the run's own
+    footage."""
     images, videos = _media_blocks(messages)
     tokens = count_text_tokens(messages) + images * estimator.FRAME_TOKENS
     if video_sec is not None:
-        tokens += estimator.video_input_tokens(float(video_sec), video_precision)
+        tokens += estimator.vendor_video_tokens(float(video_sec), video_precision)
     elif videos:
         tokens += meter.media_input_tokens
     return tokens
 
 
+def safety_cap(meter: RunMeter, model: str) -> int | None:
+    """The per-call safety cap for ``model`` in this run: the profile's own
+    number, or — for the single calls a step rests on (``MODEL_MAX``) — the
+    model's maximum output from its metadata. None: the model is unknown to
+    LiteLLM, so no ``max_tokens`` is sent at all."""
+    if int(meter.output_cap or 0) > 0:
+        return int(meter.output_cap)
+    from packages.llm.config import model_max_output_tokens
+
+    return model_max_output_tokens(model)
+
+
 def _output_cap(meter: RunMeter, model: str, input_tokens: int) -> int | None:
-    """The output + thinking the run can still afford for this call, in vendor
-    tokens (None: nothing to cap — unlimited run)."""
-    if meter.ceiling is None:
-        return None
+    """``max_tokens`` for a call that sets none, in vendor tokens.
+
+    A REQUIRED call gets the safety cap — never less because the estimate was
+    smaller or the window is nearly spent: the quota is enforced BETWEEN
+    calls, and cutting an answer off mid-thought only throws paid work away.
+    An OPTIONAL call is also kept inside what is left under the run's
+    ceiling, so a quality retry cannot overrun the advice."""
+    cap = safety_cap(meter, model)
+    if not _optional.get() or meter.ceiling is None:
+        return cap
     rate_in, rate_out = rate_card.card().llm[rate_card.family_for(model)].rates_for(input_tokens)
-    room = meter.ceiling - meter.spent - meter.in_flight - input_tokens * rate_in
-    return max(0, math.floor(room / rate_out)) if rate_out > 0 else None
+    if rate_out <= 0:
+        return cap
+    room = max(0, math.floor((meter.ceiling - meter.spent - meter.in_flight - input_tokens * rate_in) / rate_out))
+    return room if cap is None else min(cap, room)
 
 
 @dataclass(frozen=True)
@@ -406,39 +588,48 @@ def _quota_stop(meter: RunMeter, budget: int) -> QuotaExhausted:
         in_flight=meter.in_flight, call_budget=budget, quota_left=left,
         window=getattr(meter.quota, "window", None), need_satang=need, wallet_satang=spare,
     )
-    meter.stopped = True
-    meter.stops.append(f"quota left={left} call={budget}")
-    return QuotaExhausted(
+    exc = QuotaExhausted(
         meter.run_id,
         window=getattr(meter.quota, "window", None),
         resets_at=getattr(meter.quota, "resets_at", None),
         wallet_can_cover=need > 0 and spare >= need,
         wallet_satang=need,
     )
+    meter.stopped = True
+    meter.stop_exc = exc
+    meter.stops.append(f"quota left={left} call={budget}")
+    return exc
 
 
 def admit(meter: RunMeter, budget: int) -> None:
-    """Reserve ``budget`` in flight, or refuse (the call is not sent)."""
+    """Hold ``budget`` in flight, or refuse (the call is not sent).
+
+    A required call is refused only when the plan's window (and any balance
+    the run may use) has NOTHING left — a pause. It is never refused because
+    its own price, or the run's estimate, exceeds what is left (owner,
+    2026-10-01): it is sent, and ``runs.apply_charge`` stops the charge at
+    exactly 100 %. An optional call is also held to the run's ceiling."""
     if meter.stopped:
-        raise RunBudgetExceeded(meter.run_id)
+        raise meter.stop_exc or RunBudgetExceeded(meter.run_id)
+    optional = _optional.get()
     left = meter.quota_left()
-    if left is not None and budget > left:
-        # The plan's window, not this run's ceiling: the run pauses and can be
-        # resumed, so an optional call is skipped exactly as for the ceiling.
-        if _optional.get():
-            raise OptionalCallSkipped(meter.run_id)
-        raise _quota_stop(meter, budget)
-    if meter.ceiling is not None and meter.spent + meter.in_flight + budget > meter.ceiling:
-        optional = _optional.get()
-        log.warning(
-            "run_guard_stop", run_id=meter.run_id, kind=meter.kind, spent=meter.spent,
-            in_flight=meter.in_flight, call_budget=budget, ceiling=meter.ceiling, optional=optional,
-        )
+    if left is not None and left <= 0:
+        # An optional call is skipped (the run keeps the answer it has);
+        # anything else pauses the run before it is sent.
         if optional:
             raise OptionalCallSkipped(meter.run_id)
-        meter.stopped = True
-        meter.stops.append(f"spent={meter.spent} in_flight={meter.in_flight} call={budget}")
-        raise RunBudgetExceeded(meter.run_id)
+        raise _quota_stop(meter, budget)
+    if optional and (
+        (left is not None and budget + meter.in_flight > left)
+        or (meter.ceiling is not None and meter.spent + meter.in_flight + budget > meter.ceiling)
+    ):
+        # A nice-to-have must FIT — what is left of the window and the run's
+        # ceiling — or it is not worth pushing the user toward 100 % for.
+        log.warning(
+            "run_guard_optional_skipped", run_id=meter.run_id, kind=meter.kind, spent=meter.spent,
+            in_flight=meter.in_flight, call_budget=budget, ceiling=meter.ceiling, quota_left=left,
+        )
+        raise OptionalCallSkipped(meter.run_id)
     meter.in_flight += budget
 
 
@@ -476,6 +667,11 @@ async def before_llm_call(
     caller_cap = extra.get("max_tokens") or extra.get("max_completion_tokens")
     cap = None if caller_cap else _output_cap(meter, model, inp)
     admit(meter, budget)
+    if cap is not None and cap <= 0:
+        # An optional call with no room left under the ceiling: sending it
+        # with max_tokens=0 would buy an empty answer.
+        meter.in_flight = max(0, meter.in_flight - budget)
+        raise OptionalCallSkipped(meter.run_id)
     return Admission(
         budget=budget, input_tokens=inp, max_tokens=cap,
         input_charge=rate_card.tokens_for_llm(model, inp, 0, 0),
@@ -483,19 +679,22 @@ async def before_llm_call(
 
 
 def output_truncated() -> None:
-    """The answer stopped at the output cap the guard set: the run has used
-    its ceiling. Stops the run (``limit_stop``) — or, for an optional call,
-    skips it and lets the run keep its earlier answer."""
+    """The answer stopped at the ``max_tokens`` the guard set. An optional
+    call is skipped (the run keeps its earlier answer). A required one hit
+    the per-call SAFETY cap — which should never happen — and has no usable
+    answer: ``OutputTruncated`` ends the task as a retryable failure.
+    Logged at error level so it reaches monitoring: if this fires, the cap
+    for that kind is too low or the model ran away."""
     meter = current_meter()
     if meter is None:
         return
-    log.warning("run_guard_output_truncated", run_id=meter.run_id, kind=meter.kind, spent=meter.spent,
-                ceiling=meter.ceiling, optional=_optional.get())
     if _optional.get():
+        log.warning("run_guard_optional_truncated", run_id=meter.run_id, kind=meter.kind, spent=meter.spent)
         raise OptionalCallSkipped(meter.run_id)
-    meter.stopped = True
-    meter.stops.append(f"output truncated at spent={meter.spent}")
-    raise RunBudgetExceeded(meter.run_id)
+    log.error("run_guard_safety_cap_hit", run_id=meter.run_id, kind=meter.kind, spent=meter.spent,
+              output_cap=meter.output_cap)
+    meter.stops.append(f"safety cap {meter.output_cap} hit at spent={meter.spent}")
+    raise OutputTruncated(meter.run_id)
 
 
 def after_llm_call(budget: int, charged: int) -> None:

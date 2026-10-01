@@ -15,8 +15,10 @@ environment / .env exactly like the API does, and:
    change plan. Without --reprice a differing price is reported and kept.
 3. A customer-portal configuration: invoice history, payment-method update,
    cancel at period end, and switching between the four current prices —
-   upgrades invoiced immediately with proration, downgrades scheduled for the
-   end of the period.
+   upgrades start a new billing cycle now (``billing_cycle_anchor=now``) and
+   are invoiced immediately with proration (the unused part of the old plan
+   credited), downgrades scheduled for the end of the period. Re-run after
+   changing packages/billing/portal.py so the live configuration follows.
 
 Prints the portal configuration id (→ STRIPE_PORTAL_CONFIGURATION_ID) and the
 webhook events to enable. See docs/billing-stripe.md.

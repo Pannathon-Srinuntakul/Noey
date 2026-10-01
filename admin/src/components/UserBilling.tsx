@@ -61,6 +61,13 @@ export function LimitsSection({
               </p>
             </div>
           ))}
+          {!!limits.overage_tokens && (
+            <p className="small num" style={{ margin: "0 0 10px", color: LOSS }}>
+              ใช้เกินโควตา {num(limits.overage_tokens)} โทเค็น
+              {limits.overage_window && limits.overage_window !== "lifetime" ? ` (${WINDOW_LABELS[limits.overage_window]})` : ""} — ยกไปนับในรอบถัดไป
+              {limits.overage_window === "lifetime" ? " เมื่ออัปเกรดเป็นแผนรายเดือน" : ""}
+            </p>
+          )}
           {(limits.pending_plan || limits.grace_until) && (
             <p className="small" style={{ margin: "0 0 10px" }}>
               {limits.pending_plan &&

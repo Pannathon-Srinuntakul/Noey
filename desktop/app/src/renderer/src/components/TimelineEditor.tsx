@@ -2483,8 +2483,13 @@ export function VideoTimelineEditor({ uid, mode, projectName, onClose, onSaved }
   // the label column is what lane content scrolls UNDER, and at the same
   // z-index DOM order won instead — a cut block dragged to the left edge was
   // painted on top of its own track name (live report 2026-08-13).
+  // The `after:` cover fills the TRACK_GAP_PX (3px) gap UNDER each label:
+  // without it the playhead line and the guide lines showed through those
+  // gaps as a small white square per track over the names whenever they
+  // scrolled under the column (owner report 2026-10-01). Same fix as web's
+  // timeline/lanes/TrackRow.tsx.
   const trackLabelCls =
-    'sticky left-0 z-40 flex h-full shrink-0 items-center gap-1.5 bg-ground pr-3 pl-3 text-[13px] text-ink-3'
+    'sticky left-0 z-40 flex h-full shrink-0 items-center gap-1.5 bg-ground pr-3 pl-3 text-[13px] text-ink-3 after:absolute after:inset-x-0 after:top-full after:h-[3px] after:bg-ground'
 
   return (
     <TimelineViewportContext.Provider value={viewportStore}>

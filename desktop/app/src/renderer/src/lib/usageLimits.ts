@@ -50,6 +50,19 @@ export interface UsageEstimate {
   /** False = the binding allowance never comes back (see `UsageLimit.resets`). */
   resets?: boolean
   unlimited: boolean
+  /**
+   * The window is ALREADY at 100 %: a new start is refused (owner,
+   * 2026-10-01). Absent on an older server, which never refused on this.
+   */
+  full?: boolean
+  /**
+   * The run's estimate is bigger than what is left of the binding window
+   * (the strict start gate, owner 2026-10-01 — on Pro and up the closer-to-
+   * full of the week and the month): a new start is refused unless a
+   * balance the user allows covers the shortfall. (The name is older than
+   * the rule; the server keeps it for shipped clients.)
+   */
+  overage_too_large?: boolean
 }
 
 export interface EstimateRequest {
@@ -60,9 +73,14 @@ export interface EstimateRequest {
   engine?: 'lite' | 'pro'
   precision?: 'standard' | 'high'
   clips: { duration_sec: number; has_audio: boolean }[]
+  /** What the user asked the cut to be — the estimate's answer size follows
+   * it (estimate e4): the requested result length and the voiceover script. */
+  target_duration_sec?: number | null
+  user_script?: string
 }
 
-export type RefusalCode = 'limit_reached' | 'free_tier_limited' | 'service_paused' | 'limit_stop'
+export type RefusalCode =
+  'limit_reached' | 'free_tier_limited' | 'service_paused' | 'limit_stop' | 'overage_too_large'
 
 /** A start the server refused (402/429/503) or a run it stopped. */
 export interface BillingRefusal {
@@ -175,7 +193,10 @@ export function resetLine(
   now: Date = new Date(),
   timeZone?: string
 ): string {
-  if (!validIso(resetsAt)) return 'เริ่มนับรอบใหม่เมื่อใช้งานครั้งถัดไป'
+  if (!validIso(resetsAt))
+    return key === 'weekly'
+      ? 'เริ่มนับ 7 วันเมื่อใช้งานครั้งถัดไป'
+      : 'เริ่มนับรอบใหม่เมื่อใช้งานครั้งถัดไป'
   const left = new Date(resetsAt).getTime() - now.getTime()
   if (left <= 0) return 'รอบใหม่เริ่มแล้ว'
   if (key === 'five_hour') return `รอบใหม่ใน ${durationTh(left)}`
@@ -227,6 +248,8 @@ export function windowLine(
   now: Date = new Date(),
   timeZone?: string
 ): string {
+  const over = overageLine(l)
+  if (over) return over
   if (neverResets(l)) return trialCreditLine(l.used_pct)
   // `active` is NOT a gate on the date any more. A monthly window now runs
   // from one billing anniversary to the next (packages/billing/runs.py), so a
@@ -236,6 +259,20 @@ export function windowLine(
   // use", which was true of a rolling window and is false of this one. The
   // rolling sub-windows send no date while inactive, so they are unaffected.
   return resetLine(l.key, l.resets_at, now, timeZone)
+}
+
+/**
+ * A window past 100 % (owner, 2026-10-01): the work that was in flight when
+ * the quota ran out is charged in full, and the excess is counted into the
+ * NEXT period — or, for the trial credit, into the first paid one. Null at or
+ * under 100 %.
+ */
+export function overageLine(l: { used_pct: number; resets?: boolean }): string | null {
+  const over = Math.round(l.used_pct - 100)
+  if (!(l.used_pct > 100) || over < 1) return null
+  return neverResets(l)
+    ? `ใช้เกินเครดิตทดลอง ${over}% · จะนับรวมเมื่อสมัครแพลน`
+    : `ใช้เกินโควตา ${over}% · จะนับรวมในรอบถัดไป`
 }
 
 /**
@@ -445,22 +482,45 @@ export function estimateLine(est: UsageEstimate): string | null {
  * price — that is `runCostLine`, which every paid start shows.
  */
 export function estimateBlockLine(est: UsageEstimate, now: Date = new Date()): string | null {
-  if (est.unlimited || est.fits === 'plan') return null
-  // A credit that never resets has no "wait for the next window" way out: the
-  // only honest ending is the plan change.
-  if (neverResets(est)) {
-    const base = `เครดิตทดลองใช้เหลือไม่พอสำหรับงานนี้ · ${TRIAL_CREDIT_ACTION}`
-    return est.fits === 'wallet'
-      ? `${base} — ใช้ยอดเงินคงเหลือ ${formatBaht(est.wallet_satang)} ทำต่อได้`
-      : base
+  if (est.unlimited) return null
+  // A credit that never resets has no "next window": its overage waits for
+  // a plan, and its way forward is the plan change.
+  const spent = neverResets(est)
+  const wallet = est.fits === 'wallet' ? formatBaht(est.wallet_satang) : null
+  if (est.full) {
+    if (wallet)
+      return `${spent ? TRIAL_CREDIT_SPENT : 'โควตารอบนี้ใช้ครบแล้ว'} — ใช้ยอดเงินคงเหลือ ${wallet} ทำงานนี้ได้`
+    if (spent) return `${TRIAL_CREDIT_SPENT} · ${TRIAL_CREDIT_ACTION}`
+    const back = whenBack(est.resets_at, now)
+    const reset = back ? ` (รอบใหม่${back.startsWith('อีก') ? '' : ' '}${back})` : ''
+    return `โควตารอบนี้ใช้ครบแล้ว — เริ่มงานใหม่ได้เมื่อรอบใหม่เริ่ม${reset}`
   }
-  const label = limitLabel(est.binding)
-  const back = whenBack(est.resets_at, now)
-  const base = `${label}เหลือไม่พอสำหรับงานนี้${back ? ` · รอบใหม่${back.startsWith('อีก') ? '' : ' '}${back}` : ''}`
-  if (est.fits === 'wallet')
-    return `${base} — ใช้ยอดเงินคงเหลือ ${formatBaht(est.wallet_satang)} ทำต่อได้`
-  return base
+  if (est.overage_too_large) {
+    const line = spent
+      ? OVERAGE_TOO_LARGE_TRIAL_LINE
+      : est.binding === 'weekly'
+        ? OVERAGE_TOO_LARGE_WEEKLY_LINE
+        : OVERAGE_TOO_LARGE_LINE
+    if (wallet) return `${line} — หรือใช้ยอดเงินคงเหลือ ${wallet} จ่ายส่วนที่ขาด`
+    return line
+  }
+  if (est.fits === 'plan') return null
+  // Within the allowed overage: a warning, never a block (owner, 2026-10-01).
+  const warn = spent
+    ? 'งานนี้อาจใช้เกินเครดิตทดลอง ส่วนที่เกินจะนับรวมเมื่อสมัครแพลน'
+    : 'งานนี้อาจใช้เกินโควตา ส่วนที่เกินจะนับรวมในรอบถัดไป'
+  return wallet ? `${warn} — หรือใช้ยอดเงินคงเหลือ ${wallet} จ่ายส่วนที่เกินแทน` : warn
 }
+
+/** A run bigger than what is left (`overage_too_large`, the strict start
+ * gate — owner, 2026-10-01). Same levers as the server's message. */
+export const OVERAGE_TOO_LARGE_LINE =
+  'งานนี้ใหญ่กว่าโควตาที่เหลือในรอบนี้ — ลองใช้วิดีโอที่สั้นลง ขอผลลัพธ์ที่สั้นลง เลือกเอนจิน Scout หรือความละเอียดมาตรฐาน อัปเกรดแพลน หรือเติมเงิน'
+/** The same, when the WEEK is what binds (Pro and up). */
+export const OVERAGE_TOO_LARGE_WEEKLY_LINE =
+  'งานนี้ใหญ่กว่าโควตาที่เหลือของสัปดาห์นี้ — ลองใช้วิดีโอที่สั้นลง ขอผลลัพธ์ที่สั้นลง เลือกเอนจิน Scout หรือความละเอียดมาตรฐาน รอสัปดาห์ใหม่ อัปเกรดแพลน หรือเติมเงิน'
+const OVERAGE_TOO_LARGE_TRIAL_LINE =
+  'งานนี้ใหญ่กว่าเครดิตทดลองที่เหลือ — ลองใช้วิดีโอที่สั้นลง ขอผลลัพธ์ที่สั้นลง เลือกเอนจิน Scout หรืออัปเกรดแพลน'
 
 // ── refusals ─────────────────────────────────────────────────────────────────
 
@@ -468,7 +528,8 @@ const REFUSAL_CODES: readonly RefusalCode[] = [
   'limit_reached',
   'free_tier_limited',
   'service_paused',
-  'limit_stop'
+  'limit_stop',
+  'overage_too_large'
 ]
 
 function asKey(v: unknown): LimitKey | null {
@@ -517,6 +578,8 @@ export function refusalMessage(r: BillingRefusal, now: Date = new Date()): strin
       const when = back ? ` · เริ่มงานใหม่ได้${back.startsWith('อีก') ? '' : ' '}${back}` : ''
       return `${head}${when}${wallet}`
     }
+    case 'overage_too_large':
+      return r.serverMessage ?? OVERAGE_TOO_LARGE_LINE
     case 'limit_stop':
       return 'หยุดแล้ว: งานนี้ใช้มากกว่าที่ประเมินไว้ ระบบจึงหยุดไว้ก่อนไม่ให้กินโควตาเกิน — กดลองใหม่ได้'
     case 'service_paused':
