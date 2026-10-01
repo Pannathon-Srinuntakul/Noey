@@ -16,8 +16,10 @@ import { accessToken, clearSession, deleteCookie, readCookie, writeTokens } from
 import { ADMIN_URL, COOKIE_SECURE, PRICES_REVALIDATE_SECRET, SITE_URL } from "@/lib/server/config";
 import { CHALLENGE_MAX_AGE, isAdminTokens, safeNext, spec } from "@/lib/session";
 import {
-  editProblems, validRequestId, validSlug, validSource, validStatus,
-  type AuditEntry, type BlogOverview, type BlogSettings, type Category, type Connector, type PostEdit, type PostFull, type PostRow,
+  BRIEF_FIELDS, MEDIA_MAX_MB, editProblems, mediaTextProblems, parseMediaTags, validMediaKind, validPlanStatus, validRequestId,
+  validSlug, validSource, validStatus,
+  type AuditEntry, type BlogOverview, type BlogSettings, type Brief, type Category, type Connector, type MediaItem, type PlanItem,
+  type PlanStatus, type PostEdit, type PostFull, type PostRow,
 } from "@/lib/blog";
 import {
   FX_BAND, validBreaker, validFxOverride, validInvoice, validMonth, validPer1M, validWalletAdjust, validWindow,
@@ -45,7 +47,10 @@ function fail<T>(status: number, detail: string | null): ActionResult<T> {
   return { ok: false, error: detail ?? GENERIC };
 }
 
-async function authed<T>(path: string, init: { method?: "GET" | "POST" | "PUT" | "PATCH"; body?: unknown } = {}): Promise<ActionResult<T>> {
+async function authed<T>(
+  path: string,
+  init: { method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE"; body?: unknown; form?: FormData; timeoutMs?: number } = {},
+): Promise<ActionResult<T>> {
   if (!(await sameOrigin())) return { ok: false, error: "คำขอไม่ได้มาจากหน้านี้" };
   const token = await accessToken();
   if (!token) return { ok: false, error: SESSION_ENDED, signedOut: true };
@@ -396,4 +401,111 @@ export async function decideConnectAction(requestId: string, approve: boolean): 
   // callback; refuse anything that is not an https or loopback URL anyway.
   if (r.ok && !/^(https:\/\/|http:\/\/(localhost|127\.0\.0\.1)[:/])/.test(r.data.redirect_to)) return { ok: false, error: GENERIC };
   return r;
+}
+
+// ── media library (คลังสื่อ) ─────────────────────────────────────────────────
+
+export async function getMediaAction(kind: string, archived: boolean): Promise<ActionResult<{ items: MediaItem[]; total: number }>> {
+  if (!validMediaKind(kind) || typeof archived !== "boolean") return { ok: false, error: GENERIC };
+  const q = new URLSearchParams({ limit: "200" });
+  if (kind) q.set("kind", kind);
+  if (archived) q.set("archived", "true");
+  return authed<{ items: MediaItem[]; total: number }>(`/admin/blog/media?${q}`);
+}
+
+/** One upload: the file plus kind / alt / description / tags, re-checked by the backend (bytes, size, kind). */
+export async function uploadMediaAction(formData: FormData): Promise<ActionResult<MediaItem>> {
+  if (!(formData instanceof FormData)) return { ok: false, error: GENERIC };
+  const file = formData.get("file");
+  const kind = formData.get("kind");
+  const alt = String(formData.get("alt") ?? "");
+  const description = String(formData.get("description") ?? "");
+  const tags = parseMediaTags(String(formData.get("tags") ?? ""));
+  if (!(file instanceof File) || file.size === 0) return { ok: false, error: "เลือกไฟล์ก่อน" };
+  if (!validMediaKind(kind) || !kind) return { ok: false, error: "เลือกประเภทสื่อ" };
+  if (file.size > MEDIA_MAX_MB[kind] * 1024 * 1024) return { ok: false, error: `ไฟล์ใหญ่เกิน ${MEDIA_MAX_MB[kind]} MB` };
+  const problems = mediaTextProblems(alt, description);
+  if (problems.length) return { ok: false, error: problems.join(" · ") };
+  const form = new FormData();
+  form.set("file", file, file.name.slice(0, 200) || "upload");
+  form.set("kind", kind);
+  form.set("alt", alt.trim());
+  form.set("description", description.trim());
+  form.set("tags", tags.join(","));
+  return authed<MediaItem>("/admin/blog/media", { method: "POST", form, timeoutMs: 180_000 });
+}
+
+export async function updateMediaAction(
+  id: number,
+  changes: { alt?: string; description?: string; tags?: string[]; archived?: boolean },
+): Promise<ActionResult<MediaItem>> {
+  if (!validId(id) || !changes || typeof changes !== "object") return { ok: false, error: GENERIC };
+  const body: Record<string, unknown> = {};
+  if (typeof changes.alt === "string") body.alt = changes.alt.trim();
+  if (typeof changes.description === "string") body.description = changes.description.trim();
+  if (Array.isArray(changes.tags)) body.tags = parseMediaTags(changes.tags.join(","));
+  if (typeof changes.archived === "boolean") body.archived = changes.archived;
+  if (body.alt !== undefined || body.description !== undefined) {
+    const problems = mediaTextProblems(String(body.alt ?? "ok-alt"), String(body.description ?? ""));
+    if (problems.length) return { ok: false, error: problems.join(" · ") };
+  }
+  return authed<MediaItem>(`/admin/blog/media/${id}`, { method: "PATCH", body });
+}
+
+// ── writing brief + content plan ─────────────────────────────────────────────
+
+export async function getPlanningAction(): Promise<ActionResult<{ brief: Brief; plan: PlanItem[] }>> {
+  const [brief, plan] = await Promise.all([authed<Brief>("/admin/blog/brief"), authed<PlanItem[]>("/admin/blog/plan")]);
+  if (!brief.ok) return brief;
+  if (!plan.ok) return plan;
+  return { ok: true, data: { brief: brief.data, plan: plan.data } };
+}
+
+export async function saveBriefAction(brief: Omit<Brief, "updated_at">): Promise<ActionResult<Brief>> {
+  if (!brief || typeof brief !== "object") return { ok: false, error: GENERIC };
+  const body: Record<string, string> = {};
+  for (const f of BRIEF_FIELDS) {
+    const v = brief[f.key];
+    if (typeof v !== "string") return { ok: false, error: GENERIC };
+    if (v.length > f.max) return { ok: false, error: `${f.label}ยาวเกิน ${f.max} ตัวอักษร` };
+    body[f.key] = v;
+  }
+  return authed<Brief>("/admin/blog/brief", { method: "PUT", body });
+}
+
+export async function addTopicAction(topic: string, notes: string): Promise<ActionResult<PlanItem>> {
+  if (typeof topic !== "string" || typeof notes !== "string") return { ok: false, error: GENERIC };
+  if (topic.trim().length < 3 || topic.length > 200) return { ok: false, error: "หัวข้อต้องยาว 3–200 ตัวอักษร" };
+  if (notes.length > 1000) return { ok: false, error: "หมายเหตุยาวได้ไม่เกิน 1000 ตัวอักษร" };
+  return authed<PlanItem>("/admin/blog/plan", { method: "POST", body: { topic: topic.trim(), notes: notes.trim() } });
+}
+
+export async function updateTopicAction(
+  id: number,
+  changes: { topic?: string; notes?: string; status?: PlanStatus; post_slug?: string | null },
+): Promise<ActionResult<PlanItem>> {
+  if (!validId(id) || !changes || typeof changes !== "object") return { ok: false, error: GENERIC };
+  const body: Record<string, unknown> = {};
+  if (typeof changes.topic === "string") body.topic = changes.topic.trim();
+  if (typeof changes.notes === "string") body.notes = changes.notes.trim();
+  if (changes.status !== undefined) {
+    if (!validPlanStatus(changes.status)) return { ok: false, error: GENERIC };
+    body.status = changes.status;
+  }
+  if (changes.post_slug === null) body.clear_post = true;
+  else if (typeof changes.post_slug === "string" && changes.post_slug) {
+    if (!validSlug(changes.post_slug)) return { ok: false, error: "slug ใช้ได้เฉพาะ a-z 0-9 และขีดกลาง" };
+    body.post_slug = changes.post_slug;
+  }
+  return authed<PlanItem>(`/admin/blog/plan/${id}`, { method: "PATCH", body });
+}
+
+export async function deleteTopicAction(id: number): Promise<ActionResult<{ deleted: number }>> {
+  if (!validId(id)) return { ok: false, error: GENERIC };
+  return authed<{ deleted: number }>(`/admin/blog/plan/${id}`, { method: "DELETE" });
+}
+
+export async function reorderPlanAction(ids: number[]): Promise<ActionResult<PlanItem[]>> {
+  if (!Array.isArray(ids) || ids.length > 200 || !ids.every(validId) || new Set(ids).size !== ids.length) return { ok: false, error: GENERIC };
+  return authed<PlanItem[]>("/admin/blog/plan/order", { method: "PUT", body: { ids } });
 }

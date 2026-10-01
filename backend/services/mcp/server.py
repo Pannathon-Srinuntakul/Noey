@@ -60,15 +60,23 @@ from services.api import ratelimit
 
 log = get_logger(__name__)
 
-MAX_BODY_BYTES = 12 * 1024 * 1024  # an 8 MB image, base64-encoded, plus JSON
+#: The largest call is a 200 KB visual or a 300 KB upload_image, plus JSON.
+MAX_BODY_BYTES = 2 * 1024 * 1024
+#: upload_image takes small pictures only (render_cover / create_visual /
+#: list_media are the ways to put pictures in a post).
+UPLOAD_IMAGE_MAX_BASE64 = 300 * 1024
 
 INSTRUCTIONS = """\
 Noey Studio blog writer. Workflow for a new article:
-1. get_site_info — product facts, honest scope, existing guides, CTAs and the WRITING RULES (follow them).
+1. get_site_info — product facts, honest scope, guides, CTAs, the WRITING RULES, the brand kit, the owner's
+   brief and the open content-plan topics (write the first one).
 2. list_posts — every post in every status: never repeat a topic or a slug.
-3. upload_image (optional) — then use the returned url in the Markdown or as cover_image_url.
+3. Pictures: list_media (real screenshots, demo videos, logos), create_visual (HTML/CSS/JS drawn in the brand,
+   behaves like an image; returns `::visual[alt](id)` to paste on its own line), get_icons (inline SVG icons),
+   render_cover (the 1600x900 cover image). A post needs a cover and at least 2 pictures in the body.
 4. create_post — always saved as a draft; the reply lists exactly what to fix if it is refused.
 5. publish_post — publishes within the daily limit, or tells you the owner will approve it.
+6. mark_topic_done(topic_id, slug) when the post covers a content-plan topic.
 There is no delete. unpublish_post takes a post offline.
 """
 
@@ -116,6 +124,21 @@ async def _db() -> AsyncIterator[Any]:
             raise
 
 
+async def _missing_images(db: Any, urls: list[str]) -> list[str]:
+    """Media-store URLs that are not stored images (a visual/cover may only
+    show what the store holds)."""
+    from sqlalchemy import select
+
+    from packages.db.models.blog import BlogImage
+
+    rows = {r.url: r for r in (await db.execute(select(BlogImage).where(BlogImage.url.in_(urls)))).scalars()}
+    return [
+        f"`{u[:120]}` is not an image of the media store — use an image url from list_media."
+        for u in urls
+        if u not in rows or rows[u].kind != "image"
+    ]
+
+
 def _fail(exc: service.BlogError) -> ToolError:
     lines = "\n".join(f"- {p}" for p in exc.problems)
     return ToolError(f"Refused ({exc.code}). Fix the following and call again:\n{lines}")
@@ -140,8 +163,10 @@ def build_server() -> MCPServer:
         description=(
             "Product facts and the brand's writing rules for noeystudio.com articles: product description, audience, "
             "real features (modes), what the product can and cannot do (scope), plans and live prices, CTA links, the "
-            "existing /guide articles (link to them; never write a post on the same topic) and the WRITING RULES every "
-            "post must follow. Call this first."
+            "existing /guide articles (link to them; never write a post on the same topic), the WRITING RULES every "
+            "post must follow, the brand kit (colours, fonts, logo, icons, canvas sizes, a minimal visual and cover "
+            "example), the owner's writing brief (with updated_at) and the content-plan topics not written yet. "
+            "Call this first."
         ),
     )
     async def get_site_info(ctx: Context) -> dict[str, Any]:
@@ -185,7 +210,10 @@ def build_server() -> MCPServer:
         description=(
             "Create a blog post. It is ALWAYS saved as a draft (call publish_post next). Requirements: unique slug "
             "(lowercase a-z0-9-, <= 80), meta_title <= 60, meta_description <= 160, excerpt <= 300 chars; content_md "
-            "in Markdown with headings from `##`, no raw HTML/script/iframe, images only from upload_image, at least "
+            "in Markdown with headings from `##`, no raw HTML/script/iframe; a cover (cover_image_url from "
+            "render_cover or list_media, with cover_alt); at least 2 pictures in the body, each with alt text: "
+            "`::visual[alt](id)` lines from create_visual (yours only, at most 3 animated) and/or `![alt](url)` "
+            "images or .mp4 demos from list_media; PDF links `[text](url)` only from list_media; at least "
             f"2 links to pages of this site, at least {get_settings().blog_min_words} words; an existing category "
             f"slug (list_categories); {v.FAQ_MIN}-{v.FAQ_MAX} FAQ pairs; never name an AI vendor. A refusal lists "
             "every problem to fix."
@@ -204,7 +232,9 @@ def build_server() -> MCPServer:
         category: Annotated[str, Field(min_length=1, max_length=80, description="Existing category slug.")],
         faq: Annotated[list[FaqItem], Field(min_length=v.FAQ_MIN, max_length=v.FAQ_MAX, description="FAQ pairs, plain text.")],
         tags: Annotated[list[TagIn], Field(max_length=v.MAX_TAGS, description="Up to 8 tags.")] = [],  # noqa: B006
-        cover_image_url: Annotated[str | None, Field(max_length=500, description="A url from upload_image, or null.")] = None,
+        cover_image_url: Annotated[
+            str | None, Field(max_length=500, description="The url from render_cover (or an image from list_media).")
+        ] = None,
         cover_alt: Annotated[str | None, Field(max_length=v.ALT_MAX, description="Cover alt text (required with a cover).")] = None,
     ) -> dict[str, Any]:
         actor, _ = await _begin(ctx)
@@ -281,14 +311,18 @@ def build_server() -> MCPServer:
     @mcp.tool(
         annotations=WRITE,
         description=(
-            "Upload an image for a post. PNG, JPEG or WebP only (checked by content), <= 8 MB, <= 4096 px per side. "
-            "It is re-encoded to WebP (metadata removed, longest side <= 1600 px) and renamed by its hash. alt text is "
-            "required. Returns {url, width, height}: put the url in content_md as ![alt](url) or use it as cover_image_url."
+            "Upload a SMALL image (base64 <= 300 KB) — e.g. a tiny diagram you already have as a file. For pictures in "
+            "a post use create_visual (drawn HTML), render_cover (the cover) or list_media (the owner's real "
+            "screenshots and videos) instead. PNG, JPEG or WebP only (checked by content); re-encoded to WebP "
+            "(metadata removed, longest side <= 1600 px) and named by its hash. alt is required. Returns "
+            "{url, width, height}: use it as ![alt](url)."
         ),
     )
     async def upload_image(
         ctx: Context,
-        image_base64: Annotated[str, Field(min_length=8, max_length=12 * 1024 * 1024, description="The file bytes, base64.")],
+        image_base64: Annotated[
+            str, Field(min_length=8, max_length=UPLOAD_IMAGE_MAX_BASE64, description="The file bytes, base64 (<= 300 KB).")
+        ],
         filename: Annotated[str, Field(min_length=1, max_length=200, description="Original file name (informational only).")],
         alt: Annotated[str, Field(min_length=3, max_length=v.ALT_MAX, description="What the image shows, Thai.")],
     ) -> dict[str, Any]:
@@ -306,6 +340,191 @@ def build_server() -> MCPServer:
         async with _db() as db:
             await service.record_image(db, stored, alt.strip(), actor)
         return {"url": stored.url, "width": stored.width, "height": stored.height, "alt": alt.strip()}
+
+    @mcp.tool(
+        annotations=WRITE,
+        description=(
+            "Create an in-article visual — a still picture, infographic, chart or animation drawn with HTML + CSS "
+            "(+ optional JS) that the page shows exactly like an image: fixed aspect ratio (width x height is your "
+            "designed canvas, e.g. 1600x1000, 1200x1200, 1080x1350), scaled to the column, not clickable or "
+            "selectable, no scrollbars. Nothing is rendered on the server; it is stored and served sandboxed. "
+            "Rules: html + css + js <= 200 KB; no <iframe>, <form>, <a>, <input>, <object>, <embed>, <link>, <meta>, "
+            "<base>, @import, @font-face or event-handler attributes (put JS in `js`); images only from the media "
+            "store (list_media) or data:image; fonts 'Noto Sans Thai' / 'IBM Plex Sans Thai' are preloaded; icons "
+            "via get_icons (inline SVG); no network access. Set animated: true when it moves (CSS animation or "
+            "requestAnimationFrame) — at most 3 animated visuals per post; the page pauses them off-screen and for "
+            "reduced-motion readers. Returns {id, markdown}: paste markdown (`::visual[alt](id)`) on its own line "
+            "in content_md. A refusal names every spot to fix."
+        ),
+    )
+    async def create_visual(
+        ctx: Context,
+        html: Annotated[str, Field(min_length=1, max_length=200 * 1024, description="The markup inside the canvas (no <html>/<head>).")],
+        css: Annotated[str, Field(max_length=200 * 1024, description="Styles for that markup.")],
+        width: Annotated[int, Field(ge=200, le=2400, description="Designed canvas width in CSS px, e.g. 1600.")],
+        height: Annotated[int, Field(ge=200, le=2400, description="Designed canvas height in CSS px, e.g. 1000.")],
+        alt: Annotated[str, Field(min_length=3, max_length=v.ALT_MAX, description="What the visual shows, Thai (screen readers and search read it).")],
+        animated: Annotated[bool, Field(description="true when anything moves.")],
+        js: Annotated[str, Field(max_length=200 * 1024, description="Optional script (runs sandboxed, no network).")] = "",
+        caption: Annotated[str | None, Field(max_length=300, description="Optional caption shown under it, Thai.")] = None,
+        filename: Annotated[str | None, Field(max_length=200, description="Optional name, informational only.")] = None,
+    ) -> dict[str, Any]:
+        actor, _ = await _begin(ctx)
+        from packages.blog import visual
+
+        problems: list[str] = []
+        if v.banned_terms([alt, caption, html, css]):
+            problems.append("Do not name AI vendors or models in a visual, its alt text or caption.")
+        prepared, more, media_urls = visual.prepare(
+            html=html, css=css, js=js, width=width, height=height, actor=actor, media_base=media.media_base()
+        )
+        problems += more
+        async with _db() as db:
+            if media_urls:
+                problems += await _missing_images(db, media_urls)
+            if problems or prepared is None:
+                await service.audit(
+                    db, actor, "create_visual", None, False,
+                    {"bytes": len(html) + len(css) + len(js), "w": width, "h": height, "problems": problems[:25]},
+                )
+        if problems or prepared is None:
+            raise ToolError("Refused (invalid_visual). Fix the following and call again:\n" + "\n".join(f"- {p}" for p in problems))
+        await visual.store(prepared)
+        async with _db() as db:
+            await service.record_visual(
+                db, visual_id=prepared.id, key=prepared.key, width=width, height=height, alt=alt.strip(),
+                caption=(caption or "").strip() or None, animated=animated, size=len(prepared.document), actor=actor,
+            )
+        return {
+            "id": prepared.id,
+            "markdown": visual.markdown_for(prepared.id, alt.strip()),
+            "preview_url": visual.public_url(prepared.id),
+            "width": width,
+            "height": height,
+            "animated": animated,
+        }
+
+    @mcp.tool(
+        annotations=WRITE,
+        description=(
+            "Draw the post's COVER as a real 1600x900 WebP image (used as cover_image_url, og:image and in search "
+            "results). Send html + css; the server lays it out without a browser, so only this CSS subset works: "
+            "flexbox (display:flex — every <div> with more than one child needs it), position relative/absolute, "
+            "sizes, padding/margin, linear/radial gradients, border, border-radius, box-shadow, text-shadow, opacity, "
+            "transform, font-family 'Noto Sans Thai' or 'IBM Plex Sans Thai' (weights 400-700), inline <svg> icons "
+            "from get_icons and <img> from the media store with width/height. NOT supported: CSS grid, "
+            "inline/inline-block/table layout, animation/transition, JavaScript, external URLs, @import/@font-face, "
+            "emoji. The root element should be 1600x900. A refusal names each spot to fix. Returns {url, width, height}."
+        ),
+    )
+    async def render_cover(
+        ctx: Context,
+        html: Annotated[str, Field(min_length=1, max_length=100 * 1024, description="The cover markup.")],
+        css: Annotated[str, Field(max_length=100 * 1024, description="Styles (selectors are inlined before drawing).")],
+        alt: Annotated[str, Field(min_length=3, max_length=v.ALT_MAX, description="What the cover shows, Thai — use it as cover_alt.")],
+    ) -> dict[str, Any]:
+        actor, gid = await _begin(ctx)
+        from packages.blog import cover
+
+        limit = ratelimit.Limit("blog_cover:grant", max(1, get_settings().blog_cover_calls_per_min), 60)
+        try:
+            await ratelimit.enforce([(limit, f"grant:{gid}")])
+        except HTTPException:
+            raise ToolError(f"Cover limit reached ({limit.max_hits} per minute). Wait a minute and retry.") from None
+        detail: dict[str, Any] = {"bytes": len(html) + len(css)}
+        try:
+            if v.banned_terms([alt, html]):
+                raise cover.CoverError("Do not name AI vendors or models on the cover or in its alt text.")
+            checked = cover.check(html, css)
+            async with _db() as db:
+                missing = await _missing_images(db, checked.media_urls)
+            if missing:
+                raise cover.CoverError(missing)
+            png = await cover.draw(checked)
+            body, w, h = cover.to_webp(png)
+        except cover.CoverError as exc:
+            async with _db() as db:
+                await service.audit(db, actor, "render_cover", None, False, {**detail, "refused": exc.code, "problems": exc.problems[:25]})
+            raise ToolError(f"Refused ({exc.code}). Fix the following and call again:\n" + "\n".join(f"- {p}" for p in exc.problems)) from None
+        stored = await media.store_bytes(body, "webp", width=w, height=h)
+        async with _db() as db:
+            await service.record_image(db, stored, alt.strip(), actor, origin="render_cover")
+        return {"url": stored.url, "width": w, "height": h, "alt": alt.strip()}
+
+    @mcp.tool(
+        annotations=READ,
+        description=(
+            "The owner's media library: real screenshots, demo videos (MP4), logos and PDF files, with alt text, "
+            "description and tags. Use images/videos in content_md as `![alt](url)` (a video plays muted and looped "
+            "with its poster), PDFs as links `[text](url)`, images inside create_visual or render_cover, or an image "
+            "as the cover. Filter by kind (screenshot | demo | logo | file) and/or tag."
+        ),
+    )
+    async def list_media(
+        ctx: Context,
+        kind: Annotated[
+            Literal["screenshot", "demo", "logo", "file"] | None, Field(description="Only this kind; omit for all.")
+        ] = None,
+        tag: Annotated[str | None, Field(max_length=40, description="Only items with this tag.")] = None,
+    ) -> dict[str, Any]:
+        await _begin(ctx)
+        from packages.blog import library
+
+        async with _db() as db:
+            rows, total = await library.list_items(db, category=kind, tag=tag, limit=200)
+            return {"items": [library.item_out(r) for r in rows], "total": total}
+
+    @mcp.tool(
+        annotations=READ,
+        description=(
+            "Lucide icons as inline <svg> elements to paste into create_visual or render_cover html (icon fonts and "
+            "<i data-lucide> do not work). Give exact names (see https://lucide.dev/icons), e.g. ['scissors', "
+            "'captions', 'clapperboard']; unknown names come back with close matches. Size and colour are set here "
+            "and can be changed on the pasted <svg> (width/height, stroke)."
+        ),
+    )
+    async def get_icons(
+        ctx: Context,
+        names: Annotated[list[Annotated[str, Field(max_length=60)]], Field(min_length=1, max_length=20, description="Icon names.")],
+        size: Annotated[int, Field(ge=8, le=512, description="Pixel size.")] = 48,
+        color: Annotated[str, Field(pattern=r"^#[0-9a-fA-F]{6}$", description="Stroke colour, #rrggbb.")] = "#b68235",
+        stroke: Annotated[float, Field(ge=0.5, le=4, description="Stroke width.")] = 2,
+    ) -> dict[str, Any]:
+        await _begin(ctx)
+        from packages.blog import kit
+
+        icons: dict[str, str] = {}
+        unknown: dict[str, list[str]] = {}
+        for raw in names:
+            name = raw.strip().lower()
+            svg = kit.icon_svg(name, size=size, color=color, stroke=stroke)
+            if svg is None:
+                unknown[name] = kit.icon_search(name.split("-")[0], limit=8)
+            else:
+                icons[name] = svg
+        return {"icons": icons, "unknown": unknown, "set": kit.icon_set()}
+
+    @mcp.tool(
+        annotations=WRITE,
+        description=(
+            "Link a content-plan topic (get_site_info content_plan[].id) to the post that covers it, marking the "
+            "topic done. Call it after create_post for the topic you wrote."
+        ),
+    )
+    async def mark_topic_done(
+        ctx: Context,
+        topic_id: Annotated[int, Field(ge=1, description="content_plan[].id")],
+        slug: Slug,
+    ) -> dict[str, Any]:
+        actor, _ = await _begin(ctx)
+        from packages.blog import brief
+
+        try:
+            async with _db() as db:
+                item = await brief.mark_done(db, topic_id, slug, actor)
+                return {"topic": item, "message": "Marked done."}
+        except service.BlogError as exc:
+            raise _fail(exc) from None
 
     @mcp.tool(annotations=READ, description="The fixed set of categories (slug, name, description). New ones cannot be created.")
     async def list_categories(ctx: Context) -> dict[str, Any]:
@@ -325,7 +544,8 @@ def build_server() -> MCPServer:
 #: The tool names — tests pin this list (and that no delete exists).
 TOOL_NAMES = (
     "get_site_info", "list_posts", "get_post", "create_post", "update_post", "publish_post",
-    "unpublish_post", "upload_image", "list_categories", "list_tags",
+    "unpublish_post", "upload_image", "create_visual", "render_cover", "list_media", "get_icons",
+    "mark_topic_done", "list_categories", "list_tags",
 )
 
 

@@ -24,7 +24,7 @@ import { BLOG_TRAIL, postJsonLd } from "@/lib/blog-seo";
 import { formatThaiDate } from "@/lib/format";
 import { GUIDE_DOCS, GUIDE_ORDER } from "@/lib/guide";
 import { PAGES } from "@/lib/site";
-import { renderHast } from "./ArticleBody";
+import { mediaIndex, renderHast } from "./ArticleBody";
 import { PostCard } from "./PostCard";
 import { PostCover } from "./PostCover";
 import "../../styles/pages/article.css";
@@ -47,6 +47,7 @@ function guideLink(path: string): { path: string; label: string; note: string } 
  */
 export function BlogArticle({ post }: { post: BlogPost }) {
   const parts = articleParts(post.contentMd);
+  const media = mediaIndex(post.media);
   const trail = [
     ...BLOG_TRAIL,
     { name: post.category.name, path: categoryPath(post.category.slug) },
@@ -113,7 +114,7 @@ export function BlogArticle({ post }: { post: BlogPost }) {
         <article className="article blog-body">
           {parts.intro.length ? (
             <div className="article__section blog-intro">
-              <div className="prose blog-prose">{renderHast(parts.intro)}</div>
+              <div className="prose blog-prose">{renderHast(parts.intro, media)}</div>
             </div>
           ) : null}
 
@@ -125,7 +126,7 @@ export function BlogArticle({ post }: { post: BlogPost }) {
               <h2 id={`${section.id}-title`} className="article__h2">
                 {renderHast(section.heading.children)}
               </h2>
-              <div className="prose blog-prose">{renderHast(section.children)}</div>
+              <div className="prose blog-prose">{renderHast(section.children, media)}</div>
             </section>
           ))}
 

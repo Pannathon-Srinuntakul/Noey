@@ -29,6 +29,9 @@ FAQ_QUESTION_MAX = 200
 FAQ_ANSWER_MAX = 1000
 CONTENT_MAX_CHARS = 60_000
 MIN_INTERNAL_LINKS = 2
+#: Pictures in the body: images, library videos and HTML visuals together.
+MIN_BODY_MEDIA = 2
+MAX_ANIMATED_VISUALS = 3
 
 #: Thai prose reads at roughly 200 words a minute once segmented.
 WORDS_PER_MINUTE = 200
@@ -62,6 +65,10 @@ _H1_ATX_RE = re.compile(r"^ {0,3}#(?!#)\s", re.MULTILINE)
 _SETEXT_H1_RE = re.compile(r"^\S[^\n]*\n {0,3}=+[ \t]*$", re.MULTILINE)
 _HEADING_RE = re.compile(r"^ {0,3}(#{2,6})\s+\S", re.MULTILINE)
 _BAD_SCHEMES = ("javascript:", "data:", "vbscript:", "file:")
+#: An HTML visual, alone on its line: `::visual[alt text](<32-hex id>)`.
+VISUAL_RE = re.compile(r"^ {0,3}::visual\[([^\]\n]*)\]\(([^)\s]*)\)[ \t]*$", re.MULTILINE)
+_VISUAL_ANY_RE = re.compile(r"::visual\b")
+VISUAL_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 
 
 def _strip_code(md: str) -> str:
@@ -119,6 +126,7 @@ def word_count(markdown: str) -> int:
     """Words in the readable text: code, URLs and Markdown punctuation dropped,
     Thai segmented with pythainlp's newmm dictionary tokenizer."""
     text = _strip_code(markdown)
+    text = VISUAL_RE.sub(" ", text)
     text = _IMAGE_RE.sub(" ", text)
     text = _LINK_RE.sub(lambda m: f" {m.group(1)} ", text)
     text = _BARE_URL_RE.sub(" ", text)
@@ -141,6 +149,24 @@ def is_internal_link(url: str) -> bool:
 def media_url_ok(url: str, media_base: str) -> bool:
     base = media_base.rstrip("/") + "/"
     return bool(base.strip("/")) and url.startswith(base) and ".." not in url[len(base):]
+
+
+def body_media(markdown: str) -> list[tuple[str, str, str]]:
+    """The pictures of a body in reading order: (type, alt, ref) where type is
+    `image` (an image or a video — ref is the URL) or `visual` (ref is the id).
+    Code blocks are ignored."""
+    prose = _strip_code(markdown)
+    found: list[tuple[int, str, str, str]] = []
+    for m in _IMAGE_RE.finditer(prose):
+        found.append((m.start(), "image", m.group(1), m.group(2)))
+    for m in VISUAL_RE.finditer(prose):
+        found.append((m.start(), "visual", m.group(1), m.group(2)))
+    return [(t, alt, ref) for _, t, alt, ref in sorted(found)]
+
+
+def media_links(markdown: str, media_base: str) -> list[str]:
+    """Plain links into the media store (a PDF download, say)."""
+    return [u for _, u in _LINK_RE.findall(_strip_code(markdown)) if media_url_ok(u, media_base)]
 
 
 def content_problems(
@@ -174,11 +200,25 @@ def content_problems(
         problems.append("content_md has no `##` section headings — structure the article with `##` and `###`.")
     if _REF_IMAGE_RE.search(prose):
         problems.append("Reference-style images (`![alt][ref]`) are not allowed — use `![alt](url)` inline.")
+    standalone = {m.start() + (len(m.group(0)) - len(m.group(0).lstrip(" "))) for m in VISUAL_RE.finditer(prose)}
+    if any(m.start() not in standalone for m in _VISUAL_ANY_RE.finditer(prose)):
+        problems.append(
+            "A `::visual` must stand alone on its own line, exactly as create_visual returned it: "
+            "`::visual[alt text](id)`."
+        )
+    for alt, ref in VISUAL_RE.findall(prose):
+        if not VISUAL_ID_RE.match(ref):
+            problems.append(f"`::visual[…]({ref[:40]})` — the id must be the 32-character id create_visual returned.")
+        if not alt.strip():
+            problems.append(f"`::visual[]({ref[:40]})` has no alt text — write what the visual shows inside the brackets.")
     for alt, url in _IMAGE_RE.findall(prose):
+        if url.lower().split("?")[0].endswith(".pdf"):
+            problems.append(f"`{url[:120]}` is a PDF — link to it as `[text](url)`, not as an image.")
         if not media_url_ok(url, media_base):
             problems.append(
-                f"Image `{url[:120]}` is not from the blog media store — upload it with `upload_image` "
-                f"and use the returned url (it starts with {media_base.rstrip('/')}/)."
+                f"Image `{url[:120]}` is not from the blog media store — use an image or video from `list_media` "
+                f"(or a small `upload_image` picture); its url starts with {media_base.rstrip('/')}/. For a drawn "
+                "picture use `create_visual`."
             )
         if not alt.strip():
             problems.append(f"Image `{url[:120]}` has no alt text — write `![what the image shows](url)`.")

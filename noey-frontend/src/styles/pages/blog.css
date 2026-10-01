@@ -1095,6 +1095,57 @@
   color: var(--ink-3);
 }
 
+/* A library clip (BlogVideo): the image frame, its own shape before it loads. */
+.blog-video__clip {
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  background: var(--well);
+}
+
+/* An HTML visual (BlogVisual): looks and sizes like the post's pictures — the
+   same frame and corners, a pale brand ground while it loads, a short fade
+   when it has drawn, no iframe border. The figure's aspect-ratio (inline,
+   from the designed canvas) reserves the space before anything loads; the
+   caption, when there is one, sits under that box. */
+.visual {
+  position: relative;
+  margin: 1.7em 0;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--color-accent-100) 70%, var(--well));
+}
+
+/* The frame's own corners (the figure does not clip: a caption must be free
+   to grow the figure below the aspect-ratio box). */
+.visual iframe {
+  border-radius: 11px;
+  transition: opacity 0.35s ease;
+}
+
+.visual:has(figcaption) iframe {
+  border-radius: 11px 11px 0 0;
+}
+
+.visual.is-loading iframe {
+  opacity: 0;
+}
+
+.visual figcaption {
+  padding: 8px 12px 10px;
+  border-radius: 0 0 11px 11px;
+  background: var(--bg);
+  border-top: 1px solid var(--line);
+  font-size: var(--fs-13);
+  font-weight: 400;
+  color: var(--ink-3);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .visual iframe {
+    transition: none;
+  }
+}
+
 .blog-inline-img .blog-figure__img {
   display: inline-block;
   width: auto;

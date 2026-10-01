@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from packages.blog import validation as v
 
 _JSON = pathlib.Path(__file__).with_name("site_info.json")
+_BRAND_JSON = pathlib.Path(__file__).with_name("brand.json")
 
 AUDIENCE = (
     "ครีเอเตอร์และแม่ค้าออนไลน์ชาวไทยที่ถ่ายคลิปเองลงเอง โดยเฉพาะครีเอเตอร์ TikTok Affiliate "
@@ -51,7 +52,21 @@ WRITING_RULES: tuple[str, ...] = (
         f"Body length: at least {{min_words}} words. meta_title <= {v.META_TITLE_MAX} chars, meta_description <= "
         f"{v.META_DESCRIPTION_MAX}, excerpt <= {v.EXCERPT_MAX}, slug lowercase a-z0-9- <= {v.SLUG_MAX}."
     ),
-    "Images: only via `upload_image` (PNG/JPEG/WebP, alt text required); never hotlink other sites.",
+    (
+        "Pictures (required): a cover made with `render_cover` (or chosen from `list_media`) plus at least 2 pictures in "
+        "the body, each with alt text — HTML visuals from `create_visual` (paste the returned `::visual[alt](id)` on its "
+        "own line) and/or real screenshots and demo videos from `list_media` (`![alt](url)`). At most 3 animated visuals "
+        "per post. Never hotlink other sites; `upload_image` is only for small extra images."
+    ),
+    (
+        "Draw visuals in the brand (see `brand`): its colours and fonts, a fixed canvas (e.g. 1600×1000), no links, "
+        "no forms, nothing loaded from outside. Prefer real screenshots from `list_media` inside a visual over "
+        "imitations of the product UI, and never invent numbers in a chart."
+    ),
+    (
+        "Follow the owner's `brief`, and when `content_plan` lists open topics write the FIRST one (unless it is already "
+        "covered); after create_post call `mark_topic_done(topic_id, slug)`."
+    ),
 )
 
 
@@ -77,7 +92,66 @@ async def live_prices(db: AsyncSession) -> dict[str, Any]:
     }
 
 
+@lru_cache(maxsize=1)
+def _brand_tokens() -> dict[str, Any]:
+    tokens: dict[str, Any] = json.loads(_BRAND_JSON.read_text(encoding="utf-8"))
+    return tokens
+
+
+async def brand(db: AsyncSession) -> dict[str, Any]:
+    """What a writer needs to draw on-brand covers and visuals."""
+    from packages.blog import cover, kit, visual
+    from packages.blog.logo import logo_asset
+    from packages.core.settings import get_settings
+
+    tokens = _brand_tokens()
+    logo = await logo_asset(db)
+    return {
+        "name": "Noey Studio",
+        "colors": {
+            "primary": tokens["primary"],
+            "secondary": tokens["secondary"],
+            "primary_on_dark": tokens["primary_on_dark"],
+            "night": tokens["night"],
+            "light_theme": tokens["colors"]["light"],
+            "dark_theme": tokens["colors"]["dark"],
+            "roles": tokens["roles"],
+        },
+        "fonts": kit.fonts_info(get_settings().blog_embed_origin),
+        "font_stack": kit.FONT_STACK,
+        "logo": logo,
+        "icons": {
+            "set": kit.icon_set(),
+            "how": (
+                "Icons are inline SVG: call get_icons(['scissors', 'captions']) and paste the returned <svg> into the "
+                "html (visuals and covers). Set its size with width/height and its colour with the stroke attribute. "
+                "Browse names at https://lucide.dev/icons. `<i data-lucide>` and icon fonts do not work."
+            ),
+        },
+        "visual": {
+            "recommended_sizes": visual.RECOMMENDED,
+            "rules": [
+                "width/height is the designed canvas in CSS px; the page scales it like an image and keeps that aspect ratio.",
+                "html + css + js together <= 200 KB. No <iframe>, <form>, <a>, <input>, <object>, <embed>, <link>, <meta>, <base>, @import or @font-face.",
+                "Images: only media-store urls (list_media) or data:image URLs. Nothing else loads; network access is blocked.",
+                "Fonts: font-family 'Noto Sans Thai' (default) or 'IBM Plex Sans Thai' — already loaded.",
+                "Animation: CSS @keyframes or requestAnimationFrame (set animated: true). The page pauses it off-screen and for reduced-motion readers. Make loops seamless.",
+                "It is a picture: no hover, clicks or scrolling; text cannot be selected. Put links in the article text.",
+            ],
+            "markdown": "::visual[alt](id) on its own line",
+        },
+        "cover": {
+            "size": {"width": cover.WIDTH, "height": cover.HEIGHT},
+            "supported_css": list(cover.SUPPORTED_CSS),
+            "unsupported": list(cover.UNSUPPORTED_CSS),
+        },
+        "examples": {"visual": visual.example(), "cover": cover.example()},
+    }
+
+
 async def site_info(db: AsyncSession, *, min_words: int) -> dict[str, Any]:
+    from packages.blog import brief as brief_mod
+
     data = _static()
     site = data["product"]["site_url"].rstrip("/")
     return {
@@ -96,4 +170,7 @@ async def site_info(db: AsyncSession, *, min_words: int) -> dict[str, Any]:
         "pages": data["pages"],
         "guides": data["guides"],
         "writing_rules": [r.replace("{min_words}", str(min_words)) for r in WRITING_RULES],
+        "brand": await brand(db),
+        "brief": await brief_mod.get_brief(db),
+        "content_plan": await brief_mod.plan(db, unwritten_only=True),
     }

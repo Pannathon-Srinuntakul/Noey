@@ -6,6 +6,20 @@
 # Bump deliberately: `docker pull python:3.12-slim` (or the Docker Hub tags
 # API) gives the new digest — the manifest-list digest, so it resolves on
 # amd64 and arm64 alike. Digest fetched 2026-09-27.
+#
+# The blog cover renderer (render_cover: satori + resvg, backend/cover_renderer/,
+# docs/blog-mcp.md) needs a `node` binary and its node_modules — nothing else
+# from Node. They are prepared in a throwaway stage and only the binary and
+# the installed modules are copied into the runtime image: no npm, no apt
+# nodejs, no build tools. Node is pinned by digest like the Python base
+# (fetched 2026-10-02, node v22.23.3).
+FROM node:22-bookworm-slim@sha256:43ac6c60b8f89723f746e8a92ce91abd5017e627ce1ddfe4238355d3a30b772c AS cover-renderer
+WORKDIR /cover
+COPY cover_renderer/package.json cover_renderer/package-lock.json ./
+# `npm ci` installs exactly the lockfile (integrity hashes checked); no
+# package here has an install script, and none may run one.
+RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund && npm cache clean --force
+
 FROM python:3.12-slim@sha256:f77ac9e44ae96ef2c90b8053ea08c31f8be030f824196b0ae4db6d462c84e51f
 
 WORKDIR /app
@@ -33,6 +47,16 @@ COPY packages ./packages
 COPY services ./services
 COPY scripts ./scripts
 RUN pip install --no-deps -e . && pip check
+
+# The cover renderer: the node binary (~120 MB uncompressed, statically
+# linked apart from glibc/libstdc++, which the slim base already has) and the
+# renderer's installed modules (~25 MB: satori, resvg's prebuilt linux binary,
+# juice). The API spawns ONE `node cover_renderer/worker.mjs` per process on
+# the first render_cover call and stops it when idle (packages/blog/cover.py).
+COPY --from=cover-renderer /usr/local/bin/node /usr/local/bin/node
+COPY --from=cover-renderer /cover/node_modules ./cover_renderer/node_modules
+COPY cover_renderer/package.json cover_renderer/worker.mjs ./cover_renderer/
+RUN node --version
 
 # Run as an unprivileged user. Everything above ran as root (apt, pip into
 # system site-packages); from here the process can read the code but write

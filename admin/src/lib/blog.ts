@@ -55,6 +55,21 @@ export interface PostFull {
   created_at: string | null;
   created_by: string;
   slug_locked: boolean;
+  media?: PostMedia[];
+}
+
+/** One body picture as the API lists it (PostFull.media). */
+export interface PostMedia {
+  type: "image" | "video" | "visual";
+  url?: string;
+  id?: string;
+  src?: string;
+  alt: string;
+  caption?: string | null;
+  width: number | null;
+  height: number | null;
+  animated?: boolean;
+  poster_url?: string | null;
 }
 
 export interface BlogSettings {
@@ -132,6 +147,13 @@ export const ACTION_LABEL: Record<string, string> = {
   publish_post: "AI เผยแพร่",
   unpublish_post: "AI ถอนบทความ",
   upload_image: "อัปโหลดรูป",
+  create_visual: "AI สร้างภาพประกอบ",
+  render_cover: "AI สร้างภาพปก",
+  mark_topic_done: "AI ปิดหัวข้อในแผน",
+  admin_media_upload: "อัปโหลดเข้าคลังสื่อ",
+  admin_media_update: "แก้ข้อมูลในคลังสื่อ",
+  admin_brief: "แก้ Writing brief",
+  admin_plan: "แก้ Content plan",
   admin_update: "แก้ในแผงผู้ดูแล",
   admin_publish: "เผยแพร่โดยเจ้าของ",
   admin_unpublish: "ถอนโดยเจ้าของ",
@@ -229,6 +251,130 @@ export function formatTags(tags: Named[]): string {
   return tags.map((t) => (t.name && t.name !== t.slug ? `${t.slug}:${t.name}` : t.slug)).join(", ");
 }
 
+// ── media library (คลังสื่อ) ─────────────────────────────────────────────────
+
+export type MediaKind = "screenshot" | "demo" | "logo" | "file";
+
+export interface MediaItem {
+  id: number;
+  url: string;
+  type: "image" | "video" | "file";
+  kind: MediaKind | null;
+  alt: string;
+  description: string;
+  tags: string[];
+  width: number | null;
+  height: number | null;
+  poster_url?: string | null;
+  duration_sec?: number;
+  markdown: string;
+  origin: string;
+  bytes: number;
+  filename: string | null;
+  archived: boolean;
+  created_at: string | null;
+}
+
+export const MEDIA_KIND_LABEL: Record<MediaKind, string> = {
+  screenshot: "ภาพหน้าจอ",
+  demo: "คลิปสาธิต (MP4)",
+  logo: "โลโก้",
+  file: "ไฟล์ PDF",
+};
+
+/** What each kind accepts (the backend checks the bytes, this is the picker's hint). */
+export const MEDIA_ACCEPT: Record<MediaKind, string> = {
+  screenshot: "image/png,image/jpeg,image/webp",
+  logo: "image/png,image/jpeg,image/webp",
+  demo: "video/mp4,video/quicktime",
+  file: "application/pdf",
+};
+
+export const MEDIA_MAX_MB: Record<MediaKind, number> = { screenshot: 10, logo: 10, demo: 40, file: 20 };
+
+export function validMediaKind(v: unknown): v is MediaKind | "" {
+  return v === "" || v === "screenshot" || v === "demo" || v === "logo" || v === "file";
+}
+
+/** Problems with an upload's text, in Thai. Empty = OK. */
+export function mediaTextProblems(alt: string, description: string): string[] {
+  const out: string[] = [];
+  if (alt.trim().length < 3) out.push("ใส่คำอธิบายรูป (alt) อย่างน้อย 3 ตัวอักษร");
+  if (alt.length > LIMITS.alt) out.push(`คำอธิบายรูปยาวได้ไม่เกิน ${LIMITS.alt} ตัวอักษร`);
+  if (description.length > 1000) out.push("คำอธิบายยาวได้ไม่เกิน 1000 ตัวอักษร");
+  return out;
+}
+
+/** "Editor, timeline" → ["editor", "timeline"] (at most 12, each ≤ 40). */
+export function parseMediaTags(raw: string): string[] {
+  const out: string[] = [];
+  for (const part of raw.split(",")) {
+    const tag = part.trim().toLowerCase().replace(/\s+/g, " ").slice(0, 40);
+    if (tag && !out.includes(tag)) out.push(tag);
+  }
+  return out.slice(0, 12);
+}
+
+export function fileSize(bytes: number): string {
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
+
+// ── writing brief + content plan ─────────────────────────────────────────────
+
+export interface Brief {
+  tone: string;
+  focus_topics: string;
+  avoid_topics: string;
+  length: string;
+  media: string;
+  monthly_note: string;
+  updated_at: string | null;
+}
+
+export const BRIEF_FIELDS: Array<{ key: keyof Omit<Brief, "updated_at">; label: string; hint: string; max: number; rows: number }> = [
+  { key: "tone", label: "โทนการเขียน", hint: "เช่น เป็นกันเอง ตรงไปตรงมา ไม่ขายของเกินจริง", max: 1000, rows: 2 },
+  { key: "focus_topics", label: "หัวข้อที่อยากเน้น", hint: "หนึ่งบรรทัดต่อหนึ่งเรื่อง", max: 2000, rows: 3 },
+  { key: "avoid_topics", label: "หัวข้อที่ห้ามเขียน", hint: "หนึ่งบรรทัดต่อหนึ่งเรื่อง", max: 2000, rows: 3 },
+  { key: "length", label: "ความยาว", hint: "เช่น 900–1,200 คำ", max: 500, rows: 1 },
+  { key: "media", label: "จำนวนภาพ", hint: "เช่น ภาพประกอบ 2–3 ชิ้น อย่างน้อย 1 ชิ้นเป็นภาพหน้าจอจริง", max: 500, rows: 1 },
+  { key: "monthly_note", label: "หมายเหตุประจำเดือน", hint: "เช่น เดือนนี้เน้นคลิปรีวิวสินค้า", max: 2000, rows: 2 },
+];
+
+export type PlanStatus = "planned" | "writing" | "done" | "skipped";
+
+export interface PlanItem {
+  id: number;
+  position: number;
+  topic: string;
+  notes: string;
+  status: PlanStatus;
+  post_slug: string | null;
+  done_at: string | null;
+  updated_at: string | null;
+}
+
+export const PLAN_STATUS_LABEL: Record<PlanStatus, string> = {
+  planned: "รอเขียน",
+  writing: "กำลังเขียน",
+  done: "เขียนแล้ว",
+  skipped: "ข้าม",
+};
+
+export function validPlanStatus(v: unknown): v is PlanStatus {
+  return v === "planned" || v === "writing" || v === "done" || v === "skipped";
+}
+
+/** The plan with item `id` moved one place up (-1) or down (+1); ids only. */
+export function moveInPlan(ids: number[], id: number, delta: -1 | 1): number[] {
+  const i = ids.indexOf(id);
+  const j = i + delta;
+  if (i < 0 || j < 0 || j >= ids.length) return ids;
+  const out = [...ids];
+  [out[i], out[j]] = [out[j], out[i]];
+  return out;
+}
+
 // ── Markdown preview ─────────────────────────────────────────────────────────
 
 export type Inline = { kind: "text"; text: string } | { kind: "strong"; text: string } | { kind: "code"; text: string } | { kind: "link"; text: string; href: string };
@@ -239,7 +385,10 @@ export type Block =
   | { kind: "ul" | "ol"; items: Inline[][] }
   | { kind: "quote"; inline: Inline[] }
   | { kind: "code"; text: string }
-  | { kind: "img"; alt: string; src: string };
+  | { kind: "img"; alt: string; src: string }
+  /** `::visual[alt](id)`: drawn on the site only (the embed origin frames for the site alone). */
+  | { kind: "visual"; alt: string; id: string }
+  | { kind: "video"; alt: string; src: string };
 
 /** Only http(s) and site-relative links/images ever become href/src. */
 export function safeHref(href: string): string | null {
@@ -299,11 +448,17 @@ export function parseMarkdown(md: string): Block[] {
       blocks.push({ kind, inline: parseInline(heading[2]) });
       continue;
     }
+    const visual = /^::visual\[([^\]]*)\]\(([0-9a-f]{32})\)$/.exec(trimmed);
+    if (visual) {
+      flush();
+      blocks.push({ kind: "visual", alt: visual[1], id: visual[2] });
+      continue;
+    }
     const image = /^!\[([^\]]*)\]\(([^)\s]+)\)$/.exec(trimmed);
     if (image) {
       flush();
       const src = safeHref(image[2]);
-      if (src) blocks.push({ kind: "img", alt: image[1], src });
+      if (src) blocks.push(/\.mp4$/i.test(src.split(/[?#]/)[0]) ? { kind: "video", alt: image[1], src } : { kind: "img", alt: image[1], src });
       continue;
     }
     if (/^[-*]\s+/.test(trimmed) || /^\d+\.\s+/.test(trimmed)) {

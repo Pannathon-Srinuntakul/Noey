@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { editProblems, formatTags, parseInline, parseMarkdown, parseTags, safeHref, validRequestId, validSlug, type PostEdit } from "./blog";
+import { editProblems, fileSize, formatTags, mediaTextProblems, moveInPlan, parseInline, parseMarkdown, parseMediaTags, parseTags, safeHref, type PostEdit, validMediaKind, validPlanStatus, validRequestId, validSlug } from "./blog";
 
 const edit = (over: Partial<PostEdit> = {}): PostEdit => ({
   title: "ชื่อบทความ",
@@ -68,5 +68,26 @@ describe("markdown preview", () => {
     });
     expect(blocks[2]).toMatchObject({ kind: "ul", items: [[{ kind: "text", text: "หนึ่ง" }], [{ kind: "text", text: "สอง" }]] });
     expect(blocks[5]).toEqual({ kind: "code", text: "<script>x</script>" });
+  });
+});
+
+describe("media library, plan and preview helpers", () => {
+  it("previews a visual and a clip without framing or playing anything", () => {
+    const id = "0123456789abcdef0123456789abcdef";
+    const blocks = parseMarkdown(`::visual[แผนภาพ](${id})\n\n![คลิป](https://api.noeystudio.com/blog/media/${"b".repeat(64)}.mp4)\n\n::visual[x](nope)`);
+    expect(blocks[0]).toEqual({ kind: "visual", alt: "แผนภาพ", id });
+    expect(blocks[1]).toMatchObject({ kind: "video", alt: "คลิป" });
+    expect(blocks[2].kind).toBe("p");
+  });
+
+  it("tags, text checks and plan moves", () => {
+    expect(parseMediaTags(" Editor, timeline ,editor,, ซับไทย ")).toEqual(["editor", "timeline", "ซับไทย"]);
+    expect(mediaTextProblems("ab", "")).toHaveLength(1);
+    expect(mediaTextProblems("ภาพหน้าจอ", "x".repeat(1001))).toHaveLength(1);
+    expect(moveInPlan([1, 2, 3], 2, -1)).toEqual([2, 1, 3]);
+    expect(moveInPlan([1, 2, 3], 3, 1)).toEqual([1, 2, 3]);
+    expect(validMediaKind("demo") && !validMediaKind("video")).toBe(true);
+    expect(validPlanStatus("skipped") && !validPlanStatus("deleted")).toBe(true);
+    expect(fileSize(1536)).toBe("2 KB");
   });
 });

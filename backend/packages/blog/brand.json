@@ -1,0 +1,60 @@
+{
+  "source": "noey-frontend/src/app/globals.css (palette) + src/app/icon.svg (mark)",
+  "roles": {
+    "bg": "page background",
+    "surface": "card / panel background",
+    "text": "body text",
+    "accent": "primary brand colour (buttons, highlights, the mark)",
+    "accent-2": "secondary brand colour",
+    "accent-100": "pale accent tint (chip background)",
+    "accent-200": "light accent tint",
+    "accent-300": "soft accent",
+    "accent-700": "deep accent (text on pale tints)",
+    "accent-800": "darkest accent",
+    "neutral-300": "light rule / border",
+    "neutral-600": "muted text",
+    "neutral-800": "strong neutral",
+    "success": "positive / done",
+    "danger": "warning / not supported"
+  },
+  "colors": {
+    "light": {
+      "bg": "#f3f2f2",
+      "surface": "#eae9e9",
+      "text": "#201f1d",
+      "accent": "#b68235",
+      "accent-2": "#ac803e",
+      "accent-100": "#fff3e4",
+      "accent-200": "#ffe3bf",
+      "accent-300": "#facb8d",
+      "accent-700": "#7d5411",
+      "accent-800": "#5a3b0a",
+      "neutral-300": "#d7d3d3",
+      "neutral-600": "#7d7979",
+      "neutral-800": "#444141",
+      "success": "#3f6b35",
+      "danger": "#9b2c1f"
+    },
+    "dark": {
+      "bg": "#171614",
+      "surface": "#201f1d",
+      "text": "#f3f2f2",
+      "accent": "#d9a441",
+      "accent-2": "#ac803e",
+      "accent-100": "#3a2e19",
+      "accent-200": "#4a3a1e",
+      "accent-300": "#ecd09a",
+      "accent-700": "#dcb05a",
+      "accent-800": "#f0c274",
+      "neutral-300": "#332f2b",
+      "neutral-600": "#948d82",
+      "neutral-800": "#d5d1ca",
+      "success": "#9fd08f",
+      "danger": "#f0a095"
+    }
+  },
+  "primary": "#b68235",
+  "secondary": "#ac803e",
+  "primary_on_dark": "#d9a441",
+  "night": "#171614"
+}

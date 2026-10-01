@@ -28,6 +28,7 @@ import {
   type PostSource,
   type PostStatus,
 } from "@/lib/blog";
+import { BlogPlanning } from "./BlogPlanning";
 import { MarkdownPreview } from "./MarkdownPreview";
 import { LOSS, OK, Seg, type ConfirmSpec } from "./ui";
 
@@ -186,7 +187,7 @@ function PostDrawer({
                 )}
                 <h1 style={{ fontSize: 24, fontWeight: 500, margin: "0 0 8px" }}>{post.title}</h1>
                 <p style={{ margin: "0 0 18px", color: "var(--color-neutral-700)" }}>{post.excerpt}</p>
-                <MarkdownPreview markdown={post.content_md} />
+                <MarkdownPreview markdown={post.content_md} media={post.media} />
                 {post.faq.length > 0 && (
                   <>
                     <h2 style={{ fontSize: 19, fontWeight: 500, margin: "22px 0 8px" }}>คำถามที่พบบ่อย</h2>
@@ -221,7 +222,7 @@ function PostDrawer({
                 </select>
                 <label style={label} htmlFor="b-tags">แท็ก (คั่นด้วยจุลภาค · slug:ชื่อ เช่น subtitles:ซับไทย)</label>
                 <input id="b-tags" className="input" value={tagsText} onChange={(e) => setTagsText(e.target.value)} style={{ fontFamily: "inherit" }} />
-                <label style={label} htmlFor="b-cover">รูปปก (URL จากคลังรูปของบล็อก)</label>
+                <label style={label} htmlFor="b-cover">รูปปก (URL ภาพปกที่ AI สร้าง หรือรูปจากคลังสื่อ)</label>
                 <input id="b-cover" className="input" value={draft.cover_image_url ?? ""} onChange={(e) => setField("cover_image_url", e.target.value || null)} style={{ fontFamily: "inherit" }} />
                 <label style={label} htmlFor="b-alt">คำอธิบายรูปปก</label>
                 <input id="b-alt" className="input" value={draft.cover_alt ?? ""} onChange={(e) => setField("cover_alt", e.target.value || null)} style={{ fontFamily: "inherit" }} />
@@ -376,6 +377,8 @@ export function BlogTab({
           </div>
         </div>
       )}
+
+      <BlogPlanning handle={handle} ask={ask} done={done} />
 
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 14 }}>
         <Seg

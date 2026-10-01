@@ -34,6 +34,19 @@ from tests.admin_helpers import (  # noqa: F401  (fixtures)
 post_args = bh.post_args
 
 
+def cover_example() -> dict[str, str]:
+    from packages.blog import cover
+
+    ex = cover.example()
+    return {"html": ex["html"], "css": ex["css"]}
+
+
+def visual_example() -> dict[str, object]:
+    from packages.blog import visual
+
+    return {k: val for k, val in visual.example().items() if k != "js" or val}
+
+
 @pytest.fixture(autouse=True)
 async def _clean_blog():
     yield
@@ -312,15 +325,26 @@ async def test_end_to_end_create_publish_public_api_and_revalidate(mail, monkeyp
         info = await mcp.call_tool("get_site_info", {})
         site = info.structured_content
         assert site["product"]["name"] == "Noey Studio" and site["writing_rules"] and site["guides"]
+        assert site["brand"]["colors"]["primary"] == "#b68235" and "brief" in site and "content_plan" in site
         png = io.BytesIO()
         Image.new("RGB", (2000, 1000), (200, 120, 40)).save(png, format="PNG")
         up = await mcp.call_tool("upload_image", {
-            "image_base64": base64.b64encode(png.getvalue()).decode(), "filename": "cover.png", "alt": "ภาพปกบทความ",
+            "image_base64": base64.b64encode(png.getvalue()).decode(), "filename": "small.png", "alt": "ภาพประกอบเล็ก",
         })
         assert not up.is_error, _text(up)
-        cover = up.structured_content
-        assert cover["width"] == 1600 and cover["height"] == 800 and cover["url"].startswith("http://localhost:8000/blog/media/")
-        created = await mcp.call_tool("create_post", post_args(slug, cover_image_url=cover["url"], cover_alt="ภาพปก"))
+        small = up.structured_content
+        assert small["width"] == 1600 and small["height"] == 800 and small["url"].startswith("http://localhost:8000/blog/media/")
+        cover = (await mcp.call_tool("render_cover", {**cover_example(), "alt": "ภาพปกบทความ"}))
+        assert not cover.is_error, _text(cover)
+        cover = cover.structured_content
+        assert (cover["width"], cover["height"]) == (1600, 900)
+        vis = await mcp.call_tool("create_visual", {**visual_example()})
+        assert not vis.is_error, _text(vis)
+        markdown = vis.structured_content["markdown"]
+        body = bh.article() + f"\n\n## ภาพประกอบ\n\n![ภาพประกอบเล็ก]({small['url']})\n\n{markdown}\n"
+        created = await mcp.call_tool(
+            "create_post", post_args(slug, content_md=body, cover_image_url=cover["url"], cover_alt="ภาพปก")
+        )
         assert not created.is_error, _text(created)
         assert created.structured_content["status"] == "draft"
         listed = await mcp.call_tool("list_posts", {})
@@ -337,6 +361,8 @@ async def test_end_to_end_create_publish_public_api_and_revalidate(mail, monkeyp
     assert one.status_code == 200 and one.headers["cache-control"] == "public, max-age=60"
     body = one.json()
     assert body["cover_width"] == 1600 and body["source"] == "ai" and body["reading_minutes"] >= 3
+    assert [m["type"] for m in body["media"]] == ["image", "visual"]
+    assert body["media"][1]["src"].endswith(f"/visual/{body['media'][1]['id']}") and body["media"][1]["width"] == 1600
     assert body["category"] == {"slug": "editing-tips", "name": "เทคนิคตัดต่อ"}
     assert slug in [s["slug"] for s in slugs.json()]
     assert "content_md" not in lst.json()["items"][0]
@@ -345,7 +371,10 @@ async def test_end_to_end_create_publish_public_api_and_revalidate(mail, monkeyp
     assert calls[-1]["url"] == "http://site.test/api/revalidate-blog"
     # Every write is in the audit log.
     actions = {r[0] for r in await db("SELECT action FROM core.blog_audit_log WHERE actor = :a", a=f"mcp:{t['client_id']}")}
-    assert {"oauth_register", "oauth_authorize", "oauth_token", "upload_image", "create_post", "publish_post"} <= actions
+    assert {
+        "oauth_register", "oauth_authorize", "oauth_token", "upload_image", "render_cover", "create_visual", "create_post",
+        "publish_post",
+    } <= actions
 
 
 async def test_tool_refusals_tell_the_writer_what_to_fix(mail):
@@ -368,7 +397,8 @@ async def test_mcp_cannot_touch_a_human_post_and_slug_locks(mail):
         admin = await _admin(c, mail)
         t = await bh.connect(c, admin)
     async with bh.mcp_client(t["access_token"]) as mcp:
-        assert not (await mcp.call_tool("create_post", post_args(slug))).is_error
+        args = await bh.full_post_args(slug, f"mcp:{t['client_id']}")
+        assert not (await mcp.call_tool("create_post", args)).is_error
         assert not (await mcp.call_tool("publish_post", {"slug": slug})).is_error
         rename = await mcp.call_tool("update_post", {"slug": slug, "changes": {"new_slug": f"{slug}-2"}})
         assert rename.is_error and "locked" in _text(rename)

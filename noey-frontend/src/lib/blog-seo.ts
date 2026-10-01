@@ -27,6 +27,7 @@ import {
   type Crumb,
   type JsonLdImage,
   type JsonLdNode,
+  type JsonLdVideo,
 } from "./jsonld";
 import { LOCALE, PAGES, SITE_NAME, absoluteUrl } from "./site";
 
@@ -140,6 +141,36 @@ function postImage(post: BlogPostSummary): JsonLdImage {
     : { url: absoluteUrl(postShareImagePath(post.slug)), width: 1200, height: 630 };
 }
 
+/**
+ * The body's real pictures for BlogPosting: media-library images join the
+ * cover in `image`; clips become VideoObjects (a clip without a poster has no
+ * thumbnail and is left out — Google requires one). HTML visuals are not
+ * images and are not listed.
+ */
+export function bodyMediaJsonLd(post: BlogPost): { bodyImages?: JsonLdImage[]; videos?: JsonLdVideo[] } {
+  const seen = new Set(post.cover ? [post.cover.url] : []);
+  const bodyImages: JsonLdImage[] = [];
+  const videos: JsonLdVideo[] = [];
+  for (const item of post.media) {
+    if (item.type === "image" && !seen.has(item.url)) {
+      seen.add(item.url);
+      bodyImages.push({ url: item.url, width: item.width, height: item.height });
+    } else if (item.type === "video" && item.posterUrl) {
+      videos.push({
+        name: item.alt || post.title,
+        description: item.alt || post.metaDescription || post.excerpt,
+        contentUrl: item.url,
+        thumbnailUrl: item.posterUrl,
+        uploadDate: post.publishedAt,
+        width: item.width,
+        height: item.height,
+        duration: item.durationSec,
+      });
+    }
+  }
+  return { ...(bodyImages.length ? { bodyImages } : {}), ...(videos.length ? { videos } : {}) };
+}
+
 /** JSON-LD of a post: WebPage + BlogPosting (+ FAQPage) + BreadcrumbList + the Organization they name. */
 export function postJsonLd(post: BlogPost, trail: readonly Crumb[]): JsonLdNode {
   const path = blogPostPath(post.slug);
@@ -154,6 +185,7 @@ export function postJsonLd(post: BlogPost, trail: readonly Crumb[]): JsonLdNode 
       datePublished: post.publishedAt,
       dateModified: post.updatedAt,
       image: postImage(post),
+      ...bodyMediaJsonLd(post),
       section: post.category.name,
       keywords: post.tags.map((tag) => tag.name),
       blog: { id: BLOG_ID, name: `${BLOG_COPY.label} · ${SITE_NAME}`, path: BLOG_PATH },

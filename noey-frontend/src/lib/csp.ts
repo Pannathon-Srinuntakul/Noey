@@ -53,6 +53,7 @@ function policy(
   sentryOrigin: string | null,
   extraConnect: readonly string[] = [],
   extraImg: readonly string[] = [],
+  extraFrame: readonly string[] = [],
 ): string {
   const connect = ["'self'", ...(sentryOrigin ? [sentryOrigin] : []), ...extraConnect].join(" ");
   return [
@@ -60,10 +61,11 @@ function policy(
     scriptSrc,
     "style-src 'self' 'unsafe-inline'",
     ["img-src 'self' data: blob: https:", ...extraImg].join(" "),
-    "media-src 'self' blob: https:",
+    // A local (http) media base also serves the library's clips.
+    ["media-src 'self' blob: https:", ...extraImg].join(" "),
     "font-src 'self' data:",
     `connect-src ${connect}`,
-    `frame-src ${TURNSTILE_ORIGIN}`,
+    [`frame-src ${TURNSTILE_ORIGIN}`, ...extraFrame].join(" "),
     "form-action 'self' https://checkout.stripe.com https://billing.stripe.com https://accounts.google.com",
     "frame-ancestors 'none'",
     "base-uri 'self'",
@@ -75,13 +77,24 @@ function policy(
  * `blogMediaOrigin`: the blog's image origin when it is NOT https (a local
  * test backend, lib/blog-media.ts) — the one origin `img-src https:` does not
  * already cover. Production's https media base adds nothing.
+ *
+ * `blogEmbedOrigin`: where in-article visuals are framed from
+ * (https://embed.noeystudio.com; an http one only behind
+ * BLOG_EMBED_ALLOW_HTTP=1 for local testing) — the one origin `frame-src`
+ * gains besides Turnstile. Only the public (static) policy carries it: the
+ * blog is never under /account or /checkout.
  */
-export function staticContentSecurityPolicy(sentryOrigin: string | null, blogMediaOrigin: string | null = null): string {
+export function staticContentSecurityPolicy(
+  sentryOrigin: string | null,
+  blogMediaOrigin: string | null = null,
+  blogEmbedOrigin: string | null = null,
+): string {
   return policy(
     `script-src 'self' 'unsafe-inline' ${TURNSTILE_ORIGIN} ${ANALYTICS_SCRIPT_ORIGIN}`,
     sentryOrigin,
     [ANALYTICS_REPORT_ORIGIN],
     blogMediaOrigin ? [blogMediaOrigin] : [],
+    blogEmbedOrigin ? [blogEmbedOrigin] : [],
   );
 }
 

@@ -48,7 +48,7 @@ async def _session():  # type: ignore[no-untyped-def]
 
 async def _create(slug: str, **over: object) -> None:
     async with await _session() as s:
-        await service.create_post(s, NewPost.model_validate(bh.post_args(slug, **over)), ACTOR)
+        await service.create_post(s, NewPost.model_validate(await bh.full_post_args(slug, ACTOR, **over)), ACTOR)
         await s.commit()
 
 
@@ -177,7 +177,7 @@ async def test_public_api_contract_and_visibility():
     contract_keys = {
         "slug", "title", "meta_title", "meta_description", "excerpt", "content_md", "cover_image_url", "cover_alt",
         "cover_width", "cover_height", "category", "tags", "faq", "author", "source", "reading_minutes",
-        "published_at", "updated_at", "related",
+        "published_at", "updated_at", "related", "media",
     }
     assert set(post) == contract_keys
     assert post["author"] == "Noey Studio" and post["published_at"].endswith("Z")

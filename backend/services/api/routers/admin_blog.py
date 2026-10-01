@@ -18,16 +18,22 @@ POST /admin/blog/connectors/{grant_id}/revoke
 GET  /admin/blog/oauth/requests/{request_id}             the consent screen's data
 POST /admin/blog/oauth/requests/{request_id}/approve     → {redirect_to}
 POST /admin/blog/oauth/requests/{request_id}/deny        → {redirect_to}
+GET/POST /admin/blog/media                   the media library (คลังสื่อ): list / upload (multipart)
+PATCH /admin/blog/media/{item_id}            alt, description, tags, archive
+GET/PUT /admin/blog/brief                    the writing brief
+GET/POST /admin/blog/plan                    the content plan / add a topic
+PUT  /admin/blog/plan/order                  reorder (every id, in the new order)
+PATCH/DELETE /admin/blog/plan/{item_id}      edit (topic, notes, status, post) / remove a topic
 """
 
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from packages.blog import oauth, service
+from packages.blog import brief, library, oauth, service
 from packages.blog.schemas import PostChanges
 from packages.db.models.blog import BlogAuditLog
 from services.api.admin_deps import CurrentAdmin, admin_ip_allowed
@@ -177,3 +183,158 @@ async def deny(request_id: str, admin: CurrentAdmin, db: CoreSession) -> dict[st
     except oauth.ConsentError as exc:
         raise HTTPException(status_code=exc.status, detail=exc.detail) from None
     return {"redirect_to": target}
+
+
+# ── media library (คลังสื่อ) ────────────────────────────────────────────────
+
+
+class MediaChanges(BaseModel):
+    alt: str | None = Field(default=None, max_length=300)
+    description: str | None = Field(default=None, max_length=library.DESCRIPTION_MAX)
+    tags: list[Annotated[str, Field(max_length=library.TAG_MAX)]] | None = Field(default=None, max_length=library.MAX_TAGS)
+    archived: bool | None = None
+
+
+@router.get("/media")
+async def media_list(
+    admin: CurrentAdmin,
+    db: CoreSession,
+    kind: Literal["screenshot", "demo", "logo", "file"] | None = None,
+    tag: Annotated[str | None, Query(max_length=40)] = None,
+    archived: bool = False,
+    limit: Annotated[int, Query(ge=1, le=200)] = 100,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> dict[str, Any]:
+    rows, total = await library.list_items(db, category=kind, tag=tag, include_archived=archived, limit=limit, offset=offset)
+    return {"items": [library.item_out(r, internal=True) for r in rows], "total": total}
+
+
+@router.post("/media")
+async def media_upload(
+    admin: CurrentAdmin,
+    db: CoreSession,
+    file: Annotated[UploadFile, File()],
+    kind: Annotated[Literal["screenshot", "demo", "logo", "file"], Form()],
+    alt: Annotated[str, Form(max_length=300)],
+    description: Annotated[str, Form(max_length=library.DESCRIPTION_MAX)] = "",
+    tags: Annotated[str, Form(max_length=600)] = "",
+) -> dict[str, Any]:
+    actor = _actor(admin)
+    problems = library.problems_for_text(alt, description)
+    limit = max(library.MAX_VIDEO_BYTES, library.MAX_IMAGE_BYTES, library.MAX_PDF_BYTES)
+    data = await file.read(limit + 1)
+    if len(data) > limit:
+        problems.append(f"ไฟล์ใหญ่เกิน {limit // (1024 * 1024)} MB")
+    detail = {"filename": (file.filename or "")[:200], "kind": kind, "bytes": len(data)}
+    if not problems:
+        try:
+            processed = await library.process_async(data, kind)
+        except library.LibraryRejected as exc:
+            problems.append(str(exc))
+    if problems:
+        await service.audit(db, actor, "admin_media_upload", None, False, {**detail, "problems": problems})
+        await db.commit()
+        raise HTTPException(status_code=400, detail=" · ".join(problems))
+    row = await library.save(
+        db, processed, category=kind, alt=alt, description=description, tags=library.clean_tags(tags),
+        filename=file.filename or "", actor=actor,
+    )
+    await service.audit(db, actor, "admin_media_upload", None, True, {**detail, "key": row.key, "stored_bytes": row.bytes})
+    return library.item_out(row, internal=True)
+
+
+@router.patch("/media/{item_id}")
+async def media_update(item_id: int, body: MediaChanges, admin: CurrentAdmin, db: CoreSession) -> dict[str, Any]:
+    if body.alt is not None or body.description is not None:
+        problems = library.problems_for_text(body.alt if body.alt is not None else "ok-alt", body.description or "")
+        if problems:
+            raise HTTPException(status_code=400, detail=" · ".join(problems))
+    row = await library.update(db, item_id, alt=body.alt, description=body.description, tags=body.tags, archived=body.archived)
+    if row is None:
+        raise HTTPException(status_code=404, detail="ไม่พบสื่อนี้")
+    await service.audit(db, _actor(admin), "admin_media_update", None, True, {"id": item_id, **body.model_dump(exclude_none=True)})
+    return library.item_out(row, internal=True)
+
+
+# ── writing brief + content plan ─────────────────────────────────────────────
+
+
+class BriefIn(BaseModel):
+    tone: str = Field(default="", max_length=brief.BRIEF_FIELDS["tone"])
+    focus_topics: str = Field(default="", max_length=brief.BRIEF_FIELDS["focus_topics"])
+    avoid_topics: str = Field(default="", max_length=brief.BRIEF_FIELDS["avoid_topics"])
+    length: str = Field(default="", max_length=brief.BRIEF_FIELDS["length"])
+    media: str = Field(default="", max_length=brief.BRIEF_FIELDS["media"])
+    monthly_note: str = Field(default="", max_length=brief.BRIEF_FIELDS["monthly_note"])
+
+
+class TopicIn(BaseModel):
+    topic: str = Field(min_length=3, max_length=brief.TOPIC_MAX)
+    notes: str = Field(default="", max_length=brief.NOTES_MAX)
+
+
+class TopicChanges(BaseModel):
+    topic: str | None = Field(default=None, max_length=brief.TOPIC_MAX)
+    notes: str | None = Field(default=None, max_length=brief.NOTES_MAX)
+    status: Literal["planned", "writing", "done", "skipped"] | None = None
+    post_slug: str | None = Field(default=None, max_length=80)
+    clear_post: bool = False
+
+
+class OrderIn(BaseModel):
+    ids: list[int] = Field(max_length=brief.MAX_PLAN_ITEMS)
+
+
+@router.get("/brief")
+async def brief_get(admin: CurrentAdmin, db: CoreSession) -> dict[str, Any]:
+    return await brief.get_brief(db)
+
+
+@router.put("/brief")
+async def brief_put(body: BriefIn, admin: CurrentAdmin, db: CoreSession) -> dict[str, Any]:
+    try:
+        return await brief.save_brief(db, body.model_dump(), admin.user_id)
+    except service.BlogError as exc:
+        raise _refusal(exc) from None
+
+
+@router.get("/plan")
+async def plan_get(admin: CurrentAdmin, db: CoreSession) -> list[dict[str, Any]]:
+    return await brief.plan(db)
+
+
+@router.post("/plan")
+async def plan_add(body: TopicIn, admin: CurrentAdmin, db: CoreSession) -> dict[str, Any]:
+    try:
+        return await brief.add_item(db, body.topic, body.notes, admin.user_id)
+    except service.BlogError as exc:
+        raise _refusal(exc) from None
+
+
+@router.put("/plan/order")
+async def plan_order(body: OrderIn, admin: CurrentAdmin, db: CoreSession) -> list[dict[str, Any]]:
+    try:
+        return await brief.reorder(db, body.ids, admin.user_id)
+    except service.BlogError as exc:
+        raise _refusal(exc) from None
+
+
+@router.patch("/plan/{item_id}")
+async def plan_update(item_id: int, body: TopicChanges, admin: CurrentAdmin, db: CoreSession) -> dict[str, Any]:
+    try:
+        item = await brief.update_item(
+            db, item_id, topic=body.topic, notes=body.notes, status=body.status, post_slug=body.post_slug,
+            clear_post=body.clear_post, admin_user_id=admin.user_id,
+        )
+    except service.BlogError as exc:
+        raise _refusal(exc) from None
+    if item is None:
+        raise HTTPException(status_code=404, detail="ไม่พบหัวข้อนี้")
+    return item
+
+
+@router.delete("/plan/{item_id}")
+async def plan_delete(item_id: int, admin: CurrentAdmin, db: CoreSession) -> dict[str, Any]:
+    if not await brief.delete_item(db, item_id, admin.user_id):
+        raise HTTPException(status_code=404, detail="ไม่พบหัวข้อนี้")
+    return {"deleted": item_id}

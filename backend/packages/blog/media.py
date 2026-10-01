@@ -13,6 +13,11 @@ is configured — DATA_DIR/blog/. Served by this API at /blog/media/<name>
 BLOG_MEDIA_PUBLIC_URL points at a public bucket domain instead. A public
 bucket domain exposes EVERY object in the bucket, videos included — only use
 one restricted to `blog/` (docs/blog-mcp.md).
+
+Besides images the store holds the renderer's and the media library's other
+files, every one content-addressed the same way: `<sha256>.mp4` (H.264, no
+audio, faststart — packages/blog/render.py, library.py), its poster
+`<sha256>.webp`, and `<sha256>.pdf` (served as a download, never inline).
 """
 
 from __future__ import annotations
@@ -36,7 +41,9 @@ MAX_OUTPUT_SIDE = 1600
 WEBP_QUALITY = 82
 KEY_PREFIX = "blog/"
 LOCAL_ROUTE = "/blog/media"
-NAME_RE = re.compile(r"^[0-9a-f]{64}\.webp$")
+NAME_RE = re.compile(r"^[0-9a-f]{64}\.(webp|mp4|pdf)$")
+#: What each stored extension is served as. Nothing else is ever stored.
+MIME = {"webp": "image/webp", "mp4": "video/mp4", "pdf": "application/pdf"}
 
 
 class ImageRejected(ValueError):
@@ -85,8 +92,9 @@ def decode_base64(raw: str) -> bytes:
     return data
 
 
-def reencode(data: bytes) -> tuple[bytes, int, int]:
-    """Decode with Pillow and write a fresh, metadata-free WebP."""
+def reencode(data: bytes, *, max_side: int = MAX_OUTPUT_SIDE) -> tuple[bytes, int, int]:
+    """Decode with Pillow and write a fresh, metadata-free WebP (longest side
+    <= `max_side`: 1600 for upload_image, more for the owner's library)."""
     from PIL import Image, ImageOps
 
     kind = sniff(data)
@@ -110,7 +118,7 @@ def reencode(data: bytes) -> tuple[bytes, int, int]:
             upright = ImageOps.exif_transpose(opened)  # bake the orientation, then the EXIF goes
             has_alpha = upright.mode in ("RGBA", "LA") or (upright.mode == "P" and "transparency" in upright.info)
             img = upright.convert("RGBA" if has_alpha else "RGB")
-            img.thumbnail((MAX_OUTPUT_SIDE, MAX_OUTPUT_SIDE), Image.Resampling.LANCZOS)
+            img.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)
             out = io.BytesIO()
             # A new image object carries no info dict: no exif=, icc_profile= or xmp= is written.
             clean = Image.new(img.mode, img.size)
@@ -145,12 +153,12 @@ def local_dir() -> pathlib.Path:
     return data_root() / "blog"
 
 
-def _put_s3(key: str, body: bytes) -> None:
+def _put_s3(key: str, body: bytes, content_type: str = "image/webp") -> None:
     s3._client().put_object(
         Bucket=s3._bucket(),
         Key=key,
         Body=body,
-        ContentType="image/webp",
+        ContentType=content_type,
         # Content-addressed: the bytes behind a name never change.
         CacheControl="public, max-age=31536000, immutable",
     )
@@ -166,23 +174,43 @@ def _get_s3(key: str) -> bytes | None:
 
 
 async def store(encoded: bytes, width: int, height: int) -> StoredImage:
-    digest = hashlib.sha256(encoded).hexdigest()
-    key = f"{KEY_PREFIX}{digest}.webp"
+    """A re-encoded WebP image (the bytes are trusted: made by this module)."""
+    return await store_bytes(encoded, "webp", width=width, height=height)
+
+
+async def store_bytes(body: bytes, ext: str, *, width: int = 0, height: int = 0) -> StoredImage:
+    """Store bytes this server produced or verified, named by their SHA-256.
+
+    `ext` must be one of MIME's keys — the caller is responsible for the bytes
+    being what the extension says (render.py / library.py check by content)."""
+    if ext not in MIME:
+        raise ValueError(f"unsupported media extension {ext!r}")
+    digest = hashlib.sha256(body).hexdigest()
+    key = f"{KEY_PREFIX}{digest}.{ext}"
     if s3.s3_enabled():
-        await asyncio.to_thread(_put_s3, key, encoded)
+        await asyncio.to_thread(_put_s3, key, body, MIME[ext])
     else:
         folder = local_dir()
         folder.mkdir(parents=True, exist_ok=True)
-        target = folder / f"{digest}.webp"
+        target = folder / f"{digest}.{ext}"
         if not target.exists():
             tmp = target.with_suffix(".part")
-            tmp.write_bytes(encoded)
+            tmp.write_bytes(body)
             tmp.replace(target)
-    return StoredImage(key=key, url=url_for(key), width=width, height=height, bytes=len(encoded))
+    return StoredImage(key=key, url=url_for(key), width=width, height=height, bytes=len(body), mime=MIME[ext])
+
+
+def name_of_url(url: str) -> str | None:
+    """`<sha256>.<ext>` when `url` is a file of this media store, else None."""
+    base = media_base().rstrip("/") + "/"
+    if not url.startswith(base):
+        return None
+    name = url[len(base):]
+    return name if NAME_RE.match(name) else None
 
 
 async def read(name: str) -> bytes | None:
-    """The stored image for GET /blog/media/<name> — only a well-formed name,
+    """The stored file for GET /blog/media/<name> — only a well-formed name,
     only under `blog/`, from the bucket or DATA_DIR/blog."""
     if not NAME_RE.match(name):
         return None

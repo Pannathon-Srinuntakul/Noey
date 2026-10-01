@@ -24,6 +24,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import delete, func, select, text
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.blog import media, revalidate
@@ -39,6 +40,7 @@ from packages.db.models.blog import (
     BlogPost,
     BlogPostTag,
     BlogTag,
+    BlogVisual,
 )
 
 BANGKOK = ZoneInfo("Asia/Bangkok")
@@ -213,11 +215,84 @@ async def _cover(db: AsyncSession, url: str | None) -> BlogImage | None:
     if not url:
         return None
     if not v.media_url_ok(url, media.media_base()):
-        raise BlogError("invalid_cover", f"cover_image_url must be a url returned by `upload_image` (starting with {media.media_base()}/).")
+        raise BlogError("invalid_cover", f"cover_image_url must be a url from `render_cover` or `list_media` (starting with {media.media_base()}/).")
     img = (await db.execute(select(BlogImage).where(BlogImage.url == url))).scalar_one_or_none()
-    if img is None:
-        raise BlogError("invalid_cover", "cover_image_url was not uploaded through `upload_image` — upload the image first.")
+    if img is None or img.kind != "image":
+        raise BlogError("invalid_cover", "cover_image_url is not an image of the media store — draw one with `render_cover` or pick one from `list_media`.")
     return img
+
+
+#: Where a cover may come from under the MCP rules (an upload_image is too
+#: small and too generic to be a post's og:image).
+COVER_ORIGINS = ("render_cover", "library", "brand")
+
+
+async def _resolve_media(db: AsyncSession, markdown: str, extra_urls: list[str]) -> tuple[dict[str, BlogImage], dict[str, BlogVisual]]:
+    base = media.media_base()
+    items = v.body_media(markdown)
+    urls = {ref for t, _, ref in items if t == "image"} | set(v.media_links(markdown, base)) | {u for u in extra_urls if u}
+    ids = {ref for t, _, ref in items if t == "visual" and v.VISUAL_ID_RE.match(ref)}
+    rows = (
+        {r.url: r for r in (await db.execute(select(BlogImage).where(BlogImage.url.in_(urls)))).scalars()} if urls else {}
+    )
+    visuals = (
+        {r.id: r for r in (await db.execute(select(BlogVisual).where(BlogVisual.id.in_(ids)))).scalars()} if ids else {}
+    )
+    return rows, visuals
+
+
+async def _media_problems(db: AsyncSession, d: _Draft, *, strict: bool, owners: set[str]) -> list[str]:
+    """The picture rules (§7): a cover from render_cover / the library, at
+    least MIN_BODY_MEDIA pictures in the body, every one with alt text and
+    stored here, visuals made by this connection, at most 3 animated ones.
+    `strict` = the MCP rules; the owner (admin) is held only to "everything
+    referenced exists" and the animated cap."""
+    problems: list[str] = []
+    base = media.media_base()
+    rows, visuals = await _resolve_media(db, d.content_md, [d.cover_image_url or ""])
+    if d.cover_image_url:
+        row = rows.get(d.cover_image_url)
+        if not v.media_url_ok(d.cover_image_url, base) or row is None or row.kind != "image":
+            problems.append("cover_image_url is not an image of the media store — draw the cover with `render_cover` or pick an image from `list_media`.")
+        elif strict and row.origin not in COVER_ORIGINS:
+            problems.append("The cover must be made with `render_cover` (1600×900) or chosen from `list_media` — an `upload_image` picture cannot be the cover.")
+    elif strict:
+        problems.append("cover_image_url is required — draw a 1600×900 cover with `render_cover` (or pick an image from `list_media`) and pass its url with cover_alt.")
+    items = v.body_media(d.content_md)
+    animated = 0
+    seen_visuals: set[str] = set()
+    for kind, _alt, ref in items:
+        if kind == "image":
+            if not v.media_url_ok(ref, base):
+                continue  # content_problems already named it
+            row = rows.get(ref)
+            if row is None:
+                problems.append(f"`{ref[:120]}` is not in the media store — use a url from `list_media`, `render_cover` or `upload_image`.")
+            elif row.kind == "file":
+                problems.append(f"`{ref[:120]}` is a file, not a picture — link to it as `[text](url)`.")
+            continue
+        if not v.VISUAL_ID_RE.match(ref):
+            continue
+        vis = visuals.get(ref)
+        if vis is None:
+            problems.append(f"There is no visual `{ref}` — create it with `create_visual` and paste the markdown it returns.")
+            continue
+        if strict and owners and vis.created_by not in owners:
+            problems.append(f"Visual `{ref}` was made by another connection — create your own with `create_visual`.")
+        if vis.animated and ref not in seen_visuals:
+            animated += 1
+        seen_visuals.add(ref)
+    if animated > v.MAX_ANIMATED_VISUALS:
+        problems.append(f"The post uses {animated} animated visuals; at most {v.MAX_ANIMATED_VISUALS} — make the others still (animated: false).")
+    for url in v.media_links(d.content_md, base):
+        if url not in rows:
+            problems.append(f"Link `{url[:120]}` points into the media store but no such file exists — use a url from `list_media`.")
+    if strict and len(items) < v.MIN_BODY_MEDIA:
+        problems.append(
+            f"content_md has {len(items)} picture(s); at least {v.MIN_BODY_MEDIA} are required — visuals from `create_visual` "
+            "(paste `::visual[alt](id)` on its own line) and/or images or demo videos from `list_media` (`![alt](url)`)."
+        )
+    return problems
 
 
 # ── validation of a whole post ───────────────────────────────────────────────
@@ -329,7 +404,7 @@ async def create_post(db: AsyncSession, data: NewPost, actor: str) -> BlogPost:
     """MCP create: always a draft, always `source = "ai"`."""
     d = _apply(_Draft(slug=data.slug.strip()), data.model_dump(exclude={"slug"}, exclude_none=True))
     detail = {"input": data.model_dump(exclude_none=True)}
-    problems = _problems(d, strict=True)
+    problems = _problems(d, strict=True) + await _media_problems(db, d, strict=True, owners={actor})
     if not problems and await get_post_row(db, d.slug) is not None:
         problems.append(f"slug `{d.slug}` is already used — pick another (see `list_posts`).")
     if problems:
@@ -388,7 +463,9 @@ async def update_post(db: AsyncSession, slug: str, changes: PostChanges, actor: 
         if await get_post_row(db, new_slug) is not None:
             await _refuse(db, actor, action, slug, "invalid_post", [f"slug `{new_slug}` is already used."], detail)
         d.slug = new_slug
-    problems = _problems(d, strict=not by_admin)
+    problems = _problems(d, strict=not by_admin) + await _media_problems(
+        db, d, strict=not by_admin, owners={actor, post.created_by}
+    )
     if problems:
         await _refuse(db, actor, action, slug, "invalid_post", problems, detail)
     was_live = post.status == "published"
@@ -479,7 +556,8 @@ async def publish(db: AsyncSession, slug: str, actor: str, *, by_admin: bool) ->
                 {"used_today": used, "cap": cfg.max_per_day},
             )
         # Re-validate with the strict rules: an old draft must still pass them.
-        problems = _problems(await _draft_of(db, post), strict=True)
+        draft = await _draft_of(db, post)
+        problems = _problems(draft, strict=True) + await _media_problems(db, draft, strict=True, owners={post.created_by, actor})
         if problems:
             await _refuse(db, actor, action, slug, "invalid_post", problems, None)
     post.status = "published"
@@ -520,17 +598,72 @@ def _after_commit_revalidate(db: AsyncSession, slugs: list[str]) -> None:
     event.listen(sync, "after_commit", fire, once=True)
 
 
-async def record_image(db: AsyncSession, stored: media.StoredImage, alt: str, actor: str) -> BlogImage:
-    row = (await db.execute(select(BlogImage).where(BlogImage.key == stored.key))).scalar_one_or_none()
-    if row is None:
-        row = BlogImage(
-            url=stored.url, key=stored.key, mime=stored.mime, bytes=stored.bytes,
-            width=stored.width, height=stored.height, alt=alt, uploaded_by=actor,
+async def record_image(
+    db: AsyncSession, stored: media.StoredImage, alt: str, actor: str, *, origin: str = "upload"
+) -> BlogImage:
+    """A stored image's row (content-addressed: the same bytes are one row)."""
+    await db.execute(
+        pg_insert(BlogImage)
+        .values(
+            url=stored.url, key=stored.key, mime=stored.mime, bytes=stored.bytes, width=stored.width,
+            height=stored.height, alt=alt, uploaded_by=actor[:120], kind="image", origin=origin,
         )
-        db.add(row)
-        await db.flush()
-    await audit(db, actor, "upload_image", None, True, {"key": stored.key, "bytes": stored.bytes, "w": stored.width, "h": stored.height})
+        .on_conflict_do_nothing(index_elements=[BlogImage.key])
+    )
+    row = (await db.execute(select(BlogImage).where(BlogImage.key == stored.key))).scalar_one()
+    action = "render_cover" if origin == "render_cover" else "upload_image"
+    await audit(db, actor, action, None, True, {"key": stored.key, "bytes": stored.bytes, "w": stored.width, "h": stored.height})
     return row
+
+
+async def record_visual(
+    db: AsyncSession, *, visual_id: str, key: str, width: int, height: int, alt: str, caption: str | None,
+    animated: bool, size: int, actor: str,
+) -> BlogVisual:
+    await db.execute(
+        pg_insert(BlogVisual)
+        .values(
+            id=visual_id, key=key, width=width, height=height, alt=alt, caption=caption, animated=animated,
+            bytes=size, created_by=actor[:120],
+        )
+        .on_conflict_do_nothing(index_elements=[BlogVisual.id])
+    )
+    row = (await db.execute(select(BlogVisual).where(BlogVisual.id == visual_id))).scalar_one()
+    await audit(db, actor, "create_visual", None, True, {"id": visual_id, "bytes": size, "w": width, "h": height, "animated": animated})
+    return row
+
+
+async def media_for(db: AsyncSession, markdown: str) -> list[dict[str, Any]]:
+    """The body's pictures, in reading order, with what a page needs to draw
+    each one without layout shift (BLOG_CONTRACT.md, `media`)."""
+    rows, visuals = await _resolve_media(db, markdown, [])
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for kind, alt, ref in v.body_media(markdown):
+        if ref in seen:
+            continue
+        if kind == "visual":
+            vis = visuals.get(ref)
+            if vis is None:
+                continue
+            from packages.blog import visual as visual_mod
+
+            seen.add(ref)
+            out.append({
+                "type": "visual", "id": vis.id, "src": visual_mod.public_url(vis.id), "width": vis.width,
+                "height": vis.height, "alt": alt.strip() or vis.alt, "caption": vis.caption, "animated": vis.animated,
+            })
+            continue
+        row = rows.get(ref)
+        if row is None or row.kind == "file":
+            continue
+        seen.add(ref)
+        item: dict[str, Any] = {"type": row.kind, "url": row.url, "alt": alt.strip() or row.alt, "width": row.width or None, "height": row.height or None}
+        if row.kind == "video":
+            item["poster_url"] = row.poster_url
+            item["duration_sec"] = round((row.duration_ms or 0) / 1000, 1) or None
+        out.append(item)
+    return out
 
 
 # ── read models ──────────────────────────────────────────────────────────────
@@ -592,6 +725,7 @@ async def post_full(db: AsyncSession, post: BlogPost, *, internal: bool = False)
     tags = (await _post_tags(db, [int(post.id)]))[int(post.id)]
     out = post_summary(post, cats, tags)
     out["content_md"] = post.content_md
+    out["media"] = await media_for(db, post.content_md)
     out["faq"] = list(post.faq or [])
     out["related"] = await related(db, post, cats, tags) if post.status == "published" else []
     if internal:
