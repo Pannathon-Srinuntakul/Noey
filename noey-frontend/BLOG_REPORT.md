@@ -27,19 +27,33 @@ internal paths redirect back to the public URL. Page 1 is always the bare path.
 
 **404s** (a post not published, an unknown category or tag, a page past the
 last one) are answered by Proxy before any page renders (`lib/blog-proxy.ts`,
-`lib/blog-gate.ts`): it keeps an index of the published slugs, categories and
-tags (three public calls, 30 s, re-read before turning a URL away) and
-rewrites a missing URL to `<path>/__missing/404`, which no route matches, so
-the site's own 404 page renders on the server like `/nope`. Measured: a page
-that calls `notFound()` while rendering gets Next 16's error shell instead —
-an empty body, the 404 drawn in the browser, the root layout's scripts
-re-created on the client ("Encountered a script tag…" in development).
-When the API does not answer, Proxy decides nothing. The pages keep
-`notFound()` as the backstop; their `generateMetadata` never throws and
-returns the 404's own metadata (`noindex`, no canonical, no prev/next).
-The header maps rewritten paths back to the address bar's
-(`lib/nav-path.ts`), so its "you are here" is the same on the server and in
-the browser.
+`lib/blog-gate.ts`): it rewrites a missing URL to `<path>/__missing/404`,
+which no route matches, so the site's own 404 page renders on the server like
+`/nope`. Measured: a page that calls `notFound()` while rendering gets Next
+16's error shell instead — an empty body, the 404 drawn in the browser, the
+root layout's scripts re-created on the client ("Encountered a script tag…"
+in development). Proxy decides from an index of the published slugs,
+categories and tags (three public calls):
+
+- a URL that can never be missing (a feed, a share image, page 1 of a
+  listing) and a URL the held index already knows go through at once, never
+  waiting on the API; an index older than 30 s is reloaded in the background;
+- only a URL the index does not know waits for a reload, at most 500 ms; a
+  reload that fails or times out is not tried again for 10 s;
+- Proxy answers 404 only from an index fetched successfully in the last 30 s
+  with no failed reload since. With the API slow or down it decides nothing:
+  the page renders, with its own outage state, and keeps `notFound()` as the
+  backstop;
+- `POST /api/revalidate-blog` marks the index stale and drops the posts it
+  names, so a post just published or just taken down is checked against a
+  reload at once (a reload asked for before the hook is not kept).
+
+The pages' `generateMetadata` never throws and returns the 404's own metadata
+(`noindex`, no canonical, no prev/next). The header marks no menu link
+current on a 404 (it reads Next's route tree, the same on the server and in
+the browser), and maps the listings' internal routes back to the address
+bar's (`lib/nav-path.ts`), so its "you are here" never differs between the
+two.
 
 ## What was built, by spec section
 
@@ -141,6 +155,33 @@ refused two drafts under its word minimum, as it should). Then one new post:
 - `unpublish_post` → revalidated → 404 and gone from every surface;
 - `publish_post` again → back everywhere. PASS (50 checks, 0 failed).
 
+Review round 3, after merging `origin/main`, with a new post: before, the
+post URL is the site's 404 page rendered on the server (Proxy); `create_post`
+→ `publish_post` → revalidated (attempt 1) → 200 and present on every surface
+in 1.5 s; `unpublish_post` → revalidated → the site's 404 page again (Proxy,
+not the error shell) and gone from every surface. PASS (38 checks, 0 failed).
+
+### Proxy with the API slow or down (stand-in API, production build)
+
+A stand-in on :8020 forwarded to the real backend but could hang the index
+calls or be stopped. Times are the whole response:
+
+| API | Request | Status | Time | Answered by |
+| --- | --- | --- | --- | --- |
+| normal | a known post (cold: index loaded) | 200 | 60 ms | page |
+| normal | a missing post / `?page=99` | 404 | 14 / 6 ms | site 404 page (Proxy) |
+| index hangs | a known post | 200 | 13 ms | page |
+| index hangs | a missing post (index 2.5 s old: reload) | 404 | 585 ms | page's backstop |
+| index hangs | the next missing post (backing off) | 404 | 12 ms | page's backstop |
+| index hangs | a known post, index 30 s stale | 200 | 17 ms | page (reload in background) |
+| index hangs | a missing post after the 10 s backoff | 404 | 512 ms | page's backstop |
+| down | a known post | 200 | 13 ms | page |
+| down | a post Proxy has never seen | 200 | 17 ms | page's "could not load" state |
+| back up | a missing post (after backoff) | 404 | 44 ms | site 404 page (Proxy) |
+
+Before this round the same hang held every blog request about 3.1 s and a
+missing URL 9.1 s, and with the API down a stale index still 404'd URLs.
+
 ## Lighthouse (mobile, 13.5, production build, simulated throttling)
 
 | Page | Perf | A11y | BP | SEO | LCP | TBT | CLS |
@@ -160,10 +201,13 @@ from an http backend, which the optimiser cannot fetch (local IP), so the
 ## Checks
 
 - `npm run lint`, `npm run typecheck`: clean. `npx vitest run`: 35 files,
-  360 tests (new: data layer, mapping, fixtures-never-in-production,
+  369 tests (new: data layer, mapping, fixtures-never-in-production,
   Markdown sanitising, revalidation route, JSON-LD with/without FAQ,
   metadata, sitemap, feeds, llms.txt, `.md` twin, image sizes, OG text, the
-  404 gate and its index, the 404 metadata of every blog route).
+  404 gate and its index — a hanging API bounded at ~500 ms, a failing API
+  passed through, the 10 s backoff, 404s only from a fresh index, a stale
+  index never waited on, the revalidation hook — and the 404 metadata of
+  every blog route).
   The two existing tests that call `sitemap()` now `await` it (assertions
   unchanged).
 - `npm run build`: passes with the API up and with it unreachable.
@@ -193,7 +237,9 @@ state (dev, `BLOG_FIXTURES=empty`) and the API-down state (a post and a
 listing never rendered before the outage), plus a cover that fails to load
 (its file deleted from the media store) on a post and on a listing card,
 with JavaScript (the slate) and without it (the frame, never the broken-image
-glyph). All reviewed.
+glyph). All reviewed. Round 3 adds a picture inside a post that fails to load,
+measured and unmeasured, with and without JavaScript (`fig-shots`), and axe on
+a post whose every picture fails: 0 violations.
 
 ## Review round 2 (2026-10-01)
 
@@ -215,6 +261,23 @@ glyph). All reviewed.
    script warning, no error shell, the same HTML as `/nope`.
 8. The API-down listing keeps the lead; the count pill shows only when known
    and keeps its line either way.
+
+## Review round 3 (2026-10-01)
+
+- Proxy: the rules above — 500 ms reload limit, 10 s backoff after a failure,
+  404 only from a fresh index, known URLs never wait, the hook names the
+  changed posts. Timings in "Proxy with the API slow or down".
+- A picture inside a post that fails to load (measured or not) gives way to a
+  plain frame of its shape with its description, the caption under it
+  (`FigureImage`); without JavaScript the frame is drawn over the broken
+  image. Inline pictures leave their description in the line.
+- No 404 marks a menu link current (before: `/blog?page=9` marked บทความ
+  "page", `/blog/nope-post` "true"); no hydration mismatch, in development
+  or production.
+- On a listing page without a featured post, the first card's picture is
+  fetched at once (it is the largest thing on screen there).
+- Merged `origin/main` (no conflicts; nothing under `noey-frontend/` had
+  changed).
 
 ## Waiting on the backend
 
