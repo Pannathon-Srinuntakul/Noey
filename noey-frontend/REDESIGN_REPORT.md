@@ -30,7 +30,57 @@ StatusCard, EditorMockup, ScrollTimeline, SpliceDivider, CtaBand, FaqList.
 
 ## Lighthouse (mobile, production build)
 
-LIGHTHOUSE_TABLE
+Lighthouse 13.5, mobile preset (simulated throttling), production build
+(`next build` standalone) against the mock backend, three runs per page,
+median shown. Signed-in pages were measured with a mock session; the
+first-visit beta notice is part of every public page's first load.
+
+| Route | Perf | A11y | BP | SEO | FCP | LCP | TBT | CLS |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `/about` | 95 | 100 | 100 | 100 | 1.1 s | 2.9 s | 3 ms | 0.000 |
+| `/account-deleted` | 91 | 100 | 100 | 60 | 1.5 s | 3.5 s | 7 ms | 0.000 |
+| `/guide` | 90 | 100 | 100 | 100 | 1.6 s | 3.5 s | 6 ms | 0.000 |
+| `/guide/ai-cut-tiktok` | 93 | 100 | 100 | 100 | 1.2 s | 3.2 s | 6 ms | 0.000 |
+| `/guide/choose-ai-editor` | 92 | 100 | 100 | 100 | 1.2 s | 3.3 s | 4 ms | 0.000 |
+| `/guide/help` | 93 | 100 | 100 | 100 | 1.4 s | 3.2 s | 3 ms | 0.000 |
+| `/guide/long-to-shorts` | 93 | 100 | 100 | 100 | 1.2 s | 3.2 s | 4 ms | 0.000 |
+| `/guide/product-review` | 93 | 100 | 100 | 100 | 1.2 s | 3.2 s | 3 ms | 0.000 |
+| `/guide/thai-subtitles` | 93 | 100 | 100 | 100 | 1.2 s | 3.2 s | 3 ms | 0.000 |
+| `/` | 89 | 100 | 100 | 100 | 1.7 s | 3.7 s | 5 ms | 0.000 |
+| `/login` | 90 | 100 | 100 | 63 | 1.5 s | 3.5 s | 5 ms | 0.000 |
+| `/pricing` | 94 | 100 | 100 | 100 | 1.4 s | 3.1 s | 5 ms | 0.000 |
+| `/privacy` | 95 | 100 | 100 | 100 | 1.1 s | 2.9 s | 3 ms | 0.000 |
+| `/reset-password?token=abc` | 94 | 100 | 100 | 60 | 1.2 s | 3.1 s | 7 ms | 0.000 |
+| `/scope` | 96 | 100 | 100 | 100 | 1.1 s | 2.8 s | 2 ms | 0.000 |
+| `/signup` | 90 | 100 | 100 | 100 | 1.5 s | 3.5 s | 3 ms | 0.000 |
+| `/terms` | 95 | 100 | 100 | 100 | 1.1 s | 2.9 s | 7 ms | 0.000 |
+| `/verify-email?token=ok` | 96 | 100 | 100 | 60 | 0.9 s | 2.8 s | 4 ms | 0.000 |
+| `/account` | 93 | 100 | 100 | 60 | 1.1 s | 3.2 s | 5 ms | 0.000 |
+| `/account/billing` | 93 | 100 | 100 | 63 | 1.1 s | 3.2 s | 9 ms | 0.000 |
+| `/account/profile` | 91 | 100 | 100 | 60 | 1.5 s | 3.4 s | 4 ms | 0.000 |
+| `/account/quota` | 93 | 100 | 100 | 60 | 1.1 s | 3.2 s | 13 ms | 0.000 |
+| `/checkout/success?session_id=cs_test_mock` | 96 | 100 | 100 | 63 | 0.9 s | 2.8 s | 38 ms | 0.000 |
+
+How this compares with the brief's targets:
+
+- **Home `/`:** performance 89 (target ≥ 85 ✓), TBT 5 ms (< 200 ms ✓),
+  CLS 0 (< 0.1 ✓). **LCP 3.7 s under simulated throttling misses the < 2.5 s
+  target.** Lighthouse's simulation charges the page for every script and
+  font in the head that finishes before the observed LCP; with the throttling
+  applied to the real load (`--throttling-method=devtools`, three runs) the
+  same page gives LCP 1.94 s and performance 98. The LCP element is the hero
+  H1, shown without waiting on any animation. The old site measured 2.8 s
+  simulated.
+- **Every other page:** performance 90–96 (target ≥ 90 ✓); their simulated
+  LCPs (2.8–3.5 s) come from the same model.
+- **Accessibility 100 on every page** (target ≥ 95 ✓); axe-core 4.13
+  (WCAG 2.0/2.1/2.2 A–AA + best practice) finds no violations on any route at
+  412 and 1440 px, with the beta notice, menus and account dialogs open.
+- SEO 60–63 on `/login`, `/reset-password`, `/verify-email`,
+  `/account-deleted`, `/account/*` and `/checkout/success` is by design:
+  those pages are `noindex`.
+- The 404 page is not scored (Lighthouse refuses a 404 status); it was
+  checked by axe and in the screenshot reviews.
 
 ## Independent review scores
 

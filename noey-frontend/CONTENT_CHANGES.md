@@ -465,6 +465,13 @@ The editor's own gate names "Chrome หรือ Edge เวอร์ชัน�
   tab names it — "โควตารอบนี้" → "Monthly limit" (with more than one window,
   the fullest one's name; "โควตารอบนี้" stays where the account has none).
 
+## 25. Final review round: profile and sign-in labels
+
+- /account/profile, the email form: its password field "รหัสผ่านปัจจุบัน" →
+  "ยืนยันด้วยรหัสผ่าน" (the password form below asks for the same password
+  under "รหัสผ่านปัจจุบัน"; two identical labels on one screen read as one
+  field).
+
 ## Text added (not replacing anything)
 
 Only labels, no claims:
@@ -565,6 +572,16 @@ Only labels, no claims:
   instead of track numbers, the home page's extra plans carry their reel
   numbers ("P1", "P5", "P6"), and a section opens with the header ruler's
   diamond in place of a track label.
+
+- /account/profile: the password block's heading "รหัสผ่าน", like the
+  card's other blocks; under the new password, a level meter of eight
+  segments (one per character up to the minimum) — decoration.
+- Sign-in forms' placeholders: /signup "รหัสผ่านที่จะใช้เข้าสู่ระบบ";
+  /reset-password "รหัสผ่านใหม่ของคุณ" and "พิมพ์รหัสผ่านใหม่อีกครั้ง" (as /login
+  has "รหัสผ่านของคุณ"). /reset-password also gets "กลับไปหน้าเข้าสู่ระบบ" under
+  its form.
+- The sign-in pages' picture panel opens on a title strip, "PREVIEW" and a
+  timecode (decoration, hidden from assistive technology).
 
 No testimonials, client logos, ratings or measured-looking numbers were
 added. The running timecode beside "งานที่กินเวลาที่สุด ไม่ใช่การถ่าย แต่เป็นการตัด"

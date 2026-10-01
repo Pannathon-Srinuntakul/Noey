@@ -154,10 +154,19 @@ export function BetaNotice({ betaPriced }: { betaPriced: boolean }) {
           </li>
         ))}
       </ol>
+      {/* One clause a line (split at the copy's own "·"); the words are the owner's. */}
       <p className="beta-fineprint">
-        {keepThai(copy.disclaimer)}
-        {"\u00a0· "}
-        <Link href="/terms">เงื่อนไขการใช้งาน</Link>
+        {copy.disclaimer.split(" · ").map((clause, index, all) => (
+          <span key={clause} className="beta-fineprint__line">
+            {keepThai(clause)}
+            {index === all.length - 1 ? (
+              <>
+                {"\u00a0· "}
+                <Link href="/terms">เงื่อนไขการใช้งาน</Link>
+              </>
+            ) : null}
+          </span>
+        ))}
       </p>
       <div className="dialog-actions">
         {/* A plain checkbox beside the answer it qualifies, not a boxed field

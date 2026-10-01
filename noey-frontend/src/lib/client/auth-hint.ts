@@ -22,8 +22,14 @@ export function applyAuthHint(): void {
   if (name) {
     root.style.setProperty("--noey-greeting", JSON.stringify(`คุณ${name}`));
     root.setAttribute("data-auth-name", "");
+    // The account menu's head shows the name's initial (a Thai leading vowel
+    // is skipped: "เบียร์" → "บ").
+    const initial = [...name.replace(/^[เแโใไ]+/, "")][0]?.toUpperCase() ?? "";
+    if (initial) root.style.setProperty("--noey-initial", JSON.stringify(initial));
+    else root.style.removeProperty("--noey-initial");
   } else {
     root.style.removeProperty("--noey-greeting");
+    root.style.removeProperty("--noey-initial");
     root.removeAttribute("data-auth-name");
   }
 }

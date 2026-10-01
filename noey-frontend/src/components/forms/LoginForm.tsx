@@ -79,6 +79,8 @@ export function LoginForm() {
             autoComplete="email"
             required
             defaultValue={state?.values?.email}
+            aria-invalid={state?.error ? true : undefined}
+            aria-describedby={state?.error ? "l-error" : undefined}
           />
         </div>
         <div className="field">
@@ -91,6 +93,8 @@ export function LoginForm() {
             placeholder="รหัสผ่านของคุณ"
             autoComplete="current-password"
             required
+            aria-invalid={state?.error ? true : undefined}
+            aria-describedby={state?.error ? "l-error" : undefined}
           />
           <div className="forgot">
             {/* Without JS this lands on /login?forgot=1 (same dialog once scripts run). */}
@@ -105,9 +109,11 @@ export function LoginForm() {
             </a>
           </div>
         </div>
+        {/* A strip like the status cards' (a light and the state), over the button it answers. */}
         {state?.error ? (
-          <p className="form-error" role="alert">
-            {state.error}
+          <p className="form-alert" role="alert" id="l-error">
+            <span className="form-alert__dot" aria-hidden="true" />
+            <span>{state.error}</span>
           </p>
         ) : null}
         <button type="submit" className="btn btn-primary btn-block btn-lg" disabled={pending} aria-busy={pending || undefined}>

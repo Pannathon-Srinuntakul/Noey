@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useRef } from "react";
+import { useActionState, useEffect, useRef, useState } from "react";
 import { changeEmailAction, changePasswordAction, updateProfileAction } from "@/app/actions/account";
 import { notifyAuthChanged } from "@/lib/client/auth-hint";
 import type { ActionState } from "@/lib/messages";
@@ -94,13 +94,15 @@ export function EmailForm({ email }: { email: string }) {
         )}
       </div>
       <div className="field">
-        <label htmlFor="a-email-pass">รหัสผ่านปัจจุบัน</label>
+        {/* Its own name and autocomplete section: the password form below asks
+            for the same password, and the two must not read (or fill) as one. */}
+        <label htmlFor="a-email-pass">ยืนยันด้วยรหัสผ่าน</label>
         <input
           id="a-email-pass"
           name="current_password"
           className="input"
           type="password"
-          autoComplete="current-password"
+          autoComplete="section-email current-password"
           required
           aria-invalid={errors.current_password ? true : undefined}
           aria-describedby={errors.current_password ? "a-email-pass-error" : "a-email-pass-hint"}
@@ -123,6 +125,7 @@ export function EmailForm({ email }: { email: string }) {
 
 export function PasswordForm() {
   const [state, action, pending] = useActionState<ActionState | undefined, FormData>(changePasswordAction, undefined);
+  const [length, setLength] = useState(0);
   const formRef = useRef<HTMLFormElement>(null);
   const errors = state?.fieldErrors ?? {};
 
@@ -131,14 +134,13 @@ export function PasswordForm() {
       {/* Lets password managers attach the change to the right account. */}
       <input type="text" name="username" autoComplete="username" hidden readOnly />
       <div className="field">
-        {/* The same name as on the email form and the delete dialog. */}
         <label htmlFor="a-old">รหัสผ่านปัจจุบัน</label>
         <input
           id="a-old"
           name="current_password"
           className="input"
           type="password"
-          autoComplete="current-password"
+          autoComplete="section-password current-password"
           required
           aria-invalid={errors.current_password ? true : undefined}
           aria-describedby={errors.current_password ? "a-old-error" : undefined}
@@ -152,12 +154,20 @@ export function PasswordForm() {
           name="new_password"
           className="input"
           type="password"
-          autoComplete="new-password"
+          autoComplete="section-password new-password"
           minLength={8}
           required
+          onInput={(event) => setLength(event.currentTarget.value.length)}
           aria-invalid={errors.new_password ? true : undefined}
           aria-describedby={errors.new_password ? "a-new-error" : "a-new-hint"}
         />
+        {/* A level meter for the one rule there is: eight segments, one per
+            character up to the minimum, gold once it is met. Decoration. */}
+        <span className={length >= 8 ? "pw-meter pw-meter--ok" : "pw-meter"} aria-hidden="true">
+          {Array.from({ length: 8 }, (_, index) => (
+            <i key={index} data-lit={index < length ? "" : undefined} />
+          ))}
+        </span>
         {/* The rule stays in sight while typing (a placeholder goes away). */}
         {errors.new_password ? (
           <p className="field-error" id="a-new-error">{errors.new_password}</p>

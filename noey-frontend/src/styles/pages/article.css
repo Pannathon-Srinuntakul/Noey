@@ -516,22 +516,22 @@ html[data-theme="dark"] .article .prose {
 /* A strip cut from a lane, on a stage of its own: drawn half again as large
    as the frame's width would hold it, centred, its ends fading (it is a cut
    from a lane that runs on, as on the home page's strips). */
+/* A strip cut from a lane, drawn whole at the frame's width: the frame hugs
+   it (zoomed past the frame, its clips read as cropped). */
 .guide-visual--strip .guide-visual__frame {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: clamp(150px, 15vw, 210px);
-  padding: 14px 0;
+  display: block;
+  height: auto;
+  padding: 16px 18px;
 }
 
 .guide-visual--strip .ammini {
   justify-content: center;
-  -webkit-mask-image: linear-gradient(90deg, transparent, #000 40px, #000 calc(100% - 40px), transparent);
-  mask-image: linear-gradient(90deg, transparent, #000 40px, #000 calc(100% - 40px), transparent);
+  height: auto;
+  container-type: inline-size;
 }
 
 .guide-visual--strip .ammini .am-view {
-  width: calc(min(100cqw, 100cqh * var(--am-cw) / var(--am-ch)) * 1.5);
+  width: 100%;
 }
 
 /* A whole card or window brings its own frame — and its own corners: the
@@ -577,5 +577,32 @@ html[data-theme="dark"] .article .prose {
 
   .article__related {
     gap: 8px;
+  }
+}
+
+/* From 960px the plan table keeps to the reading column like everything
+   else in it, and scrolls sideways inside its frame; its plan cells stay on
+   one line ("ไม่จำกัดจำนวน", "ปกติ และละเอียด") instead of wrapping in a
+   breakout that ran past the text. */
+@media (min-width: 960px) {
+  .article .article__extra {
+    max-width: var(--measure);
+  }
+
+  .article .article__extra .cmp__scroll {
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+  }
+
+  .article .article__extra .cmp__table {
+    min-width: 1000px;
+  }
+
+  .article .article__extra .cmp__table thead th {
+    top: 0;
+  }
+
+  .article .article__extra .cmp__table td {
+    white-space: nowrap;
   }
 }

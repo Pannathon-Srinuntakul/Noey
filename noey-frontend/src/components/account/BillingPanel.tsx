@@ -168,6 +168,10 @@ export function BillingPanel(props: BillingPanelProps) {
   // already carries it ("ต่ออายุอัตโนมัติ …", "ยกเลิกแล้ว ใช้ได้ถึง …"), the
   // payment card does not repeat it.
   const showPeriodEnd = !!periodEndLabel && !statusLine?.includes(periodEndLabel);
+  // A plain renewal is said once — by the cycle track on the payment card,
+  // which names the date and the days left; the plan card keeps a line only
+  // for a state that needs one (cancelled, a payment problem).
+  const renewalOnTrack = !!cycle && !cancelScheduled && !statusWarn && !!statusLine?.startsWith("ต่ออายุอัตโนมัติ");
 
   return (
     <section className="account-grid acct-billing" aria-label="แพลนและการชำระเงิน">
@@ -192,7 +196,7 @@ export function BillingPanel(props: BillingPanelProps) {
                 {currentOption && plan?.beta ? <span className="tag tag-accent plan-price__beta">{`${BETA_BADGE} −${BETA_DISCOUNT_PERCENT}%`}</span> : null}
               </div>
             ) : null}
-            {statusLine ? <p className={statusWarn ? "plan-status plan-status--warn" : "plan-status"}>{keepThai(statusLine)}</p> : null}
+            {statusLine && !renewalOnTrack ? <p className={statusWarn ? "plan-status plan-status--warn" : "plan-status"}>{keepThai(statusLine)}</p> : null}
             {plan ? (
               <div className="plan-usage">
                 <p className="plan-usage__line">

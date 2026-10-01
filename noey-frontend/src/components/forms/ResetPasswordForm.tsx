@@ -24,16 +24,21 @@ export function ResetPasswordForm({ token }: { token: string }) {
           name="new_password"
           className="input"
           type="password"
+          placeholder="รหัสผ่านใหม่ของคุณ"
           autoComplete="new-password"
           minLength={8}
           required
           aria-invalid={errors.new_password ? true : undefined}
-          aria-describedby={errors.new_password ? "r-new-hint r-new-error" : "r-new-hint"}
+          aria-describedby={errors.new_password ? "r-new-error" : "r-new-hint"}
         />
-        <p className="field-hint" id="r-new-hint">
-          อย่างน้อย 8 ตัวอักษร
-        </p>
-        {errors.new_password ? <p className="field-error" id="r-new-error">{errors.new_password}</p> : null}
+        {/* The rule, or — when it was broken — the error that says it. */}
+        {errors.new_password ? (
+          <p className="field-error" id="r-new-error">{errors.new_password}</p>
+        ) : (
+          <p className="field-hint" id="r-new-hint">
+            อย่างน้อย 8 ตัวอักษร
+          </p>
+        )}
       </div>
       <div className="field">
         <label htmlFor="r-confirm">ยืนยันรหัสผ่านใหม่</label>
@@ -42,6 +47,7 @@ export function ResetPasswordForm({ token }: { token: string }) {
           name="confirm_password"
           className="input"
           type="password"
+          placeholder="พิมพ์รหัสผ่านใหม่อีกครั้ง"
           autoComplete="new-password"
           minLength={8}
           required

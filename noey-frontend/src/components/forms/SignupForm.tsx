@@ -113,7 +113,15 @@ export function SignupForm({ googleEnabled = false }: { googleEnabled?: boolean 
           />
           {emailError ? (
             <p className="field-error" id="s-email-error">
-              {emailError}
+              {emailTaken && emailError.includes("เข้าสู่ระบบ") ? (
+                <>
+                  {emailError.slice(0, emailError.indexOf("เข้าสู่ระบบ"))}
+                  <Link href="/login">เข้าสู่ระบบ</Link>
+                  {emailError.slice(emailError.indexOf("เข้าสู่ระบบ") + "เข้าสู่ระบบ".length)}
+                </>
+              ) : (
+                emailError
+              )}
             </p>
           ) : null}
         </div>
@@ -124,20 +132,23 @@ export function SignupForm({ googleEnabled = false }: { googleEnabled?: boolean 
             name="password"
             className="input"
             type="password"
+            placeholder="รหัสผ่านที่จะใช้เข้าสู่ระบบ"
             autoComplete="new-password"
             minLength={8}
             required
             aria-invalid={errors.password ? true : undefined}
-            aria-describedby={errors.password ? "s-pass-hint s-pass-error" : "s-pass-hint"}
+            aria-describedby={errors.password ? "s-pass-error" : "s-pass-hint"}
           />
-          <p className="field-hint" id="s-pass-hint">
-            อย่างน้อย 8 ตัวอักษร
-          </p>
+          {/* The rule, or — when it was broken — the error that says it. */}
           {errors.password ? (
             <p className="field-error" id="s-pass-error">
               {errors.password}
             </p>
-          ) : null}
+          ) : (
+            <p className="field-hint" id="s-pass-hint">
+              อย่างน้อย 8 ตัวอักษร
+            </p>
+          )}
         </div>
         {/* Turnstile loads only when a site key is configured; eager here so the slot is reserved from the start. */}
         <TurnstileWidget siteKey={TURNSTILE_SITE_KEY} resetKey={state} />

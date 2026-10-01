@@ -92,7 +92,7 @@ export default async function QuotaPage() {
         )}
 
         {storage ? (
-          <div className="acct-quota__limit">
+          <div className="acct-quota__limit acct-quota__limit--storage">
             <div className="meter-row">
               <span id="storage-label">พื้นที่เก็บงาน</span>
               <span className="num">

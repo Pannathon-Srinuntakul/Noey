@@ -89,6 +89,11 @@ const KEEP_TOGETHER = [
   "ผ่าน Chrome",
   "Safari 26 ขึ้นไป",
   "ยังใช้บนมือถือ",
+  "หน้าตั้งค่า",
+  "ตัดได้",
+  "ตัดซ้อน",
+  "คัดช็อต",
+  "(ภายในพื้นที่ที่ได้)",
   // The modes' names, and phrases the guides split (final review).
   "ตัดฉากเด่น",
   "ตัดช่วงเงียบ",

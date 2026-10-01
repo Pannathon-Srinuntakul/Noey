@@ -52,6 +52,8 @@ export default async function ProfilePage({ searchParams }: { searchParams: Prom
       </div>
       <div className="card account-card">
         <h2 className="card-kicker">ความปลอดภัย</h2>
+        {/* The block's own name, as the email and Google blocks have theirs. */}
+        {hasPassword ? <h3 className="acct-subhead">รหัสผ่าน</h3> : null}
         {hasPassword ? <PasswordForm /> : <SetPasswordByEmail email={me.data.email} />}
         {googleEnabled || googleLinked ? (
           <div className="card-section" id="google">

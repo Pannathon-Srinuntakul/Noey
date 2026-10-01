@@ -325,6 +325,9 @@
     margin-inline: calc(var(--gutter) * -1);
     padding-inline: var(--gutter);
     scroll-padding-inline: var(--gutter);
+    /* Each card its own height: the free trial's short list left a 130px
+       hole above its button when every card took the tallest one's. */
+    align-items: start;
   }
 }
 

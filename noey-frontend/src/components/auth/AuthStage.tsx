@@ -15,7 +15,13 @@ export function AuthStage() {
     <div className="auth__stage">
       <div className="auth__viewer">
         <span className="auth__glow" aria-hidden="true" />
-        <span className="auth__ruler" aria-hidden="true" />
+        {/* The viewer's title strip, as every panel on the site has one (decoration). */}
+        <div className="auth__strip" aria-hidden="true">
+          <span className="auth__rec" />
+          <span className="tc">PREVIEW</span>
+          <span className="auth__rule" />
+          <span className="tc">00:00:08:12</span>
+        </div>
         <EditorMockup variant="ambient" className="auth__mock" />
       </div>
     </div>

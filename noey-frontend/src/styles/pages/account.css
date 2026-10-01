@@ -503,13 +503,11 @@
   }
 }
 
+/* A phone-width card: no waveform left alone under the button — the copy
+   and the computer-only note are the card. */
 @container (max-width: 420px) {
-  .acct-hero__wave--long {
+  .acct-hero__art {
     display: none;
-  }
-
-  .acct-hero__wave--mid {
-    display: block;
   }
 }
 
@@ -957,11 +955,20 @@
   margin-top: 22px;
   border: 1px solid var(--line-2);
   border-radius: 5px;
-  /* A tick at every tenth: one tile a tenth wide, repeated — a repeating
-     gradient with percentage stops dropped a tick at some widths. */
-  background:
-    linear-gradient(90deg, transparent calc(100% - 1px), var(--line) calc(100% - 1px)) 0 0 / 10% 100% repeat-x,
-    var(--well);
+  background: var(--well);
+}
+
+/* A tick at every tenth, drawn over the fill too (a ruler under the whole
+   lane): one tile a tenth wide, repeated — a repeating gradient with
+   percentage stops dropped a tick at some widths. */
+.acct-cycle__lane::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
+  background: linear-gradient(90deg, transparent calc(100% - 1px), color-mix(in srgb, var(--color-text) 16%, transparent) calc(100% - 1px)) 0 0 / 10% 100% repeat-x;
+  pointer-events: none;
 }
 
 .acct-cycle__fill {
@@ -976,6 +983,7 @@
 /* Today: the playhead, its cap on top and its name over the cap. */
 .acct-cycle__head {
   position: absolute;
+  z-index: 2;
   top: -9px;
   bottom: -5px;
   left: calc(var(--cycle) * 100%);
@@ -1436,4 +1444,44 @@ form.acct-form--edit:not([data-dirty]) .acct-form__submit.btn-primary:hover {
 
 .acct__menu a[aria-current="page"] svg {
   color: var(--gold-ink);
+}
+
+/* A block's own heading at the top of a card (the password block), set as
+   the card's other block headings. */
+.acct-subhead {
+  font-size: var(--fs-15);
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--ink);
+}
+
+/* The new password's level meter: one segment per character up to the
+   minimum of eight, gold once the rule is met. */
+.pw-meter {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 3px;
+  margin-top: 8px;
+  max-width: 220px;
+}
+
+.pw-meter i {
+  height: 4px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--color-text) 10%, transparent);
+  transition: background-color var(--dur-2) ease;
+}
+
+.pw-meter i[data-lit] {
+  background: var(--ink-3);
+}
+
+.pw-meter--ok i[data-lit] {
+  background: var(--gold);
+}
+
+/* Quota A1 beside a taller A2: the card hugs its rows instead of stretching
+   to A2's height, so no hole opens inside it. */
+.acct-quota .account-card:has(> .acct-quota__limit--storage) {
+  align-self: start;
 }

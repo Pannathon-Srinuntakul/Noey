@@ -1112,10 +1112,17 @@ html:has(.menu[open]) {
 }
 
 .beta-fineprint {
+  display: grid;
+  gap: 4px;
   margin: 18px 0 0;
-  font-size: var(--fs-13);
-  line-height: 1.7;
+  font-size: var(--fs-14);
+  font-weight: 400;
+  line-height: 1.65;
   color: var(--ink-2);
+}
+
+.beta-fineprint__line {
+  display: block;
 }
 
 /* Phone width: the dialog becomes a bottom sheet. This works only because
@@ -1536,4 +1543,16 @@ html[data-splicing][data-no-vt] main {
   .splice-seam {
     display: none;
   }
+}
+
+/* The account menu's head: the name's initial once the hint has it. */
+html[data-auth-name] .acct__avatar--initial svg {
+  display: none;
+}
+
+html[data-auth-name] .acct__avatar--initial::before {
+  content: var(--noey-initial, "");
+  font-size: var(--fs-13);
+  font-weight: 600;
+  line-height: 1;
 }

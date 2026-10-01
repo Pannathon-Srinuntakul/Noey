@@ -70,7 +70,8 @@ export function SiteHeader() {
                 <div className="acct__menu">
                   {/* Who is signed in, as the head of the panel below it. */}
                   <div className="acct__head" aria-hidden="true">
-                    <span className="acct__avatar">
+                    {/* The name's initial (auth-hint.ts), the person icon until it is known. */}
+                    <span className="acct__avatar acct__avatar--initial">
                       <IconUser size={16} />
                     </span>
                     <span className="auth-name" />

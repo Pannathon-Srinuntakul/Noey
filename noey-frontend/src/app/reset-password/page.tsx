@@ -30,6 +30,9 @@ export default async function ResetPasswordPage({ searchParams }: { searchParams
               <h1>ตั้งรหัสผ่านใหม่</h1>
               <p className="auth-page__switch">บันทึกแล้วระบบจะพาเข้าสู่ระบบให้ทันที</p>
               <ResetPasswordForm token={token} />
+              <p className="auth-back">
+                <Link href="/login">กลับไปหน้าเข้าสู่ระบบ</Link>
+              </p>
             </div>
           </div>
           <AuthStage />

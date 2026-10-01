@@ -496,3 +496,14 @@ html:not([data-theme="dark"]) .status__halo {
     width: 100%;
   }
 }
+
+/* The quiet ending reads from the left (account deleted): its empty track
+   runs the card's width with the playhead parked at the end, so the left
+   alignment reads as the track's start, not a leftover. */
+.status--quiet.status--start .status__emblem {
+  justify-self: stretch;
+}
+
+.status--quiet.status--start .status__meter {
+  width: 100%;
+}
