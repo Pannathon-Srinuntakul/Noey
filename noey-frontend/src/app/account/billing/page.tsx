@@ -100,7 +100,7 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
     specs: [
       clipsSpec(tier),
       clipsHighLine(tier),
-      `ฟุตเทจ ${FOOTAGE_PER_PROJECT[tier]}ต่อโปรเจกต์`,
+      `ฟุตเทจตัดฉากเด่น ${FOOTAGE_PER_PROJECT[tier]}ต่อโปรเจกต์`,
       storageOf(tier) ? `เก็บได้ ${storageOf(tier)}` : null,
     ].filter((spec): spec is string => !!spec),
     recommended: !!PLAN_COPY[tier].recommended,

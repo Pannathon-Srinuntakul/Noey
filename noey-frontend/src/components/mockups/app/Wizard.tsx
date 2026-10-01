@@ -84,7 +84,7 @@ function Estimate() {
     <div className="flex flex-col gap-2">
       <p className="flex items-start gap-2 text-[13px] leading-[1.6] tabular-nums text-ink-2">
         <Icon name="Gauge" size={15} className="mt-[3px] shrink-0" />
-        งานนี้ใช้ประมาณ 5% ของโควตารายสัปดาห์
+        งานนี้ใช้ประมาณ 5% ของโควตารายเดือน
       </p>
     </div>
   );

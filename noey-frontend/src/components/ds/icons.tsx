@@ -88,6 +88,12 @@ export const IconMinus = (props: IconProps) => (
   </Svg>
 );
 
+export const IconPlus = (props: IconProps) => (
+  <Svg {...props}>
+    <path d="M6 12h12M12 6v12" />
+  </Svg>
+);
+
 export const IconLock = (props: IconProps) => (
   <Svg {...props}>
     <rect x="5" y="10.5" width="14" height="10" rx="2.2" />

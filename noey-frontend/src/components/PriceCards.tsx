@@ -2,15 +2,18 @@ import Link from "next/link";
 import { BETA_BADGE, BETA_DISCOUNT_PERCENT, BETA_STRIKE_LABEL, isBetaActive } from "@/lib/beta";
 import {
   APPROX_CUTS_PER_MONTH,
-  CLIPS_BASIS_SHORT,
+  APPROX_HIGH_CUTS_PER_MONTH,
   CLIPS_FOOTNOTE,
-  CUTS_APPROX_PREFIX,
   CUTS_APPROX_SHORT,
+  CUTS_OVER_FOOTAGE,
+  CUTS_SHORT_OF_BUDGET,
   EXTRA_TIERS,
+  FOOTAGE_PER_PROJECT,
   FREE_CLIPS_CAPTION,
   MAIN_TIERS,
   PAID_TIERS,
   PLAN_COPY,
+  PRECISION_NAMES,
   TIERS,
   clipsHeadline,
   clipsHighLine,
@@ -20,6 +23,7 @@ import {
   type Tier,
 } from "@/lib/plans";
 import { PlanButton } from "./PlanButton";
+import { ClipsBasis, CutsCount, CutsNumber, CutsWord } from "./pricing/CutsCount";
 import "../styles/parts/plans.css";
 import { keepThaiProse } from "./ds/ThaiProse";
 
@@ -140,11 +144,13 @@ function PriceCard({ tier, table, size }: { tier: Tier; table: PriceTable; size:
   // minutes of footage. The "ราว" is part of the claim, not decoration — a
   // heavy user gets fewer — so it sits with the number, not in a footnote.
   // Free is one trial credit, so it carries its own caption instead of /เดือน.
+  // The count and its words are marked (pricing/CutsCount) so /pricing's
+  // calculator can reprice them for another mode or length; the server HTML
+  // states the default, and so does the basis under it.
+  const free = tier === "free";
   const cuts = APPROX_CUTS_PER_MONTH[tier];
-  const cutsPrefix = tier === "free" ? CUTS_APPROX_SHORT : CUTS_APPROX_PREFIX;
-  const cutsUnit = tier === "free" ? "คลิป" : "คลิป / เดือน";
   // Pro and up: the same count at ระดับละเอียด, rounded down like the first.
-  const high = clipsHighLine(tier);
+  const highCuts = APPROX_HIGH_CUTS_PER_MONTH[tier];
 
   return (
     <article className={classes.join(" ")} data-tier={tier} aria-labelledby={`plan-${size}-${tier}`}>
@@ -184,15 +190,36 @@ function PriceCard({ tier, table, size }: { tier: Tier; table: PriceTable; size:
         </p>
       ) : null}
       <p className="plan__usage">
-        <span className="usage-approx">{cutsPrefix}</span>{" "}
-        <span className="usage-count">
-          <span className="num usage-mult">{cuts}</span> <span className="usage-caption">{cutsUnit}</span>
-        </span>
-        {tier === "free" ? <span className="usage-caption">{keepThaiProse(` · ${FREE_CLIPS_CAPTION}`)}</span> : null}
+        <CutsCount
+          tier={tier}
+          over={<span className="usage-over">{`${CUTS_OVER_FOOTAGE} (${FOOTAGE_PER_PROJECT[tier]})`}</span>}
+          short={<span className="usage-over">{CUTS_SHORT_OF_BUDGET}</span>}
+        >
+          <span className="usage-approx">
+            <CutsWord word={free ? "hedge" : "prefix"} />
+          </span>{" "}
+          <span className="usage-count">
+            <CutsNumber className="num usage-mult" value={cuts} />{" "}
+            <span className="usage-caption">
+              <CutsWord word={free ? "unit" : "unit-month"} />
+            </span>
+          </span>
+        </CutsCount>
+        {free ? <span className="usage-caption">{keepThaiProse(` · ${FREE_CLIPS_CAPTION}`)}</span> : null}
         {/* Pro and up: the same count at ระดับละเอียด, rounded down like the first. */}
-        {high ? <span className="usage-high">{keepThaiProse(high)}</span> : null}
+        {highCuts ? (
+          <CutsCount tier={tier} precision="high" className="usage-high">
+            {`ระดับ${PRECISION_NAMES.high}`}
+            <span className="usage-count">
+              {`${CUTS_APPROX_SHORT} `}
+              <CutsNumber value={highCuts} /> คลิป
+            </span>
+          </CutsCount>
+        ) : null}
       </p>
-      <p className="clip-note">{keepThaiProse(CLIPS_BASIS_SHORT)}</p>
+      <p className="clip-note">
+        <ClipsBasis />
+      </p>
       <p className="plan__blurb">{keepThaiProse(detailed ? copy.pricingBlurb : copy.homeBlurb)}</p>
       {detailed ? (
         <ul className="plan__features">

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { Fragment } from "react";
 import { BetaPriceNote } from "@/components/BetaPriceNote";
 import { Breadcrumb } from "@/components/Breadcrumb";
 import { CheckoutCanceledNotice } from "@/components/CheckoutCanceledNotice";
@@ -9,11 +10,14 @@ import { PlanComparisonTable } from "@/components/PlanComparisonTable";
 import { PriceCards } from "@/components/PriceCards";
 import { CtaBand } from "@/components/ds/CtaBand";
 import { UsageMockup } from "@/components/mockups/UsageMockup";
+import { Icon } from "@/components/mockups/app/ui";
 import { PageHero } from "@/components/ds/PageHero";
 import { ComputerOnly } from "@/components/ComputerOnly";
 import { SectionHeader } from "@/components/ds/SectionHeader";
+import { ClipsBasis, CutsCount, CutsNumber, CutsWord } from "@/components/pricing/CutsCount";
 import { PlanRail } from "@/components/pricing/PlanRail";
 import { pricingFaq } from "@/lib/faq";
+import { MODES } from "@/lib/modes";
 import { formatThaiDate } from "@/lib/format";
 import {
   SOFTWARE_ID,
@@ -26,13 +30,18 @@ import {
 import { BETA_PRICE_LINE } from "@/lib/beta";
 import {
   APPROX_CUTS_PER_MONTH,
-  CLIPS_FOOTNOTE,
+  APPROX_HIGH_CUTS_PER_MONTH,
+  CLIPS_BASIS_SHORT,
+  CUTS_APPROX_SHORT,
+  CUTS_OVER_FOOTAGE_SHORT,
+  CUTS_SHORT_OF_BUDGET,
   FREE_CLIPS_CAPTION,
   PAID_TIERS,
   PLAN_COPY,
+  PRECISION_NAMES,
+  SPEECH_FOOTAGE_NOTE,
   VOLUME_VALUE_NOTE,
   clipsHeadline,
-  clipsLadderSentence,
   displayPrice,
   footageLadderSentence,
   formatBaht,
@@ -72,27 +81,55 @@ export async function generateMetadata(): Promise<Metadata> {
 /**
  * Answer-first: the free trial and how paying works open the page, in two
  * short quotable paragraphs; every plan's price and clip count is said in
- * one sentence under the cards (`priceList`), where the cards have just
+ * one sentence under the cards (`PriceList`), where the cards have just
  * shown them — in the hero it was a wall of numbers above the same numbers.
  * The beta terms are said once, in the strip above the cards (BetaPriceNote).
  */
 function answer(): string[] {
   return [
-    `Noey Studio ให้เครดิตทดลองฟรีก้อนเดียวเมื่อสมัคร ตัดได้ ${clipsHeadline("free")} ไม่ต้องผูกบัตร`,
+    `Noey Studio ให้เครดิตทดลองฟรีก้อนเดียวเมื่อสมัคร ตัดได้ ${clipsHeadline("free")} (${CLIPS_BASIS_SHORT}) ไม่ต้องผูกบัตร`,
     "ชำระด้วยบัตรเครดิตหรือเดบิต เปลี่ยนหรือยกเลิกแพลนได้เองจากหน้าบัญชี",
   ];
 }
 
-/** Every monthly plan's price and clip count in one sentence (the cards' text twin). */
-function priceList(table: PriceTable): string {
+/**
+ * Every monthly plan's price and clip count in one sentence (the cards' text
+ * twin). The counts are marked like the cards' (pricing/CutsCount), so the
+ * calculator above reprices them too, and the sentence ends on its basis.
+ */
+function PriceList({ table }: { table: PriceTable }) {
   const paid = PAID_TIERS.flatMap((tier) => {
     const price = displayPrice(table, tier);
     return price ? [`${PLAN_COPY[tier].name} ${price} บาท`] : [];
   });
   const list = paid.length > 1 ? `${paid.slice(0, -1).join(", ")} และ ${paid[paid.length - 1]}` : paid.join("");
-  const clips = clipsLadderSentence(PAID_TIERS);
-  // The basis of the counts (CLIPS_FOOTNOTE) is said once, under the picker.
-  return `ใช้หมดแล้วเลือกแพลนรายเดือนได้ ${paid.length} ระดับ ได้แก่ ${list} ต่อเดือน โดยได้จำนวนคลิปต่อเดือน ${clips}`;
+  return (
+    <p className="pricing-summary">
+      {keepThaiProse(`ใช้หมดแล้วเลือกแพลนรายเดือนได้ ${paid.length} ระดับ ได้แก่ ${list} ต่อเดือน โดยได้จำนวนคลิปต่อเดือน`)}{" "}
+      {PAID_TIERS.map((tier, index) => {
+        const high = APPROX_HIGH_CUTS_PER_MONTH[tier];
+        return (
+          <Fragment key={tier}>
+            {index ? "\u00a0· " : null}
+            {`${PLAN_COPY[tier].name} `}
+            <CutsCount tier={tier} over={CUTS_OVER_FOOTAGE_SHORT} short={CUTS_SHORT_OF_BUDGET}>
+              <CutsWord word="hedge" /> <CutsNumber value={APPROX_CUTS_PER_MONTH[tier]} /> <CutsWord word="unit" />
+            </CutsCount>
+            {high ? (
+              <CutsCount tier={tier} precision="high">
+                {` (ระดับ${PRECISION_NAMES.high}`}
+                <span className="kt">
+                  {`${CUTS_APPROX_SHORT} `}
+                  <CutsNumber value={high} /> คลิป)
+                </span>
+              </CutsCount>
+            ) : null}
+          </Fragment>
+        );
+      })}{" "}
+      (<ClipsBasis />)
+    </p>
+  );
 }
 
 /**
@@ -106,11 +143,11 @@ function priceList(table: PriceTable): string {
 const QUOTA_RULES: ReadonlyArray<{ key: string; editor?: string; text: string }> = [
   { key: "Monthly limit", editor: "โควตารายเดือน", text: "ทุกแพลนรายเดือน ได้โควตาใหม่ทุกรอบบิล ใช้หนักวันไหนก็ได้ ไม่มีเพดานรายสัปดาห์หรือรายชั่วโมง" },
   { key: "แพลนใหญ่", text: `${VOLUME_VALUE_NOTE} ตัวเลขบนการ์ดคิดให้แล้ว` },
-  { key: "Trial credit", editor: "เครดิตทดลองใช้", text: `แพลนฟรี ได้เครดิตทดลองก้อนเดียวตอนสมัคร ตัดได้ ${clipsHeadline("free")} ไม่รีเซ็ตรายเดือน` },
+  { key: "Trial credit", editor: "เครดิตทดลองใช้", text: `แพลนฟรี ได้เครดิตทดลองก้อนเดียวตอนสมัคร ตัดได้ ${clipsHeadline("free")} (${CLIPS_BASIS_SHORT}) ไม่รีเซ็ตรายเดือน` },
   { key: "บอกก่อนเริ่ม", text: "ระบบบอกก่อนเริ่มทุกครั้งว่างานนี้ใช้โควตาเท่าไหร่ จึงไม่มีการหักเกินโดยไม่รู้ตัว" },
   { key: "ไม่กินโควตา", text: "การแก้ไทม์ไลน์ การสลับช็อต และการเรนเดอร์ซ้ำ ทำได้ไม่จำกัด" },
   { key: "งานหนัก", text: "ฟุตเทจยาวและโหมดพากย์ใหม่ใช้ปริมาณมากกว่างานปกติ เพราะต้องถอดเสียงและวางแผนมากขึ้น" },
-  { key: "ฟุตเทจต่อโปรเจกต์", text: `เพดานเดียวต่อแพลน ใช้กับทุกโหมดเท่ากัน — ${footageLadderSentence()}` },
+  { key: "ฟุตเทจต่อโปรเจกต์", text: `โหมดตัดฉากเด่นมีเพดานต่อแพลน — ${footageLadderSentence()} · ${SPEECH_FOOTAGE_NOTE} ภายในนั้นโควตาของแพลนเป็นตัวกำหนด` },
   {
     key: "ความละเอียด",
     text: "แพลนฟรี Lite และ Starter วิเคราะห์ที่ระดับปกติ ซึ่งให้ผลดีอยู่แล้ว ตั้งแต่ Pro ขึ้นไปเลือกระดับละเอียดได้ ซึ่งตัดถี่ขึ้นและจุดตัดแม่นขึ้น แลกกับการใช้โควตามากกว่า",
@@ -127,7 +164,14 @@ export default async function PricingPage() {
     softwareApplicationNode(table),
     faqPageNode(pricingFaq(isBetaPriced(table)), page.path),
   );
-  const railPlans = PAID_TIERS.map((tier) => ({ tier, name: PLAN_COPY[tier].name, cuts: APPROX_CUTS_PER_MONTH[tier] }));
+  const railPlans = PAID_TIERS.map((tier) => ({ tier, name: PLAN_COPY[tier].name }));
+  // The three modes as the home page introduces them, with the editor's icons.
+  const railModes = MODES.map((mode) => ({
+    id: mode.id,
+    name: mode.name,
+    fit: mode.fit,
+    icon: <Icon name={mode.icon} size={18} strokeWidth={1.8} />,
+  }));
 
   return (
     <main id="main" className="pricing-page">
@@ -158,10 +202,10 @@ export default async function PricingPage() {
           <CheckoutCanceledNotice />
           <ComputerOnly className="computer-only--top" />
           <BetaPriceNote table={table} />
-          <PlanRail plans={railPlans} initial={APPROX_CUTS_PER_MONTH.pro} footnote={CLIPS_FOOTNOTE} freeNote={`${PLAN_COPY.free.name}: ${FREE_CLIPS_CAPTION}`}>
+          <PlanRail plans={railPlans} modes={railModes} initial={APPROX_CUTS_PER_MONTH.pro} freeNote={`${PLAN_COPY.free.name}: ${FREE_CLIPS_CAPTION}`}>
             <PriceCards table={table} variant="full" />
           </PlanRail>
-          <p className="pricing-summary">{keepThaiProse(priceList(table))}</p>
+          <PriceList table={table} />
         </div>
       </section>
 
@@ -169,7 +213,7 @@ export default async function PricingPage() {
         <div className="wrap quota__grid">
           <SectionHeader id="quota-title" marker timecode="00:00:48:00" title="โควตาคิดยังไง" size="h-2">
             <p>
-              {keepThaiProse("เรานับเป็นจำนวนคลิปที่ AI ตัดให้ต่อเดือน เพราะงานหนักของแต่ละคลิปคือการถอดเสียงและการวางแผนตัด ซึ่งใช้กำลังใกล้เคียงกันไม่ว่าฟุตเทจจะยาวแค่ไหน ตัวเลขบนการ์ดคิดจากคลิปดิบ 5 นาทีและปัดลง แพลน Pro ขึ้นไปบอกทั้งจำนวนที่ระดับปกติและระดับละเอียด คลิปที่ยาวกว่าใช้โควตามากกว่า และหน้าตั้งค่าแสดงเป็นเปอร์เซ็นต์ของรอบที่เหลือ")}
+              {keepThaiProse("เรานับเป็นจำนวนคลิปที่ AI ตัดให้ต่อเดือน เพราะงานหนักของแต่ละคลิปคือการถอดเสียงและการวางแผนตัด ซึ่งใช้กำลังใกล้เคียงกันไม่ว่าฟุตเทจจะยาวแค่ไหน ตัวเลขบนการ์ดคิดจากโหมดและความยาวคลิปดิบที่ตั้งไว้ด้านบน ตั้งต้นที่โหมดตัดฉากเด่น คลิปดิบ 5 นาที และปัดลง แต่ละโหมดใช้โควตาไม่เท่ากัน แพลน Pro ขึ้นไปบอกทั้งจำนวนที่ระดับปกติและระดับละเอียด คลิปที่ยาวกว่าใช้โควตามากกว่า และหน้าตั้งค่าแสดงเป็นเปอร์เซ็นต์ของรอบที่เหลือ")}
             </p>
           </SectionHeader>
           <div className="quota-card">
@@ -202,7 +246,7 @@ export default async function PricingPage() {
               {keepThaiProse("ทุกแพลนได้ดราฟต์แรกจากการคัดช็อตเหมือนกัน แล้วยังต้องเกลาต่อเองในไทม์ไลน์ ระบบเหมาะกับคลิปสั้นที่โครงไม่ซับซ้อน ไม่ใช่งานโปรดักชันที่ต้องแทรกภาพหรือตัดซ้อนหลายชั้น")}
             </p>
           </SectionHeader>
-          <PlanComparisonTable table={table} labelledBy="compare-title" footnote={false} />
+          <PlanComparisonTable table={table} labelledBy="compare-title" footnote="live" />
         </div>
       </section>
 

@@ -8,9 +8,13 @@
  * clips' own sound (a new voiceover or music only), and ตัดช่วงเงียบ cuts
  * pauses — it does not find stumbles or a sentence said twice.
  */
+import type { CutMode } from "./plans";
+
 export type ModeIcon = "Mic" | "Clapperboard" | "Layers";
 
 export interface ModeIntro {
+  /** The editor's mode id (/pricing prices each mode by it). */
+  id: CutMode;
   /** The mode's name in the editor. */
   name: string;
   icon: ModeIcon;
@@ -24,6 +28,7 @@ export interface ModeIntro {
 
 export const MODES: readonly ModeIntro[] = [
   {
+    id: "talking_head",
     name: "ตัดช่วงเงียบ",
     icon: "Mic",
     fit: "คลิปพูดหน้ากล้องที่ถ่ายรวดเดียว",
@@ -35,6 +40,7 @@ export const MODES: readonly ModeIntro[] = [
     result: ["ได้ 1 คลิป", "เสียงเดิม"],
   },
   {
+    id: "dub_first",
     name: "ตัดฉากเด่น",
     icon: "Clapperboard",
     fit: "คลิปขายของหรือรีวิวสินค้า ที่ถ่ายไว้หลายคลิปหลายมุม",
@@ -46,6 +52,7 @@ export const MODES: readonly ModeIntro[] = [
     result: ["ได้ 1 คลิป", "พากย์ใหม่ ไม่ใช้เสียงในคลิปเดิม"],
   },
   {
+    id: "speech_highlights",
     name: "ตัดไฮไลต์จากคลิปยาว",
     icon: "Layers",
     fit: "คลิปพูดยาวหรือไลฟ์ ที่อยากแยกเป็นคลิปสั้น",

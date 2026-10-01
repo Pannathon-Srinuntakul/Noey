@@ -78,9 +78,8 @@
 
 .plan-rail__bar {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 18px 28px;
-  align-items: end;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
   padding: clamp(18px, 2.4vw, 26px);
   border: 1px solid var(--line);
   border-radius: var(--r-xl);
@@ -95,6 +94,294 @@
   justify-content: flex-end;
   gap: 8px;
   margin-bottom: -8px;
+}
+
+/* The calculator's choices — mode, raw-clip length, setting — ruled off from
+   the clips picker under them. */
+.rail-setup {
+  display: grid;
+  gap: 18px;
+}
+
+.rail-setup__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 18px 44px;
+}
+
+.rail-setup__note {
+  margin-top: -4px;
+  padding-bottom: 18px;
+  border-bottom: 1px dashed var(--line-2);
+}
+
+/* The setting group and the line that stands in for it share one cell, so
+   switching modes moves nothing below. */
+.rail-setup__fine {
+  display: grid;
+}
+
+.rail-setup__layer {
+  grid-area: 1 / 1;
+  display: grid;
+  align-content: start;
+  gap: 10px;
+}
+
+.rail-setup__layer[data-off] {
+  visibility: hidden;
+}
+
+/* The three modes as clips on a track: the editor's icon, the name, the
+   footage each is for. The one picked is the clip selected in the
+   timeline — gold edge and trim handles (components.css .clip). */
+.mode-pick {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.mode-pick > legend,
+.seg > legend {
+  margin: 0 0 10px;
+  padding: 0;
+}
+
+.mode-pick__options {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.mode-pick__option {
+  position: relative;
+  display: flex;
+}
+
+.mode-pick__input,
+.seg__input {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.mode-pick__face {
+  --clip-edge: var(--line-2);
+  position: relative;
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border: 1px solid var(--clip-edge);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--panel) 80%, transparent);
+  box-shadow: var(--rim);
+  transition:
+    border-color var(--dur-2) ease,
+    background-color var(--dur-2) ease,
+    box-shadow var(--dur-2) ease;
+}
+
+.mode-pick__face::before,
+.mode-pick__face::after {
+  content: "";
+  position: absolute;
+  top: 12px;
+  bottom: 12px;
+  width: 5px;
+  border-radius: 3px;
+  background: var(--gold);
+  opacity: 0;
+  transition:
+    opacity var(--dur-2) ease,
+    translate var(--dur-3) var(--ease-out);
+}
+
+.mode-pick__face::before {
+  left: -3px;
+  translate: 5px 0;
+}
+
+.mode-pick__face::after {
+  right: -3px;
+  translate: -5px 0;
+}
+
+.mode-pick__option:hover .mode-pick__face {
+  --clip-edge: var(--line-3);
+}
+
+.mode-pick__input:checked + .mode-pick__face {
+  --clip-edge: var(--gold);
+  background:
+    linear-gradient(180deg, var(--gold-softer), transparent 80%),
+    var(--panel);
+  box-shadow:
+    var(--rim),
+    0 18px 40px -24px var(--gold-glow);
+}
+
+.mode-pick__input:checked + .mode-pick__face::before,
+.mode-pick__input:checked + .mode-pick__face::after {
+  opacity: 1;
+  translate: 0 0;
+}
+
+.mode-pick__input:focus-visible + .mode-pick__face {
+  outline: 2px solid var(--focus);
+  outline-offset: 3px;
+}
+
+.mode-pick__icon {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: var(--gold-soft);
+  color: var(--gold-ink);
+}
+
+.mode-pick__input:checked + .mode-pick__face .mode-pick__icon {
+  background: var(--gold);
+  color: var(--on-gold);
+}
+
+.mode-pick__text {
+  display: grid;
+  min-width: 0;
+}
+
+.mode-pick__name {
+  font-size: var(--fs-15);
+  font-weight: 600;
+  line-height: 1.45;
+  color: var(--ink);
+}
+
+.mode-pick__fit {
+  font-size: var(--fs-13);
+  line-height: 1.55;
+  color: var(--ink-3);
+}
+
+/* A segmented control over native radios (the setting). */
+.seg {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.seg__options {
+  display: flex;
+  gap: 2px;
+  width: fit-content;
+  padding: 3px;
+  border: 1px solid var(--line-2);
+  border-radius: 12px;
+  background: var(--well);
+}
+
+.seg__option {
+  position: relative;
+  display: flex;
+}
+
+.seg__text {
+  display: block;
+  min-width: 5.5em;
+  padding: 7px 16px;
+  border-radius: 9px;
+  font-size: var(--fs-14);
+  line-height: 1.45;
+  text-align: center;
+  color: var(--ink-2);
+  transition:
+    background-color var(--dur-2) ease,
+    color var(--dur-2) ease;
+}
+
+.seg__option:hover .seg__text {
+  color: var(--ink);
+}
+
+.seg__input:checked + .seg__text {
+  background: var(--panel);
+  color: var(--gold-ink);
+  font-weight: 600;
+  box-shadow:
+    inset 0 0 0 1px var(--gold),
+    var(--rim);
+}
+
+/* Where the mode has no setting: the control's outline, empty, saying so —
+   the same size as the control, so the row keeps its height. */
+.seg__none {
+  display: inline-flex;
+  align-items: center;
+  min-height: 43px;
+  margin: 0;
+  padding: 0 16px;
+  border: 1px dashed var(--line-2);
+  border-radius: 12px;
+  font-size: var(--fs-13);
+  line-height: 1.5;
+  color: var(--ink-3);
+}
+
+.seg__input:focus-visible + .seg__text {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.cliplen {
+  display: grid;
+  gap: 10px;
+}
+
+.cliplen > .picker__label {
+  /* Lines up with the legends beside it. */
+  line-height: 1.5;
+}
+
+.cliplen__row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cliplen__input {
+  width: 4.2em;
+  min-height: 40px;
+  padding: 4px 6px;
+  font-size: var(--fs-20);
+  font-weight: 600;
+  text-align: center;
+  color: var(--gold-ink);
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+
+.cliplen__input::-webkit-inner-spin-button,
+.cliplen__input::-webkit-outer-spin-button {
+  margin: 0;
+  -webkit-appearance: none;
+}
+
+.cliplen__unit {
+  margin-left: 4px;
+  font-size: var(--fs-14);
+  color: var(--ink-2);
 }
 
 .picker {
@@ -189,7 +476,8 @@
 
 .picker__num {
   display: inline-block;
-  min-width: 1.9em;
+  /* Four digits: ตัดช่วงเงียบ counts run into the thousands. */
+  min-width: 2.4em;
   text-align: right;
   font-size: var(--fs-20);
   font-weight: 600;
@@ -258,6 +546,11 @@
   font-weight: 600;
 }
 
+/* No count for this choice: the marker steps off the track. */
+.picker__tick--out {
+  visibility: hidden;
+}
+
 .picker__note {
   margin: 0;
   font-size: var(--fs-13);
@@ -266,8 +559,14 @@
 }
 
 @media (max-width: 720px) {
-  .plan-rail__bar {
-    grid-template-columns: 1fr;
+  /* The modes stack, one clip per row, each with its footage line. */
+  .mode-pick__options {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  .mode-pick__face {
+    padding-block: 10px;
   }
 
   /* The readout takes the track's full width under it. */

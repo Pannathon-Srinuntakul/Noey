@@ -13,6 +13,7 @@
  * and the full ladder is what the backend charges.
  */
 import { isBetaActive } from "./beta";
+import { MODES } from "./modes";
 
 /**
  * Every plan, cheapest first — the order of the comparison table.
@@ -237,8 +238,8 @@ export type UsageLimit = "Trial credit" | "Monthly limit" | "Weekly limit" | "5-
 // High (ระดับละเอียด) = 267,420. The backend derives the same numbers in
 // `packages/billing/limits.py` (`plan_cuts` / `plan_cuts_high`, served as
 // `approx_cuts` / `approx_cuts_high`) and its tests pin them; change both
-// together. Budgets are not written here on purpose: the site never states a
-// token count.
+// together. The budgets appear only in the calculator model below, as code:
+// the site never prints a token count.
 export const APPROX_CUTS_PER_MONTH: Record<Tier, number> = {
   free: 2,
   lite: 4,
@@ -260,6 +261,153 @@ export const APPROX_HIGH_CUTS_PER_MONTH: Partial<Record<Tier, number>> = {
   agency: 97,
   max: 179,
 };
+
+// ─── Cuts per mode at the visitor's own raw-clip length (/pricing) ──────────
+//
+// Owner, 2026-10-01: on /pricing a visitor picks the mode they cut in and how
+// long their raw clips run, and every count on the page follows. ตัดฉากเด่น
+// at 5 minutes stays the default and the basis every other surface states —
+// the two maps above. The modes cost very differently: ตัดช่วงเงียบ only
+// transcribes, ตัดไฮไลต์จากคลิปยาว reads the transcript and trims each
+// highlight, ตัดฉากเด่น sends the footage itself.
+//
+// The arithmetic mirrors the backend and must stay exact:
+// - ตัดฉากเด่น: `packages/billing/limits.py` `cut_tokens` (the fitted model
+//   the two maps above come from; the fixed part includes the voiceover pass);
+// - ตัดช่วงเงียบ and ตัดไฮไลต์จากคลิปยาว: `packages/billing/estimate.py`
+//   `estimate_run` for `talking_head` / `speech_highlights`, with the
+//   `rate_card.py` rates its speech model is charged at.
+// A count is the plan's budget (`PlanLimits.monthly`; Free: its one-off
+// credit) divided by one cut's cost, ROUNDED DOWN — 0 when one cut costs more
+// than the whole budget. Only ตัดฉากเด่น has a footage ceiling per plan
+// (`FOOTAGE_MINUTES`); the two speech modes take up to `SPEECH_FOOTAGE_MINUTES`
+// on every plan and only the budget limits them (owner, 2026-10-01).
+//
+// The numbers below are rate-card tokens. They are code, never copy: the site
+// never prints a token count, only the counts derived from them.
+// plans.test.ts pins them against the backend's own results.
+
+/**
+ * The lengths the calculator offers, in whole minutes; `basis` is its
+ * default. The longest is the mode's own (`maxClipMinutes`).
+ */
+export const CLIP_MINUTES = { min: 1, basis: 5 } as const;
+
+/** The two analysis settings, by their identifiers (copy: `PRECISION_NAMES`). */
+export type Precision = "standard" | "high";
+
+/**
+ * The three modes the site introduces (lib/modes.ts, same order), by the
+ * editor's mode ids: ตัดช่วงเงียบ, ตัดฉากเด่น, ตัดไฮไลต์จากคลิปยาว.
+ */
+export type CutMode = "talking_head" | "dub_first" | "speech_highlights";
+export const CUT_MODES: readonly CutMode[] = ["talking_head", "dub_first", "speech_highlights"];
+/** The mode every count on the site is quoted in unless a visitor picks another. */
+export const DEFAULT_CUT_MODE: CutMode = "dub_first";
+
+/** Only ตัดฉากเด่น sends footage to the model, so only it has ระดับละเอียด. */
+export function modeHasPrecision(mode: CutMode): boolean {
+  return mode === "dub_first";
+}
+
+/** Each plan's budget for its window (Free: the one-off trial credit). */
+const PLAN_BUDGET: Record<Tier, number> = {
+  free: 450_000,
+  lite: 800_000,
+  starter: 2_000_000,
+  pro: 5_600_000,
+  studio: 12_000_000,
+  agency: 26_000_000,
+  max: 48_000_000,
+};
+
+/** ตัดฉากเด่น: per second of footage, per setting, plus the fixed part of a cut. */
+const SCENE_PER_SEC: Record<Precision, number> = { standard: 65.6, high: 340.1 };
+const SCENE_FIXED = 125_390 + 40_000;
+/** Speech-to-text, per second of audio. */
+const STT_PER_SEC = 51.75;
+/** The speech model's input and output rates. */
+const SPEECH_IN = 1.035;
+const SPEECH_OUT = 5.175;
+/** Transcript the highlight passes read, per second of audio. */
+const TRANSCRIPT_PER_SEC = 15;
+/** The highlight selector (one call) and the trim of each highlight it picks. */
+const SELECTOR = { prompt: 4_000, output: 6_000 };
+const TRIM = { prompt: 3_000, output: 2_500 };
+/** Highlights a recording is priced for: one a minute, at least 3, at most 24. */
+const PICK_SECONDS = 60;
+const PICKS = { min: 3, max: 24 };
+
+/** The rate card's rounding: snap float noise to 6 decimals, then round up. */
+const cardCeil = (value: number) => Math.max(0, Math.ceil(Number(value.toFixed(6))));
+
+/** Rate-card tokens one cut of `seconds` of raw clip costs in `mode`. */
+export function cutCost(mode: CutMode, seconds: number, precision: Precision = "standard"): number {
+  const stt = cardCeil(seconds * STT_PER_SEC);
+  if (mode === "talking_head") return stt;
+  if (mode === "speech_highlights") {
+    const transcript = Math.ceil(TRANSCRIPT_PER_SEC * seconds);
+    const picks = Math.max(PICKS.min, Math.min(PICKS.max, Math.ceil(seconds / PICK_SECONDS)));
+    const selector = cardCeil((SELECTOR.prompt + transcript) * SPEECH_IN + SELECTOR.output * SPEECH_OUT);
+    const trim = cardCeil((TRIM.prompt + Math.ceil(transcript / picks)) * SPEECH_IN + TRIM.output * SPEECH_OUT);
+    return selector + trim * picks + stt;
+  }
+  return cardCeil(SCENE_PER_SEC[precision] * seconds) + SCENE_FIXED;
+}
+
+/** ตัดฉากเด่น's footage ceiling per project, in minutes — `FOOTAGE_PER_PROJECT` as numbers. */
+export const FOOTAGE_MINUTES: Record<Tier, number> = {
+  free: 10,
+  lite: 10,
+  starter: 20,
+  pro: 30,
+  studio: 30,
+  agency: 30,
+  max: 30,
+};
+
+/**
+ * The footage ตัดช่วงเงียบ and ตัดไฮไลต์จากคลิปยาว take per project, on every
+ * plan: the editor's own per-mode ceiling (web/src/lib/wizardState.ts
+ * `capSecFor`, two hours).
+ */
+export const SPEECH_FOOTAGE_MINUTES = 120;
+
+/** The longest raw clip the calculator offers in a mode: the largest plan's ceiling. */
+export function maxClipMinutes(mode: CutMode = DEFAULT_CUT_MODE): number {
+  return mode === "dub_first" ? Math.max(...Object.values(FOOTAGE_MINUTES)) : SPEECH_FOOTAGE_MINUTES;
+}
+
+/** A length the calculator accepts in `mode`: a whole number of minutes within its range. */
+export function clampClipMinutes(minutes: number, mode: CutMode = DEFAULT_CUT_MODE): number {
+  if (!Number.isFinite(minutes)) return CLIP_MINUTES.basis;
+  return Math.min(maxClipMinutes(mode), Math.max(CLIP_MINUTES.min, Math.round(minutes)));
+}
+
+/**
+ * How many cuts of a `minutes`-long raw clip the plan pays for per month
+ * (Free: in all) in `mode`, rounded down — 0 when one cut is more than the
+ * plan's whole budget. Null when the plan cannot take such a clip at all
+ * (ตัดฉากเด่น past the plan's footage ceiling) or cannot pick that setting.
+ */
+export function cutsAt(
+  tier: Tier,
+  minutes: number,
+  precision: Precision = "standard",
+  mode: CutMode = DEFAULT_CUT_MODE,
+): number | null {
+  if (precision === "high" && (!modeHasPrecision(mode) || !hasHighPrecision(tier))) return null;
+  const length = clampClipMinutes(minutes, mode);
+  if (mode === "dub_first" && length > FOOTAGE_MINUTES[tier]) return null;
+  return Math.floor(PLAN_BUDGET[tier] / cutCost(mode, length * 60, precision));
+}
+
+/** What /pricing says in place of a ตัดฉากเด่น count past the plan's footage ceiling. */
+export const CUTS_OVER_FOOTAGE = "เกินเพดานฟุตเทจของแพลนนี้";
+/** The same, short, for a table cell or a list. */
+export const CUTS_OVER_FOOTAGE_SHORT = "เกินเพดานฟุตเทจ";
+/** What it says where one clip of that length costs more than the plan's whole budget. */
+export const CUTS_SHORT_OF_BUDGET = "ไม่พอสำหรับคลิปยาวขนาดนี้";
 
 /**
  * The word that makes the number honest. Load-bearing: without it the card
@@ -338,27 +486,75 @@ export const VOLUME_VALUE_NOTE = "แพลนใหญ่ขึ้น ได้
  * repetition is free there, and an agent may read one plan in isolation.
  */
 export const CLIPS_FOOTNOTE =
-  "คิดจากคลิปดิบ 5 นาที ปัดลง · คลิปที่ยาวกว่าหรือระดับละเอียดใช้โควตามากกว่า · ระบบบอกก่อนเริ่มทุกครั้งว่างานนี้ใช้เท่าไหร่";
+  "คิดจากโหมดตัดฉากเด่น คลิปดิบ 5 นาที ปัดลง · คลิปที่ยาวกว่าหรือระดับละเอียดใช้โควตามากกว่า · ระบบบอกก่อนเริ่มทุกครั้งว่างานนี้ใช้เท่าไหร่";
 
-/** What a card puts under its own count; the page states the rest once. */
-export const CLIPS_BASIS_SHORT = "~คลิปดิบ 5 นาที";
+/** A count as the page prints it: "3,091". */
+export function formatCount(count: number): string {
+  return count.toLocaleString("en-US");
+}
+
+/**
+ * How a count reads in each mode. ตัดไฮไลต์จากคลิปยาว counts the LONG clips
+ * that go in (each comes out as several short ones), and its estimate assumes
+ * up to one highlight a minute — above what real runs produce — so its count
+ * is a floor ("อย่างน้อย"), not an approximation.
+ */
+export const CUT_MODE_WORDS: Record<CutMode, { hedge: string; unit: string }> = {
+  talking_head: { hedge: CUTS_APPROX_SHORT, unit: "คลิป" },
+  dub_first: { hedge: CUTS_APPROX_SHORT, unit: "คลิป" },
+  speech_highlights: { hedge: "อย่างน้อย", unit: "คลิปยาว" },
+};
+
+/** The mode's name as the editor and the home page spell it. */
+export function cutModeName(mode: CutMode): string {
+  return MODES.find((entry) => entry.id === mode)?.name ?? mode;
+}
+
+/** The basis of a count, short: "คิดจากโหมดตัดฉากเด่น คลิปดิบ 5 นาที". */
+export function clipsBasis(minutes: number, mode: CutMode = DEFAULT_CUT_MODE): string {
+  return `คิดจากโหมด${cutModeName(mode)} คลิปดิบ ${clampClipMinutes(minutes, mode)} นาที`;
+}
+
+/**
+ * The footnote for a count in `mode` at `minutes` — the clips picker's note
+ * on /pricing, which follows the visitor's choices. Every other surface states
+ * `CLIPS_FOOTNOTE`, which is this at the default: ตัดฉากเด่น, 5 minutes.
+ */
+export function clipsFootnote(minutes: number, mode: CutMode = DEFAULT_CUT_MODE): string {
+  const middle: Record<CutMode, string> = {
+    talking_head: "คลิปที่ยาวกว่าใช้โควตามากกว่า",
+    dub_first: "คลิปที่ยาวกว่าหรือระดับละเอียดใช้โควตามากกว่า",
+    speech_highlights: "หนึ่งคลิปยาวแยกได้หลายคลิปสั้น",
+  };
+  return `${clipsBasis(minutes, mode)} ปัดลง · ${middle[mode]} · ระบบบอกก่อนเริ่มทุกครั้งว่างานนี้ใช้เท่าไหร่`;
+}
+
+/**
+ * What a card puts under its own count — the basis, short, so a count read
+ * alone is never ambiguous about the mode and length it assumes; the page
+ * states the rest once. `clipsBasis` at the default.
+ */
+export const CLIPS_BASIS_SHORT = "คิดจากโหมดตัดฉากเด่น คลิปดิบ 5 นาที";
 
 /** The free plan's headline needs its own caption: it never comes back. */
 export const FREE_CLIPS_CAPTION = "ทดลองใช้ครั้งเดียว ไม่รีเซ็ต";
 
 // ─── Footage per project ─────────────────────────────────────────────────────
 //
-// Owner, 2026-09-29. ONE number per plan, and it is the only footage ceiling
-// the site states. The earlier copy promised Pro and up "2 ชั่วโมง" and then
-// had to qualify it with the ตัดฉากเด่น mode's own ceiling (1 hour at the
-// ordinary setting / 44 minutes at the finer one, which that mode hits
-// because it hands the whole project to
-// the AI in one pass). With every plan now at 30 minutes or less, the plan's
-// number is always the smaller of the two, so the mode ceiling can never bind
-// and stating it would only be noise. If a plan ever exceeds 44 minutes again,
-// bring the second number back. Mirrors the backend's
-// `packages/billing/limits.py`; change both together or the site promises what
-// the product refuses.
+// Owner, 2026-09-29, narrowed 2026-10-01: the per-plan ceiling applies to
+// ตัดฉากเด่น ONLY — the mode that hands the whole project to the AI in one
+// video pass, so its footage is what the plan pays for. ตัดช่วงเงียบ and
+// ตัดไฮไลต์จากคลิปยาว work from the transcript and take up to two hours on
+// every plan (`SPEECH_FOOTAGE`, the editor's `capSecFor`); within that, the
+// plan's quota is what limits a run. Every sentence that states the ladder
+// therefore names ตัดฉากเด่น, and says the two hours for the others.
+//
+// ตัดฉากเด่น also has a ceiling of its own per request (1 hour at the
+// ordinary setting / 44 minutes at the finer one); with every plan at 30
+// minutes or less the plan's number is always the smaller, so it is not
+// stated. If a plan ever exceeds 44 minutes again, bring it back. Mirrors the
+// backend's `packages/billing/limits.py`; change both together or the site
+// promises what the product refuses.
 export const FOOTAGE_PER_PROJECT: Record<Tier, string> = {
   free: "10 นาที",
   lite: "10 นาที",
@@ -369,9 +565,20 @@ export const FOOTAGE_PER_PROJECT: Record<Tier, string> = {
   max: "30 นาที",
 };
 
-/** Feature/FAQ sentence listing the whole ladder, so no page writes its own. */
+/** The two speech modes' footage per project, on every plan (`SPEECH_FOOTAGE_MINUTES`). */
+export const SPEECH_FOOTAGE = "2 ชั่วโมง";
+
+/** The one statement of the speech modes' footage, so no page words its own. */
+export const SPEECH_FOOTAGE_NOTE = `โหมดตัดช่วงเงียบและตัดไฮไลต์จากคลิปยาวรับฟุตเทจรวมได้ถึง ${SPEECH_FOOTAGE}ต่อโปรเจกต์ทุกแพลน`;
+
+/** Feature/FAQ sentence listing ตัดฉากเด่น's ladder, so no page writes its own. */
 export function footageLadderSentence(): string {
   return TIERS.map((tier) => `${PLAN_COPY[tier].name} ${FOOTAGE_PER_PROJECT[tier]}`).join(" · ");
+}
+
+/** A plan's footage bullet: "ฟุตเทจรวมโหมดตัดฉากเด่น 30 นาทีต่อโปรเจกต์". */
+export function footageFeature(tier: Tier): string {
+  return `ฟุตเทจรวมโหมดตัดฉากเด่น ${FOOTAGE_PER_PROJECT[tier]}ต่อโปรเจกต์`;
 }
 
 // ─── ความละเอียด (analysis precision) ────────────────────────────────────────
@@ -421,14 +628,14 @@ export const PLAN_COPY: Record<Tier, PlanCopy> = {
     // Not a recurring 0-baht plan: one credit, spent once, then you upgrade.
     pricingBlurb: "ทดลองใช้ครั้งเดียว ใช้หมดแล้วเลือกแพลนต่อ",
     features: [
-      `ฟุตเทจรวม ${FOOTAGE_PER_PROJECT.free}ต่อโปรเจกต์`,
+      footageFeature("free"),
       precisionFeature("free"),
       "ครบทุกโหมด รวมโหมดพากย์ใหม่",
       "เก็บได้ 3 โปรเจกต์ · 1 GB",
     ],
     accountFeatures: [
       `${clipsHeadline("free")} · ${FREE_CLIPS_CAPTION}`,
-      `ฟุตเทจรวม ${FOOTAGE_PER_PROJECT.free}ต่อโปรเจกต์ · ${precisionFeature("free")}`,
+      `${footageFeature("free")} · ${precisionFeature("free")}`,
       "เก็บได้ 3 โปรเจกต์ · 1 GB",
     ],
     dialogSummary: "",
@@ -442,17 +649,17 @@ export const PLAN_COPY: Record<Tier, PlanCopy> = {
     homeBlurb: "เริ่มแบบประหยัด ลงคลิปสัปดาห์ละไม่กี่ตัว",
     pricingBlurb: "เริ่มแบบประหยัด ลงคลิปสัปดาห์ละไม่กี่ตัว",
     features: [
-      `ฟุตเทจรวม ${FOOTAGE_PER_PROJECT.lite}ต่อโปรเจกต์`,
+      footageFeature("lite"),
       precisionFeature("lite"),
       "เพิ่มเพลงประกอบได้",
       "เก็บได้ 10 โปรเจกต์ · 3 GB",
     ],
     accountFeatures: [
       clipsHeadline("lite"),
-      `ฟุตเทจรวม ${FOOTAGE_PER_PROJECT.lite}ต่อโปรเจกต์ · ${precisionFeature("lite")}`,
+      `${footageFeature("lite")} · ${precisionFeature("lite")}`,
       "เก็บได้ 10 โปรเจกต์ · 3 GB",
     ],
-    dialogSummary: `${clipsHeadline("lite")} · ฟุตเทจ ${FOOTAGE_PER_PROJECT.lite}ต่อโปรเจกต์ · 3 GB`,
+    dialogSummary: `${clipsHeadline("lite")} · ฟุตเทจตัดฉากเด่น ${FOOTAGE_PER_PROJECT.lite}ต่อโปรเจกต์ · 3 GB`,
     pricingCta: "เลือกแพลนนี้",
     limits: ["Monthly limit"],
     concurrentJobs: 1,
@@ -463,17 +670,17 @@ export const PLAN_COPY: Record<Tier, PlanCopy> = {
     homeBlurb: "สำหรับคนที่ลงคลิปหลายตัวต่อสัปดาห์",
     pricingBlurb: "สำหรับคนที่ลงคลิปหลายตัวต่อสัปดาห์",
     features: [
-      `ฟุตเทจรวม ${FOOTAGE_PER_PROJECT.starter}ต่อโปรเจกต์`,
+      footageFeature("starter"),
       precisionFeature("starter"),
       "ฟุตเทจยาวขึ้น พร้อมเพลงประกอบ",
       "เก็บได้ 20 โปรเจกต์ · 5 GB",
     ],
     accountFeatures: [
       clipsHeadline("starter"),
-      `ฟุตเทจรวม ${FOOTAGE_PER_PROJECT.starter}ต่อโปรเจกต์ · ${precisionFeature("starter")}`,
+      `${footageFeature("starter")} · ${precisionFeature("starter")}`,
       "เก็บได้ 20 โปรเจกต์ · 5 GB",
     ],
-    dialogSummary: `${clipsHeadline("starter")} · ฟุตเทจ ${FOOTAGE_PER_PROJECT.starter}ต่อโปรเจกต์ · 5 GB`,
+    dialogSummary: `${clipsHeadline("starter")} · ฟุตเทจตัดฉากเด่น ${FOOTAGE_PER_PROJECT.starter}ต่อโปรเจกต์ · 5 GB`,
     pricingCta: "เลือกแพลนนี้",
     limits: ["Monthly limit"],
     concurrentJobs: 1,
@@ -484,14 +691,14 @@ export const PLAN_COPY: Record<Tier, PlanCopy> = {
     homeBlurb: "ทำคลิปทุกวัน หรือรับงานให้ลูกค้าหลายเจ้า",
     pricingBlurb: "ทำคลิปทุกวัน หรือรับงานให้ลูกค้าหลายเจ้า",
     features: [
-      `ฟุตเทจรวม ${FOOTAGE_PER_PROJECT.pro}ต่อโปรเจกต์`,
+      footageFeature("pro"),
       precisionFeature("pro"),
       "ทำงาน AI พร้อมกันได้ 2 งาน",
       "คิวประมวลผลก่อนแพลนอื่น · จำนวนโปรเจกต์ไม่จำกัด ภายใน 10 GB",
     ],
     accountFeatures: [
       clipsHeadlineFull("pro"),
-      `ฟุตเทจรวม ${FOOTAGE_PER_PROJECT.pro}ต่อโปรเจกต์ · ${precisionFeature("pro")}`,
+      `${footageFeature("pro")} · ${precisionFeature("pro")}`,
       "คิวประมวลผลก่อนแพลนอื่น · เก็บโปรเจกต์ไม่จำกัดจำนวน · 10 GB",
     ],
     dialogSummary: `${clipsHeadlineFull("pro")} · 10 GB`,
@@ -506,14 +713,14 @@ export const PLAN_COPY: Record<Tier, PlanCopy> = {
     homeBlurb: "ผลิตคลิปวันละหลายตัว หรือรับงานเป็นทีม",
     pricingBlurb: "ผลิตคลิปวันละหลายตัว หรือรับงานเป็นทีม",
     features: [
-      `ฟุตเทจรวม ${FOOTAGE_PER_PROJECT.studio}ต่อโปรเจกต์`,
+      footageFeature("studio"),
       precisionFeature("studio"),
       "ทำงาน AI พร้อมกันได้ 3 งาน",
       "คิวประมวลผลลำดับแรก · จำนวนโปรเจกต์ไม่จำกัด ภายใน 30 GB",
     ],
     accountFeatures: [
       clipsHeadlineFull("studio"),
-      `ฟุตเทจรวม ${FOOTAGE_PER_PROJECT.studio}ต่อโปรเจกต์ · ${precisionFeature("studio")}`,
+      `${footageFeature("studio")} · ${precisionFeature("studio")}`,
       "คิวประมวลผลลำดับแรก · เก็บโปรเจกต์ไม่จำกัด · 30 GB",
     ],
     dialogSummary: `${clipsHeadlineFull("studio")} · ทำงานพร้อมกัน 3 งาน · 30 GB`,
@@ -527,7 +734,7 @@ export const PLAN_COPY: Record<Tier, PlanCopy> = {
     homeBlurb: "ดูแลหลายแบรนด์พร้อมกัน",
     pricingBlurb: "สำหรับเอเจนซีที่ดูแลคอนเทนต์หลายแบรนด์",
     features: [
-      `ฟุตเทจรวม ${FOOTAGE_PER_PROJECT.agency}ต่อโปรเจกต์`,
+      footageFeature("agency"),
       precisionFeature("agency"),
       "ทำงาน AI พร้อมกันได้ 4 งาน",
       "คิวประมวลผลลำดับแรก · จำนวนโปรเจกต์ไม่จำกัด ภายใน 60 GB",
@@ -548,7 +755,7 @@ export const PLAN_COPY: Record<Tier, PlanCopy> = {
     homeBlurb: "ทีมผลิตคอนเทนต์เต็มเวลา ใช้งานต่อเนื่องได้ทั้งวัน",
     pricingBlurb: "สำหรับทีมผลิตคอนเทนต์เต็มเวลา ใช้งานต่อเนื่องได้ทั้งวัน",
     features: [
-      `ฟุตเทจรวม ${FOOTAGE_PER_PROJECT.max}ต่อโปรเจกต์`,
+      footageFeature("max"),
       precisionFeature("max"),
       "ทำงาน AI พร้อมกันได้ 5 งาน",
       "คิวประมวลผลลำดับแรก · จำนวนโปรเจกต์ไม่จำกัด ภายใน 100 GB",
@@ -582,19 +789,35 @@ export function limitsShort(limits: readonly UsageLimit[]): string {
   return limits.map((limit) => limit.replace(" limit", "")).join(" + ");
 }
 
+/** The free plan's count cell: one credit, not a month's. */
+export const FREE_ONCE = "ครั้งเดียว";
+
 /** Comparison table rows. Order follows TIERS (7 values each). */
 type Row7 = readonly [string, string, string, string, string, string, string];
 
-export const COMPARISON_ROWS: ReadonlyArray<{ label: string; values: Row7; numeric?: boolean }> = [
+/**
+ * A comparison row. `cuts` marks a clip-count row and its setting, so the
+ * table can mark each cell for /pricing's calculator (its `values` are the
+ * same counts at the default, as plain text).
+ */
+export interface ComparisonRow {
+  label: string;
+  values: Row7;
+  numeric?: boolean;
+  cuts?: Precision;
+}
+
+export const COMPARISON_ROWS: readonly ComparisonRow[] = [
   {
     // The headline the whole product is sold on. The row label carries the
     // "ต่อเดือน (โดยประมาณ)", so each cell uses the compact form — but every
     // cell still says "ราว", because a cell read alone must not promise.
     label: "จำนวนคลิปต่อเดือน (โดยประมาณ)",
     values: TIERS.map((tier) =>
-      tier === "free" ? `${clipsListItem(tier)} ครั้งเดียว` : clipsListItem(tier),
+      tier === "free" ? `${clipsListItem(tier)} ${FREE_ONCE}` : clipsListItem(tier),
     ) as unknown as Row7,
     numeric: true,
+    cuts: "standard",
   },
   {
     // Pro and up quote the finer setting's count too (owner, 2026-10-01);
@@ -603,6 +826,7 @@ export const COMPARISON_ROWS: ReadonlyArray<{ label: string; values: Row7; numer
     label: `จำนวนคลิปต่อเดือน ระดับ${PRECISION_NAMES.high} (โดยประมาณ)`,
     values: TIERS.map((tier) => clipsHighListItem(tier) ?? "—") as unknown as Row7,
     numeric: true,
+    cuts: "high",
   },
   {
     label: "ขีดจำกัดการใช้งาน",
@@ -614,8 +838,15 @@ export const COMPARISON_ROWS: ReadonlyArray<{ label: string; values: Row7; numer
     numeric: true,
   },
   {
-    label: "ฟุตเทจรวมต่อโปรเจกต์",
+    // The per-plan ceiling is ตัดฉากเด่น's alone (owner, 2026-10-01); the
+    // row under it says what the two speech modes take on every plan.
+    label: "ฟุตเทจรวมต่อโปรเจกต์ โหมดตัดฉากเด่น",
     values: TIERS.map((tier) => FOOTAGE_PER_PROJECT[tier]) as unknown as Row7,
+    numeric: true,
+  },
+  {
+    label: "ฟุตเทจรวมต่อโปรเจกต์ โหมดตัดช่วงเงียบและตัดไฮไลต์จากคลิปยาว",
+    values: TIERS.map(() => SPEECH_FOOTAGE) as unknown as Row7,
     numeric: true,
   },
   {

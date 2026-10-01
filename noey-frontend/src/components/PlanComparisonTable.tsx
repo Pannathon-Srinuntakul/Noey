@@ -1,8 +1,53 @@
 import { BETA_PRICE_NOTE, BETA_STRIKE_LABEL } from "@/lib/beta";
-import { CLIPS_FOOTNOTE, COMPARISON_ROWS, PLAN_COPY, TIERS, displayPrice, isBetaPriced, strikePrice, type PriceTable } from "@/lib/plans";
+import {
+  APPROX_CUTS_PER_MONTH,
+  APPROX_HIGH_CUTS_PER_MONTH,
+  CLIPS_FOOTNOTE,
+  COMPARISON_ROWS,
+  CUTS_APPROX_SHORT,
+  CUTS_OVER_FOOTAGE_SHORT,
+  CUTS_SHORT_OF_BUDGET,
+  FREE_ONCE,
+  PLAN_COPY,
+  TIERS,
+  displayPrice,
+  isBetaPriced,
+  strikePrice,
+  type Precision,
+  type PriceTable,
+  type Tier,
+} from "@/lib/plans";
 import "../styles/parts/plans.css";
 import { IconArrowRight, IconCheck } from "./ds/icons";
 import { keepThaiProse } from "./ds/ThaiProse";
+import { ClipsBasis, CutsCount, CutsNumber, CutsWord } from "./pricing/CutsCount";
+
+/**
+ * A clip-count cell, marked for /pricing's calculator: the same text as the
+ * row's value at the default. The ระดับละเอียด row exists only in ตัดฉากเด่น
+ * (the calculator hides the row in the other modes), so its words are fixed.
+ */
+function CutsCell({ tier, precision }: { tier: Tier; precision: Precision }) {
+  if (precision === "high") {
+    const count = APPROX_HIGH_CUTS_PER_MONTH[tier];
+    if (!count) return "—";
+    return (
+      <CutsCount tier={tier} precision="high">
+        {`${CUTS_APPROX_SHORT} `}
+        <CutsNumber value={count} /> คลิป
+      </CutsCount>
+    );
+  }
+  return (
+    <CutsCount tier={tier} over={CUTS_OVER_FOOTAGE_SHORT} short={CUTS_SHORT_OF_BUDGET}>
+      <CutsWord word="hedge" />{" "}
+      <span className="kt">
+        <CutsNumber value={APPROX_CUTS_PER_MONTH[tier]} /> <CutsWord word="unit" />
+      </span>
+      {tier === "free" ? ` ${FREE_ONCE}` : null}
+    </CutsCount>
+  );
+}
 
 /**
  * The seven-plan comparison table. Rendered on /pricing and again on the help
@@ -21,8 +66,11 @@ export function PlanComparisonTable({
 }: {
   table: PriceTable;
   labelledBy: string;
-  /** The basis of the clip counts under the table — off where the page says it already (/pricing). */
-  footnote?: boolean;
+  /**
+   * The basis of the clip counts under the table. "live" (/pricing) states the
+   * mode and length the calculator above has set, marked so it follows them.
+   */
+  footnote?: boolean | "live";
 }) {
   return (
     <div className="cmp">
@@ -45,7 +93,7 @@ export function PlanComparisonTable({
                 ความสามารถ
               </th>
               {TIERS.map((tier) => (
-                <th key={tier} scope="col" className={PLAN_COPY[tier].recommended ? "c cmp__plan cmp__plan--recommended" : "c cmp__plan"}>
+                <th key={tier} scope="col" data-plan-col={tier} className={PLAN_COPY[tier].recommended ? "c cmp__plan cmp__plan--recommended" : "c cmp__plan"}>
                   {PLAN_COPY[tier].name}
                 </th>
               ))}
@@ -57,7 +105,7 @@ export function PlanComparisonTable({
               {TIERS.map((tier) => {
                 const full = strikePrice(table, tier);
                 return (
-                  <td key={tier} className={PLAN_COPY[tier].recommended ? "c num cmp__rec" : "c num"}>
+                  <td key={tier} data-plan-col={tier} className={PLAN_COPY[tier].recommended ? "c num cmp__rec" : "c num"}>
                     {full ? (
                       <s className="price-strike">
                         <span className="sr-only">{BETA_STRIKE_LABEL} </span>
@@ -70,16 +118,19 @@ export function PlanComparisonTable({
               })}
             </tr>
             {COMPARISON_ROWS.map((row) => (
-              <tr key={row.label}>
+              <tr key={row.label} data-cuts-row={row.cuts === "high" ? "high" : undefined}>
                 <th scope="row">{keepThaiProse(row.label)}</th>
                 {row.values.map((value, index) => (
                   <td
                     key={TIERS[index]}
+                    data-plan-col={TIERS[index]}
                     className={[row.numeric ? "c num" : "c", value === "—" ? "cmp__none" : null, PLAN_COPY[TIERS[index]].recommended ? "cmp__rec" : null]
                       .filter(Boolean)
                       .join(" ")}
                   >
-                    {value === "มี" ? (
+                    {row.cuts && value !== "—" ? (
+                      <CutsCell tier={TIERS[index]} precision={row.cuts} />
+                    ) : value === "มี" ? (
                       // A tick reads faster than fifty "มี"; the word stays for screen readers.
                       <>
                         <IconCheck size={16} className="cmp__yes" />
@@ -96,7 +147,15 @@ export function PlanComparisonTable({
         </table>
       </div>
       {/* The clip counts in the table are estimates; say on what. */}
-      {footnote ? <p className="table-note">{keepThaiProse(CLIPS_FOOTNOTE)}</p> : null}
+      {footnote === "live" ? (
+        <p className="table-note">
+          {"จำนวนคลิปในตาราง"}
+          <ClipsBasis />
+          {" ตามที่ตั้งไว้ในส่วนแพลนด้านบน ปัดลง"}
+        </p>
+      ) : footnote ? (
+        <p className="table-note">{keepThaiProse(CLIPS_FOOTNOTE)}</p>
+      ) : null}
       {isBetaPriced(table) ? <p className="table-note">{keepThaiProse(BETA_PRICE_NOTE)}</p> : null}
     </div>
   );

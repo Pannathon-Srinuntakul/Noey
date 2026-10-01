@@ -156,6 +156,28 @@
 /* Pro and up: the ระดับละเอียด count on its own line under the headline
    (owner, 2026-10-01). Quieter than the headline, but a real number, not a
    footnote — a plan bought for that setting must say what it buys there. */
+/* Past the plan's footage ceiling, /pricing's calculator shows this in place of a count. */
+.usage-over {
+  font-size: var(--fs-14);
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+/* The calculator hides a count's text, a whole count or a table row with
+   [hidden]; a class's own display must not bring it back. */
+[data-cuts-tier][hidden],
+[data-cuts-when][hidden],
+[data-cuts-row][hidden] {
+  display: none !important;
+}
+
+/* On a card the ระดับละเอียด line keeps its height while hidden, so a card in
+   view does not jump when the mode changes. */
+.plan__usage .usage-high[hidden] {
+  display: block !important;
+  visibility: hidden;
+}
+
 .usage-high {
   display: block;
   margin-top: 2px;
@@ -375,6 +397,16 @@
 .cmp__plan--recommended {
   color: var(--gold-ink) !important;
   box-shadow: inset 0 -2px 0 var(--gold);
+}
+
+/* /pricing's calculator marks the plan that fits, down its whole column. */
+.cmp__table [data-plan-col][data-fit] {
+  background-color: color-mix(in srgb, var(--color-accent) 13%, var(--panel));
+}
+
+.cmp__table thead [data-plan-col][data-fit] {
+  color: var(--gold-ink);
+  box-shadow: inset 0 -3px 0 var(--gold);
 }
 
 .cmp__table tbody th[scope="row"] {

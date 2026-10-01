@@ -303,9 +303,10 @@ describe("what a plan sells", () => {
     }
   });
 
-  it("state ONE footage cap per plan, the same one the cards and the table show", () => {
-    // Owner, 2026-09-29. Every mode reads the same ceiling now, so no surface
-    // may promise a second, longer number.
+  it("state ตัดฉากเด่น's footage cap per plan, the same one the cards and the table show", () => {
+    // Owner, 2026-09-29; narrowed 2026-10-01: the per-plan ceiling is
+    // ตัดฉากเด่น's alone, so every surface that states it names the mode, and
+    // the two speech modes' two hours is said once, in its own row.
     expect(TIERS.map((tier) => FOOTAGE_PER_PROJECT[tier])).toEqual([
       "10 นาที",
       "10 นาที",
@@ -317,11 +318,13 @@ describe("what a plan sells", () => {
     ]);
     for (const tier of TIERS) {
       const text = [...PLAN_COPY[tier].features, ...PLAN_COPY[tier].accountFeatures].join("\n");
-      expect(text, `${tier} names its footage cap`).toContain(FOOTAGE_PER_PROJECT[tier]);
-      expect(text, `${tier} still promises 2 hours`).not.toContain("2 ชั่วโมง");
+      expect(text, `${tier} names its footage cap`).toContain(`ฟุตเทจรวมโหมดตัดฉากเด่น ${FOOTAGE_PER_PROJECT[tier]}`);
+      expect(text, `${tier} puts 2 hours on a card`).not.toContain("2 ชั่วโมง");
     }
-    const row = COMPARISON_ROWS.find((r) => r.label === "ฟุตเทจรวมต่อโปรเจกต์");
+    const row = COMPARISON_ROWS.find((r) => r.label === "ฟุตเทจรวมต่อโปรเจกต์ โหมดตัดฉากเด่น");
     expect(row?.values).toEqual(TIERS.map((tier) => FOOTAGE_PER_PROJECT[tier]));
+    const speech = COMPARISON_ROWS.find((r) => r.label === "ฟุตเทจรวมต่อโปรเจกต์ โหมดตัดช่วงเงียบและตัดไฮไลต์จากคลิปยาว");
+    expect(speech?.values).toEqual(TIERS.map(() => "2 ชั่วโมง"));
     expect(footageLadderSentence()).toContain("ฟรี 10 นาที");
     expect(footageLadderSentence()).toContain("Max 30 นาที");
   });
