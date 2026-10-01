@@ -67,7 +67,7 @@ def extract() -> dict:
     night = _block(css, ":root {")["night"]
     light = _block(css, ":root,\n.theme-day")
     dark = {**light, **_block(css, 'html[data-theme="dark"],\n.theme-night'), "bg": night}
-    pick = lambda pal: {k: pal[k] for k in ROLES if k in pal}  # noqa: E731
+    pick = lambda pal: {k: pal[k] for k in ROLES if k in pal}
     return {
         "source": "noey-frontend/src/app/globals.css (palette) + src/app/icon.svg (mark)",
         "roles": ROLES,

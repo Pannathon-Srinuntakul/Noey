@@ -11,9 +11,8 @@ No auth; every answer is `Cache-Control: public, max-age=60`. Only
 `status = published` posts ever leave this router.
 """
 
-from typing import Annotated, Any
-
 import re
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession

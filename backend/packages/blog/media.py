@@ -92,8 +92,9 @@ def decode_base64(raw: str) -> bytes:
     return data
 
 
-def reencode(data: bytes) -> tuple[bytes, int, int]:
-    """Decode with Pillow and write a fresh, metadata-free WebP."""
+def reencode(data: bytes, *, max_side: int = MAX_OUTPUT_SIDE) -> tuple[bytes, int, int]:
+    """Decode with Pillow and write a fresh, metadata-free WebP (longest side
+    <= `max_side`: 1600 for upload_image, more for the owner's library)."""
     from PIL import Image, ImageOps
 
     kind = sniff(data)
@@ -117,7 +118,7 @@ def reencode(data: bytes) -> tuple[bytes, int, int]:
             upright = ImageOps.exif_transpose(opened)  # bake the orientation, then the EXIF goes
             has_alpha = upright.mode in ("RGBA", "LA") or (upright.mode == "P" and "transparency" in upright.info)
             img = upright.convert("RGBA" if has_alpha else "RGB")
-            img.thumbnail((MAX_OUTPUT_SIDE, MAX_OUTPUT_SIDE), Image.Resampling.LANCZOS)
+            img.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)
             out = io.BytesIO()
             # A new image object carries no info dict: no exif=, icc_profile= or xmp= is written.
             clean = Image.new(img.mode, img.size)

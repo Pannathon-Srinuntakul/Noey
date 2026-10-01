@@ -260,6 +260,12 @@ def create_app() -> FastAPI:
     # request id and the security headers. CORS's own headers are untouched
     # either way; only `http.response.start` headers are added to.
     app.add_middleware(RequestContextMiddleware)
+    # Outermost of all: requests for the embed origin (blog visuals + fonts,
+    # BLOG_EMBED_PUBLIC_URL) are answered here and never reach the API — no
+    # route, cookie or header of the API applies to them (services/api/embed.py).
+    from services.api.embed import EmbedHostMiddleware
+
+    app.add_middleware(EmbedHostMiddleware)
 
     @app.get("/health", tags=["meta"])
     async def health() -> dict:

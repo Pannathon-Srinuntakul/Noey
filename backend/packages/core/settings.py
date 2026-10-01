@@ -513,6 +513,29 @@ class Settings(BaseSettings):
     #: redirect URIs at client registration (Claude Code, the MCP Inspector,
     #: local tests). Off in production: only claude.ai/claude.com callbacks.
     blog_mcp_allow_loopback_redirects: bool = False
+    #: The cookieless origin that serves in-article HTML visuals (`/visual/<id>`)
+    #: and the brand fonts (`/fonts/<file>`). The API answers requests whose
+    #: Host is this URL's host with ONLY those two routes (services/api/embed.py);
+    #: point the domain at the API service (docs/blog-mcp.md).
+    blog_embed_public_url: str = "https://embed.noeystudio.com"
+    #: Extra `frame-ancestors` for visuals, comma-separated — ONLY for local
+    #: testing (e.g. `http://localhost:3260`). Production leaves it empty:
+    #: visuals may then be framed by https://noeystudio.com and www only.
+    blog_embed_dev_ancestors: str = ""
+    #: render_cover calls per connection per minute (each one draws a picture).
+    blog_cover_calls_per_min: int = 6
+    #: The `node` binary that runs the cover renderer (backend/cover_renderer/).
+    blog_cover_node: str = "node"
+    #: Seconds without a cover request before the renderer process is stopped
+    #: (its memory returns to the OS; the next call starts it again, ~1 s).
+    blog_cover_idle_sec: int = 300
+
+    @property
+    def blog_embed_origin(self) -> str:
+        from urllib.parse import urlsplit
+
+        u = urlsplit(self.blog_embed_public_url.strip())
+        return f"{u.scheme}://{u.netloc}"
 
     @property
     def blog_mcp_resource_url(self) -> str:

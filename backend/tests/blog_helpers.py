@@ -63,6 +63,42 @@ def post_args(slug: str, **over: object) -> dict[str, object]:
     return args
 
 
+async def seed_media(actor: str, *, animated: int = 0, visuals: int = 2) -> dict[str, object]:
+    """A cover (origin render_cover) and `visuals` HTML visuals made by
+    `actor`, as rows only — what create_post's picture rules look up. Returns
+    the create_post fields that use them (cover + content_md with the visuals)."""
+    import secrets as _s
+
+    from packages.blog import media
+
+    base = media.media_base()
+    cover_url = f"{base}/{_s.token_hex(32)}.webp"
+    await db(
+        "INSERT INTO core.blog_images (url, key, mime, bytes, width, height, alt, uploaded_by, kind, origin) "
+        "VALUES (:u, :k, 'image/webp', 1000, 1600, 900, 'ภาพปก', 'test-seed', 'image', 'render_cover')",
+        u=cover_url, k=f"blog/{cover_url.rsplit('/', 1)[1]}",
+    )
+    lines = []
+    for i in range(visuals):
+        vid = _s.token_hex(16)
+        await db(
+            "INSERT INTO core.blog_visuals (id, key, width, height, alt, animated, bytes, created_by) "
+            "VALUES (:i, :k, 1600, 1000, 'แผนภาพ', :a, 1000, :c)",
+            i=vid, k=f"visual/{vid}.html", a=i < animated, c=actor,
+        )
+        lines.append(f"::visual[แผนภาพขั้นตอนที่ {i + 1}]({vid})")
+    return {
+        "cover_image_url": cover_url,
+        "cover_alt": "ภาพปกบทความ",
+        "content_md": article() + "\n\n## ภาพประกอบ\n\n" + "\n\n".join(lines) + "\n",
+    }
+
+
+async def full_post_args(slug: str, actor: str, **over: object) -> dict[str, object]:
+    """post_args plus a cover and two visuals of `actor` — passes every rule."""
+    return post_args(slug, **{**(await seed_media(actor)), **over})
+
+
 def pkce() -> tuple[str, str]:
     verifier = secrets.token_urlsafe(48)
     challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip("=")
@@ -155,4 +191,7 @@ async def purge_blog() -> None:
     await db("DELETE FROM core.blog_oauth_clients WHERE client_name LIKE 'pytest%'")
     await db("DELETE FROM core.blog_audit_log WHERE slug LIKE :p OR actor LIKE 'admin:%' OR actor LIKE 'mcp:%' OR actor = 'oauth'", p=f"{PREFIX}%")
     await db("DELETE FROM core.blog_images WHERE uploaded_by LIKE 'mcp:%' OR uploaded_by LIKE 'test%'")
+    await db("DELETE FROM core.blog_visuals WHERE created_by LIKE 'mcp:%' OR created_by LIKE 'test%'")
+    await db("DELETE FROM core.blog_content_plan WHERE topic LIKE 't-blog-%'")
+    await db("DELETE FROM core.blog_brief")
     await db("DELETE FROM core.admin_settings WHERE key = 'blog_config'")
