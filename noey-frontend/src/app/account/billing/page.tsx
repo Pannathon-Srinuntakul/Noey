@@ -1,16 +1,66 @@
 import type { Metadata } from "next";
 import { BillingPanel, type UpgradeOption } from "@/components/account/BillingPanel";
 import { formatCard, hasLiveSubscription, needsPaymentAttention, subscriptionLapsed, subscriptionStatusLabel } from "@/lib/billing";
-import { formatShortDate } from "@/lib/format";
+import { formatShortDate, toDate } from "@/lib/format";
 import { MSG } from "@/lib/messages";
-import { BETA_PRICE_NOTE_SHORT } from "@/lib/beta";
-import { PAID_TIERS, PLAN_COPY, displayPrice, isBetaPriced, isPaidTier, isTier, planDisplayName, strikePrice, tierFromLookupKey, type PaidTier } from "@/lib/plans";
+import { BETA_PRICE_NOTE_SHORT, isBetaActive } from "@/lib/beta";
+import {
+  APPROX_CUTS_PER_MONTH,
+  CLIPS_BASIS_SHORT,
+  COMPARISON_ROWS,
+  CUTS_APPROX_PREFIX,
+  CUTS_APPROX_SHORT,
+  FOOTAGE_PER_PROJECT,
+  FREE_CLIPS_CAPTION,
+  PAID_TIERS,
+  PLAN_COPY,
+  TIERS,
+  clipsHeadline,
+  displayPrice,
+  isBetaPriced,
+  isPaidTier,
+  isTier,
+  planDisplayName,
+  strikePrice,
+  tierFromLookupKey,
+  type PaidTier,
+  type Tier,
+} from "@/lib/plans";
 import { privatePageMetadata } from "@/lib/seo";
 import { loadAccountData } from "@/lib/server/account-data";
 import { getPriceTable } from "@/lib/server/prices";
 import { keepThaiProse } from "@/components/ds/ThaiProse";
 
 export const metadata: Metadata = privatePageMetadata("แพลนและการชำระเงิน");
+
+/** A plan's place in the ladder, as /pricing's cards number it (P0 … P6). */
+const reelOf = (tier: Tier) => `P${TIERS.indexOf(tier)}`;
+
+/** A plan's storage, from the comparison table's own row (the only place it is stated per plan). */
+const STORAGE_ROW = COMPARISON_ROWS.find((row) => row.label === "พื้นที่เก็บงานบนบัญชี");
+const storageOf = (tier: Tier) => STORAGE_ROW?.values[TIERS.indexOf(tier)] ?? null;
+
+const DAY_MONTH = new Intl.DateTimeFormat("th-TH-u-ca-gregory", { day: "numeric", month: "short", timeZone: "Asia/Bangkok" });
+
+/**
+ * The billing cycle that ends at `end`: every plan bills monthly, so it began
+ * one calendar month earlier (Stripe keeps the day, clamped to the shorter
+ * month's last day). Where today sits in it, for the payment card's track.
+ */
+function billingCycle(endValue: string | number | null | undefined, now = Date.now()) {
+  const end = toDate(endValue);
+  if (!end) return null;
+  const year = end.getUTCFullYear();
+  const month = end.getUTCMonth() - 1;
+  const lastDay = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+  const start = new Date(end);
+  start.setUTCFullYear(year, month, Math.min(end.getUTCDate(), lastDay));
+  const span = end.getTime() - start.getTime();
+  if (span <= 0) return null;
+  const progress = Math.min(1, Math.max(0, (now - start.getTime()) / span));
+  const daysLeft = Math.max(0, Math.ceil((end.getTime() - now) / 86_400_000));
+  return { startLabel: DAY_MONTH.format(start), endLabel: DAY_MONTH.format(end), progress, daysLeft };
+}
 
 export default async function BillingPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const params = await searchParams;
@@ -34,15 +84,35 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
   else if (live && periodEndLabel) statusLine = `ต่ออายุอัตโนมัติ ${periodEndLabel}`;
   else if (subscriptionLapsed(billing?.status)) statusLine = "การชำระเงินของแพลนล่าสุดไม่สำเร็จ บัญชีจึงกลับมาใช้แพลนฟรี เลือกแพลนใหม่ได้จากปุ่ม “เลือกแพลน”";
 
+  // Every row of the plan picker states the same three things, so the plans
+  // can be compared down the list.
   const options: UpgradeOption[] = PAID_TIERS.map((tier) => ({
     tier,
+    reel: reelOf(tier),
     name: PLAN_COPY[tier].name,
     price: displayPrice(table, tier),
     fullPrice: strikePrice(table, tier),
-    summary: PLAN_COPY[tier].dialogSummary,
+    specs: [clipsHeadline(tier), `ฟุตเทจ ${FOOTAGE_PER_PROJECT[tier]}ต่อโปรเจกต์`, storageOf(tier)].filter((spec): spec is string => !!spec),
     recommended: !!PLAN_COPY[tier].recommended,
     current: tier === currentTier && !cancelScheduled,
   }));
+
+  // The plan card, drawn from the same parts and words as its /pricing card.
+  const planTier: Tier | null = isTier(planValue) ? planValue : null;
+  const plan = planTier
+    ? {
+        reel: reelOf(planTier),
+        beta: live && isBetaActive() && strikePrice(table, planTier) !== null,
+        usage: {
+          prefix: planTier === "free" ? CUTS_APPROX_SHORT : CUTS_APPROX_PREFIX,
+          count: APPROX_CUTS_PER_MONTH[planTier],
+          unit: planTier === "free" ? "คลิป" : "คลิป / เดือน",
+          caption: planTier === "free" ? FREE_CLIPS_CAPTION : null,
+        },
+        basis: CLIPS_BASIS_SHORT,
+        features: PLAN_COPY[planTier].features,
+      }
+    : null;
 
   // Preselected plan: the one picked on a plan button (?plan=pro); else, for a
   // subscriber, the next tier up; else the design's default (Pro); else the
@@ -96,7 +166,8 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
       ) : null}
       <BillingPanel
         planName={planDisplayName(planValue)}
-        planFeatures={isTier(planValue) ? PLAN_COPY[planValue].accountFeatures : []}
+        plan={plan}
+        freePlan={planTier === "free" && !live}
         statusLine={statusLine}
         statusWarn={needsPaymentAttention(billing?.status)}
         options={options}
@@ -106,6 +177,7 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
         cancelScheduled={cancelScheduled}
         billingEnabled={billingEnabled}
         periodEndLabel={live ? periodEndLabel : null}
+        cycle={live ? billingCycle(billing?.current_period_end) : null}
         cardLabel={formatCard(billing?.payment_method)}
         betaNote={isBetaPriced(table) ? BETA_PRICE_NOTE_SHORT : null}
       />

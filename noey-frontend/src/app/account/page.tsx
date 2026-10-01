@@ -3,6 +3,7 @@ import Link from "next/link";
 import { IconArrowRight, IconChevronRight } from "@/components/ds/icons";
 import { LevelMeter } from "@/components/ds/LevelMeter";
 import { Waveform } from "@/components/ds/Waveform";
+import { ComputerOnly } from "@/components/ComputerOnly";
 import { NoeyMark } from "@/components/NoeyMark";
 import { needsPaymentAttention, subscriptionStatusLabel } from "@/lib/billing";
 import { formatBytes } from "@/lib/format";
@@ -58,6 +59,8 @@ export default async function AccountAppPage({ searchParams }: { searchParams: P
                   "โปรเจกต์ การสร้างงานใหม่ และไทม์ไลน์ อยู่ในห้องตัดต่อบนเว็บทั้งหมด ไม่ต้องติดตั้งโปรแกรม บัญชีเดียวกันนี้เข้าใช้ได้เลย",
                 )}
               </p>
+              {/* On a phone or a tablet only (its own rule), above the button. */}
+              <ComputerOnly />
               <a href={EDITOR_OPEN_PATH} className="btn btn-primary btn-lg acct-hero__open" data-magnetic="">
                 เปิดห้องตัดต่อ
                 <IconArrowRight size={18} />
@@ -67,7 +70,10 @@ export default async function AccountAppPage({ searchParams }: { searchParams: P
               <span className="acct-hero__glow" />
               <NoeyMark size={88} className="acct-hero__mark" />
               <span className="acct-hero__track">
-                <Waveform bars={48} seed={23} className="acct-hero__wave" still />
+                {/* One bar pitch whatever the lane's width (account.css picks one). */}
+                <Waveform bars={48} seed={23} className="acct-hero__wave acct-hero__wave--short" still />
+                <Waveform bars={120} seed={23} className="acct-hero__wave acct-hero__wave--long" still />
+                <Waveform bars={72} seed={23} className="acct-hero__wave acct-hero__wave--mid" still />
                 <span className="acct-hero__head" />
               </span>
             </div>

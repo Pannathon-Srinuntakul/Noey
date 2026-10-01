@@ -238,8 +238,8 @@
 .acct-billing .button-row,
 .acct-billing .account-card > :is(.inline-form, .acct-pay__btn),
 .acct-quota .account-card > .acct-quota__limit + .meter-note,
-.acct-quota .account-card > .acct-tasks__note,
-.acct-profile .account-card > .card-section:last-child {
+.acct-quota .account-card > .acct-tasks__foot,
+.acct-profile .account-card:nth-child(2) > .card-section:last-child {
   margin-top: auto;
 }
 
@@ -351,7 +351,10 @@
   grid-template-columns: minmax(0, 1.75fr) minmax(280px, 1fr);
 }
 
-@media (max-width: 899px) {
+/* Below 1200px the editor card takes the panel's width and the summary sits
+   under it, its three rows side by side when there is room: beside a
+   narrowed editor card the summary was a column with a hole under it. */
+@media (max-width: 1199px) {
   .acct-home {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -432,6 +435,13 @@
   height: 100%;
 }
 
+/* One bar pitch at every width: a waveform drawn for each width the lane
+   takes (stretched, a single one turned to blocks on a wide lane). */
+.acct-hero__wave--long,
+.acct-hero__wave--mid {
+  display: none;
+}
+
 .acct-hero__head {
   position: absolute;
   top: -5px;
@@ -483,6 +493,45 @@
   .acct-hero__mark {
     display: none;
   }
+
+  .acct-hero__wave--short {
+    display: none;
+  }
+
+  .acct-hero__wave--long {
+    display: block;
+  }
+}
+
+@container (max-width: 420px) {
+  .acct-hero__wave--long {
+    display: none;
+  }
+
+  .acct-hero__wave--mid {
+    display: block;
+  }
+}
+
+/* On a phone or a tablet the editor's button steps back to an outline under
+   the computer-only note: it opens an editor this device cannot run. */
+@media (max-width: 767px), (pointer: coarse) {
+  .acct-hero .computer-only {
+    margin: 2px 0 0;
+  }
+
+  .acct-hero .btn.acct-hero__open {
+    --btn-bg: color-mix(in srgb, var(--panel) 70%, transparent);
+    --btn-ink: var(--ink);
+    --btn-line: var(--gold);
+    --btn-handle: var(--gold);
+    font-weight: 500;
+    box-shadow: none;
+  }
+
+  .acct-hero .btn.acct-hero__open:hover {
+    --btn-bg: var(--gold-softer);
+  }
 }
 
 .acct-summary .kv dd {
@@ -504,9 +553,69 @@
   color: var(--danger);
 }
 
+.acct-summary {
+  container-type: inline-size;
+}
+
 .acct-summary__rows > div {
+  position: relative;
+  isolation: isolate;
   flex-wrap: wrap;
   row-gap: 10px;
+}
+
+/* The whole row opens its tab (one tab stop: the value's link, stretched
+   over the row), and lights up under the pointer. */
+.acct-summary__rows > div:has(.acct-summary__link)::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: 3px -10px;
+  border-radius: 10px;
+  transition: background-color var(--dur-2) ease;
+}
+
+.acct-summary__rows > div:has(.acct-summary__link:hover)::before {
+  background: color-mix(in srgb, var(--color-text) 5%, transparent);
+}
+
+.acct-summary__rows > div:has(.acct-summary__link:focus-visible)::before {
+  outline: 2px solid var(--gold);
+}
+
+.acct-summary__link::after {
+  content: "";
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+}
+
+.acct-summary__link:focus-visible {
+  outline: none;
+}
+
+/* A summary as wide as the panel: the three rows side by side. */
+@container (min-width: 620px) {
+  .acct-summary__rows {
+    flex-direction: row;
+  }
+
+  .acct-summary__rows > div {
+    flex: 1 1 0;
+    align-content: flex-start;
+    padding: 6px 0;
+    border-bottom: 0;
+  }
+
+  .acct-summary__rows > div + div {
+    margin-left: 22px;
+    padding-left: 22px;
+    border-left: 1px solid var(--line);
+  }
+
+  .acct-summary__rows > div + div:has(.acct-summary__link)::before {
+    inset: 3px -10px 3px 12px;
+  }
 }
 
 .acct-summary__link {
@@ -633,8 +742,17 @@
   padding-right: 0;
 }
 
-.acct-tasks__note {
+.acct-tasks__foot {
+  display: grid;
+  gap: 6px;
   padding-top: 4px;
+}
+
+.acct-tasks__foot .meter-note {
+  margin: 0;
+  font-size: var(--fs-13);
+  line-height: 1.6;
+  color: var(--ink-3);
 }
 
 /* A note for the whole card (not one meter's): the quiet size. */
@@ -646,6 +764,52 @@
 }
 
 /* ── แพลนและการชำระเงิน ─────────────────────────────────────────────────── */
+
+/* Two cards side by side only from 1200px; under that each takes the
+   panel's width (beside each other at 1024 the plan card ran 180px past the
+   payment card). */
+.acct-billing {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+@media (max-width: 1199px) {
+  .acct-billing {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* The plan card: its plan, price and clips, then its features — side by side
+   when the card is wide enough for both. */
+.acct-plan {
+  container-type: inline-size;
+}
+
+.plan-body,
+.plan-main {
+  display: grid;
+  gap: 14px;
+}
+
+@container (min-width: 480px) {
+  .plan-body {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+    align-items: start;
+    column-gap: 28px;
+  }
+
+  .plan-body > .plan-features {
+    margin: 4px 0 0;
+    padding-left: 24px;
+    border-left: 1px dashed var(--line-2);
+  }
+}
+
+/* The plan's head: its reel number, as on /pricing's card, then its name. */
+.plan-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
 
 .plan-name {
   font-size: clamp(1.375rem, 1.2rem + 0.6vw, 1.625rem);
@@ -680,6 +844,132 @@
 
 .plan-price .price-strike {
   font-size: var(--fs-18);
+}
+
+.plan-price__beta {
+  align-self: center;
+}
+
+/* The plan's clips, as /pricing's card states them: the approximate count,
+   then its basis. */
+.plan-usage {
+  display: grid;
+  gap: 2px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--line-2);
+}
+
+.plan-usage__line {
+  margin: 0;
+  font-size: var(--fs-14);
+  line-height: 1.6;
+  color: var(--ink-3);
+}
+
+.plan-usage__count {
+  font-size: var(--fs-20);
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--gold-ink);
+}
+
+.plan-usage__basis {
+  margin: 0;
+  font-size: var(--fs-12);
+  line-height: 1.6;
+  color: var(--ink-3);
+}
+
+/* ── This billing cycle, as a clip on a lane (BillingPanel) ─────────────── */
+
+.acct-cycle {
+  display: grid;
+  gap: 8px;
+  padding-bottom: 4px;
+}
+
+.acct-cycle__top {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 4px 12px;
+  font-size: var(--fs-14);
+}
+
+.acct-cycle__title {
+  color: var(--ink-2);
+}
+
+.acct-cycle__left {
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.acct-cycle__lane {
+  --cycle: 0;
+  position: relative;
+  height: 16px;
+  margin-top: 22px;
+  border: 1px solid var(--line-2);
+  border-radius: 5px;
+  background:
+    repeating-linear-gradient(90deg, transparent 0 calc(10% - 1px), var(--line) calc(10% - 1px) 10%),
+    var(--well);
+}
+
+.acct-cycle__fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: calc(var(--cycle) * 100%);
+  border-radius: 4px 0 0 4px;
+  background: color-mix(in srgb, var(--gold) 60%, var(--panel));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--gold) 80%, transparent);
+}
+
+/* Today: the playhead, its cap on top and its name over the cap. */
+.acct-cycle__head {
+  position: absolute;
+  top: -9px;
+  bottom: -5px;
+  left: calc(var(--cycle) * 100%);
+  width: 2px;
+  margin-left: -1px;
+  border-radius: 1px;
+  background: var(--gold);
+  box-shadow: 0 0 8px var(--gold-glow);
+}
+
+.acct-cycle__head::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -4px;
+  border: 5px solid transparent;
+  border-top: 7px solid var(--gold);
+  border-bottom: 0;
+}
+
+/* Its name rides with it, kept inside the lane's ends (at the start it reads
+   to the right of the playhead, at the end to the left). */
+.acct-cycle__today {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 1px;
+  translate: calc(var(--cycle) * -100%) 0;
+  font-size: var(--fs-12);
+  font-weight: 600;
+  line-height: 1;
+  color: var(--gold-ink);
+  white-space: nowrap;
+}
+
+.acct-cycle__ends {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: var(--fs-12);
+  color: var(--ink-3);
 }
 
 .plan-status {
@@ -723,6 +1013,13 @@
   border-left: 2px solid var(--gold);
   border-bottom: 2px solid var(--gold);
   rotate: -45deg;
+}
+
+.acct-pay__note {
+  margin: -4px 0 0;
+  font-size: var(--fs-13);
+  line-height: 1.6;
+  color: var(--ink-3);
 }
 
 .acct-pay__btn {
@@ -789,18 +1086,43 @@
 }
 
 .plan-option__name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
   font-weight: 600;
   color: var(--ink);
 }
 
-.plan-option__meta {
+.plan-option__price {
+  white-space: nowrap;
+}
+
+/* The same three facts on every row, each whole: rows of facts, no "·" left
+   at the end of a line. */
+.plan-option__specs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 16px;
   font-size: var(--fs-13);
   line-height: 1.65;
   color: var(--ink-3);
 }
 
-.plan-option__tag {
-  margin-left: 8px;
+.plan-option__spec {
+  white-space: nowrap;
+}
+
+/* The beta terms over the picker: on a phone the price line takes a line of
+   its own, so no "·" is left at a line's end. */
+@media (max-width: 480px) {
+  .beta-note--compact .beta-note__lead {
+    display: block;
+  }
+
+  .beta-note--compact .beta-note__sep {
+    display: none;
+  }
 }
 
 .plan-option .price-strike {
@@ -826,6 +1148,30 @@
 
 .acct-form__submit {
   align-self: flex-start;
+}
+
+/* A one-field form (the name) with its button beside the field when the card
+   has the room: the card is one row shorter. */
+.acct-profile .account-card {
+  container-type: inline-size;
+}
+
+@container (min-width: 380px) {
+  .acct-form--inline {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: end;
+    gap: 12px;
+  }
+
+  .acct-form--inline > :not(.field, .acct-form__submit) {
+    grid-column: 1 / -1;
+  }
+
+  /* Level with the field's box, not its label. */
+  .acct-form--inline > .acct-form__submit {
+    align-self: end;
+  }
 }
 
 .acct-form__line {
@@ -901,7 +1247,7 @@
 
 .acct-danger p {
   margin: 0;
-  max-width: 62ch;
+  max-width: 820px;
   font-size: var(--fs-14);
   line-height: 1.75;
   color: var(--ink-2);
@@ -1017,4 +1363,29 @@ form.acct-form--edit:not([data-dirty]) .acct-form__submit.btn-primary:hover {
 
 .dialog--danger .input:user-invalid {
   border-color: var(--danger);
+}
+
+/* ── The header's account menu, on an account page ──────────────────────── */
+
+/* The tab being viewed is marked (AccountMenuLinks sets aria-current). Its
+   rules live here: the menu only links to these pages. */
+.acct__menu a[aria-current="page"] {
+  position: relative;
+  background: var(--gold-softer);
+  font-weight: 500;
+}
+
+.acct__menu a[aria-current="page"]::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 9px;
+  bottom: 9px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--gold);
+}
+
+.acct__menu a[aria-current="page"] svg {
+  color: var(--gold-ink);
 }

@@ -98,9 +98,6 @@ export default async function QuotaPage() {
           </div>
         ) : null}
 
-        {usage.concurrency && usage.concurrency.max > 0 ? (
-          <p className="meter-note">{keepThaiProse(`ทำงาน AI พร้อมกันได้ ${usage.concurrency.max} งาน`)}</p>
-        ) : null}
         {walletBaht !== null ? (
           <p className="meter-note">
             {keepThaiProse(
@@ -147,7 +144,14 @@ export default async function QuotaPage() {
         ) : (
           <p className="acct-quota__empty">ยังไม่มีงานที่ใช้โควตาในรอบนี้</p>
         )}
-        <p className="meter-note acct-tasks__note">{keepThaiProse("การแก้ไทม์ไลน์ การสลับช็อต และการเรนเดอร์ซ้ำ ไม่นับโควตา")}</p>
+        {/* How many jobs may run at once sits with the jobs (this card), not
+            with the windows: the two cards then end level. */}
+        <div className="acct-tasks__foot">
+          {usage.concurrency && usage.concurrency.max > 0 ? (
+            <p className="meter-note">{keepThaiProse(`ทำงาน AI พร้อมกันได้ ${usage.concurrency.max} งาน`)}</p>
+          ) : null}
+          <p className="meter-note acct-tasks__note">{keepThaiProse("การแก้ไทม์ไลน์ การสลับช็อต และการเรนเดอร์ซ้ำ ไม่นับโควตา")}</p>
+        </div>
       </div>
     </section>
   );

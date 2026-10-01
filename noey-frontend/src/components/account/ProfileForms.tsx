@@ -37,7 +37,7 @@ export function ProfileForm({ name }: { name: string }) {
   }, [state]);
 
   return (
-    <form action={action} className="stack acct-form acct-form--edit" onInput={markDirty}>
+    <form action={action} className="stack acct-form acct-form--edit acct-form--inline" onInput={markDirty}>
       <div className="field">
         <label htmlFor="a-name">ชื่อ</label>
         <input
@@ -152,14 +152,20 @@ export function PasswordForm() {
           name="new_password"
           className="input"
           type="password"
-          placeholder="อย่างน้อย 8 ตัวอักษร"
           autoComplete="new-password"
           minLength={8}
           required
           aria-invalid={errors.new_password ? true : undefined}
-          aria-describedby={errors.new_password ? "a-new-error" : undefined}
+          aria-describedby={errors.new_password ? "a-new-error" : "a-new-hint"}
         />
-        {errors.new_password ? <p className="field-error" id="a-new-error">{errors.new_password}</p> : null}
+        {/* The rule stays in sight while typing (a placeholder goes away). */}
+        {errors.new_password ? (
+          <p className="field-error" id="a-new-error">{errors.new_password}</p>
+        ) : (
+          <p className="field-hint" id="a-new-hint">
+            อย่างน้อย 8 ตัวอักษร
+          </p>
+        )}
       </div>
       <button type="submit" className="btn btn-primary acct-form__submit" disabled={pending}>
         {pending ? "กำลังเปลี่ยน…" : "เปลี่ยนรหัสผ่าน"}
