@@ -9,6 +9,7 @@ import {
 } from '../../../lib/timelineMath'
 import type { FilmstripStripMap } from '../../../lib/useFilmstripStrips'
 import { Textarea } from '../../ui/Input'
+import { FilmstripThumb } from '../FilmstripThumb'
 import { withShortcut } from '../shortcuts'
 import type { WorkingCut } from '../types'
 
@@ -91,17 +92,11 @@ export const ScriptTab = memo(function ScriptTab({
                 type="button"
                 onClick={() => onSelectCut(c)}
                 title={`มุม ${cutIndexInLine(cuts, c)} · ${(c.out - c.in).toFixed(1)} วิ`}
-                className={`h-11 w-[26px] overflow-hidden rounded border bg-black transition-colors duration-state ${
+                className={`h-11 w-[26px] overflow-hidden rounded border bg-surface transition-colors duration-state ${
                   c.id === selectedId ? 'border-accent' : 'border-border hover:border-border-strong'
                 }`}
               >
-                {angleThumbUrl(strips, c) ? (
-                  <img
-                    src={angleThumbUrl(strips, c) ?? undefined}
-                    alt=""
-                    className="h-full w-full object-cover"
-                  />
-                ) : null}
+                <FilmstripThumb url={angleThumbUrl(strips, c)} />
               </button>
             ))}
             <button

@@ -34,6 +34,27 @@ import type { FilmstripStrip } from '../lib/useFilmstripStrips'
 const OVERSCAN_PX = 400
 
 /**
+ * What a slot shows until its tile has decoded, and what a lane still being
+ * extracted shows whole. Opaque on purpose: the canvas sits at the block's
+ * `opacity` over a black block, and an opaque grey at 0.6 reads as the same
+ * neutral the app's `<Skeleton variant="media">` draws over the ground. The
+ * old transparent slot let the black block through — the "แถบดำ" the owner saw
+ * before thumbnails popped in (2026-10-01).
+ */
+const PLACEHOLDER_FILL = 'rgb(70 69 68)'
+
+/** A tile that decodes after its slot was first painted fades in over this. */
+const FADE_MS = 180
+
+function prefersReducedMotion(): boolean {
+  try {
+    return window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  } catch {
+    return false
+  }
+}
+
+/**
  * Size the backing store, and leave it blank with an identity transform.
  *
  * Assigning `width` or `height` resets the canvas and throws its pixels away
@@ -123,6 +144,12 @@ export const FilmstripCanvas = memo(function FilmstripCanvas({
     // triggers exactly one redraw, so a lane fills in progressively without
     // ever touching React.
     const pending = new Map<string, () => void>()
+    // Tiles that arrived while this lane was showing their placeholder, by
+    // the time they did: drawn with a short fade instead of popping in. A
+    // tile already decoded on the first paint (the usual case once the
+    // first-view gate has waited for them) draws at full strength at once.
+    const fadeFrom = new Map<string, number>()
+    const fadeMs = prefersReducedMotion() ? 0 : FADE_MS
     let raf = 0
     let disposed = false
     // Set by whatever changes the picture other than a scroll: a prop, or a
@@ -175,7 +202,7 @@ export const FilmstripCanvas = memo(function FilmstripCanvas({
           )
           canvas.style.width = `${canvas.width}px`
           canvas.style.height = `${canvas.height}px`
-          ctx.fillStyle = 'rgb(243 242 242 / 0.05)'
+          ctx.fillStyle = PLACEHOLDER_FILL
           ctx.fillRect(0, 0, canvas.width, canvas.height)
           return
         }
@@ -240,25 +267,51 @@ export const FilmstripCanvas = memo(function FilmstripCanvas({
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
 
       const wanted = new Set<string>()
+      const now = performance.now()
+      let fading = false
       for (const slot of slots) {
         const url = p.strip.urlFor(slot.tileIndex)
         wanted.add(url)
+        const x = slot.x - originX
         const img = getDecodedFilmstripImage(url)
+        let alpha = 1
+        const from = fadeFrom.get(url)
+        if (img && from !== undefined) {
+          alpha = fadeMs > 0 ? Math.min(1, (now - from) / fadeMs) : 1
+          if (alpha >= 1) fadeFrom.delete(url)
+          else fading = true
+        }
+        if (!img || alpha < 1) {
+          ctx.fillStyle = PLACEHOLDER_FILL
+          ctx.fillRect(x, 0, slot.width, p.heightPx)
+        }
         if (!img) {
           if (!pending.has(url)) {
-            const off = subscribeFilmstripImage(url, redraw, () => undefined)
+            const off = subscribeFilmstripImage(
+              url,
+              () => {
+                fadeFrom.set(url, performance.now())
+                redraw()
+              },
+              () => undefined
+            )
             pending.set(url, off)
           }
           continue
         }
-        const x = slot.x - originX
         ctx.save()
+        ctx.globalAlpha = alpha
         ctx.beginPath()
         ctx.rect(x, 0, slot.width, p.heightPx)
         ctx.clip()
         const r = computeCoverRect(img.naturalWidth, img.naturalHeight, slot.width, p.heightPx)
         ctx.drawImage(img, x + r.x, r.y, r.width, r.height)
         ctx.restore()
+      }
+      // Keep painting until every fade has finished.
+      if (fading) {
+        dirty = true
+        schedule()
       }
 
       // Stop waiting on tiles that scrolled away — otherwise a long scroll
