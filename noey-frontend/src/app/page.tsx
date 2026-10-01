@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { ModeTracks } from "@/components/home/ModeTracks";
 import Link from "next/link";
 import type { CSSProperties } from "react";
 import { BetaPriceNote } from "@/components/BetaPriceNote";
@@ -42,8 +43,8 @@ export const revalidate = 600;
 
 export const metadata: Metadata = pageMetadata("home", {
   ogTitle: "Noey Studio — ตัดคลิป TikTok ด้วย AI ในเบราว์เซอร์",
-  ogDescription: "ลากคลิปเข้าเว็บ ให้ AI ตัดร่างแรกให้ก่อน ถอดเสียงไทย เลือกช่วงไฮไลต์ ใส่ซับ แล้วแก้ต่อในไทม์ไลน์ได้ทุกช็อต",
-  twitterDescription: "ลากคลิปเข้าเว็บ ให้ AI ตัดร่างแรกให้ก่อน แล้วแก้ต่อในไทม์ไลน์ได้ทุกช็อต",
+  ogDescription: "ลากคลิปเข้าเว็บ ให้ AI ตัดดราฟต์แรกให้ก่อน ถอดเสียงไทย เลือกช่วงไฮไลต์ ใส่ซับ แล้วแก้ต่อในไทม์ไลน์ได้ทุกช็อต",
+  twitterDescription: "ลากคลิปเข้าเว็บ ให้ AI ตัดดราฟต์แรกให้ก่อน แล้วแก้ต่อในไทม์ไลน์ได้ทุกช็อต",
 });
 
 const FEATURES = [
@@ -97,14 +98,14 @@ const STEPS = [
   {
     media: MEDIA.stepImport,
     title: "ลากฟุตเทจเข้ามา",
-    body: "ลากคลิปจากมือถือหรือกล้องเข้ามาได้หลายไฟล์พร้อมกัน ระบบตรวจความยาวและความละเอียดให้ ไฟล์ฟอร์แมตแปลกก็แปลงให้ก่อน",
+    body: "ลากคลิปจากมือถือหรือกล้องเข้ามาได้หลายไฟล์พร้อมกัน ระบบตรวจความยาวและความละเอียดให้",
   },
   {
     media: MEDIA.stepStyle,
     title: "บอกว่าอยากได้คลิปแบบไหน",
     // "สไตล์การตัด" dropped from the design's copy: styles are hidden on the web
     // editor (owner, 2026-09-22), so the site must not promise them.
-    body: "เลือกโหมด ความยาวที่ต้องการ และจะใช้เสียงในคลิปเดิมหรือพากย์ใหม่ จากนั้นกดปุ่มเดียวแล้วรอผล",
+    body: "เลือกหนึ่งในสามโหมดให้ตรงกับคลิป แล้วตั้งค่าของโหมดนั้น จากนั้นกดปุ่มเดียวแล้วรอผล",
   },
   {
     media: MEDIA.stepTimeline,
@@ -173,7 +174,7 @@ export default async function HomePage() {
             </span>
             <p>{keepThaiProse("สำหรับครีเอเตอร์และแม่ค้าที่ถ่ายคลิปเอง")}</p>
           </div>
-          <WordReveal as="h1" id="hero-title" text={"ถ่ายเสร็จ ลากคลิปเข้าเว็บ\nให้ AI ตัดร่างแรกให้ก่อน"} className="h-display hero__title" soft={[1]} />
+          <WordReveal as="h1" id="hero-title" text={"ถ่ายเสร็จ ลากคลิปเข้าเว็บ\nให้ AI ตัดดราฟต์แรกให้ก่อน"} className="h-display hero__title" soft={[1]} />
           <div className="hero__cols">
             {/* Answer-first block: what the product is and does, in one extractable paragraph. */}
             <p className="hero__lead">
@@ -192,7 +193,7 @@ export default async function HomePage() {
                 {/* Where the computer-only note shows (phones), it already said this. */}
                 <span className="hero__fine-desk">{keepThaiProse(HERO_FINE.slice(HERO_FINE_CUT))}</span>
               </p>
-              <p className="hero__fine hero__honest">{keepThaiProse("ระบบทำร่างแรกให้ ไม่ได้ตัดจบแทนคุณ งานที่เหลือยังแก้เองในไทม์ไลน์")}</p>
+              <p className="hero__fine hero__honest">{keepThaiProse("ระบบทำดราฟต์แรกให้ ไม่ได้ตัดจบแทนคุณ งานที่เหลือยังแก้เองในไทม์ไลน์")}</p>
               <p className="stamp">
                 อัปเดตล่าสุด <time dateTime={home.updated}>{formatThaiDate(home.updated)}</time>
               </p>
@@ -275,13 +276,13 @@ export default async function HomePage() {
           </div>
           <div className="problem__body">
             <p data-reveal="rise">
-              {keepThaiProse("ครีเอเตอร์ส่วนใหญ่ถ่ายคลิปหนึ่งตัวจบภายในไม่กี่นาที แต่ใช้เวลาอีกหลายเท่าไปกับการไล่ดูฟุตเทจ หาช่วงที่พูดรู้เรื่อง ตัดช่วงที่พูดผิดออก พิมพ์ซับ แล้วจัดจังหวะใหม่อีกรอบ ยิ่งลงคลิปถี่ เวลาส่วนนี้ยิ่งกลืนทั้งวัน")}
+              {keepThaiProse("ครีเอเตอร์ส่วนใหญ่ถ่ายคลิปหนึ่งตัวจบภายในไม่กี่นาที แต่ใช้เวลาอีกหลายเท่าไปกับการไล่ดูฟุตเทจ หาช่วงที่พูดรู้เรื่อง ตัดช่วงเงียบออก พิมพ์ซับ แล้วจัดจังหวะใหม่อีกรอบ ยิ่งลงคลิปถี่ เวลาส่วนนี้ยิ่งกลืนทั้งวัน")}
             </p>
             <p data-reveal="rise">
               {keepThaiProse("Noey Studio ทำขั้นตอนที่ซ้ำ ๆ ตรงนั้นแทน ระบบถอดเสียงทั้งคลิปเป็นข้อความก่อน แล้วให้ AI อ่านสิ่งที่คุณพูดจริง ๆ เพื่อเลือกช่วงที่ควรเก็บและลำดับที่ควรวาง สิ่งที่ได้กลับมาคือคลิปที่ตัดแล้วหนึ่งตัว ไม่ใช่รายการงานที่ต้องทำต่อ")}
             </p>
             <p data-reveal="rise" className="problem__last">
-              {keepThaiProse("ร่างแรกไม่ต้องสมบูรณ์ก็ได้ เพราะไทม์ไลน์ยังอยู่ครบ ย้าย ยืดหด ลบ หรือสลับช็อตในฉากเดิม แล้วเรนเดอร์ใหม่ได้ไม่จำกัดครั้ง")}
+              {keepThaiProse("ดราฟต์แรกไม่ต้องสมบูรณ์ก็ได้ เพราะไทม์ไลน์ยังอยู่ครบ ย้าย ยืดหด ลบ หรือสลับช็อตในฉากเดิม แล้วเรนเดอร์ใหม่ได้ไม่จำกัดครั้ง")}
             </p>
           </div>
         </div>
@@ -342,7 +343,7 @@ export default async function HomePage() {
                 <div className="how__intro">
                   <SectionHeader id="how-title" marker timecode="00:01:08:00" title="สามขั้นตอน จบในหน้าเดียว">
                     <p>
-                      {keepThaiProse("ขั้นตอนใช้งานมีสามขั้น คือลากฟุตเทจเข้ามา เลือกโหมดและความยาวที่ต้องการ แล้วดูผล เกลาในไทม์ไลน์ และดาวน์โหลดไฟล์ วิดีโอแนวตั้ง 1080×1920 การแก้และเรนเดอร์ซ้ำทำได้ไม่จำกัดครั้งโดยไม่กินโควตา")}
+                      {keepThaiProse("ขั้นตอนใช้งานมีสามขั้น คือลากฟุตเทจเข้ามา เลือกโหมดที่ตรงกับคลิป แล้วดูผล เกลาในไทม์ไลน์ และดาวน์โหลดไฟล์ วิดีโอแนวตั้ง 1080×1920 การแก้และเรนเดอร์ซ้ำทำได้ไม่จำกัดครั้งโดยไม่กินโควตา")}
                     </p>
                   </SectionHeader>
                 </div>
@@ -376,12 +377,24 @@ export default async function HomePage() {
         </div>
       </section>
 
+      {/* ── 5b. The three modes: what each is for, how it works, what comes out ── */}
+      <section id="modes" className="sect modes-sect" aria-labelledby="modes-title">
+        <div className="wrap">
+          <SectionHeader id="modes-title" marker timecode="00:01:22:00" title="สามโหมด สำหรับคลิปสามแบบ">
+            <p>
+              {keepThaiProse("โหมดคือสิ่งที่กำหนดว่า AI ตัดจากอะไร เลือกให้ตรงกับคลิปที่ถ่ายมา แล้วระบบทำส่วนที่เหลือ ทุกโหมดใช้ได้ทุกแพลน รวมแพลนฟรี")}
+            </p>
+          </SectionHeader>
+          <ModeTracks />
+        </div>
+      </section>
+
       {/* ── 6. Scope: what fits and what does not, side by side at equal weight ── */}
       <section className="sect scope-teaser" aria-labelledby="scope-title">
         <div className="wrap">
           <SectionHeader id="scope-title" marker timecode="00:01:36:12" title="ระบบคัดช็อตให้ ไม่ได้ตัดจบแทนคุณ">
             <p>
-              {keepThaiProse("สิ่งที่ได้กลับมาคือร่างแรก — ช็อตที่คัดมาแล้ว เรียงลำดับไว้ พร้อมซับไทย จากนั้นยังต้องเข้าไปเกลาจังหวะและลำดับเองในไทม์ไลน์เกือบทุกครั้ง ส่วนที่ประหยัดคือเวลานั่งไล่ฟุตเทจทีละช่วงและพิมพ์ซับเอง ไม่ใช่การตัดต่อทั้งกระบวนการ")}
+              {keepThaiProse("สิ่งที่ได้กลับมาคือดราฟต์แรก — ช็อตที่คัดมาแล้ว เรียงลำดับไว้ พร้อมซับไทย จากนั้นยังต้องเข้าไปเกลาจังหวะและลำดับเองในไทม์ไลน์เกือบทุกครั้ง ส่วนที่ประหยัดคือเวลานั่งไล่ฟุตเทจทีละช่วงและพิมพ์ซับเอง ไม่ใช่การตัดต่อทั้งกระบวนการ")}
             </p>
           </SectionHeader>
           <FitLists fits={HOME_FITS} misfits={HOME_MISFITS} fitTitle="เหมาะกับงานแบบนี้" misfitTitle="ยังทำให้ไม่ได้" headingLevel="h3" />

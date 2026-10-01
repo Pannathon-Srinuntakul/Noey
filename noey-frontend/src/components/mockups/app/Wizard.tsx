@@ -285,6 +285,10 @@ function Row({ label, hint, first, align = "center", children }: { label: string
 }
 
 const NOTE_SILENCE = ["ดูทุกคลิปแล้วแก้คำที่ถอดเสียงผิด", "ตัดช่วงพูดติดหรือพูดซ้ำออก", "เก็บช่วงเงียบที่ยังมีภาพสำคัญไว้"];
+// The editor prints this note, but the pipeline cuts pauses only — it does not
+// find a stumble or a sentence said twice (owner, 2026-10-01). The site does not
+// repeat the claim: the line keeps its place in the drawing, unpainted.
+const NOTE_NOT_DRAWN = "ตัดช่วงพูดติดหรือพูดซ้ำออก";
 
 function SilenceRows() {
   return (
@@ -295,12 +299,21 @@ function SilenceRows() {
       </Row>
       <Row label="โหมดนี้ทำอะไร" align="top">
         <div className="flex flex-col gap-[7px] text-sm leading-[1.6] text-muted">
-          {NOTE_SILENCE.map((note) => (
-            <span key={note} className="flex gap-[9px]">
-              <span className="opacity-70">·</span>
-              {note}
-            </span>
-          ))}
+          {NOTE_SILENCE.map((note) =>
+            note === NOTE_NOT_DRAWN ? (
+              <Omit key={note}>
+                <span className="flex gap-[9px]">
+                  <span className="opacity-70">·</span>
+                  {note}
+                </span>
+              </Omit>
+            ) : (
+              <span key={note} className="flex gap-[9px]">
+                <span className="opacity-70">·</span>
+                {note}
+              </span>
+            ),
+          )}
         </div>
       </Row>
     </>

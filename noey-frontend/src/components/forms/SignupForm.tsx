@@ -67,8 +67,6 @@ export function SignupForm({ googleEnabled = false }: { googleEnabled?: boolean 
           {keepThai("รวมถึงการเก็บและประมวลผลไฟล์ที่ฉันนำเข้ามาเพื่อให้บริการ")}
         </span>
       </label>
-      {/* Why the buttons below are locked, said where the fix is: at the box. */}
-      {agreed ? null : <p className="agree-hint">ติ๊กยอมรับเงื่อนไขก่อนจึงจะสมัครได้</p>}
       {errors.agree ? (
         <p className="field-error" id="s-agree-error" style={{ marginTop: -8 }}>
           {errors.agree}

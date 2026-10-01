@@ -42,7 +42,7 @@ function Bullet({ text }: { text: string }) {
  * being trimmed, the whole editor in a browser tab, the quota card.
  */
 const VISUALS: Record<GuideDoc["key"], { node: ReactNode; label: string; shape: "wide" | "strip" | "card" }> = {
-  guideCut: { node: <FeatureVisual index={0} />, label: "ไทม์ไลน์หลังระบบตัดร่างแรก", shape: "wide" },
+  guideCut: { node: <FeatureVisual index={0} />, label: "ไทม์ไลน์หลังระบบตัดดราฟต์แรก", shape: "wide" },
   guideSubtitles: { node: <MicroDemo kind="subs" />, label: "เลนคำบรรยายไทยในไทม์ไลน์", shape: "strip" },
   guideReview: { node: <MicroDemo kind="swap" />, label: "สลับฉากเป็นช็อตสำรอง", shape: "strip" },
   guideLongform: { node: <MicroDemo kind="trim" />, label: "ยืดหดความยาวฉากในไทม์ไลน์", shape: "strip" },

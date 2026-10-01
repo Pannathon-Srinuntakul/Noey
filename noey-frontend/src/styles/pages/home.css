@@ -1123,3 +1123,142 @@
 }
 
 
+
+/* ── The three modes ───────────────────────────────────────────────────────
+   One track per mode: its name with the editor's icon, the footage it is
+   for, what the system does in three cues, and what comes out. */
+
+.modes {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: clamp(14px, 1.6vw, 22px);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+@media (max-width: 960px) {
+  .modes {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.mode {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: clamp(20px, 2.2vw, 28px);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: color-mix(in srgb, var(--panel) 86%, transparent);
+  box-shadow: var(--shadow-2), var(--rim);
+}
+
+/* The clip's head: a gold edge along the top. */
+.mode::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 2px;
+  background: linear-gradient(90deg, var(--gold), transparent 75%);
+}
+
+.mode__head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.mode__head .trk {
+  order: 3;
+  margin-left: auto;
+}
+
+.mode__icon {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  background: var(--gold-soft);
+  color: var(--gold-ink);
+}
+
+.mode__name {
+  margin: 0;
+  font-size: var(--fs-h4);
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.mode__fit {
+  margin: 0;
+  font-size: var(--fs-15);
+  font-weight: 400;
+  line-height: 1.75;
+  color: var(--ink);
+}
+
+.mode__label {
+  display: block;
+  margin-bottom: 2px;
+  font-size: var(--fs-12);
+  color: var(--ink-3);
+}
+
+.mode__steps {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 14px 0 0;
+  border-top: 1px dashed var(--line-2);
+  list-style: none;
+}
+
+.mode__steps li {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr);
+  gap: 10px;
+  font-size: var(--fs-15);
+  font-weight: 400;
+  line-height: 1.7;
+  color: var(--ink-2);
+}
+
+.mode__n {
+  padding-top: 0.5em;
+  font-weight: 600;
+  color: var(--gold-ink);
+}
+
+/* What comes out, at the foot of every track at the same height. */
+.mode__result {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: auto 0 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+/* Inline text, not flex: its words and kept runs keep their spaces. */
+.mode__chip {
+  display: inline-block;
+  padding: 3px 11px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-text) 4%, transparent);
+  font-size: var(--fs-13);
+  line-height: 1.5;
+  color: var(--ink);
+}
+
+.mode__chip:first-child {
+  border-color: color-mix(in srgb, var(--color-accent) 40%, transparent);
+  background: var(--gold-softer);
+  font-weight: 600;
+  color: var(--gold-ink);
+}

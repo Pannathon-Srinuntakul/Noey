@@ -11,7 +11,7 @@ describe("honest-scope copy (Website v2)", () => {
   it("has the design's lists", () => {
     expect(HOME_FITS).toHaveLength(3);
     expect(HOME_MISFITS).toHaveLength(3);
-    expect(SCOPE_STEPS.map((step) => step.title)).toEqual(["ถอดเสียงทั้งกอง", "คัดช็อตและเรียงลำดับ", "ใส่ซับไทยให้"]);
+    expect(SCOPE_STEPS.map((step) => step.title)).toEqual(["ถอดเสียงทุกไฟล์", "คัดช็อตและเรียงลำดับ", "ใส่ซับไทยให้"]);
     expect(SCOPE_FITS).toHaveLength(5);
     expect(SCOPE_MISFITS).toHaveLength(5);
     expect(SCOPE_SUMMARY.map((row) => row.label)).toEqual(["ระบบทำ", "คุณทำ", "ยังไม่มี"]);

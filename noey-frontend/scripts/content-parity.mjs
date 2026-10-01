@@ -10,7 +10,9 @@
  *     the merge-base of HEAD and main), read with `git show`.
  * (b) Checks each one still exists in src/ now — as a whole string, or inside
  *     a longer one — or is quoted in CONTENT_CHANGES.md, which records every
- *     deliberate rewording (old → new → why).
+ *     deliberate rewording (old → new → why). A term changed across the whole
+ *     site is recorded once as a line `- Everywhere: "old" → "new"`; a string
+ *     that differs only by such terms counts as present.
  * (c) When both crawls exist (scripts/crawl-text.mjs, before and after),
  *     compares what each page shows, line by line: a baseline line counts as
  *     present when the new page contains it (whitespace and case ignored), or
@@ -103,18 +105,28 @@ function currentSources() {
   return out;
 }
 
+/** Site-wide term changes recorded in CONTENT_CHANGES.md: `- Everywhere: "old" → "new"`. */
+function substitutions() {
+  const text = readFileSync(CHANGES_FILE, "utf8");
+  return [...text.matchAll(/^- Everywhere: "([^"]+)" → "([^"]+)"/gm)].map((match) => [match[1], match[2]]);
+}
+
 function checkSource(documented) {
   const baseline = baselineStrings();
+  const swaps = substitutions();
   const current = new Set();
   for (const file of currentSources()) {
     for (const text of thaiStrings(file, readFileSync(file, "utf8"))) current.add(squash(text));
   }
   const corpus = [...current].join("\u0000");
+  const present = (key) => current.has(key) || corpus.includes(key);
   const missing = [];
   for (const [text, path] of baseline) {
     const key = squash(text);
-    if (current.has(key) || corpus.includes(key)) continue;
+    if (present(key)) continue;
     if (documented.includes(key)) continue;
+    const swapped = swaps.reduce((out, [from, to]) => out.split(from).join(to), text);
+    if (swapped !== text && present(squash(swapped))) continue;
     missing.push({ text, path });
   }
   return { total: baseline.size, missing };

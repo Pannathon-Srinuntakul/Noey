@@ -8,6 +8,7 @@ import { IconLock } from "@/components/ds/icons";
 import { PageHero } from "@/components/ds/PageHero";
 import { SectionHeader } from "@/components/ds/SectionHeader";
 import { keepThaiProse } from "@/components/ds/ThaiProse";
+import { keepThai } from "@/components/ds/ThaiText";
 import { formatTimecode } from "@/components/ds/timecode";
 import { Waveform } from "@/components/ds/Waveform";
 import { ContactForm } from "@/components/forms/ContactForm";
@@ -46,7 +47,7 @@ const CHAPTERS: readonly { start: number; paragraphs: readonly ReactNode[] }[] =
   {
     start: 38.4,
     paragraphs: [
-      keepThaiProse("หลักที่เรายึดคือ AI ควรทำร่างแรกให้เร็ว แต่คนต้องแก้ทับได้ทุกจุด ไม่ใช่กดปุ่มเดียวแล้วรับผลที่แก้อะไรไม่ได้"),
+      keepThaiProse("หลักที่เรายึดคือ AI ควรทำดราฟต์แรกให้เร็ว แต่คนต้องแก้ทับได้ทุกจุด ไม่ใช่กดปุ่มเดียวแล้วรับผลที่แก้อะไรไม่ได้"),
       <>
         {keepThaiProse(
           "หลักเดียวกันนี้ใช้กับสิ่งที่เขียนบนเว็บด้วย เราเขียนเฉพาะสิ่งที่ระบบทำได้จริงในวันนี้ และบอกข้อจำกัดไว้ตรง ๆ ตัวเลขที่ยังไม่ได้วัดด้วยวิธีที่บอกได้ว่าวัดอย่างไร เราจะไม่ประกาศ อ่านขอบเขตทั้งหมดได้ใน",
@@ -59,7 +60,7 @@ const CHAPTERS: readonly { start: number; paragraphs: readonly ReactNode[] }[] =
     start: 71.12,
     paragraphs: [
       keepThaiProse(
-        "เครื่องมือนี้ถูกใช้กับงานจริงทุกวันก่อนจะเปิดให้คนอื่นใช้ สิ่งที่อยู่ในระบบวันนี้จึงมาจากปัญหาที่เจอเองซ้ำ ๆ เช่น การไล่ฟุตเทจหลายไฟล์เพื่อหาเทกที่ใช้ได้ การพิมพ์ซับทีละบรรทัด และการอัดเสียงพากย์ใหม่เฉพาะประโยคที่พูดพลาด ฟีเจอร์ที่ไม่ได้แก้ปัญหาซ้ำแบบนั้น เราเลือกที่จะยังไม่ทำ",
+        "เครื่องมือนี้ถูกใช้กับงานจริงทุกวันก่อนจะเปิดให้คนอื่นใช้ สิ่งที่อยู่ในระบบวันนี้จึงมาจากปัญหาที่เจอเองซ้ำ ๆ เช่น การไล่ฟุตเทจหลายไฟล์เพื่อหาเทกที่ใช้ได้ และการพิมพ์ซับทีละบรรทัด ฟีเจอร์ที่ไม่ได้แก้ปัญหาซ้ำแบบนั้น เราเลือกที่จะยังไม่ทำ",
       ),
       keepThaiProse(
         "วันนี้ระบบใช้งานได้จริงกับคลิปสั้นภาษาไทยสามแบบ คือคลิปพูดหน้ากล้องที่อยากตัดช่วงเงียบออก คลิปขายของที่ถ่ายไว้หลายมุม และคลิปยาวที่อยากแยกเป็นคลิปสั้นหลายตัว ทั้งสามแบบจบในเบราว์เซอร์เดียวโดยไม่ต้องสลับไปโปรแกรมอื่นกลางทาง",
@@ -84,7 +85,7 @@ const CHAPTERS: readonly { start: number; paragraphs: readonly ReactNode[] }[] =
 
 const PRINCIPLES = [
   {
-    title: "AI ทำร่างแรก คนตัดสินใจ",
+    title: "AI ทำดราฟต์แรก คนตัดสินใจ",
     text: "ระบบคัดช็อต เรียงลำดับ และใส่ซับให้เร็วที่สุดเท่าที่ทำได้ แต่ทุกอย่างต้องแก้ทับได้ในไทม์ไลน์ ไม่มีผลลัพธ์ไหนที่ล็อกไว้จนแก้ไม่ได้",
   },
   {
@@ -105,7 +106,7 @@ const PRINCIPLES = [
     // The two pages it names are links, as every other page the about page names.
     after: (
       <>
-        <Link href={PAGES.privacy.path}>หน้าความเป็นส่วนตัว</Link>และ<Link href={PAGES.terms.path}>เงื่อนไขการใช้งาน</Link>
+        <Link href={PAGES.privacy.path}>{keepThai("หน้าความเป็นส่วนตัว")}</Link>และ<Link href={PAGES.terms.path}>{keepThai("เงื่อนไขการใช้งาน")}</Link>
       </>
     ),
   },

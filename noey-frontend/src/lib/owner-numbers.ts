@@ -35,7 +35,7 @@ export const OWNER_NUMBERS: Record<OwnerNumberKey, OwnerNumber> = {
   draftTimeFiveMinuteClip: {
     value: null,
     measured: null,
-    note: "เวลาตั้งแต่กดเริ่มจนได้ร่างแรก จากฟุตเทจดิบ 5 นาที",
+    note: "เวลาตั้งแต่กดเริ่มจนได้ดราฟต์แรก จากฟุตเทจดิบ 5 นาที",
   },
   transcriptionAccuracyThai: {
     value: null,
