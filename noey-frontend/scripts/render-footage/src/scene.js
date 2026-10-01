@@ -2,7 +2,8 @@
 // travertine and linen, lit like a small tabletop product shoot. Real-world
 // units (metres), so the path tracer's depth of field behaves like a lens.
 import * as THREE from "three";
-import { brushed, linen, oak, travertine, label, makeNoise, mottled } from "./textures.js";
+import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
+import { brushed, carton, linen, oak, travertine, label, makeNoise, mottled } from "./textures.js";
 
 const GOLD = new THREE.Color("#d9a441");
 
@@ -307,6 +308,43 @@ export function buildPebble(seed, size, tint = "#c8bca9") {
     geometry,
     new THREE.MeshPhysicalMaterial({ map: mottled(seed, tint), roughness: 0.62, clearcoat: 0.08, clearcoatRoughness: 0.6 }),
   );
+}
+
+/**
+ * The bottle's carton: folding board with softened edges, its printed
+ * panels laid on the faces (one material per mesh: the path tracer is given
+ * no multi-material geometry). Its base sits at y = 0.
+ */
+export function buildCarton() {
+  const w = 0.036;
+  const h = 0.104;
+  const group = new THREE.Group();
+  const box = new THREE.Mesh(
+    new RoundedBoxGeometry(w, h, w, 3, 0.0012),
+    new THREE.MeshPhysicalMaterial({ color: "#efe7d8", roughness: 0.8, sheen: 0.15, sheenRoughness: 0.8 }),
+  );
+  box.position.y = h / 2;
+  group.add(box);
+  const print = carton(512);
+  const panel = (map, x, z, turn) => {
+    const mesh = new THREE.Mesh(
+      new THREE.PlaneGeometry(w - 0.0024, h - 0.0024),
+      new THREE.MeshPhysicalMaterial({ map, roughness: 0.78, sheen: 0.15, sheenRoughness: 0.8 }),
+    );
+    mesh.position.set(x, h / 2, z);
+    mesh.rotation.y = turn;
+    group.add(mesh);
+  };
+  const out = w / 2 + 0.00015;
+  panel(print.front, 0, out, 0);
+  panel(print.front, 0, -out, Math.PI);
+  panel(print.side, out, 0, Math.PI / 2);
+  panel(print.side, -out, 0, -Math.PI / 2);
+  group.traverse((child) => {
+    child.castShadow = true;
+    child.receiveShadow = true;
+  });
+  return group;
 }
 
 /** A shallow saucer in glazed off-white ceramic. */

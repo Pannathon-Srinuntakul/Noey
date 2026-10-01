@@ -67,12 +67,12 @@ export interface SampleScene {
 const SCENES: ReadonlyArray<Pick<SampleScene, "clip" | "sourceIn" | "line" | "alternates" | "note" | "caption">> = [
   { clip: 0, sourceIn: 3.2, line: 1, alternates: 2, note: "ขวดบนแท่นหิน กล้องค่อย ๆ เข้าใกล้", caption: "ทุกเช้าต้องมี" },
   { clip: 2, sourceIn: 5.4, line: 1, alternates: 0, note: "ขวดหมุนบนแท่น เห็นฉลาก", caption: "เซรั่มขวดนี้" },
-  { clip: 1, sourceIn: 8.1, line: 2, alternates: 3, note: "หยดเซรั่มบนหิน เห็นเนื้อใส", caption: "เนื้อบางเบา" },
-  { clip: 4, sourceIn: 12.6, line: 2, alternates: 0, note: "มุมบน ขวดวางบนผ้า ถ้วยเซรั่มข้างขวด", caption: "ไม่เหนอะหนะ" },
+  { clip: 1, sourceIn: 8.1, line: 2, alternates: 3, note: "ใกล้ฉลาก ไล่ขึ้นไปที่คอขวดสีทอง", caption: "เนื้อบางเบา" },
+  { clip: 4, sourceIn: 12.6, line: 2, alternates: 0, note: "ขวดวางคู่กล่องบนผ้าลินิน", caption: "ไม่เหนอะหนะ" },
   { clip: 3, sourceIn: 4.0, line: 3, alternates: 1, note: "โฟกัสจากถ้วยเซรั่มไปที่ขวด", caption: "หยดเดียวก็ทั่วหน้า" },
   { clip: 2, sourceIn: 11.2, line: 4, alternates: 1, note: "หมุนให้เห็นหลอดหยดและฝาสีทอง", caption: "ขวดเล็กมีหลอดหยด" },
   { clip: 0, sourceIn: 15.0, line: 4, alternates: 0, note: "ขวดเต็มเฟรม ฝาทองรับแสง", caption: "พกใส่กระเป๋าได้" },
-  { clip: 4, sourceIn: 30.5, line: 5, alternates: 1, note: "มุมบน ขวดวางบนผ้าลินิน", caption: "กดตะกร้าด้านล่างได้เลย" },
+  { clip: 4, sourceIn: 30.5, line: 5, alternates: 1, note: "ขวดกับกล่อง กล้องค่อย ๆ เข้าใกล้", caption: "กดตะกร้าด้านล่างได้เลย" },
 ];
 
 export const SAMPLE_SCENES: readonly SampleScene[] = SCENES.map((scene, index) => {

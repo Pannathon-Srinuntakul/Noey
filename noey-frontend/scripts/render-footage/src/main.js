@@ -4,7 +4,7 @@
 // returns the frame as a PNG data URL.
 import * as THREE from "three";
 import { PhysicalCamera, WebGLPathTracer } from "three-gpu-pathtracer";
-import { buildBottle, buildDish, buildDrop, buildLights, buildPebble, buildPlinth, buildSet } from "./scene.js";
+import { buildBottle, buildCarton, buildDish, buildDrop, buildLights, buildPebble, buildPlinth, buildSet } from "./scene.js";
 
 const params = new URLSearchParams(location.search);
 const W = Number(params.get("w") ?? 720);
@@ -89,44 +89,28 @@ const shots = {
     };
   },
 
-  /** Texture: drops of serum on the stone, the bottle soft behind; a slow slide. */
+  /**
+   * Detail: close on the bottle — the label, then up the shoulder to the gold
+   * collar — with the plinth falling away out of focus; a slow rise.
+   */
   texture() {
     scene.add(buildSet({ surface: "linen" }));
     const plinth = buildPlinth();
     scene.add(plinth);
     const bottle = buildBottle();
-    bottle.position.set(0.012, 0.038, -0.028);
-    bottle.rotation.y = -0.2;
+    bottle.position.y = 0.038;
+    bottle.rotation.y = -0.18;
     scene.add(bottle);
-    const serumMaterial = bottle.children[1].material;
-    // A bead only millimetres deep would be almost clear in the bottle's serum:
-    // the beads get a denser amber, as a real drop of serum shows.
-    const beadMaterial = serumMaterial.clone();
-    beadMaterial.attenuationColor = new THREE.Color("#d9963a");
-    beadMaterial.attenuationDistance = 0.006;
-    // [x, z, footprint radius, contact angle]: serum beads on the stone.
-    // Clustered within the ~2 cm a macro lens sees across a portrait frame.
-    [
-      [-0.006, 0.02, 0.0042, 0.85],
-      [0.0025, 0.0265, 0.0028, 0.95],
-      [-0.0005, 0.0135, 0.002, 1.0],
-      [-0.0095, 0.0305, 0.0016, 1.02],
-      [0.0045, 0.0345, 0.0013, 1.05],
-    ].forEach(([x, z, r, contact]) => {
-      const drop = buildDrop(beadMaterial, r, contact);
-      drop.position.set(x, 0.038, z);
-      scene.add(drop);
-    });
     return {
       duration: 3.5,
       pose(t) {
         const k = ease(t / 3.5);
-        // Looking down onto the stone, so the beads fill the frame and the
-        // bottle stands soft behind them.
-        camera.fov = 26;
-        camera.fStop = 8;
-        aim(new THREE.Vector3(-0.008 + k * 0.01, 0.074, 0.092), new THREE.Vector3(-0.002, 0.039, 0.022), t, 0.3);
-        camera.focusDistance = camera.position.distanceTo(new THREE.Vector3(-0.004, 0.0405, 0.021));
+        camera.fov = 18;
+        camera.fStop = 2.8;
+        const y = 0.074 + k * 0.03;
+        aim(new THREE.Vector3(0.018, y + 0.006, 0.19), new THREE.Vector3(0, y, 0), t, 0.35);
+        // Focus rides the bottle's front as the camera rises.
+        camera.focusDistance = camera.position.distanceTo(new THREE.Vector3(0.004, y, 0.016));
       },
     };
   },
@@ -154,45 +138,30 @@ const shots = {
     };
   },
 
-  /** Flat lay from above: the bottle on linen with pebbles and the dish. */
+  /**
+   * Unboxed: the bottle on linen in front of its carton, from a little above
+   * eye level; a slow push in.
+   */
   flatlay() {
     scene.add(buildSet({ surface: "linen" }));
-    const bottle = buildBottle({ lying: true });
-    // Lying down, label up: tip it over about x, then turn it about the vertical.
-    bottle.rotation.order = "YXZ";
-    bottle.rotation.set(-Math.PI / 2, 0.55, 0);
-    bottle.position.set(0.006, 0.0161, 0.0);
+    const bottle = buildBottle();
+    bottle.rotation.y = -0.3;
+    bottle.position.set(0.016, 0, 0.022);
     scene.add(bottle);
-    const dish = buildDish();
-    dish.position.set(-0.042, 0.0, 0.066);
-    scene.add(dish);
-    const serumMaterial = bottle.children[1].material;
-    const puddle = buildDrop(serumMaterial, 0.0085, 0.32);
-    puddle.position.set(-0.042, 0.0022, 0.066);
-    scene.add(puddle);
-    [
-      [0.052, 0.07, 0.013, "#cdbfa9", 7],
-      [0.068, 0.046, 0.009, "#b7a88f", 8],
-      [-0.05, -0.066, 0.012, "#d6cab6", 9],
-    ].forEach(([x, z, size, tint, seed]) => {
-      const pebble = buildPebble(seed, size, tint);
-      pebble.position.set(x, size * 0.42, z);
-      scene.add(pebble);
-    });
-    renderer.toneMappingExposure = 0.82;
+    const box = buildCarton();
+    box.rotation.y = 0.42;
+    box.position.set(-0.026, 0, -0.026);
+    scene.add(box);
     return {
       duration: 3.5,
       pose(t) {
-        camera.fov = 30;
-        camera.fStop = 5.6;
         const k = ease(t / 3.5);
-        const h = handheld(t, 0.5);
-        camera.position.set(0.0 + h.x, 0.4 - k * 0.025, 0.0005 + h.y);
-        const turn = -0.2 + k * 0.08;
-        camera.up.set(Math.sin(turn), 0, -Math.cos(turn));
-        camera.lookAt(0.0, 0, 0.0);
-        camera.updateMatrixWorld();
-        camera.focusDistance = camera.position.y - 0.016;
+        camera.fov = 24;
+        camera.fStop = 3.5;
+        const d = 0.4 - k * 0.035;
+        // About 16° down onto the pair, a little from the right.
+        aim(new THREE.Vector3(0.03, 0.05 + d * 0.27, d * 0.96), new THREE.Vector3(-0.004, 0.05, 0), t, 0.5);
+        camera.focusDistance = camera.position.distanceTo(new THREE.Vector3(0.012, 0.045, 0.036));
       },
     };
   },
@@ -222,12 +191,14 @@ const shots = {
       duration: 3.5,
       pose(t) {
         camera.fov = 22;
-        camera.fStop = 2.0;
+        // A gentler aperture and a quicker pull: the bottle is never a ghost
+        // of itself for long (at f/2 its long, heavy blur read as graphics).
+        camera.fStop = 3.2;
         const cam = new THREE.Vector3(0.004, 0.092, 0.46 - ease(t / 3.5) * 0.015);
         aim(cam, new THREE.Vector3(0.0, 0.072, 0), t, 0.5);
         const nearDist = cam.distanceTo(new THREE.Vector3(-0.012, 0.058, 0.24));
         const farDist = cam.distanceTo(new THREE.Vector3(0, 0.07, 0.016));
-        const k = ease((t - 0.9) / 1.5);
+        const k = ease((t - 0.7) / 1.0);
         camera.focusDistance = nearDist + (farDist - nearDist) * k;
       },
     };

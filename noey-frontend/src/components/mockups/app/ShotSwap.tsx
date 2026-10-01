@@ -10,9 +10,9 @@ import { Button, Icon, Omit, Still, cn } from "./ui";
 
 const OPTIONS = [
   { still: sceneStill(2), label: "AI เลือกไว้", note: SAMPLE_SCENES[2].note },
-  { still: extraStill("alt-texture"), label: "อีกมุมหนึ่ง", note: "ใกล้ขึ้น เห็นหยดเล็กชัดกว่า" },
-  { still: extraStill("alt-flatlay"), label: "อีกมุมหนึ่ง", note: "มุมบน เซรั่มในถ้วย" },
-  { still: extraStill("alt-rack"), label: "อีกมุมหนึ่ง", note: "ถ้วยเซรั่มชัด ขวดเบลออยู่ด้านหลัง" },
+  { still: extraStill("alt-texture"), label: "อีกมุมหนึ่ง", note: "ใกล้ขึ้น เห็นฉลากและคอขวดชัด" },
+  { still: extraStill("alt-flatlay"), label: "อีกมุมหนึ่ง", note: "ขวดคู่กับกล่อง ขวดอยู่ด้านหน้า" },
+  { still: extraStill("alt-rack"), label: "อีกมุมหนึ่ง", note: "ขวดชัด ถ้วยเซรั่มเบลออยู่ด้านหน้า" },
 ];
 
 /** The frame width ShotSwapReview measures for a 1280×800 window (four cards). */

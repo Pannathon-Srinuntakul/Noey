@@ -238,6 +238,60 @@ export function label(size = 1024) {
   return tex;
 }
 
+/**
+ * The carton's printed panels: uncoated board with a faint fibre, the
+ * label's type set larger on the front with a gold rule, and a plain side
+ * with the volume. Returns { front, side } textures (portrait, 1:2.9).
+ */
+export function carton(size = 512) {
+  const panel = (draw) => {
+    const c = document.createElement("canvas");
+    c.width = size;
+    c.height = Math.round(size * 2.9);
+    const ctx = c.getContext("2d");
+    const fibre = makeNoise(31, 128);
+    const img = ctx.createImageData(c.width, c.height);
+    for (let y = 0; y < c.height; y++) {
+      for (let x = 0; x < c.width; x++) {
+        const t = 0.965 + (fibre(x / 30, y / 30, 3) - 0.5) * 0.045 + (fibre(x / 3, y / 90, 1) - 0.5) * 0.02;
+        const i = (y * c.width + x) * 4;
+        img.data[i] = 239 * t;
+        img.data[i + 1] = 231 * t;
+        img.data[i + 2] = 216 * t;
+        img.data[i + 3] = 255;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+    ctx.fillStyle = "#2b2622";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    draw(ctx, c.width / 2, c.height);
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = 8;
+    return tex;
+  };
+  const sans = (weight, px) => `${weight} ${px}px "Helvetica Neue", Helvetica, Arial, sans-serif`;
+  const front = panel((ctx, cx, H) => {
+    ctx.font = sans(600, size * 0.07);
+    ctx.letterSpacing = `${size * 0.016}px`;
+    ctx.fillText("FACE SERUM", cx, H * 0.36);
+    ctx.letterSpacing = "0px";
+    ctx.fillStyle = "#b8933f";
+    ctx.fillRect(cx - size * 0.1, H * 0.405, size * 0.2, size * 0.008);
+    ctx.fillStyle = "#2b2622";
+    ctx.font = `400 ${size * 0.19}px Georgia, "Times New Roman", serif`;
+    ctx.fillText("Serum", cx, H * 0.48);
+    ctx.font = sans(500, size * 0.06);
+    ctx.fillText("30 ml · 1 fl oz", cx, H * 0.88);
+  });
+  const side = panel((ctx, cx, H) => {
+    ctx.font = sans(500, size * 0.055);
+    ctx.fillText("30 ml", cx, H * 0.9);
+  });
+  return { front, side };
+}
+
 /** Turned metal: fine rings round the part, a little uneven, as a roughness map. */
 export function brushed(seed = 13, size = 256) {
   const noise = makeNoise(seed, 64);
