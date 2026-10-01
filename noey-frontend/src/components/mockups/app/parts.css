@@ -185,7 +185,7 @@
   .am-cycle [data-am-line="1"] {
     background: color-mix(in srgb, var(--gold) 12%, transparent);
     font-weight: 600;
-    color: var(--gold);
+    color: var(--gold-ink);
   }
 }
 
@@ -292,7 +292,7 @@
   0% {
     background: color-mix(in srgb, var(--gold) 12%, transparent);
     font-weight: 600;
-    color: var(--gold);
+    color: var(--gold-ink);
   }
   20%,
   100% {

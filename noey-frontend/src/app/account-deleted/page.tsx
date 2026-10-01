@@ -18,9 +18,10 @@ export default function AccountDeletedPage() {
       <div className="wrap">
         <StatusCard
           tone="quiet"
-          eyebrow="บัญชีของฉัน"
+          eyebrow="ลบบัญชี"
           title="ลบบัญชีเรียบร้อยแล้ว"
           role="status"
+          start
           actions={
             <Link href="/" className="btn btn-secondary btn-lg">
               กลับหน้าแรก

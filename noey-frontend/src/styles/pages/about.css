@@ -175,6 +175,13 @@
   }
 }
 
+@media (min-width: 1100px) {
+  /* Clear of the ruler that opens the story column. */
+  .about-contact {
+    margin-top: 16px;
+  }
+}
+
 @media (min-width: 1100px) and (min-height: 760px) {
   .about-contact {
     position: sticky;
@@ -361,16 +368,19 @@
   }
 }
 
+/* Phones: the track header narrows to a slim column (the label over the
+   lock), as an editor's track header does — not a strip of empty panel over
+   the clip. */
 @media (max-width: 639px) {
   .locked__track {
-    grid-template-columns: 1fr;
+    grid-template-columns: 52px minmax(0, 1fr);
   }
 
   .locked__head {
+    flex-direction: column;
     align-items: center;
-    padding: 10px 16px;
-    border-right: 0;
-    border-bottom: 1px solid var(--line);
+    gap: 8px;
+    padding: 16px 6px;
   }
 }
 
@@ -384,8 +394,22 @@
   padding-block: calc(var(--section-y) * 0.5);
 }
 
+/* The headings sit close to what they head. */
+.principles .sec-head,
+.about-faq .sec-head {
+  margin-bottom: clamp(22px, 3vw, 34px);
+}
+
+/* The FAQ keeps the story's measure (its right edge is the story's, not a
+   third one between the story and the full-width tracks). */
 .about-faq__list {
   max-width: 880px;
+}
+
+@media (min-width: 1100px) {
+  .about-faq__list {
+    max-width: calc(100% - 420px - clamp(40px, 6vw, 96px));
+  }
 }
 
 /* Sent: the confirmation moves to the top of the form (first thing the eye
@@ -395,13 +419,63 @@
 }
 
 #contact .form-success {
-  padding: 14px 16px;
-  border: 1px solid color-mix(in srgb, var(--color-success) 45%, transparent);
+  padding: 14px 16px 14px 18px;
+  border: 1px solid color-mix(in srgb, var(--color-success) 55%, transparent);
+  border-left: 4px solid var(--success);
   border-radius: var(--r-md);
   background: var(--success-soft);
   color: var(--ink);
   font-size: var(--fs-15);
+  font-weight: 500;
   line-height: 1.7;
+  text-wrap: balance;
+}
+
+/* Sent: the message's render bar, full, with its tick and readout. */
+.contact-sent__meter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.contact-sent__bar {
+  flex: 1;
+  height: 6px;
+  border-radius: 6px;
+  background: var(--success);
+}
+
+.contact-sent__tick {
+  flex: none;
+  color: var(--success);
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.contact-sent__tick circle {
+  fill: var(--success-soft);
+}
+
+.contact-sent__meter .tc {
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  color: var(--success);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .contact-sent__bar {
+    transform-origin: left center;
+    animation: sent-fill 1s var(--ease-out) both;
+  }
+}
+
+@keyframes sent-fill {
+  from {
+    transform: scaleX(0.04);
+  }
 }
 
 #contact .form-error {

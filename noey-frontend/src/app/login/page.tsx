@@ -24,11 +24,12 @@ export default async function LoginPage() {
       <div className="wrap auth__grid">
         <div className="auth__main">
           <div className="auth__form">
+            {/* The same place as on /signup: above the heading, not between it and the form. */}
+            <ComputerOnly className="computer-only--top" />
             <h1>เข้าสู่ระบบ</h1>
             <p className="auth-page__switch">
               ยังไม่มีบัญชี <Link href="/signup">สมัครใช้งานฟรี</Link>
             </p>
-            <ComputerOnly />
             <GoogleSignInForm from="login" enabled={googleEnabled} />
             {googleEnabled ? <OrDivider /> : null}
             <LoginForm />

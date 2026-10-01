@@ -3,9 +3,18 @@ import { GUIDE_KEYS, NAV_LINKS, PAGES } from "@/lib/site";
 import { NoeyMark } from "./NoeyMark";
 import { keepThaiProse } from "./ds/ThaiProse";
 
-const ACCOUNT_LINKS = [
-  { href: PAGES.login.path, label: PAGES.login.label },
-  { href: PAGES.signup.path, label: PAGES.signup.label },
+/**
+ * The account column. The footer is static like the header, so it carries
+ * both sets and the same html[data-auth] switch shows one: signed out, log in
+ * and sign up; signed in, the account's own tabs (their labels, as the tabs
+ * print them).
+ */
+const ACCOUNT_LINKS: ReadonlyArray<{ href: string; label: string; auth?: "in" | "out" }> = [
+  { href: PAGES.login.path, label: PAGES.login.label, auth: "out" },
+  { href: PAGES.signup.path, label: PAGES.signup.label, auth: "out" },
+  { href: "/account", label: "บัญชีของฉัน", auth: "in" },
+  { href: "/account/quota", label: "โควตาและลิมิต", auth: "in" },
+  { href: "/account/billing", label: "แพลนและการชำระเงิน", auth: "in" },
   { href: PAGES.terms.path, label: PAGES.terms.label },
   { href: PAGES.privacy.path, label: PAGES.privacy.label },
 ];
@@ -67,7 +76,7 @@ export function SiteFooter() {
                 <span id="footer-account">บัญชี</span>
               </p>
               {ACCOUNT_LINKS.map((link) => (
-                <Link key={link.href} href={link.href} prefetch={false}>
+                <Link key={link.href} href={link.href} prefetch={false} className={link.auth ? `auth-${link.auth}` : undefined}>
                   {link.label}
                 </Link>
               ))}

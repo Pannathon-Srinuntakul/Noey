@@ -37,7 +37,7 @@ export default async function ProfilePage({ searchParams }: { searchParams: Prom
   return (
     <section className="account-grid acct-profile" aria-label="ข้อมูลส่วนตัว">
       <div className="card account-card">
-        <div className="card-kicker">ข้อมูลส่วนตัว</div>
+        <h2 className="card-kicker">ข้อมูลส่วนตัว</h2>
         <ProfileForm name={sanitizeDisplayName(me.data.display_name)} />
         <div className="card-section">
           <h3>อีเมลที่ใช้เข้าสู่ระบบ</h3>
@@ -51,7 +51,7 @@ export default async function ProfilePage({ searchParams }: { searchParams: Prom
         </div>
       </div>
       <div className="card account-card">
-        <div className="card-kicker">ความปลอดภัย</div>
+        <h2 className="card-kicker">ความปลอดภัย</h2>
         {hasPassword ? <PasswordForm /> : <SetPasswordByEmail email={me.data.email} />}
         {googleEnabled || googleLinked ? (
           <div className="card-section" id="google">

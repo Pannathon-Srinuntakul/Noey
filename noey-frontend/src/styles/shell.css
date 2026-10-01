@@ -374,11 +374,13 @@ html[data-auth-name] .auth-name {
   rotate: 180deg;
 }
 
+/* The panel opens below the whole bar (the row and the ruler under it),
+   never over the ruler's ticks. */
 .acct__menu {
   position: absolute;
-  top: calc(100% + 10px);
+  top: calc(100% + (var(--header-h) - 40px) / 2 + 26px);
   right: 0;
-  min-width: 230px;
+  min-width: 250px;
   padding: 8px;
   border: 1px solid var(--line-2);
   border-radius: 14px;
@@ -410,8 +412,21 @@ html[data-auth-name] .acct__head {
   color: var(--ink);
 }
 
+html[data-scrolled] .acct__menu {
+  top: calc(100% + (54px - 40px) / 2 + 26px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html[data-scrolled] .acct__menu {
+    top: calc(100% + (var(--header-h) - 40px) / 2 + 26px);
+  }
+}
+
+/* Each item's icon takes the avatar's width, so every label in the panel
+   starts on one line with the name above. */
 .acct__menu :is(a, button) svg {
   flex: none;
+  margin-inline: 6px;
   color: var(--ink-3);
 }
 
@@ -442,8 +457,15 @@ html[data-auth-name] .acct__head {
   max-width: none;
 }
 
+/* With the name shown, the fallback label still names the menu button for
+   assistive technology (the name itself is generated content). */
 html[data-auth-name] .acct__fallback {
-  display: none;
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .acct__menu a,
@@ -733,6 +755,20 @@ html[data-auth-name] .acct__fallback {
   z-index: 2;
 }
 
+/* With the sheet open, the theme switch sits in the bar beside the close
+   button, where the bar's other controls are. */
+@media (max-width: 1023px) {
+  .hdr__bar:has(.menu[open]) .hdr__tools > .theme-toggle {
+    display: inline-flex;
+    position: relative;
+    z-index: 2;
+  }
+
+  .menu__sheet .menu__theme {
+    display: none;
+  }
+}
+
 .menu__sheet {
   position: fixed;
   inset: 0;
@@ -744,10 +780,16 @@ html[data-auth-name] .acct__fallback {
   overflow-y: auto;
 }
 
+/* The sheet keeps the editor's ruler: a strip of ticks over the list. */
 .menu__nav {
+  position: relative;
   display: flex;
   flex-direction: column;
+  padding-top: 16px;
   border-top: 1px solid var(--line);
+  background:
+    repeating-linear-gradient(90deg, var(--line-2) 0 1px, transparent 1px 12px) top / 100% 6px no-repeat,
+    repeating-linear-gradient(90deg, var(--line-3) 0 1px, transparent 1px 60px) top / 100% 10px no-repeat;
 }
 
 .menu__nav a {
@@ -773,9 +815,9 @@ html[data-auth-name] .acct__fallback {
   color: var(--gold-ink);
 }
 
+/* Straight after the list (pushed to the bottom, it left a screen-tall gap). */
 .menu__foot {
-  margin-top: auto;
-  padding-top: 28px;
+  padding-top: 24px;
   display: flex;
   flex-direction: column;
   gap: 12px;

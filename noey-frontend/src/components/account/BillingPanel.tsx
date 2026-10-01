@@ -100,6 +100,8 @@ export function BillingPanel(props: BillingPanelProps) {
   const [portalState, portalAction, portalPending] = useActionState<ActionState | undefined>(openPortalAction, undefined);
 
   const selectedOption = options.find((option) => option.tier === selected);
+  // The plan held, priced as /pricing prices it (the same table).
+  const currentOption = hasLiveSubscription ? options.find((option) => option.current && option.price !== null) : undefined;
   const canSubmit = billingEnabled && !!selectedOption && !selectedOption.current && selectedOption.price !== null && payAgreed;
   // Before a first subscription there is no Stripe customer: the card is
   // added during Checkout, so "add card" starts the upgrade flow instead.
@@ -110,13 +112,26 @@ export function BillingPanel(props: BillingPanelProps) {
       <div className="card account-card acct-plan">
         <div className="card-kicker">แพลนปัจจุบัน</div>
         <div className="plan-name">{planName}</div>
+        {currentOption ? (
+          <p className="plan-price num">
+            {currentOption.fullPrice ? <s className="price-strike">{currentOption.fullPrice}</s> : null}
+            {currentOption.price} บาท / เดือน
+          </p>
+        ) : null}
         {statusLine ? <p className={statusWarn ? "plan-status plan-status--warn" : "plan-status"}>{keepThai(statusLine)}</p> : null}
         {planFeatures.length > 0 ? (
           <ul className="plan-features">
             {/* A copy line joins facts with " · "; here each fact is its own
-                ticked row, so no line ends on a dot or strands "10 GB". */}
+                ticked row, so no line ends on a dot. A piece with no words of
+                its own ("10 GB") stays with the fact it qualifies. */}
             {planFeatures
-              .flatMap((feature) => feature.split(" · "))
+              .flatMap((feature) =>
+                feature.split(" · ").reduce<string[]>((facts, piece) => {
+                  if (facts.length > 0 && !/[\u0E00-\u0E7F]/.test(piece)) facts[facts.length - 1] += ` · ${piece}`;
+                  else facts.push(piece);
+                  return facts;
+                }, []),
+              )
               .map((fact) => (
                 <li key={fact}>{keepThai(fact)}</li>
               ))}

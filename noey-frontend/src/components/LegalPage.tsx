@@ -6,6 +6,7 @@ import type { LegalDoc } from "@/lib/legal";
 import { PAGES, type PageKey } from "@/lib/site";
 import { Breadcrumb } from "./Breadcrumb";
 import { ClipCard } from "./ds/ClipCard";
+import { IconArrowLeft, IconArrowRight } from "./ds/icons";
 import { PageHero } from "./ds/PageHero";
 import { TimelineToc } from "./ds/TimelineToc";
 import { JsonLd } from "./JsonLd";
@@ -52,7 +53,7 @@ export function LegalPage({ pageKey, title, doc }: { pageKey: LegalKey; title: s
   const related = [
     { href: other.path, label: other.label, note: "เอกสารอีกฉบับที่ใช้ร่วมกับหน้านี้" },
     { href: PAGES.guideHelp.path, label: PAGES.guideHelp.label, note: "โหมดการตัด ไฟล์ที่รองรับ โควตา และการแก้ปัญหา" },
-    { href: PAGES.pricing.path, label: PAGES.pricing.label, note: "ราคา ขีดจำกัดของแต่ละแพลน และการยกเลิก" },
+    { href: PAGES.pricing.path, label: PAGES.pricing.label, note: "ขีดจำกัดของแต่ละแพลน และการยกเลิก" },
     { href: PAGES.scope.path, label: PAGES.scope.label, note: "ขอบเขตของระบบ สิ่งที่ทำได้และทำไม่ได้" },
   ];
 
@@ -80,13 +81,24 @@ export function LegalPage({ pageKey, title, doc }: { pageKey: LegalKey; title: s
                 <span>{section.title}</span>
               </h2>
               <div className="prose">
-                {section.paragraphs.map((paragraph) => (
+                {/* Items of one list (the data a policy names, the purposes) read as a list. */}
+                {section.list ? (
+                  <ul className="article__bullets">
+                    {section.paragraphs.slice(0, section.list).map((item) => (
+                      <li key={item}>{keepThaiProse(item)}</li>
+                    ))}
+                  </ul>
+                ) : null}
+                {section.paragraphs.slice(section.list ?? 0).map((paragraph) => (
                   <Paragraph key={paragraph} text={paragraph} />
                 ))}
               </div>
             </section>
           ))}
           <section className="article__section" id={`${pageKey}-related-section`} aria-labelledby={`${pageKey}-related`}>
+            <div className="article__cue" aria-hidden="true">
+              <span className="trk tc">→</span>
+            </div>
             <h2 id={`${pageKey}-related`} className="article__h2">
               หน้าที่เกี่ยวข้อง
             </h2>
@@ -101,11 +113,13 @@ export function LegalPage({ pageKey, title, doc }: { pageKey: LegalKey; title: s
             </ul>
           </section>
           <div className="article__foot article__foot--legal">
+            <Link href="/" className="btn btn-ghost">
+              <IconArrowLeft size={16} />
+              กลับหน้าแรก
+            </Link>
             <Link href={other.path} className="btn btn-secondary">
               {otherLabel}
-            </Link>
-            <Link href="/" className="btn btn-ghost">
-              กลับหน้าแรก
+              <IconArrowRight size={16} />
             </Link>
           </div>
         </article>

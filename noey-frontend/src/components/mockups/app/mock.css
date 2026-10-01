@@ -27,7 +27,7 @@
   --am-ch: var(--am-h);
   position: relative;
   overflow: hidden;
-  container-type: inline-size;
+  container: am-view / inline-size;
   aspect-ratio: var(--am-cw) / var(--am-ch);
   background: var(--bg);
   /* A window away from the screen is not styled, laid out or painted until
@@ -204,7 +204,7 @@ html[data-theme="dark"] .am,
 .am-vo[data-sel] {
   border-color: var(--color-accent);
   background: var(--color-accent-nav);
-  color: var(--color-accent);
+  color: var(--color-accent-hover-text);
 }
 
 .am-vo[data-speaking]:not([data-sel]) {
@@ -226,6 +226,12 @@ html[data-theme="dark"] .am,
 /* ScriptTab: the angle that is the selected scene. */
 .am-angle[data-sel] {
   border-color: var(--color-accent);
+}
+
+/* Gold text: the site's legible gold (--gold-ink), as everywhere else on the
+   site; the editor's bright accent stays for fills, borders and bars. */
+.am .text-accent {
+  color: var(--color-accent-hover-text);
 }
 
 /* ─── What a visitor can use (Editor.tsx LaneHits / Tip) ──────────────────
@@ -260,6 +266,15 @@ html[data-theme="dark"] .am,
   z-index: 1;
   border-radius: 5px;
   cursor: pointer;
+}
+
+/* A window drawn under 400px wide (a phone) is too small for a scene to be
+   a target of its own: the whole timeline is the playhead's slider there,
+   and a tap seeks to the scene under it. */
+@container am-view (max-width: 399px) {
+  .am-pick {
+    display: none;
+  }
 }
 
 .am[data-scrubbing] .am-scrub,

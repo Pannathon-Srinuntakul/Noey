@@ -14,8 +14,9 @@ import { glueMarks, keepSegments } from "./ThaiText";
  *    matched across two other words ("ด้วย|การ" does not contain "ยก").
  * 2. Short words that lean on the next one — a line must not end right after
  *    them: "ไม่ / กิน" reads as "no" at the end of the line; "การ / ขาดรายได้",
- *    "ความ / รับผิด", "ผู้ / ปกครอง", "ค่า / บริการ", "ใน / ห้องตัดต่อ", "บน / คอมพิวเตอร์" split a
- *    phrase the reader takes as one word. Each is glued to the word after it.
+ *    "ความ / รับผิด", "ผู้ / ปกครอง", "ค่า / บริการ", "ใน / ห้องตัดต่อ", "บน / คอมพิวเตอร์",
+ *    "โดย / ไม่ผูก", "ผ่าน / Chrome", "แต่ละ / แพลน", "หลาย / ตัว" split a phrase the reader
+ *    takes as one unit. Each is glued to the word after it.
  *
  * Server components only: a client component would segment again in the
  * browser, whose dictionary may differ, and the hydrated text would not match
@@ -23,7 +24,7 @@ import { glueMarks, keepSegments } from "./ThaiText";
  * no-break spaces before ๆ and "·"; the wrappers are plain spans.
  */
 
-const LEANS_ON_NEXT = new Set(["ไม่", "การ", "ความ", "ผู้", "ค่า", "ใน", "บน"]);
+const LEANS_ON_NEXT = new Set(["ไม่", "การ", "ความ", "ผู้", "ค่า", "ใน", "บน", "โดย", "ผ่าน", "แต่ละ", "หลาย"]);
 
 /** Glossary words by first character, longest first. */
 const BY_FIRST = new Map<string, string[]>();

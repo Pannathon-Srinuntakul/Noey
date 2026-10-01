@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { ResendVerificationButton } from "@/components/account/VerifyEmail";
+import { ComputerOnly } from "@/components/ComputerOnly";
 import { StatusCard, type StatusTone } from "@/components/ds/StatusCard";
 import { MSG } from "@/lib/messages";
 import { tokenPageMetadata } from "@/lib/seo";
@@ -131,7 +132,15 @@ export default async function VerifyEmailPage({ searchParams }: { searchParams: 
   return (
     <main id="main" className="status-page page-top">
       <div className="wrap">
-        <StatusCard tone={tone} eyebrow="ยืนยันอีเมล" title={title} role={success ? "status" : "alert"} actions={actions}>
+        {/* After a confirmation the next step is the editor, which runs on a computer only. */}
+        <StatusCard
+          tone={tone}
+          eyebrow="ยืนยันอีเมล"
+          title={title}
+          role={success ? "status" : "alert"}
+          actions={actions}
+          footer={success ? <ComputerOnly /> : undefined}
+        >
           <p>{typeof body === "string" ? keepThaiProse(body) : body}</p>
         </StatusCard>
       </div>

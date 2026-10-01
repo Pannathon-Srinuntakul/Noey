@@ -229,6 +229,30 @@ words; the only change is where the paragraphs break, so two runs of the
 old source no longer exist in one piece: "ไม่ต้องผูกบัตร ใช้หมดแล้วเลือกแพลนรายเดือนได้"
 and ") ชำระด้วยบัตรเครดิตหรือเดบิต เปลี่ยนหรือยกเลิกแพลนได้เองจากหน้าบัญชี".
 
+## 15. /about: the form is "in this page", not "beside"
+
+Old: "…ส่งข้อความหาเราได้จากแบบฟอร์มข้าง ๆ บอกชื่อโปรเจกต์…" (the full sentence:
+"ถ้าติดปัญหาหรืออยากให้ระบบทำอะไรเพิ่ม ส่งข้อความหาเราได้จากแบบฟอร์มข้าง ๆ บอกชื่อโปรเจกต์ โหมดที่ใช้ และสิ่งที่เกิดขึ้น จะช่วยให้ตรวจสอบได้เร็วขึ้นมาก คำถามที่ถูกถามซ้ำหลายครั้งมักจบลงในหน้าคู่มือหรือหน้าช่วยเหลือ เพื่อให้คนถัดไปหาคำตอบได้เองโดยไม่ต้องรอ").
+
+New: "แบบฟอร์มในหน้านี้". The form sits beside the story only on wide screens;
+below 1100px it follows the story, where "ข้าง ๆ" pointed at nothing.
+
+## 16. Status cards: the eyebrow names the task
+
+Old: "บัญชีของฉัน" over /reset-password and /account-deleted.
+
+New: "รหัสผ่าน" on /reset-password (the visitor is not signed in there) and
+"ลบบัญชี" on /account-deleted (the account no longer exists).
+
+## 17. Legal pages: typography only
+
+- Terms §12: the straight quotes around "ตามสภาพที่เป็น" and "เท่าที่มีให้ใช้ได้"
+  are typographic quotes (“ ”). Old: `บริการให้ "ตามสภาพที่เป็น" และ "เท่าที่มีให้ใช้ได้"`.
+- The related card for /pricing: "ราคา ขีดจำกัดของแต่ละแพลน และการยกเลิก" →
+  "ขีดจำกัดของแต่ละแพลน และการยกเลิก" (the card's title already says ราคา).
+- Privacy §01 and §02: the items they list are drawn as a list; the words are
+  unchanged.
+
 ## Text added (not replacing anything)
 
 Only labels, no claims:
@@ -263,6 +287,19 @@ Only labels, no claims:
 - /pricing: the clips slider label "ใช้ประมาณกี่คลิปต่อเดือน"; its readout is
   built from `plans.ts` only (`clipsHeadline`, `FREE_CLIPS_CAPTION`) with
   `CLIPS_FOOTNOTE` under it.
+- /about: the page's own description (its meta description) is shown as the
+  lead under the title: "Noey Studio เริ่มจากครีเอเตอร์ที่ลงคลิปรีวิวสินค้าทุกวัน…".
+- The footer's account column, signed in, lists the account's tabs by their
+  own labels ("บัญชีของฉัน", "โควตาและลิมิต", "แพลนและการชำระเงิน") instead of
+  "เข้าสู่ระบบ" and "สมัครใช้งาน"; the header's account menu lists the same
+  four tabs ("…", "ข้อมูลส่วนตัว").
+- /account/billing: the plan's price under its name, as /pricing prints it
+  ("499 บาท / เดือน", the regular price struck through during the beta).
+- The computer-only note (§12) also under the actions after an email is
+  verified and after a payment, whose next step is the editor.
+- Decorative readouts, hidden from assistive technology: "EXPORT · 100%"
+  under the checkout card's render bar, "SENT" on the contact form's
+  confirmation.
 - /account: when the last charge failed (`past_due`), the summary's plan row
   repeats the billing tab's own sentence, "ตัดบัตรไม่สำเร็จ ระบบจะลองตัดอีกครั้ง
   อัปเดตบัตรได้ที่การ์ดการชำระเงิน", so it is seen without opening that tab.

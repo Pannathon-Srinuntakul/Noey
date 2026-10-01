@@ -18,6 +18,12 @@
 
 /* ── 1. Palette ─────────────────────────────────────────────────────────── */
 
+:root {
+  /* The night scene's background (the footer, the closing band, dark theme):
+     also the canvas past the end of the page (html, below). */
+  --color-night: #171614;
+}
+
 :root,
 .theme-day {
   --color-bg: #f3f2f2;
@@ -62,7 +68,7 @@
 html[data-theme="dark"],
 .theme-night {
   color-scheme: dark;
-  --color-bg: #171614;
+  --color-bg: var(--color-night);
   --color-surface: #201f1d;
   --color-text: #f3f2f2;
   --color-divider: #35322d;
@@ -94,7 +100,7 @@ html[data-theme="dark"],
 @media (prefers-color-scheme: dark) {
   html:not([data-theme="light"]) {
     color-scheme: dark;
-    --color-bg: #171614;
+    --color-bg: var(--color-night);
     --color-surface: #201f1d;
     --color-text: #f3f2f2;
     --color-divider: #35322d;
@@ -311,6 +317,10 @@ html[data-beta-banner] {
 html {
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
+  /* The canvas around the page: the day colour above the fold line of the
+     screen, the footer's night below it — a rounded-off last pixel or a
+     bounce past the end shows the footer's colour, not a light line. */
+  background: linear-gradient(var(--bg) 50%, var(--color-night) 50%) fixed;
   scroll-padding-top: calc(var(--beta-h) + var(--header-top) + var(--header-h) + 24px);
 }
 
@@ -734,6 +744,16 @@ html[data-theme="dark"] .btn-primary:hover,
   --btn-line: var(--danger);
 }
 
+/* A locked destructive action reads like a locked primary one: an empty,
+   dashed outline with legible text, not a washed-out pink. */
+.btn-danger:is(:disabled, [aria-disabled="true"]) {
+  opacity: 1;
+  --btn-bg: transparent;
+  --btn-ink: var(--ink-3);
+  --btn-line: color-mix(in srgb, var(--color-danger) 55%, transparent);
+  border-style: dashed;
+}
+
 .btn-lg {
   min-height: 52px;
   padding: 0 26px;
@@ -822,8 +842,10 @@ html[data-theme="dark"] .btn-primary:hover,
     box-shadow var(--dur-2) ease;
 }
 
+/* A hint, still readable (about 4.5:1 on the field): a pale placeholder
+   read as an empty, broken box. */
 .input::placeholder {
-  color: color-mix(in srgb, var(--color-text) 42%, transparent);
+  color: color-mix(in srgb, var(--color-text) 58%, transparent);
 }
 
 .input:hover {
@@ -1030,9 +1052,18 @@ textarea.input {
 }
 
 .forgot {
-  margin-top: 8px;
+  margin-top: 4px;
   text-align: right;
-  font-size: var(--fs-13);
+  font-size: var(--fs-14);
+}
+
+/* A target a thumb can hit (44px tall) without moving the text. */
+.forgot a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding-inline: 4px;
+  margin-inline-end: -4px;
 }
 
 .legal-line {
@@ -1247,7 +1278,8 @@ dialog.dialog::backdrop {
   justify-content: flex-end;
   flex-wrap: wrap;
   gap: 10px;
-  margin: 24px calc(var(--dialog-pad) * -1) calc(var(--dialog-pad) * -1);
+  /* Room under the last field once scrolled to the end, clear of the fade. */
+  margin: 32px calc(var(--dialog-pad) * -1) calc(var(--dialog-pad) * -1);
   padding: 14px var(--dialog-pad) clamp(18px, 3vw, 26px);
   border-top: 1px solid var(--line);
   background: var(--bg);
@@ -1280,6 +1312,17 @@ dialog.dialog::backdrop {
   .dialog-actions__never {
     margin-right: 0;
   }
+}
+
+/* A locked action in a dialog's footer steps further back, and the box that
+   unlocks it is drawn as the slot it is waiting on (as on /signup). */
+.dialog-actions .btn-primary:is(:disabled, [aria-disabled="true"]) {
+  opacity: 0.62;
+}
+
+.dialog-actions__consent:has(.agree__box:not(:checked)) .agree__box {
+  outline: 2px dashed color-mix(in srgb, var(--color-accent) 70%, transparent);
+  outline-offset: 2px;
 }
 
 /* A consent box in the footer sits above the buttons it unlocks. */
@@ -1446,9 +1489,10 @@ dialog.dialog::backdrop {
   box-shadow: none;
 }
 
-/* Status pages (checkout, verification, reset, deleted, 404) finish one
-   task; the header's gold call to action would pull away from it. */
-body:has(main.status-page) .hdr__tools .btn-primary {
+/* Status pages (checkout, verification, reset, deleted, 404), the sign-in
+   pages and the account area each have their own one gold action; the
+   header's gold call to action would compete with it. */
+body:has(main:is(.status-page, .auth, .acct-page)) .hdr__tools .btn-primary {
   background: transparent;
   color: var(--gold-ink);
   border-color: color-mix(in srgb, var(--gold) 45%, transparent);

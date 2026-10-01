@@ -76,7 +76,7 @@ const CHAPTERS: readonly { start: number; paragraphs: readonly ReactNode[] }[] =
         <Link href={PAGES.pricing.path}>หน้าราคา</Link> และ <Link href={PAGES.guideHelp.path}>หน้าช่วยเหลือ</Link>
       </>,
       keepThaiProse(
-        "ถ้าติดปัญหาหรืออยากให้ระบบทำอะไรเพิ่ม ส่งข้อความหาเราได้จากแบบฟอร์มข้าง ๆ บอกชื่อโปรเจกต์ โหมดที่ใช้ และสิ่งที่เกิดขึ้น จะช่วยให้ตรวจสอบได้เร็วขึ้นมาก คำถามที่ถูกถามซ้ำหลายครั้งมักจบลงในหน้าคู่มือหรือหน้าช่วยเหลือ เพื่อให้คนถัดไปหาคำตอบได้เองโดยไม่ต้องรอ",
+        "ถ้าติดปัญหาหรืออยากให้ระบบทำอะไรเพิ่ม ส่งข้อความหาเราได้จากแบบฟอร์มในหน้านี้ บอกชื่อโปรเจกต์ โหมดที่ใช้ และสิ่งที่เกิดขึ้น จะช่วยให้ตรวจสอบได้เร็วขึ้นมาก คำถามที่ถูกถามซ้ำหลายครั้งมักจบลงในหน้าคู่มือหรือหน้าช่วยเหลือ เพื่อให้คนถัดไปหาคำตอบได้เองโดยไม่ต้องรอ",
       ),
     ],
   },
@@ -131,6 +131,7 @@ export default function AboutPage() {
       <PageHero
         crumb={<Breadcrumb trail={TRAIL} />}
         title="เครื่องมือที่เราทำขึ้นเพราะเราต้องใช้เอง"
+        lead={<p>{keepThaiProse(page.description)}</p>}
         meta={
           <p className="stamp">
             อัปเดตล่าสุด <time dateTime={page.updated}>{formatThaiDate(page.updated)}</time>
@@ -175,7 +176,7 @@ export default function AboutPage() {
 
       <section className="sect principles" aria-labelledby="about-principles-title">
         <div className="wrap">
-          <SectionHeader id="about-principles-title" track="L" timecode="00:02:40:00" title="หลักที่เรายึดตอนทำระบบ" size="h-3" />
+          <SectionHeader id="about-principles-title" track="L" timecode="00:02:40:00" title="หลักที่เรายึดตอนทำระบบ" size="h-2" />
           <ul className="locked" data-reveal="stagger">
             {PRINCIPLES.map((principle, index) => (
               <li key={principle.title} className="locked__track">
@@ -198,7 +199,7 @@ export default function AboutPage() {
 
       <section className="sect about-faq" aria-labelledby="about-faq-title">
         <div className="wrap">
-          <SectionHeader id="about-faq-title" track="Q" timecode="00:03:12:00" title="คำถามที่พบบ่อยเกี่ยวกับเรา (FAQ)" size="h-3" />
+          <SectionHeader id="about-faq-title" track="Q" timecode="00:03:12:00" title="คำถามที่พบบ่อยเกี่ยวกับเรา (FAQ)" size="h-2" />
           <div className="about-faq__list">
             <FaqList items={ABOUT_FAQ} compact />
           </div>

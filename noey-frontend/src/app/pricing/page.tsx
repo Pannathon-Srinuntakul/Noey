@@ -134,7 +134,11 @@ export default async function PricingPage() {
         }
       />
 
-      <section className="pricing-plans" aria-label="แพลนทั้งหมด">
+      <section className="pricing-plans" aria-labelledby="pricing-plans-title">
+        {/* The plans' heading for the page's outline (the cards are h3). */}
+        <h2 id="pricing-plans-title" className="sr-only">
+          แพลนทั้งหมด
+        </h2>
         <div className="wrap">
           <CheckoutCanceledNotice />
           <ComputerOnly className="computer-only--top" />

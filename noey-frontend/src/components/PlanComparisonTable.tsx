@@ -7,7 +7,8 @@ import { keepThaiProse } from "./ds/ThaiProse";
 /**
  * The seven-plan comparison table. Rendered on /pricing and again on the help
  * page, from the SAME `PriceTable` and `COMPARISON_ROWS`, so the two pages
- * cannot drift apart. `labelledBy` is the id of the <h2> that introduces it.
+ * cannot drift apart. `labelledBy` is the id of the <h2> that introduces it;
+ * the table's caption takes that id plus "-caption".
  *
  * The header row and the first column stay in place while the rest scrolls
  * (the page on wide screens, the table's own box on narrow ones), and the
@@ -16,9 +17,13 @@ import { keepThaiProse } from "./ds/ThaiProse";
 export function PlanComparisonTable({ table, labelledBy }: { table: PriceTable; labelledBy: string }) {
   return (
     <div className="cmp">
-      <div className="cmp__scroll" role="region" aria-labelledby={labelledBy} tabIndex={0}>
+      {/* Named by the table's caption: the section around it is already
+          named by the heading, and two landmarks would share one name. */}
+      <div className="cmp__scroll" role="region" aria-labelledby={`${labelledBy}-caption`} tabIndex={0}>
         <table className="table cmp__table">
-          <caption className="sr-only">เทียบราคาและความสามารถของแพลนฟรี Lite Starter Pro Studio Agency และ Max</caption>
+          <caption id={`${labelledBy}-caption`} className="sr-only">
+            เทียบราคาและความสามารถของแพลนฟรี Lite Starter Pro Studio Agency และ Max
+          </caption>
           <thead>
             <tr>
               <th scope="col" className="cmp__corner">

@@ -50,14 +50,20 @@
   padding: 4px 4px 12px 0;
 }
 
+/* Phones and tablets: the contents bar sticks under the header for the
+   whole article (a block layout: in a one-column grid the bar's own row
+   would hold it in place). */
 @media (max-width: 1023px) {
   .article-layout {
-    grid-template-columns: 1fr;
+    display: block;
   }
 
   .article-layout__toc {
-    position: static;
+    z-index: 5;
+    top: calc(var(--beta-h) + var(--header-top) + var(--header-h) + 8px);
     max-height: none;
+    margin-bottom: clamp(24px, 5vw, 36px);
+    padding: 0;
     overflow: visible;
   }
 }
@@ -201,12 +207,6 @@
     width: 100%;
   }
 
-  /* Legal pages: the button to the other document first, the plain way
-     home under it. */
-  .article__foot--legal {
-    flex-direction: column;
-  }
-
   .article__bullets li {
     padding-left: 38px;
   }
@@ -245,6 +245,13 @@
   animation: none !important;
 }
 
+/* The page meant to be the easiest to read: body text at full ink and the
+   regular weight (the light weight thins out at reading size). */
+.legal-page .prose {
+  font-weight: 400;
+  color: var(--ink);
+}
+
 .legal-page .phero__beam {
   opacity: 0.5;
 }
@@ -262,6 +269,33 @@
   border: 1px solid var(--line);
   border-radius: var(--r-md);
   background: var(--panel);
+  box-shadow: var(--shadow-2);
+}
+
+/* Open over the article: the list scrolls inside the bar. */
+.toc__mobile[open] .toc__list {
+  max-height: min(60vh, 520px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* The bar's label, then the section being read (filled in by the script). */
+.toc__mobile-label {
+  flex: none;
+}
+
+.toc__now {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--gold-ink);
+  font-size: var(--fs-13);
+}
+
+.toc__now:empty {
+  display: none;
 }
 
 .toc__mobile summary {
@@ -344,11 +378,6 @@
   gap: 2px;
 }
 
-/* A long document (the legal pages) gets tighter rows so the whole timeline fits. */
-.toc__list:has(> li:nth-child(13)) .toc__link {
-  padding-block: 4px;
-  font-size: var(--fs-13);
-}
 
 .toc__link {
   position: relative;
@@ -403,6 +432,11 @@
   color: var(--ink);
   font-weight: 500;
   background: var(--gold-softer);
+}
+
+.toc__link[aria-current] .toc__n {
+  color: var(--gold-ink);
+  font-weight: 600;
 }
 
 .toc__n {

@@ -6,6 +6,7 @@ import { LIVE_SUBSCRIPTION_STATUSES } from "@/lib/billing";
 import { EDITOR_OPEN_PATH } from "@/lib/editor-handoff";
 import { planDisplayName } from "@/lib/plans";
 import { StatusCard } from "../ds/StatusCard";
+import { ComputerOnly } from "../ComputerOnly";
 import { keepThai } from "@/components/ds/ThaiText";
 
 type BillingSnapshot = { plan: string; status: string | null };
@@ -80,10 +81,12 @@ export function CheckoutStatus({ initial }: { initial: BillingSnapshot | null })
   if (view.kind === "confirmed") {
     return (
       <StatusCard
-        tone="success"
+        tone="celebrate"
         eyebrow={EYEBROW}
         title={TITLE}
         role="status"
+        readout="EXPORT · 100%"
+        footer={<ComputerOnly />}
         actions={
           <>
             <a href={EDITOR_OPEN_PATH} className="btn btn-primary btn-lg">

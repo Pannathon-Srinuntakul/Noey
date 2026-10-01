@@ -40,7 +40,8 @@ const A = clipsOf(AUDIO);
  * per tick or bar: the root not-found tree travels in every page's RSC
  * payload, so its size is paid on every page load.
  */
-const TICKS_PATH = Array.from({ length: 56 }, (_, index) => `M${50 + index * 12} ${index % 5 === 0 ? 8 : 13}V18`).join("");
+// The ticks stop short of the readout box at the right (x 626–714): none runs under it.
+const TICKS_PATH = Array.from({ length: 48 }, (_, index) => `M${50 + index * 12} ${index % 5 === 0 ? 8 : 13}V18`).join("");
 const WAVE_PATH = (() => {
   const mid = (AUDIO.top + AUDIO.bottom) / 2;
   return waveform(132, 53)
@@ -131,6 +132,10 @@ function MissingClip() {
   );
 }
 
+/** The lead's last sentence stays on one line: a narrow screen breaks between the sentences. */
+const LEAD = "ลิงก์นี้อาจพิมพ์ผิด หรือหน้าถูกย้ายไปแล้ว ลองเริ่มจากหน้าเหล่านี้แทน";
+const LEAD_BREAK = LEAD.lastIndexOf(" ");
+
 export default function NotFound() {
   return (
     <main id="main" className="status-page page-top nf">
@@ -143,7 +148,9 @@ export default function NotFound() {
         <div className="nf__copy">
           <p className="nf__code tc">404</p>
           <h1 className="nf__title">ไม่พบหน้าที่ต้องการ</h1>
-          <p className="nf__lead">ลิงก์นี้อาจพิมพ์ผิด หรือหน้าถูกย้ายไปแล้ว ลองเริ่มจากหน้าเหล่านี้แทน</p>
+          <p className="nf__lead">
+            {LEAD.slice(0, LEAD_BREAK)} <span className="kt">{LEAD.slice(LEAD_BREAK + 1)}</span>
+          </p>
           <ul className="nf__links">
             <li>
               <Link href="/" className="btn btn-primary btn-lg">

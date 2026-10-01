@@ -105,7 +105,8 @@ function usage(s) {
       { task: "effects", pct: 12.1 },
       { task: "style", pct: 9.5 },
     ],
-    usage_pct: 46,
+    // As the backend does (usage.py): the tightest window's percentage.
+    usage_pct: limits.reduce((top, limit) => Math.max(top, limit.used_pct), 0),
   };
 }
 

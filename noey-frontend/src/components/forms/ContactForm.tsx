@@ -99,6 +99,14 @@ export function ContactForm({ contactEmail }: { contactEmail: string }) {
     // Sent: an empty form under a gold button would invite sending it again.
     return (
       <div ref={confirmation} className="contact-sent" tabIndex={-1}>
+        <span className="contact-sent__meter" aria-hidden="true">
+          <span className="contact-sent__bar" />
+          <svg className="contact-sent__tick" viewBox="0 0 20 20" width="20" height="20" fill="none">
+            <circle cx="10" cy="10" r="9" />
+            <path d="M6 10.4 8.7 13 14 7.4" />
+          </svg>
+          <span className="tc">SENT</span>
+        </span>
         <OutcomeMessage outcome="sent" contactEmail={contactEmail} />
         <button type="button" className="btn btn-secondary" onClick={() => setStatus({ kind: "idle" })}>
           ส่งอีกข้อความ

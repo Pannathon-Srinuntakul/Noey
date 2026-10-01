@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import type { CSSProperties } from "react";
 import Link from "next/link";
 import { ResetClock } from "@/components/account/ResetClock";
 import { LevelMeter } from "@/components/ds/LevelMeter";
@@ -113,31 +114,38 @@ export default async function QuotaPage() {
       <div className="card account-card">
         <div className="card-kicker">งานที่ใช้โควตาในรอบนี้</div>
         {tasks.length > 0 ? (
-          <table className="table acct-tasks">
-            <thead>
-              <tr>
-                <th scope="col">งาน</th>
-                <th scope="col" className="r">
-                  สัดส่วน
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {tasks.map((task) => (
-                <tr key={task.task}>
-                  <td>{keepThaiProse(TASK_LABELS[task.task] ?? task.task)}</td>
-                  <td className="r num">
-                    <span className="acct-tasks__share">
-                      <span className="acct-tasks__bar" aria-hidden="true">
-                        <span style={{ width: `${Math.min(100, Math.max(0, task.pct))}%` }} />
-                      </span>
-                      {Math.round(task.pct)}%
-                    </span>
-                  </td>
-                </tr>
+          <>
+            {/* The round's mix as one strip, its parts keyed to the rows below. */}
+            <div className="acct-mix" aria-hidden="true">
+              {tasks.map((task, index) => (
+                <span
+                  key={task.task}
+                  style={{ flexGrow: Math.max(0.5, task.pct), "--k": index } as CSSProperties}
+                />
               ))}
-            </tbody>
-          </table>
+            </div>
+            <table className="table acct-tasks">
+              <thead>
+                <tr>
+                  <th scope="col">งาน</th>
+                  <th scope="col" className="r">
+                    สัดส่วน
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {tasks.map((task, index) => (
+                  <tr key={task.task}>
+                    <td>
+                      <span className="acct-mix__key" aria-hidden="true" style={{ "--k": index } as CSSProperties} />
+                      {keepThaiProse(TASK_LABELS[task.task] ?? task.task)}
+                    </td>
+                    <td className="r num">{Math.round(task.pct)}%</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </>
         ) : (
           <p className="acct-quota__empty">ยังไม่มีงานที่ใช้โควตาในรอบนี้</p>
         )}

@@ -782,7 +782,7 @@
 }
 
 .status-page.page-top {
-  padding-top: calc(var(--beta-h) + var(--header-top) + var(--header-h) + clamp(28px, 5vw, 64px));
+  padding-top: calc(var(--beta-h) + var(--header-top) + var(--header-h) + clamp(40px, 5vw, 64px));
 }
 
 /* Auto margins centre the card but never push a tall one under the header. */
@@ -1119,19 +1119,16 @@
   stroke-width: 1;
 }
 
-/* Bottom right: the one corner no track, label or ruler reaches. */
+/* Bottom right, in a row of its own under the drawing: clear of the audio
+   lane at every width. */
+.nf__stage {
+  padding-bottom: 40px;
+}
+
 .nf__tag {
   position: absolute;
   right: 14px;
-  bottom: 8px;
-}
-
-/* Phones: the drawing is too short for that corner to stay clear of the
-   audio lane, so the label gets its own row under it. */
-@media (max-width: 560px) {
-  .nf__stage {
-    padding-bottom: 36px;
-  }
+  bottom: 10px;
 }
 
 .nf__trk {
@@ -1340,6 +1337,14 @@
   /* Above a form or a list rather than under a button. */
   .computer-only--top {
     margin: 0 0 18px;
+  }
+
+  /* Under a status card's actions (verified, paid): the width of the
+     actions, reading from the left like every other note. */
+  .status .computer-only {
+    width: 100%;
+    margin: 6px 0 0;
+    text-align: start;
   }
 }
 

@@ -9,10 +9,14 @@ import { BetaBannerButton } from "./BetaBannerButton";
  */
 export function BetaBanner({ text }: { text: string }) {
   return (
-    <div className="beta-banner" data-beta-strip="">
-      <span className="tag tag-accent beta-banner__badge">{BETA_BADGE}</span>
+    // A landmark of its own, named by its badge, so the strip is not loose
+    // content outside the page's regions.
+    <aside className="beta-banner" data-beta-strip="" aria-labelledby="beta-strip-badge">
+      <span id="beta-strip-badge" className="tag tag-accent beta-banner__badge">
+        {BETA_BADGE}
+      </span>
       <span className="beta-banner__text">{text}</span>
       <BetaBannerButton />
-    </div>
+    </aside>
   );
 }

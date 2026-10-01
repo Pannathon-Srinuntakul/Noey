@@ -16,9 +16,11 @@ export interface TocItem {
  * heading, and a playhead that follows your reading position down the rail.
  * The current section's link carries aria-current="location".
  *
- * Desktop: a sticky rail beside the text. Phones: a <details> list at the
- * top of the article (works without JavaScript). Only one of the two is
- * displayed at any width, so only one is ever in the accessibility tree.
+ * Desktop: a sticky rail beside the text. Phones and tablets: a <details>
+ * bar that sticks under the header as you read (works without JavaScript),
+ * naming the section you are in; picking a section closes it. Only one of
+ * the two is displayed at any width, so only one is ever in the accessibility
+ * tree.
  */
 export function TimelineToc({ items, label, className }: { items: readonly TocItem[]; label: string; className?: string }) {
   const nav = useRef<HTMLElement>(null);
@@ -27,6 +29,7 @@ export function TimelineToc({ items, label, className }: { items: readonly TocIt
     const root = nav.current;
     if (!root) return;
     const rail = root.querySelector<HTMLElement>(".toc__desk");
+    const now = root.querySelector<HTMLElement>("[data-toc-now]");
     const links = [...root.querySelectorAll<HTMLAnchorElement>("[data-toc-link]")];
     const targets = items.map((item) => document.getElementById(item.id));
     let frame = 0;
@@ -52,6 +55,12 @@ export function TimelineToc({ items, label, className }: { items: readonly TocIt
         else link.removeAttribute("aria-current");
         link.toggleAttribute("data-passed", index <= current);
       });
+      // The bar on phones names the section being read ("07 · โควตา…").
+      if (now) {
+        const link = current >= 0 ? links.find((candidate) => Number(candidate.dataset.tocLink) === current) : undefined;
+        const text = link ? `${link.querySelector(".toc__n")?.textContent ?? ""} · ${link.querySelector(".toc__text")?.textContent ?? ""}` : "";
+        if (now.textContent !== text) now.textContent = text;
+      }
     };
     const onScroll = () => {
       if (!frame) frame = window.requestAnimationFrame(update);
@@ -83,9 +92,16 @@ export function TimelineToc({ items, label, className }: { items: readonly TocIt
 
   return (
     <nav ref={nav} className={["toc", className].filter(Boolean).join(" ")} aria-label={label}>
-      <details className="toc__mobile">
+      <details
+        className="toc__mobile"
+        onClick={(event) => {
+          // A section picked: the bar folds away so the section is in view.
+          if (event.target instanceof Element && event.target.closest("a")) event.currentTarget.open = false;
+        }}
+      >
         <summary>
-          <span>{label}</span>
+          <span className="toc__mobile-label">{label}</span>
+          <span className="toc__now" data-toc-now="" aria-hidden="true" />
           <IconChevronDown size={16} />
         </summary>
         {list}

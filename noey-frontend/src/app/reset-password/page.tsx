@@ -20,7 +20,7 @@ export default async function ResetPasswordPage({ searchParams }: { searchParams
     <main id="main" className="status-page page-top">
       <div className="wrap">
         {valid ? (
-          <StatusCard tone="info" eyebrow="บัญชีของฉัน" title="ตั้งรหัสผ่านใหม่">
+          <StatusCard tone="info" eyebrow="รหัสผ่าน" title="ตั้งรหัสผ่านใหม่">
             <p>{keepThaiProse("ตั้งรหัสผ่านใหม่อย่างน้อย 8 ตัวอักษร เสร็จแล้วระบบจะพาเข้าสู่ระบบให้ทันที")}</p>
             <div className="status__form">
               <ResetPasswordForm token={token} />
@@ -29,7 +29,7 @@ export default async function ResetPasswordPage({ searchParams }: { searchParams
         ) : (
           <StatusCard
             tone="danger"
-            eyebrow="บัญชีของฉัน"
+            eyebrow="รหัสผ่าน"
             title="ตั้งรหัสผ่านใหม่"
             role="alert"
             actions={

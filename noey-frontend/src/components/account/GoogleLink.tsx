@@ -5,6 +5,7 @@ import { forgotPasswordAction } from "@/app/actions/auth";
 import { unlinkGoogleAction } from "@/app/actions/account";
 import type { ActionState } from "@/lib/messages";
 import { GoogleButton } from "../auth/GoogleButton";
+import { keepThai } from "../ds/ThaiText";
 import { TURNSTILE_SITE_KEY, TurnstileWidget } from "../forms/TurnstileWidget";
 
 function Feedback({ state }: { state: ActionState | undefined }) {
@@ -55,7 +56,7 @@ export function GoogleLinkPanel({
       <form method="post" action="/api/auth/google/start" className="stack acct-form acct-form--tight">
         <input type="hidden" name="intent" value="link" />
         <p className="field-hint field-hint--flush">
-          เชื่อมต่อแล้วจะเข้าสู่ระบบด้วยปุ่ม “เข้าสู่ระบบด้วย Google” ได้ โดยไม่ต้องพิมพ์รหัสผ่าน
+          {keepThai("เชื่อมต่อแล้วจะเข้าสู่ระบบด้วยปุ่ม “เข้าสู่ระบบด้วย Google” ได้ โดยไม่ต้องพิมพ์รหัสผ่าน")}
         </p>
         <div>
           <GoogleButton label="เชื่อมต่อกับ Google" />

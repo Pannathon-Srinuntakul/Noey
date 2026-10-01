@@ -6,6 +6,9 @@ import { notifyAuthChanged } from "@/lib/client/auth-hint";
 import type { ActionState } from "@/lib/messages";
 import { keepThai } from "../ds/ThaiText";
 
+/** A form turns its submit gold once something in it was edited (account.css). */
+const markDirty = (event: React.FormEvent<HTMLFormElement>) => event.currentTarget.setAttribute("data-dirty", "");
+
 function Feedback({ state }: { state: ActionState | undefined }) {
   return (
     <div aria-live="polite">
@@ -34,7 +37,7 @@ export function ProfileForm({ name }: { name: string }) {
   }, [state]);
 
   return (
-    <form action={action} className="stack acct-form">
+    <form action={action} className="stack acct-form acct-form--edit" onInput={markDirty}>
       <div className="field">
         <label htmlFor="a-name">ชื่อ</label>
         <input
@@ -67,7 +70,7 @@ export function EmailForm({ email }: { email: string }) {
   const [state, action, pending] = useActionState<ActionState | undefined, FormData>(changeEmailAction, undefined);
   const errors = state?.fieldErrors ?? {};
   return (
-    <form action={action} className="stack acct-form">
+    <form action={action} className="stack acct-form acct-form--edit" onInput={markDirty}>
       <input type="hidden" name="current_email" value={email} />
       <div className="field">
         <label htmlFor="a-email">อีเมล</label>
@@ -118,7 +121,7 @@ export function PasswordForm() {
   const errors = state?.fieldErrors ?? {};
 
   return (
-    <form ref={formRef} action={action} className="stack acct-form">
+    <form ref={formRef} action={action} className="stack acct-form acct-form--edit" onInput={markDirty}>
       {/* Lets password managers attach the change to the right account. */}
       <input type="text" name="username" autoComplete="username" hidden readOnly />
       <div className="field">

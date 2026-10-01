@@ -815,11 +815,13 @@ function LaneHits({
           className="am-pick"
           aria-label={`ฉาก ${index + 1} · ยาว ${scene.seconds.toFixed(2)} วิ`}
           aria-pressed={index === selected}
+          // The scene's column over the picture and voiceover lanes: a target
+          // at least 24px tall on screen wherever the picks are shown (mock.css).
           style={{
             left: HEADER_COL_PX + scene.start * px,
             top: LANE_TOPS.image,
             width: scene.seconds * px,
-            height: IMG_LANE_PX,
+            height: IMG_LANE_PX + TRACK_GAP_PX + VO_LANE_PX,
           }}
           data-am-pick={index}
           data-am-target={index === DEMO_PICK ? "pick" : undefined}
