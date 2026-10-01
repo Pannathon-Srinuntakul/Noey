@@ -598,3 +598,29 @@
   color: var(--gold-ink);
   vertical-align: middle;
 }
+
+/* In a guide's column the table scrolls at every width (it is wider than the
+   column even on a desktop): the hint and the edge fade go with it. */
+.article__extra .cmp__hint {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  margin: 0 0 10px;
+  font-size: var(--fs-13);
+  color: var(--ink-3);
+}
+
+.article__extra .cmp__scroll {
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+
+@supports (animation-timeline: scroll()) {
+  .article__extra .cmp__scroll {
+    -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - var(--cmp-fade)), transparent);
+    mask-image: linear-gradient(90deg, #000 calc(100% - var(--cmp-fade)), transparent);
+    animation: cmp-fade linear both;
+    animation-timeline: scroll(self inline);
+  }
+}

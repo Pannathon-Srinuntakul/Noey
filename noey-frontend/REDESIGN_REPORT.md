@@ -84,7 +84,72 @@ How this compares with the brief's targets:
 
 ## Independent review scores
 
-REVIEW_TABLE
+Every round was run by fresh subagents that had not written any of the code,
+on full-page screenshots of every route at 390/1024/1440 px in both themes
+(plus dialogs, menus and motion frames), with the live production build open
+for checks. Rounds 1–3 used a six-part rubric (concept, visual, typography,
+responsiveness, themes, consistency → one overall); from round 4 on, the
+brief's four criteria — ความล้ำ / ความ polish / ความสม่ำเสมอกับหน้าอื่น / อ่านง่าย —
+averaged. After each round the defects were fixed and the pages under 8
+reviewed again (rounds 5–9; a later round only re-scored the pages still
+below 8, plus regression checks).
+
+| Page | R1 | R2 | R3 | R4 (first final) | Latest | Latest: ล้ำ / polish / สม่ำเสมอ / อ่านง่าย |
+| --- | --- | --- | --- | --- | --- | --- |
+| `/` | — | 7 | 8 | 7.5 | **8.25** | 8.5 / 7.5 / 8.5 / 8.5 |
+| `/scope` | — | 6.5 | 7.5 | 7.8 | **8.5** | 8 / 8.5 / 9 / 8.5 |
+| `/pricing` | — | 5 | 6.5 | 6.5 | **7.75** | 8 / 8 / 8 / 7 |
+| `/guide` | 6 | 7 | 7 | 7.5 | **8.0** | 8.5 / 7.5 / 8 / 8 |
+| `/guide/ai-cut-tiktok` | 7 | 7 | 8 | 7.0 | **8.5** | 8 / 8.5 / 9 / 8.5 |
+| `/guide/help` | 6 | 5 | 7 | 7.0 | **7.4** | 7 / 7 / 8 / 7.5 |
+| `/guide/thai-subtitles` | — | — | — | 6.5* | **8.0** | 7.5 / 7.5 / 8.5 / 8.5 |
+| `/guide/product-review` | — | — | — | 6.5* | **7.5** | 7 / 7.5 / 7.5 / 8 |
+| `/guide/long-to-shorts` | — | — | — | 6.5* | **8.0** | 7.5 / 7.5 / 8.5 / 8.5 |
+| `/guide/choose-ai-editor` | — | — | — | 6.5* | **8.5** | 8.5 / 8 / 9 / 8.5 |
+| `/about` | 7 | 8 | 8 | 7.8 | **8.1** | 8 / 8 / 8.5 / 8 |
+| `/terms` | 7 | 8 | 7 | 7.4 | **8.1** | 7 / 8 / 9 / 8.5 |
+| `/privacy` | 7 | 7 | 8 | 7.5 | **8.1** | 7 / 8 / 9 / 8.5 |
+| `/signup` | 6 | 7 | 8 | 7.8 | **8.1** | 8 / 8 / 8.5 / 8 |
+| `/login` | 7 | 8 | 8 | 7.3 | **8.4** | 8 / 8.5 / 8.5 / 8.5 |
+| `/reset-password` | 7 | 8 | 8 | 7.3 | **8.4** | 8 / 8.5 / 8.5 / 8.5 |
+| `/verify-email` | 7 | 8 | 8 | 7.3 | **8.4** | 7 / 8.5 / 9 / 9 |
+| `/checkout/success` | 6 | 7 | 7 | 7.0 | **8.3** | 6.5 / 8.5 / 9 / 9 |
+| `/account-deleted` | 7 | 7 | 7 | 6.0 | **7.6** | 7.5 / 8 / 7.5 / 7.5 |
+| 404 | 6 | 8 | 8 | 8.4 | **8.8** | 9 / 8 / 9 / 9 |
+| Phone menu | 2 | 8 | 8 | 7.5 | **8.0** | 7.5 / 8 / 7.5 / 9 |
+| Beta notice | — | 6.5 | 7.5 | 6.8† | **8.1** | 8 / 8.5 / 8.5 / 7.5 |
+| `/account` | 6 | 7 | 8 | 7.3 | **8.25** | 8 / 8 / 8.5 / 8.5 |
+| `/account/quota` | 6 | 6 | 7 | 7.3 | **8.1** | 8 / 8 / 8.5 / 8 |
+| `/account/billing` | 5 | 6 | 7 | 6.4 | **8.4** | 8 / 8.5 / 8.5 / 8.5 |
+| `/account/profile` | 6 | 6 | 7 | 6.5 | **7.9** | 7 / 8 / 8.5 / 8 |
+| Header account menu | 4 | 5 | 6 | 6.1 | **7.75** | 7 / 8 / 7.5 / 8.5 |
+
+\* Round 4 scored the four other guides together. † Round 5.
+
+**Outcome, stated plainly.** Average of the latest scores: **8.1**. No page is
+more than 1 point below it (lowest: 7.4). **Six pages finished under the
+brief's bar of 8:** `/pricing` 7.75, `/guide/help` 7.4,
+`/guide/product-review` 7.5, `/account-deleted` 7.6, `/account/profile` 7.9
+and the header account menu 7.75. They were fixed and re-reviewed several
+times (pricing and help five times); in the last rounds the reviewers'
+remaining points were small, often contradicted an earlier round (e.g. the
+price list under the cards: "make it body size" in one round, "make it
+quieter" in the next; equal-height account cards vs cards that hug their
+content), or asked for things the owner has ruled out (new copy in the
+guides, a consent hint on sign-up, a password reveal toggle, renaming
+"แผน" in the drawings of the editor, which uses that word). The open points
+from the last round are listed below for whoever picks this up:
+
+- `/pricing`: the per-plan clip sentence under the cards and its twin in the
+  help guide read as one dense run (a list would read better); "ทดลองใช้ครั้งเดียว"
+  repeats in the free row; the free row leaves a gap at 1024–1440.
+- `/guide/product-review` and the other strip-picture guides: the strip is a
+  small picture next to a four-line answer (larger reads as cropped, smaller
+  reads as weak — both were tried).
+- `/account-deleted`: start-aligned on purpose (a calm ending), while the
+  broken reset-link card is centred; reviewers asked for one alignment.
+- Header account menu: the chip in the header shows a person icon, the open
+  menu an initial.
 
 ## Dependencies added
 
