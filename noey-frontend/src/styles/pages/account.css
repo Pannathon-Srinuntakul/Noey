@@ -459,6 +459,14 @@
   padding: 2px;
 }
 
+.acct-summary__warn {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: var(--fs-13);
+  line-height: 1.6;
+  color: var(--danger);
+}
+
 /* ── โควตาและลิมิต ──────────────────────────────────────────────────────── */
 
 .acct-quota__limit {
@@ -600,6 +608,10 @@
 
 .acct-pay__btn {
   margin-top: 6px;
+  /* Sized to its label like the card's other actions; as a direct child of
+     the card's column it would stretch across it. */
+  align-self: flex-start;
+  justify-self: start;
 }
 
 /* The plan picker in the dialog: each plan is a selectable clip. */

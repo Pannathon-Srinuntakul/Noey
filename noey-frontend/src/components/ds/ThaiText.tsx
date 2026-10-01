@@ -70,8 +70,21 @@ const KEEP_TOGETHER = [
   "เข้าสู่ระบบ",
   "ค่าใช้จ่าย",
   "ขาดรายได้",
+  "รับผิดชอบ",
   "รับผิด",
   "ความเป็นส่วนตัว",
+  "ผู้ใช้",
+  "ค่าบริการ",
+  "ทีละขั้น",
+  "ทีละ",
+  "สัปดาห์ละ",
+  "ครั้งละ",
+  "วันละ",
+  "คลิปสั้น",
+  "เสียงเดิม",
+  "พากย์เอง",
+  "เกิดขึ้น",
+  "ดีขึ้น",
   "ไม่ได้รับ",
   "พื้นที่เก็บงาน",
   "ใช้งานหนัก",
@@ -95,19 +108,20 @@ const PATTERN = new RegExp(
 );
 
 /**
- * The repeat mark ๆ never starts a line: the space before it ("สั้น ๆ") becomes
- * a no-break space, which also keeps it on the word it repeats.
+ * Marks that never start a line: the repeat mark ๆ ("สั้น ๆ") and the "·"
+ * between the items of a run ("ฟรี 10 นาที · Lite 10 นาที"). The space before
+ * each becomes a no-break space, which keeps it on the word before it.
  */
-export const glueRepeat = (text: string) => text.replace(/ ๆ/g, "\u00a0ๆ");
+export const glueMarks = (text: string) => text.replace(/ ([ๆ·])/g, "\u00a0$1");
 
 /**
  * Thai text with those words and number–unit pairs wrapped so a line never
- * ends inside them. The text is unchanged apart from the no-break space
- * before ๆ (the wrappers are plain spans), so copy, search and screen readers
- * see the same words.
+ * ends inside them. The text is unchanged apart from the no-break spaces
+ * before ๆ and "·" (the wrappers are plain spans), so copy, search and screen
+ * readers see the same words.
  */
 export function keepThai(source: string): ReactNode {
-  const text = glueRepeat(source);
+  const text = glueMarks(source);
   const parts = text.split(PATTERN);
   if (parts.length === 1) return text;
   return parts.map((part, index) =>

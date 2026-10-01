@@ -4,6 +4,7 @@ import { IconArrowRight, IconChevronRight } from "@/components/ds/icons";
 import { LevelMeter } from "@/components/ds/LevelMeter";
 import { Waveform } from "@/components/ds/Waveform";
 import { NoeyMark } from "@/components/NoeyMark";
+import { needsPaymentAttention, subscriptionStatusLabel } from "@/lib/billing";
 import { formatBytes } from "@/lib/format";
 import { planDisplayName } from "@/lib/plans";
 import { privatePageMetadata } from "@/lib/seo";
@@ -85,6 +86,13 @@ export default async function AccountAppPage({ searchParams }: { searchParams: P
                   <IconChevronRight size={15} />
                 </Link>
               </dd>
+              {/* A failed charge is said here too, not only on the billing tab
+                  (the same sentence the billing tab shows). */}
+              {needsPaymentAttention(billing?.status) ? (
+                <p className="acct-summary__warn">
+                  {keepThaiProse(`${subscriptionStatusLabel(billing?.status)} อัปเดตบัตรได้ที่การ์ดการชำระเงิน`)}
+                </p>
+              ) : null}
             </div>
             <div>
               <dt>โควตารอบนี้</dt>

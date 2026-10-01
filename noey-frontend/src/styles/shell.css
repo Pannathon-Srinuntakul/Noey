@@ -114,6 +114,13 @@ html[data-scrolled] .hdr::before {
   background: linear-gradient(var(--color-bg) 35%, transparent);
   pointer-events: none;
   z-index: -1;
+  transition: opacity var(--dur-3) var(--ease-out);
+}
+
+/* Over a night scene (the closing band, the footer) the day background's
+   fade would lie on it as a pale haze: the bar floats on its own there. */
+html[data-night-under] .hdr::before {
+  opacity: 0;
 }
 
 /* Once content passes under it, the frosted bar turns nearly opaque: the
@@ -608,6 +615,8 @@ html[data-auth-name] .acct__fallback {
 
 @media (max-width: 1023px) {
   .stl {
+    /* No timecode here, so the cues and the fill share the whole width. */
+    --stl-tc: 0px;
     height: 3px;
     margin: 0 14px;
     border-top: 0;
@@ -637,7 +646,6 @@ html[data-auth-name] .acct__fallback {
   }
 
   .stl__fill {
-    width: calc(var(--p) * 100%);
     height: 2px;
     border-radius: 2px;
   }

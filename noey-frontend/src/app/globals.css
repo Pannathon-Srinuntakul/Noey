@@ -702,6 +702,12 @@ html[data-theme="dark"] .btn-primary:hover,
   --btn-bg: var(--gold-softer);
 }
 
+/* An unavailable control does not light up under the pointer. */
+.btn-secondary:is(:disabled, [aria-disabled="true"]):hover {
+  --btn-line: var(--line-2);
+  --btn-bg: color-mix(in srgb, var(--panel) 70%, transparent);
+}
+
 .btn-ghost {
   --btn-line: transparent;
   --btn-ink: var(--ink);

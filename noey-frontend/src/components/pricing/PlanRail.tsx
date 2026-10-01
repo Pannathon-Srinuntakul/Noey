@@ -47,6 +47,8 @@ export function PlanRail({
   const toClips = (position: number) => Math.max(1, Math.round(Math.exp((position / SCALE) * Math.log(max))));
   const [position, setPosition] = useState(() => toPosition(initial));
   const [touched, setTouched] = useState(false);
+  // Which ends of the rail are in view: an arrow that cannot move says so.
+  const [edges, setEdges] = useState({ start: true, end: false });
   const sliderId = useId();
   const noteId = useId();
   const clips = toClips(position);
@@ -66,6 +68,24 @@ export function PlanRail({
     const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     track.scrollTo({ left: target.offsetLeft - track.offsetLeft - 8, behavior: still ? "auto" : "smooth" });
   }, [fit.tier, touched]);
+
+  useEffect(() => {
+    const track = root.current?.querySelector<HTMLElement>("[data-rail-track]");
+    if (!track) return;
+    const update = () => {
+      const start = track.scrollLeft <= 2;
+      const end = track.scrollLeft + track.clientWidth >= track.scrollWidth - 2;
+      setEdges((last) => (last.start === start && last.end === end ? last : { start, end }));
+    };
+    update();
+    track.addEventListener("scroll", update, { passive: true });
+    const resize = new ResizeObserver(update);
+    resize.observe(track);
+    return () => {
+      track.removeEventListener("scroll", update);
+      resize.disconnect();
+    };
+  }, []);
 
   function step(direction: 1 | -1) {
     const track = root.current?.querySelector<HTMLElement>("[data-rail-track]");
@@ -131,12 +151,26 @@ export function PlanRail({
           <p className="picker__note">{keepThai(freeNote)}</p>
         </div>
       </div>
-      {/* Beside the cards they move (hidden where every card is in view). */}
+      {/* Beside the cards they move (hidden where every card is in view). At
+          an end the arrow is aria-disabled rather than disabled, so a keyboard
+          user who just pressed it keeps their focus on it. */}
       <div className="plan-rail__nav">
-        <button type="button" className="btn btn-secondary btn-icon" onClick={() => step(-1)} aria-label="แพลนก่อนหน้า">
+        <button
+          type="button"
+          className="btn btn-secondary btn-icon"
+          onClick={() => !edges.start && step(-1)}
+          aria-disabled={edges.start || undefined}
+          aria-label="แพลนก่อนหน้า"
+        >
           <IconArrowLeft />
         </button>
-        <button type="button" className="btn btn-secondary btn-icon" onClick={() => step(1)} aria-label="แพลนถัดไป">
+        <button
+          type="button"
+          className="btn btn-secondary btn-icon"
+          onClick={() => !edges.end && step(1)}
+          aria-disabled={edges.end || undefined}
+          aria-label="แพลนถัดไป"
+        >
           <IconArrowRight />
         </button>
       </div>

@@ -14,6 +14,7 @@ import {
   shouldShowBetaBanner,
   shouldShowBetaNotice,
 } from "@/lib/beta";
+import { keepThai } from "../ds/ThaiText";
 import { Dialog } from "../ui/Dialog";
 
 /** <html data-busy> — set by any surface the visitor must not be interrupted on. */
@@ -141,13 +142,13 @@ export function BetaNotice({ betaPriced }: { betaPriced: boolean }) {
       <ol className="beta-points">
         {copy.points.map((point) => (
           <li key={point.title}>
-            <strong>{point.title}</strong>
-            <span>{point.body}</span>
+            <strong>{keepThai(point.title)}</strong>
+            <span>{keepThai(point.body)}</span>
           </li>
         ))}
       </ol>
       <p className="beta-fineprint">
-        {copy.disclaimer}
+        {keepThai(copy.disclaimer)}
         {"\u00a0· "}
         <Link href="/terms">เงื่อนไขการใช้งาน</Link>
       </p>

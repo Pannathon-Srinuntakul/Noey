@@ -1,6 +1,6 @@
 import { Fragment, type ReactNode } from "react";
 import GLOSSARY from "./thai-glossary.json";
-import { glueRepeat, keepSegments } from "./ThaiText";
+import { glueMarks, keepSegments } from "./ThaiText";
 
 /**
  * Line breaking for long Thai copy rendered on the server: keepThai's words,
@@ -20,7 +20,7 @@ import { glueRepeat, keepSegments } from "./ThaiText";
  * Server components only: a client component would segment again in the
  * browser, whose dictionary may differ, and the hydrated text would not match
  * (client components use keepThai). The text is unchanged apart from the
- * no-break space before ๆ; the wrappers are plain spans.
+ * no-break spaces before ๆ and "·"; the wrappers are plain spans.
  */
 
 const LEANS_ON_NEXT = new Set(["ไม่", "การ", "ความ", "ผู้", "ค่า", "ใน", "บน"]);
@@ -63,7 +63,7 @@ function tokenize(text: string, tokens: Token[]) {
 }
 
 export function keepThaiProse(source: string): ReactNode {
-  const text = glueRepeat(source);
+  const text = glueMarks(source);
   const tokens: Token[] = [];
   for (const part of keepSegments(text)) {
     if (part.keep) tokens.push({ text: part.text, keep: true, word: true });

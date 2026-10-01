@@ -139,7 +139,12 @@
   color: var(--gold-ink);
 }
 
+/* The unit stays beside its number: the caption takes the rest of the line
+   and wraps inside it ("คลิป · ทดลองใช้ครั้งเดียว…"), instead of moving
+   whole to a line of its own and leaving the number without its unit. */
 .usage-caption {
+  flex: 1 1 0;
+  min-width: 7em;
   font-size: var(--fs-13);
   line-height: 1.45;
   color: var(--ink-3);
@@ -245,11 +250,14 @@
   background: var(--panel);
 }
 
+/* The count sits under the name on every card: a longer name ("Agency")
+   would push it to a second line on its own and drop that card's price
+   below the others'. */
 .price-more__name {
   display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 4px 10px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
   font-size: var(--fs-16);
   font-weight: 600;
 }

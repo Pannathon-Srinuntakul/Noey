@@ -253,8 +253,8 @@ export function BillingPanel(props: BillingPanelProps) {
                 onChange={(event) => setPayAgreed(event.target.checked)}
               />
               <span className="agree__text">
-                ฉันเข้าใจว่าระบบจะเรียกเก็บเงินทุกเดือนโดยอัตโนมัติจนกว่าจะยกเลิก และยอมรับ <Link href="/terms">เงื่อนไขการใช้งาน</Link>{" "}
-                เรื่องค่าบริการและการคืนเงิน
+                {keepThai("ฉันเข้าใจว่าระบบจะเรียกเก็บเงินทุกเดือนโดยอัตโนมัติจนกว่าจะยกเลิก และยอมรับ ")}
+                <Link href="/terms">เงื่อนไขการใช้งาน</Link> {keepThai("เรื่องค่าบริการและการคืนเงิน")}
               </span>
             </label>
             <button type="button" className="btn btn-secondary" onClick={() => setUpgradeOpen(false)}>
@@ -274,8 +274,9 @@ export function BillingPanel(props: BillingPanelProps) {
         maxWidth={460}
         description={
           <p style={{ margin: 0 }}>
-            ยังใช้งานได้จนจบรอบบิลที่จ่ายไปแล้ว{periodEndLabel ? ` (ถึง ${periodEndLabel})` : ""} หลังจากนั้นบัญชีจะกลับไปเป็นแพลนฟรี
-            โปรเจกต์ที่เกินโควตาแพลนฟรีจะเปิดอ่านได้แต่แก้ต่อไม่ได้จนกว่าจะลบให้เหลือตามจำนวน
+            {keepThai(
+              `ยังใช้งานได้จนจบรอบบิลที่จ่ายไปแล้ว${periodEndLabel ? ` (ถึง ${periodEndLabel})` : ""} หลังจากนั้นบัญชีจะกลับไปเป็นแพลนฟรี โปรเจกต์ที่เกินโควตาแพลนฟรีจะเปิดอ่านได้แต่แก้ต่อไม่ได้จนกว่าจะลบให้เหลือตามจำนวน`,
+            )}
           </p>
         }
       >

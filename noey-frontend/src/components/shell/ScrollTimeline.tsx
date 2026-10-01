@@ -6,6 +6,8 @@ import { formatTimecode } from "../ds/timecode";
 
 /** How many pixels of scrolling make one second of "footage" on the ruler. */
 const PX_PER_SECOND = 90;
+/** How far down the header's fade reaches (shell.css, .hdr::before), beta strip included. */
+const HEADER_FADE_PX = 120;
 
 interface Mark {
   element: HTMLElement;
@@ -48,12 +50,22 @@ export function ScrollTimeline() {
       return (header?.getBoundingClientRect().bottom ?? 80) + 24;
     };
 
+    // The night scenes (the closing call to action, the footer): while one is
+    // under the header, the header's fade must not paint the day background
+    // over it (shell.css, html[data-night-under]).
+    let nights: HTMLElement[] = [];
+
     const update = () => {
       frame = 0;
       const max = scrollable();
       const progress = Math.min(1, Math.max(0, window.scrollY / max));
+      const nightUnder = nights.some((night) => {
+        const box = night.getBoundingClientRect();
+        return box.top < HEADER_FADE_PX && box.bottom > 0;
+      });
       bar.style.setProperty("--p", progress.toFixed(4));
       document.documentElement.toggleAttribute("data-scrolled", window.scrollY > 24);
+      document.documentElement.toggleAttribute("data-night-under", nightUnder);
       const text = formatTimecode(window.scrollY / PX_PER_SECOND);
       if (text !== lastText) {
         tc.textContent = text;
@@ -63,25 +75,29 @@ export function ScrollTimeline() {
     };
 
     const build = () => {
-      marksLayer.replaceChildren();
+      // Every measurement first, then every change: a change between two
+      // measurements would make the browser lay the page out again.
       const max = scrollable();
+      const top = offset();
+      nights = [...document.querySelectorAll<HTMLElement>("main .theme-night, [data-site-footer]")];
+      // The sections' own stamps show the time the ruler reads when their
+      // heading reaches the playhead (never past END).
+      const stamps = [...document.querySelectorAll<HTMLElement>("main .sec-head__tc, main .chapter__tc")].flatMap((stamp) => {
+        const anchor = stamp.closest(".sec-head")?.querySelector<HTMLElement>("h1, h2, h3") ?? stamp.closest<HTMLElement>(".chapter");
+        if (!anchor || anchor.offsetParent === null) return [];
+        return [{ stamp, text: formatTimecode(Math.min(max, Math.max(0, docTop(anchor) - top)) / PX_PER_SECOND) }];
+      });
+      // A status card's own heading (checkout, verification) is not a section.
+      const headings = [...document.querySelectorAll<HTMLElement>("main h2")]
+        .filter((heading) => heading.offsetParent !== null && !heading.closest("dialog, details:not([open]), [hidden], .status"))
+        .map((element) => ({ element, at: Math.min(1, Math.max(0, (docTop(element) - top) / max)) }));
+
       // The footer's end credit shows the page's full length on the same clock.
       const end = document.querySelector<HTMLElement>("[data-end-tc]");
       if (end) end.textContent = `END · ${formatTimecode(max / PX_PER_SECOND)}`;
-      const top = offset();
-      // So do the sections' own stamps: each shows the time the ruler reads
-      // when its heading reaches the playhead (never past END).
-      for (const stamp of document.querySelectorAll<HTMLElement>("main .sec-head__tc, main .chapter__tc")) {
-        const anchor = stamp.closest(".sec-head")?.querySelector<HTMLElement>("h1, h2, h3") ?? stamp.closest<HTMLElement>(".chapter");
-        if (!anchor || anchor.offsetParent === null) continue;
-        stamp.textContent = formatTimecode(Math.min(max, Math.max(0, docTop(anchor) - top)) / PX_PER_SECOND);
-      }
-      // A status card's own heading (checkout, verification) is not a section.
-      const headings = [...document.querySelectorAll<HTMLElement>("main h2")].filter(
-        (heading) => heading.offsetParent !== null && !heading.closest("dialog, details:not([open]), [hidden], .status"),
-      );
-      marks = headings.map((element) => {
-        const at = Math.min(1, Math.max(0, (docTop(element) - top) / max));
+      for (const { stamp, text } of stamps) stamp.textContent = text;
+      marksLayer.replaceChildren();
+      marks = headings.map(({ element, at }) => {
         const node = document.createElement("div");
         node.className = "stl__mark";
         node.style.left = `${(at * 100).toFixed(3)}%`;

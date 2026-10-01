@@ -311,7 +311,9 @@
 .stamp {
   display: inline-block;
   max-width: 100%;
-  padding: 4px 12px 4px 10px;
+  /* The dot hangs in the padding: a second line starts under the text. */
+  padding: 4px 12px 4px 26px;
+  text-indent: -16px;
   border: 1px solid var(--line);
   border-radius: 16px;
   background: color-mix(in srgb, var(--panel) 70%, transparent);

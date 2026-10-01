@@ -4,6 +4,7 @@ import { useActionState, useEffect, useRef } from "react";
 import { changeEmailAction, changePasswordAction, updateProfileAction } from "@/app/actions/account";
 import { notifyAuthChanged } from "@/lib/client/auth-hint";
 import type { ActionState } from "@/lib/messages";
+import { keepThai } from "../ds/ThaiText";
 
 function Feedback({ state }: { state: ActionState | undefined }) {
   return (
@@ -84,7 +85,9 @@ export function EmailForm({ email }: { email: string }) {
         {errors.new_email ? (
           <p className="field-error" id="a-email-error">{errors.new_email}</p>
         ) : (
-          <p className="field-hint" id="a-email-hint">เปลี่ยนอีเมลแล้ว เราจะส่งลิงก์ยืนยันไปที่อีเมลใหม่ก่อนใช้งานจริง</p>
+          <p className="field-hint" id="a-email-hint">
+            {keepThai("เปลี่ยนอีเมลแล้ว เราจะส่งลิงก์ยืนยันไปที่อีเมลใหม่ก่อนใช้งานจริง")}
+          </p>
         )}
       </div>
       <div className="field">

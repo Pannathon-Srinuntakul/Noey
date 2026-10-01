@@ -1,4 +1,4 @@
-import { EditorMockup } from "../mockups/EditorMockup";
+import { EditorMockup } from "../mockups/client";
 
 /**
  * The right half of /signup and /login: the editor mockup in its ambient

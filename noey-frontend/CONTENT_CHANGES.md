@@ -107,15 +107,17 @@ Old: the toggle's visible glyph was the character "☾" (and a sun character in
 dark mode). New: drawn icons. The button's accessible names ("สลับเป็นโหมดมืด",
 "สลับเป็นโหมดสว่าง") are unchanged.
 
-## 7. Article stamp: the separator binds to the date
+## 7. Article and /pricing stamps: the separator binds to the date
 
-Old: `อัปเดตล่าสุด <date> · เขียนโดย <author>` as one run of text.
+Old: `อัปเดตล่าสุด <date> · เขียนโดย <author>` as one run of text, and on
+/pricing `อัปเดตล่าสุด <date> · ราคาเป็นเงินบาทต่อเดือน`.
 
 New: the same words, but the " · " is joined to the date with a no-break
-space and "เขียนโดย <author>" is kept on one line, so a narrow screen breaks
-after the dot instead of stranding "Noey Studio" or starting a line with "·".
-The source no longer holds the literal "· เขียนโดย" in one piece; what a
-reader sees is unchanged.
+space and the part after it ("เขียนโดย <author>", "ราคาเป็นเงินบาทต่อเดือน")
+is kept on one line, so a narrow screen breaks after the dot instead of
+stranding "Noey Studio" or "ต่อเดือน", or starting a line with "·". The source
+no longer holds the literals "· เขียนโดย" and "· ราคาเป็นเงินบาทต่อเดือน" in
+one piece; what a reader sees is unchanged.
 
 ## 8. Plan picker: no "แนะนำ" on the plan already held
 
@@ -261,6 +263,9 @@ Only labels, no claims:
 - /pricing: the clips slider label "ใช้ประมาณกี่คลิปต่อเดือน"; its readout is
   built from `plans.ts` only (`clipsHeadline`, `FREE_CLIPS_CAPTION`) with
   `CLIPS_FOOTNOTE` under it.
+- /account: when the last charge failed (`past_due`), the summary's plan row
+  repeats the billing tab's own sentence, "ตัดบัตรไม่สำเร็จ ระบบจะลองตัดอีกครั้ง
+  อัปเดตบัตรได้ที่การ์ดการชำระเงิน", so it is seen without opening that tab.
 
 No testimonials, client logos, ratings or measured-looking numbers were
 added. The running timecode beside "งานที่กินเวลาที่สุด ไม่ใช่การถ่าย แต่เป็นการตัด"

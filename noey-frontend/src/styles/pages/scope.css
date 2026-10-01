@@ -9,6 +9,7 @@
 /* The hero's map of the timeline below: two tracks offset across the cut. */
 .phero__aside:has(.handoff-key) {
   align-self: center;
+  container-type: inline-size;
 }
 
 .handoff-key {
@@ -121,6 +122,39 @@
 .handoff-key__cut::after {
   right: 4px;
   top: 2px;
+}
+
+/* A narrow card cannot hold the tracks side by side — yours alone needs
+   about 170px, five twelfths of the card — so they stack, still offset,
+   with the cut between them. */
+@container (max-width: 459px) {
+  .handoff-key {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+  }
+
+  .handoff-key__lane--ai {
+    grid-column: 1;
+    grid-row: 2;
+    margin-right: 18%;
+  }
+
+  .handoff-key__cut {
+    grid-column: 1;
+    grid-row: 3;
+    height: 36px;
+  }
+
+  .handoff-key__cut::before,
+  .handoff-key__cut::after {
+    height: 17px;
+  }
+
+  .handoff-key__lane--you {
+    grid-column: 1;
+    grid-row: 4;
+    margin-left: 18%;
+  }
 }
 
 /* ── The handoff timeline ───────────────────────────────────────────────── */

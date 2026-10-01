@@ -115,14 +115,19 @@ export function MotionRuntime() {
         },
         { rootMargin: "0px 0px -8% 0px", threshold: 0.08 },
       );
-      for (const element of waiting) {
+      // Measure them all before marking any: each mark restyles the page, and
+      // a measurement after it would lay the whole page out again.
+      const inView = waiting.map((element) => {
         const rect = element.getBoundingClientRect();
-        if (rect.top < fold && rect.bottom > 0) element.setAttribute("data-reveal-state", "now");
+        return rect.top < fold && rect.bottom > 0;
+      });
+      waiting.forEach((element, index) => {
+        if (inView[index]) element.setAttribute("data-reveal-state", "now");
         else {
           element.setAttribute("data-reveal-state", "wait");
           io.observe(element);
         }
-      }
+      });
       cleanups.push(() => io.disconnect());
 
       // Pinned scenes: progress through the scene's scroll length.

@@ -71,7 +71,7 @@ export default async function QuotaPage() {
                 <LevelMeter value={pct} labelledBy={labelId} />
                 {neverResets(limit) ? (
                   <p className="meter-note">
-                    {spentCreditText(pct)} <Link href="/pricing">ดูแพลนทั้งหมด</Link>
+                    {keepThaiProse(spentCreditText(pct))} <Link href="/pricing">ดูแพลนทั้งหมด</Link>
                   </p>
                 ) : (
                   <p className="meter-note">
@@ -93,12 +93,12 @@ export default async function QuotaPage() {
               </span>
             </div>
             {storagePct !== null ? <LevelMeter value={storagePct} labelledBy="storage-label" /> : null}
-            <p className="meter-note">เก็บไว้ {storage.project_count} โปรเจกต์บนบัญชี</p>
+            <p className="meter-note">{keepThaiProse(`เก็บไว้ ${storage.project_count} โปรเจกต์บนบัญชี`)}</p>
           </div>
         ) : null}
 
         {usage.concurrency && usage.concurrency.max > 0 ? (
-          <p className="meter-note">ทำงาน AI พร้อมกันได้ {usage.concurrency.max} งาน</p>
+          <p className="meter-note">{keepThaiProse(`ทำงาน AI พร้อมกันได้ ${usage.concurrency.max} งาน`)}</p>
         ) : null}
         {walletBaht !== null ? (
           <p className="meter-note">
@@ -106,7 +106,7 @@ export default async function QuotaPage() {
             ใช้ต่อได้เมื่อโควตาของแพลนหมด
           </p>
         ) : null}
-        {pendingName ? <p className="meter-note">เปลี่ยนเป็นแพลน {pendingName} เมื่อจบรอบบิลนี้</p> : null}
+        {pendingName ? <p className="meter-note">{keepThaiProse(`เปลี่ยนเป็นแพลน ${pendingName} เมื่อจบรอบบิลนี้`)}</p> : null}
         {note ? <p className="meter-note">{keepThaiProse(note)}</p> : null}
       </div>
 

@@ -30,6 +30,11 @@
   container-type: inline-size;
   aspect-ratio: var(--am-cw) / var(--am-ch);
   background: var(--bg);
+  /* A window away from the screen is not styled, laid out or painted until
+     it comes near (its box keeps its size from the aspect ratio). The home
+     page draws a dozen of these, some 500 elements each: measured, this cuts
+     the main thread's work on load by about a third. */
+  content-visibility: auto;
 }
 
 .am {

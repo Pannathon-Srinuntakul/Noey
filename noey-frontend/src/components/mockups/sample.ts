@@ -98,7 +98,9 @@ export const SAMPLE_MUSIC = { file: "soft_morning_96bpm.mp3", seconds: 45, volum
 /**
  * The music block's waveform: one peak per 1/8 s of the cut, drawn the way
  * MusicBlock draws decoded peaks. A 96 bpm pulse with a slow swell, computed
- * the same on every render.
+ * the same on every render. Rounded: Math.sin and Math.exp may differ in the
+ * last digit between the server's JavaScript engine and the browser's, and
+ * the drawing is rendered on both (a mismatch would not hydrate cleanly).
  */
 export const SAMPLE_MUSIC_PEAKS: readonly number[] = Array.from({ length: Math.round(SAMPLE_CUT_SECONDS * 8) }, (_, i) => {
   const t = i / 8;
@@ -106,7 +108,7 @@ export const SAMPLE_MUSIC_PEAKS: readonly number[] = Array.from({ length: Math.r
   const pulse = Math.exp(-4 * (beat - Math.floor(beat)));
   const swell = 0.62 + 0.38 * Math.sin((t / SAMPLE_CUT_SECONDS) * Math.PI * 1.6 + 0.4);
   const grain = 0.5 + 0.5 * Math.sin(i * 12.9898) * Math.sin(i * 4.1414);
-  return Math.min(1, 0.18 + (0.5 * pulse + 0.32 * grain) * swell);
+  return Math.round(Math.min(1, 0.18 + (0.5 * pulse + 0.32 * grain) * swell) * 1000) / 1000;
 });
 
 // ─── Footage files (public/footage, made by scripts/render-footage/encode.mjs) ──

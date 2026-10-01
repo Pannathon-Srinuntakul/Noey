@@ -1,6 +1,6 @@
 import Image from "next/image";
 import type { MediaEntry } from "@/lib/media";
-import { StepMockup } from "./mockups/StepMockup";
+import { StepMockup } from "./mockups/client";
 
 /**
  * Replaces the prototype's <image-slot>. The box reserves its aspect ratio up
