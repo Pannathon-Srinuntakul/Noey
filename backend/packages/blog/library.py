@@ -38,7 +38,7 @@ from packages.blog import validation as v
 from packages.db.models.blog import LIBRARY_CATEGORIES, BlogImage
 
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
-MAX_VIDEO_BYTES = 60 * 1024 * 1024
+MAX_VIDEO_BYTES = 40 * 1024 * 1024
 MAX_PDF_BYTES = 20 * 1024 * 1024
 MAX_VIDEO_SECONDS = 120
 MAX_VIDEO_SIDE = 2160

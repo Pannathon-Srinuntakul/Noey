@@ -21,6 +21,14 @@ const nextConfig: NextConfig = {
   // The Docker image runs `.next/standalone/server.js` (see Dockerfile).
   output: "standalone",
   poweredByHeader: false,
+  // The media library (คลังสื่อ) uploads files through a Server Action: a demo
+  // clip may be up to 40 MB (backend/packages/blog/library.py). Both limits —
+  // the action's and the proxy's request buffer — must allow it; every other
+  // action stays far below.
+  experimental: {
+    serverActions: { bodySizeLimit: "45mb" },
+    proxyClientMaxBodySize: "45mb",
+  },
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];
   },

@@ -17,6 +17,8 @@ export type ApiResult<T> =
 export interface ApiInit {
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   body?: unknown;
+  /** A multipart body (file uploads) — sent as is, with fetch's own boundary. */
+  form?: FormData;
   token?: string;
   timeoutMs?: number;
 }
@@ -37,14 +39,14 @@ async function visitorHeaders(): Promise<Record<string, string>> {
 
 export async function adminApi<T = unknown>(path: string, init: ApiInit = {}): Promise<ApiResult<T>> {
   const h: Record<string, string> = { Accept: "application/json", ...(await visitorHeaders()) };
-  if (init.body !== undefined) h["Content-Type"] = "application/json";
+  if (init.body !== undefined && !init.form) h["Content-Type"] = "application/json";
   if (init.token) h.Authorization = `Bearer ${init.token}`;
   let response: Response;
   try {
     response = await fetch(`${API_URL}${path}`, {
       method: init.method ?? "GET",
       headers: h,
-      body: init.body === undefined ? undefined : JSON.stringify(init.body),
+      body: init.form ?? (init.body === undefined ? undefined : JSON.stringify(init.body)),
       cache: "no-store",
       signal: AbortSignal.timeout(init.timeoutMs ?? 15_000),
     });

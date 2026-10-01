@@ -21,6 +21,7 @@ import { ctxFrom, forecastDefaults, priceAt, pricesFromSatang, summarize, type F
 import { PAID_KEYS, planLabel } from "@/lib/plans";
 import type { CostConfig, DashboardData, UserDetail } from "@/lib/types";
 import { BlogTab } from "./BlogTab";
+import { MediaTab } from "./MediaTab";
 import { CostsTab } from "./CostsTab";
 import { OverviewTab } from "./OverviewTab";
 import { PlansTab } from "./PlansTab";
@@ -29,11 +30,11 @@ import { ConfirmDialog, Seg, type ConfirmSpec } from "./ui";
 import { UserDrawer } from "./UserDrawer";
 import { DEFAULT_USERS_VIEW, UsersTab, type UsersView } from "./UsersTab";
 
-type Tab = "overview" | "users" | "plans" | "costs" | "pricing" | "blog";
+type Tab = "overview" | "users" | "plans" | "costs" | "pricing" | "blog" | "media";
 type Period = "today" | "7d" | "30d" | "custom";
 
 const TABS: Array<[Tab, string]> = [
-  ["overview", "ภาพรวม"], ["users", "ผู้ใช้"], ["plans", "แผน"], ["costs", "ต้นทุน"], ["pricing", "ราคาและแผน"], ["blog", "บทความ"],
+  ["overview", "ภาพรวม"], ["users", "ผู้ใช้"], ["plans", "แผน"], ["costs", "ต้นทุน"], ["pricing", "ราคาและแผน"], ["blog", "บทความ"], ["media", "คลังสื่อ"],
 ];
 const MAX_DAYS = 366;
 
@@ -337,6 +338,9 @@ export function Dashboard({ initial, adminEmail, idleMs }: { initial: DashboardD
             done={(msg) => { setConfirm(null); say(msg); }}
             active={!confirm}
           />
+        )}
+        {tab === "media" && (
+          <MediaTab handle={handle} ask={setConfirm} done={(msg) => { setConfirm(null); say(msg); }} />
         )}
         {tab === "pricing" && (
           <PricingTab
