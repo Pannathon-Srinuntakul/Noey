@@ -43,6 +43,12 @@ they have**, and more.
   product images come from the user.
 - Infographic numbers must come from the speech or the user's brief — the AI never invents data.
 - The before/after comparison layout in Kitti's ad is marketing, not a feature to copy.
+- **Ready-made effects only** (2026-10-02): transitions, clip effects, overlays/popups and SFX
+  come from existing libraries/asset packs (Remotion and its packages, gl-transitions, Lottie,
+  CC0 sound packs); never hand-written. Remotion returns as the render engine of this mode.
+- **Stock libraries: not now** (2026-10-02) — built as a disabled hook.
+- **Not only sales clips**: content includes unscripted live-stream talk; prompts stay
+  content-agnostic. Implementation plan: `docs/impl-story-mode.md`.
 - **Web only** (2026-10-02): the mode is built in `web/` + backend; nothing on desktop.
   Customers use the web editor only, so this is a deliberate product scope, not parity drift.
 

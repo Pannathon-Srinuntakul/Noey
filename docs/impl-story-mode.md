@@ -3,74 +3,112 @@
 Companion to `docs/plan-aroll-broll-motion-mode.md` (the WHAT and the owner decisions). This
 file is the HOW: build order, files, schemas, tests and gates. It is meant to be executed in
 one long run by a Claude Code session, phase by phase, ticking the checklist at the bottom.
-Written 2026-10-02 against `main` @ 8cf21a1.
+Written 2026-10-02; revised the same day after the owner's answers (§0).
 
 **Scope: web editor (`web/`) + backend only. No desktop work** (owner, 2026-10-02 —
 customers use the web editor only; deliberate scope, so no PARITY.md entry).
 
-Internal mode name: `story`. UI name: proposal **"เล่าเรื่อง + ภาพประกอบ"** (owner to confirm,
-see §0). UI never names an AI vendor.
+Internal mode name: `story`. UI name: **"เล่าเรื่อง + ภาพประกอบ"** (default; owner may rename).
+UI never names an AI vendor.
+
+**Not only sales clips.** Content ranges from product reviews to long rambling live-stream
+talk. Every prompt is content-agnostic: the concept step must find a story inside an
+unscripted talk (like `speech_highlights` does) as well as structure a scripted ad.
 
 ---
 
-## 0. Before the run — owner inputs (blocking items marked ★)
+## 0. Owner answers (2026-10-02) and what they change
 
-| # | Item | Default if the owner says "use defaults" |
+| Topic | Answer | Effect on this plan |
 |---|---|---|
-| ★1 | Test footage: 3 projects, each = 1 talking-head clip (2–5 min) + 5–20 b-roll files (video + photos + one screen recording), different product categories (e.g. skincare, gadget, apparel). Put them in `~/noey-story-fixtures/<name>/{aroll,broll}/`. | none — the live eval (Phase 9) cannot run without it |
-| ★2 | Stock API keys: `PEXELS_API_KEY`, `PIXABAY_API_KEY` (+ optional `UNSPLASH_ACCESS_KEY`). Free to obtain. | stock fill disabled; visual fill skips to text card |
-| 3 | UI name of the mode | "เล่าเรื่อง + ภาพประกอบ" |
-| 4 | Which plans get the mode | every plan incl. Free trial (quota pays) |
-| 5 | Model per step (engine tiers) | storyboard + graphics on the Director engine (`dub_engine_pro`), understand/stock/QA on Scout; no Pro-tier model → daily cap is not an issue |
-| 6 | Why was the Remotion overlay layer removed on 2026-08-12? (or allow reading `git log` for that week) | assume "slow + broke on web"; this design renders graphics on a server and composites on the client, which avoids both |
-| 7 | Music: user upload only in v1? | yes; SFX are synthesized in code (§6.4), so no sound library licence is needed |
-| 8 | Railway: new service **Noey Graphics** (headless Chromium, private network only) | create it (Railway writes are pre-authorised; deletes still need asking) |
+| Stock images (Pexels/Pixabay/Unsplash) | not now | Stock stage is built as a disabled hook only (§3.4); visual fill = user b-roll → graphic → text card. No API keys needed. |
+| Test footage | owner sends raw live-stream talk clips (not sales); Claude makes the b-roll itself | §9: fixture builder records screen captures and makes photo/b-roll sets per topic; also test the **no-b-roll** case. |
+| Remotion | reason for the 2026-08-12 removal unknown; bring it back if it gives the best effects/overlays | **Remotion is the render engine of this mode** (§1). |
+| Effects, transitions, overlays, SFX | **never hand-write them** — use ready-made libraries/assets; "we cannot beat the market by writing our own" | §4 lists the sources; our code only wires, parameterises and composites. Procedural SFX and hand-rolled shaders are out. |
+| Plans that get the mode | default: every plan incl. Free trial (quota pays) | §3.2 |
+| Model per step | default: storyboard + graphics on the Director engine, understand + QA on Scout | §3.4 |
 
 Ship rule: everything merges to `main` behind `STORY_MODE_ENABLED=false` + an allow-list
 (`STORY_MODE_ALLOWLIST`, comma-separated emails). Production stays unchanged until the owner
 flips it. Work happens on branch `feature/story-mode`; merge to `main` only at the end of a
 phase whose gate is green (main auto-deploys).
 
+### 0.1 Remotion licence (checked 2026-10-02 — re-check at P0)
+Free licence: individuals and for-profit companies with **up to 3 employees**, commercial use
+and automation allowed. A company of 4+ needs the Company licence; a product that renders
+videos for its customers then falls under **"Remotion for Automators": $0.01 per render,
+$100/month minimum**. Noey today = free tier. Record the check in `THIRD_PARTY_ASSETS.md`
+and add a line to `docs/unit-economics.md` for the day the team grows past 3.
+Sources: remotion.dev/docs/license/pricing, remotion.dev/docs/license/faq.
+
 ---
 
-## 1. Architecture in one page
+## 1. Architecture
+
+One Remotion composition (`StoryVideo`) is the whole video. The storyboard is its input
+props. Everything visual is a Remotion component from an existing package or asset pack.
 
 ```
-web (browser)                                   backend (API + worker)               Noey Graphics (new service)
-───────────────                                 ──────────────────────               ───────────────────────────
+web (browser)                                     backend (API + worker)            Noey Graphics (new service)
+───────────────                                   ──────────────────────            ───────────────────────────
 Wizard: A-roll + b-roll + brand kit + brief
 ingest (existing) → proxies, WAV, photo downscale
-upload ─────────────────────────────────────▶ POST /videos/{uid}/story/understand
-                                               task story_understand_local:
-                                                 STT (existing Scribe) → 1 Gemini call
-                                                 → broll_index.json, keep.json, concepts.json
-Concept picker  ◀──────── waiting_user ─────────
-POST /story/storyboard {concept_ids} ────────▶ task story_storyboard_local: 1 call
-                                                 → storyboard.json (validated, catalog-bound)
-Storyboard player (stills + super text +
-  A-roll audio, per-shot notes)
-  notes → POST /story/revise ────────────────▶ task story_revise_local: 1 call (noted shots only)
-  approve → POST /story/produce ─────────────▶ task story_produce_local (chained, one run):
-                                                 stock search (HTTP) → 0–1 pick call → download
-                                                 templates → params only (no call)
-                                                 1 graphics-code call ──────────────────▶ POST /render (HTML → stacked-alpha MP4)
-                                                 1 QA call on sampled frames ◀──────────
-                                                 0–1 fix call → re-render failing pieces
-                                                 → assets under story/ in the bucket
+upload ───────────────────────────────────────▶ POST /videos/{uid}/story/understand
+                                                 task story_understand_local:
+                                                   STT (existing Scribe) → 1 model call
+                                                   → broll_index.json, keep.json, concepts.json
+Concept picker ◀──────── waiting_user ───────────
+POST /story/storyboard {conceptIds} ───────────▶ task story_storyboard_local: 1 call
+                                                   → storyboard.json (validated, catalog-bound)
+Storyboard player = @remotion/player playing
+  StoryVideo on the 480p proxies (real motion,
+  real captions, real audio) + per-shot notes
+  notes → POST /story/revise ──────────────────▶ task story_revise_local: 1 call (noted shots)
+  approve → POST /story/approve ───────────────▶ task story_produce_local (one run):
+                                                   templates → params only (no call)
+                                                   1 custom-graphics call ───────▶ Remotion renderer (server):
+                                                   1 QA call on rendered frames ◀── transparent clip + QA stills
+                                                   0–1 fix call → re-render failing pieces
+                                                   → story/graphics/* in the bucket
 download story/ assets → OPFS
-person matte pass (MediaPipe, client) for cut-out shots
-StoryRenderer (WebGL2 compositor + audio graph) → final.mp4
-Result page: per-shot notes → revise → re-produce only changed shots → re-render
+person matte pass (MediaPipe) for cut-out shots
+final render: @remotion/web-renderer renderMediaOnWeb(StoryVideo) on the full-res footage
+  (fallback: server render, §1.2)
+Result page: per-shot notes → revise → re-produce changed shots → re-render
 ```
 
-Model calls per job: understand 1 + storyboard 1 + pick 0–1 + graphics 1–2 + QA 1 + fix 0–1
-= **4–7**; each revision round 1–2. Every call goes through `packages/llm` and is billed.
+Model calls per job: understand 1 + storyboard 1 + custom graphics 1–2 + QA 1 + fix 0–1 =
+**4–6** (stock pick returns when stock is enabled); each revision round 1–2.
 
-Why the graphics render on a server: QA needs rendered frames inside the backend pipeline;
-AI-written code must never run on our web origin (XSS surface); headless Chromium gives
-identical output for every user. Why compositing stays on the client: the final footage
-never leaves the user's machine (existing product promise); the web engine already has a
-per-frame canvas loop (`engine/cutRender.ts` + `media.ts:encodeVideo`).
+### 1.1 Why this split
+- **Remotion** brings the effects ecosystem we must not write ourselves: `@remotion/transitions`,
+  `@remotion/light-leaks`, `@remotion/motion-blur`, `@remotion/lottie`, `@remotion/captions`
+  (+ the official open-source TikTok captions template), `@remotion/three` (WebGL shader
+  effects), `@remotion/media` (`<Video>`/`<Audio>`), `@remotion/player` (live preview).
+  Models also write Remotion code well.
+- **Trusted code runs on the client; AI-written code never does.** Templates and catalog
+  components (our repo, reviewed) run inside `StoryVideo` in the browser. AI-written custom
+  graphics are rendered on the Noey Graphics server in a sandbox to a transparent video; the
+  browser only plays the resulting video file. No AI-written JavaScript ever executes on our
+  web origin.
+- **Footage stays on the user's machine** (existing product promise): the final render runs
+  in the browser on the original files in OPFS.
+
+### 1.2 Render-path spike (P0, decides before anything is built on it)
+`@remotion/web-renderer` is **experimental alpha** (Remotion docs, 2026-10). Supported:
+`<Video>`/`<Audio>` from `@remotion/media`, `<Img>`, `<Lottie>`, `<ThreeCanvas>`, CSS
+transforms, opacity, filters (not in Safari), text-stroke/shadow. Unsupported: `z-index`,
+`mix-blend-mode`, `backdrop-filter`, `perspective`, `<OffthreadVideo>`.
+Spike: a 60 s composition with 2 footage clips, one transition from each source (§4), a light
+leak, a Lottie sticker, TikTok-style captions in Kanit, a transparent overlay video, a person
+matte layer. Measure: correctness vs a server render of the same composition, speed (target
+≥0.5× real time on an M1 / mid Windows laptop), memory, Chrome + Edge.
+- **Pass** → final render in the browser (the plan as written).
+- **Fail** → fallback: upload the used footage ranges (existing presigned upload) and render
+  on Noey Graphics with `@remotion/renderer`; the composition code is identical, only the
+  render call moves. Billing: render minutes are not AI tokens — count them under the plan's
+  existing render/transcode feature (owner to price if this path is taken).
+Write the result into this file (§11) before P2.
 
 ---
 
@@ -79,401 +117,393 @@ per-frame canvas loop (`engine/cutRender.ts` + `media.ts:encodeVideo`).
 All JSON lives under the project's output dir `story/` (server: `data_root()/video_outputs/<uid>/story/`,
 S3 `videos/<uid>/outputs/story/...`, client OPFS `noeyfs://projects/<uid>/story/`).
 Pydantic models in `backend/packages/video/story/schema.py`; mirrored TS types in
-`web/src/lib/story/types.ts`; a contract test (§10) asserts the enums are identical.
+`web/src/lib/story/types.ts`; a contract test asserts the enums are identical.
 
 ### 2.1 Catalog (`backend/packages/video/story/catalog.py` + `web/src/lib/story/catalog.ts`)
-The menu the AI picks from. Response schemas build their `enum`s from it, so the model cannot
-order something the renderer cannot draw.
+The menu the AI picks from. Every entry maps to a ready-made source (§4). Response schemas
+build their `enum`s from it, so the model cannot order something the renderer cannot draw.
+The exact entry list is filled in P1 from what the sources actually provide; the shape:
 
-- `LAYOUTS`: `aroll_full`, `broll_full`, `cutout_over_broll` (slots: `bottom_center_large`,
+- `LAYOUTS`: `aroll_full`, `broll_full`, `cutout_over_broll` (slots `bottom_center_large`,
   `bottom_left`, `bottom_right`), `split_top_bottom`, `pip_corner`, `phone_mockup`,
-  `result_card` (framed clip on blurred self + top/bottom chips), `graphic_full`,
-  `text_card`.
-- `CAMERA`: `none`, `push_in_slow` (1–2 %/s), `punch_in` (+12–18 % in 0.2–0.3 s, ease-out,
-  hold), `punch_out`, `settle` (start +2.4 %, ease back in 0.15 s), `ken_burns`, `pan_lr`,
-  `pan_rl`, `shake` (≤8 px, ≤0.25 s). Zoom anchor = face centre from the matte/face box,
-  never the top-left (Kitti's visible bug).
-- `TRANSITIONS` (into the shot): `cut`, `white_flash` (3 frames), `zoom_blur`, `dissolve`
-  (≤0.2 s), `slide_left`, `slide_up`, `shrink_to_pip`, `scale_into_card`, `whip`.
-- `TREATMENTS`: `none`, `freeze_bw`, `glass_crack`, `fast_forward` (+ timer chip), `vhs_rewind`.
-- `SUPER_ANIMS`: `pop` (0.7→1.1→1.0 in 4–6 frames), `typewriter` (Thai grapheme clusters via
-  `Intl.Segmenter('th',{granularity:'grapheme'})`), `word_pop`, `keyword_bump`, `none`.
-- `SFX`: `whoosh`, `swish`, `pop`, `click`, `tick`, `typing`, `thud`, `boom`, `impact`,
-  `ding`, `chime_reveal`, `crack`, `kaching`, `stamp`, `rewind`, `riser`, `bell`.
-- `TEMPLATES` (id → JSON-schema of params): `title_card`, `feature_chips`,
-  `price_ticket_countup`, `discount_code`, `badge_stamp`, `sticker`, `mascot_pop`,
-  `timer_chip`, `checklist`, `steps`, `comparison_table`, `bar_chart`, `pie_chart`,
-  `star_rating`, `cart_cta` ("กดตะกร้า"), `end_card`, `counter`, `text_card`.
+  `result_card` (framed clip on its own blurred copy + top/bottom chips), `graphic_full`,
+  `text_card`. Layouts are composition structure (positioning of layers) — ours by necessity.
+- `TRANSITIONS`: `{id, source: "remotion" | "gl-transitions", name, params}` — e.g.
+  remotion `fade`/`slide`/`wipe`/`flip`/`clockWipe`/`iris`, gl-transitions `crosszoom`,
+  `directionalwarp`, `glitchmemories`, `cube`, `dreamy`, … plus `light_leak` overlays.
+- `EFFECTS` (on a layer, for a time range): from `@remotion/motion-blur`, `@remotion/three`
+  + the `postprocessing` library (glitch, chromatic aberration, noise/film grain, vignette,
+  bloom, pixelation), CSS filters (grayscale for the "problem" beat, blur), camera moves
+  driven by Remotion `interpolate`/`spring` presets (`push_in`, `punch_in`, `ken_burns`,
+  `shake`) anchored on the face box.
+- `CAPTION_STYLES`: from `@remotion/captions` + the TikTok template's page/highlight logic,
+  restyled with our fonts/brand colours; animations offered by those components.
+- `OVERLAYS`: Lottie animations from the curated pack (stickers, arrows, check marks,
+  confetti, emoji, frames, call-to-action bubbles), light leaks.
+- `SFX`: tag list of the curated CC0 pack (§4.4), e.g. `whoosh`, `pop`, `click`, `typing`,
+  `impact`, `ding`, `riser`, `glass`, `cash`, `stamp`, `rewind`.
+- `TEMPLATES` (id → params JSON-schema): motion-graphic templates built from Remotion
+  components + Lottie: `title_card`, `feature_chips`, `price_ticket_countup`,
+  `discount_code`, `badge_stamp`, `sticker`, `mascot_pop`, `timer_chip`, `checklist`,
+  `steps`, `comparison_table`, `bar_chart`, `pie_chart`, `star_rating`, `cart_cta`,
+  `end_card`, `counter`, `quote_card`, `topic_title` (the last two for talk/live content).
+  Start from existing open-source Remotion templates/examples where one fits (licence-checked).
 
 ### 2.2 `broll_index.json`
 `{files:[{id, kind: video|photo|screen, durationSec?, summary, tags[], usable:[{in,out,what}], text_on_screen?}]}`
 
 ### 2.3 `keep.json` (A-roll cleanup)
-`{ranges:[{clip, fromWord, toWord, reason?}], dropped:[{clip, fromWord, toWord, why: silence|flub|retake|filler}]}`
+`{ranges:[{clip, fromWord, toWord}], dropped:[{clip, fromWord, toWord, why: silence|flub|retake|filler|off_topic}]}`
 — word INDICES into `transcript.json`, never timestamps. Code converts to times with the
-existing snapping (`audio_edges.py`) so the cut lands in real silence.
+existing snapping (`audio_edges.py`).
 
 ### 2.4 `concepts.json`
-`{concepts:[{id, title, hook, beats[{label, words:[fromWord,toWord]}], tone, targetSec, brollIds[]}]}` — 2–3 items,
-written by the model per job (owner decision: no fixed concept list in code).
+`{concepts:[{id, title, hook, beats[{label, words:[fromWord,toWord]}], tone, targetSec, brollIds[]}]}` —
+2–3 items written by the model per job (owner decision: no fixed list in code). For a long
+live talk a concept is a self-contained story picked out of it; several concepts may cover
+different parts (like `speech_highlights`), and picking 2 makes 2 clips.
 
-### 2.5 `storyboard.json` (the single source of truth for the render)
+### 2.5 `storyboard.json` (single source of truth; = `StoryVideo` input props)
 ```jsonc
 {
   "version": 1, "conceptId": "c1", "fps": 30, "size": [1080, 1920],
   "brand": {"primary": "#…", "accent": "#EAFF07", "font": "kanit", "logo": "brand/logo.png?"},
+  "captionStyle": "tiktok_pop",
   "shots": [{
     "id": "s01", "beat": "hook",
-    "aroll": [{"clip": "a1", "fromWord": 12, "toWord": 19}],      // audio + (maybe) picture
+    "aroll": [{"clip": "a1", "fromWord": 12, "toWord": 19}],
     "layout": "cutout_over_broll", "slot": "bottom_center_large",
-    "visual": {"source": "broll|stock|graphic|text_card|none", "ref": "b07", "in": 2.0, "out": 4.1,
-               "fit": "cover", "mute": true},
-    "graphic": {"template": "price_ticket_countup", "params": {…}} | {"custom": "g03", "spec": "…prose…"} | null,
-    "super": {"lines": ["ฟุตเยอะ แต่", "ขี้เกียจตัด"], "emphasis": [[1,0,10]], "anim": "pop",
-              "at": "word:14"} | null,
-    "camera": {"move": "punch_in", "at": "word:15"},
-    "transitionIn": "white_flash", "treatment": "none",
-    "sfx": [{"kind": "whoosh", "at": "start"}, {"kind": "pop", "at": "super"}],
-    "stockQuery": {"en": "person editing video on laptop", "orientation": "portrait"} | null,
+    "visual": {"source": "broll|graphic|text_card|none", "ref": "b07", "in": 2.0, "out": 4.1, "mute": true},
+    "graphic": {"template": "price_ticket_countup", "params": {}} | {"custom": "g03", "spec": "…"} | null,
+    "super": {"lines": ["ฟุตเยอะ แต่", "ขี้เกียจตัด"], "emphasis": [[1,0,10]], "at": "word:14"} | null,
+    "camera": {"preset": "punch_in", "at": "word:15"},
+    "transitionIn": {"id": "gl:crosszoom", "durationFrames": 9},
+    "effects": [{"id": "grayscale", "from": "start", "to": "end"}],
+    "overlays": [{"id": "lottie:arrow_down_01", "at": "super", "slot": "top_right"}],
+    "sfx": [{"tag": "whoosh", "at": "start"}, {"tag": "pop", "at": "super"}],
     "emotion": "excited", "note": ""
   }],
-  "music": {"track": "music/user.mp3?", "duckDb": 3, "bedDb": -14},
-  "alternates": {}
+  "music": {"track": "music/user.mp3?", "duckDb": 3, "bedDb": -14}
 }
 ```
-Times are anchors (`start`, `end`, `super`, `word:<index>`), resolved by code → the model
-never does arithmetic on seconds. `resolveStoryboard()` (TS, pure) turns it into an output
-timeline: `[{shotId, outStart, outEnd, arollRanges[{clip,in,out}], …}]`.
+Times are anchors (`start`, `end`, `super`, `word:<index>`) resolved by code
+(`web/src/lib/story/resolve.ts`, pure) → the model never does arithmetic on seconds.
 
 Validation (`backend/packages/video/story/validate.py`, mirrored in TS): words exist and are
-inside `keep.json`; shots cover every kept range in order exactly once; `ref`s exist; template
-params validate against the template schema; every number shown in `super`/`params` appears
-in the transcript or brief (owner rule: no invented data) — failing items are dropped to
-`text_card` with a logged reason, never sent back to the model automatically.
+inside `keep.json`; shots cover every kept range of the concept in order exactly once; every
+`id` exists in the catalog; template params validate; every number shown appears in the
+transcript or brief (owner rule: no invented data). Failing items degrade (unknown
+transition → `cut`, bad graphic → `text_card`) with a logged reason.
 
 ### 2.6 Graphics manifest `story/graphics/manifest.json`
-`{items:[{id, shotId, kind: template|custom, durationSec, file: "graphics/g03.mp4", alpha: "stacked", qa: pass|fixed|fallback}]}`
-Stacked alpha = H.264 1080×3840 (top half colour, bottom half alpha as luma). Decodes with the
-existing `VideoReader`; the compositor recombines it in a shader. (Chrome's WebCodecs does
-not reliably decode VP9 alpha.)
-
-### 2.7 Stock manifest `story/stock/manifest.json`
-`{items:[{id, shotId, provider, providerId, url, author, authorUrl, licence, file, w, h, durationSec?}]}` —
-kept for attribution and takedowns.
+`{items:[{id, shotId, durationSec, file: "graphics/g03.webm", qa: pass|fixed|fallback}]}` —
+transparent video of each AI-written custom graphic. Container/codec decided in the P0 spike:
+VP9-alpha WebM if `@remotion/media` decodes its alpha in the browser, else stacked-alpha H.264
+(colour over alpha, recombined by a small ready-made-free mask layer — the only custom
+compositing code allowed, since it is plumbing, not an effect).
 
 ---
 
 ## 3. Backend
 
 ### 3.1 Settings (`packages/core/settings.py`, `.env.example`, `docs/railway-deploy.md`)
-`story_mode_enabled: bool=False`, `story_mode_allowlist: str=""`, `pexels_api_key`,
-`pixabay_api_key`, `unsplash_access_key` (all `str|None`), `graphics_service_url`
-(`http://noey-graphics.railway.internal:8080`), `graphics_service_token` (shared secret),
-`story_understand_model`, `story_board_model`, `story_graphics_model`, `story_qa_model`
-(defaults from `quality.py` tiers). Exposed to the client as `features.story` on the existing
-`/auth/me` (or `/billing/plans`) payload.
+`story_mode_enabled: bool=False`, `story_mode_allowlist: str=""`, `story_stock_enabled: bool=False`
+(+ `pexels_api_key`, `pixabay_api_key`, `unsplash_access_key`, all optional, unused while
+disabled), `graphics_service_url` (`http://noey-graphics.railway.internal:8080`),
+`graphics_service_token`, `story_understand_model`, `story_board_model`,
+`story_graphics_model`, `story_qa_model` (defaults from `quality.py` tiers). Exposed to the
+client as `features.story` on the existing `/auth/me` payload.
 
 ### 3.2 Mode registration (no migration — `mode`/`stage`/`status` are plain strings)
-- `videos_local.py:create_local_project` allow-list += `story` (gated by the flag/allow-list → 404 when off).
-- `models/video_project.py`: `VIDEO_STATUS` += `waiting_user`; `PIPELINE_STAGES`/`STAGE_ORDER["story"]` =
-  `imported → understood → boarded → produced → rendered`; `PAID_STAGES`.
-- `packages/billing/resume.py:SERVER_STAGES` += the story stages; router `_STAGE_KIND`,
-  `_reached_stage`, `_resting_status` (`waiting_user` is a resting status and restartable).
+- `videos_local.py:create_local_project` allow-list += `story` (flag/allow-list off → 404).
+- `models/video_project.py`: `VIDEO_STATUS` += `waiting_user`; `PIPELINE_STAGES`/`STAGE_ORDER["story"]`
+  = `imported → understood → boarded → produced → rendered`; `PAID_STAGES`.
+- `packages/billing/resume.py:SERVER_STAGES` += story stages; router `_STAGE_KIND`,
+  `_reached_stage`, `_resting_status` (`waiting_user` is resting and restartable).
 - `_WEB_FILE_ROOTS` += `story`, `broll`, `brand`.
-- `plan_features.py`: `FOOTAGE_KINDS` += `story_understand`; footage cap = `SPEECH_FOOTAGE_SEC`
-  for A-roll, b-roll counted separately (cap: 40 files, 10 min total b-roll video).
-- `llm/usage.py:_TASK_BY_FEATURE` += `story_*` features.
+- `plan_features.py`: `FOOTAGE_KINDS` += `story_understand`; A-roll cap = `SPEECH_FOOTAGE_SEC`
+  (2 h, so a live-stream recording fits); b-roll cap 40 files / 10 min of video.
+- `llm/usage.py:_TASK_BY_FEATURE` += `story_*`.
 
 ### 3.3 Billing (`packages/billing/estimate.py`)
-New `Kind`s + `MODE_PROFILES` entries, each `sized` from the request:
+New `Kind`s + `MODE_PROFILES`, sized from the request:
 | kind | calls | inputs priced | output sizing |
 |---|---|---|---|
-| `story_understand` | STT + 1 | A-roll audio sec (STT) + A-roll video sec at 1 fps + b-roll video sec + photos×258 | thinking + 120×concepts + 40×b-roll files + 8×transcript words/10 |
-| `story_board` | 1 per selected concept | transcript + index + concept | thinking + 220×expected shots (0.43 shots/s of target) |
+| `story_understand` | STT + 1 | A-roll audio sec (STT) + A-roll video at 1 fps + b-roll video sec + photos | thinking + 120×concepts + 40×b-roll files + keep ranges (~1 per 10 words) |
+| `story_board` | 1 per picked concept | transcript + index + concept | thinking + 220×expected shots (0.43 shots/s of target) |
 | `story_revise` | 1 | storyboard + notes | thinking + 220×noted shots |
-| `story_produce` | 1–4 | stock thumbs, graphic specs, QA frames | thinking + 2,500×custom graphics (cap: split into 2 calls above 20k) |
-Starts: understand at wizard submit, board at concept pick, produce at approve — three
-separate runs (each its own strict start gate; resume exempt). Output caps = model max;
-`finish_reason=length` → `safety_cap`, no auto-retry (existing rule). Measure real numbers
-in Phase 9 and update the constants in one commit.
+| `story_produce` | 1–3 | graphic specs + QA frames | thinking + 2,500×custom graphics (split above 40k) |
+Three separate runs: understand at wizard submit, board at concept pick, produce at approve
+(each its own strict start gate; resume exempt). `finish_reason=length` → `safety_cap`, no
+auto-retry. A 2-hour live A-roll is big input for one call: measure in P9; if the
+understand call exceeds the model's input context, the route refuses with
+`footage_over_limit` (same rule as existing modes) — no chunking in v1.
 
 ### 3.4 Prompts + calls (`backend/packages/video/story/`)
-One module per call; each = system prompt constants + `RESPONSE_SCHEMA` built from the
-catalog + `async def run_*(…)` using `upload_gemini_file` / `gemini_video_block` /
-`acompletion_stream_thinking` exactly like `dub_ai.generate_dub_edit_script_video`
-(Files API, several files in one message, `finally: delete_gemini_files`).
-- `understand.py` — inputs: A-roll proxy (fps 1), every b-roll proxy (fps 1) and photo, the
-  word list as `[i] word (start)`, Scribe silence gaps, brief. Output: index + keep + concepts.
-  Prompt rules: product-agnostic; keep = pick the best take per script line (Kitti dropped a
-  whole first take and kept ~4 s of the first 77 s of raw — retake detection, not only silence
-  removal), drop flubs, repeats and fillers, never reorder lines, never speed up. Code then
-  trims every pause to 100–250 ms (measured on Kitti: median gap ~160 ms, longest 660 ms
-  under a flash) with 50–100 ms padding per word edge; overall ~60–67 % of raw is removed on
-  a scripted talking head.
-- `storyboard.py` — inputs: concept, kept words, index (text only, no video re-upload),
-  brand, style defaults (§3.5), catalog prose. Output: storyboard.
-- `revise.py` — current storyboard + notes `{shotId: text}`; must return only the noted shots;
-  code merges and re-validates.
-- `stock.py` — HTTP clients (`httpx`, 10 s timeout, 3 results × query per provider,
-  portrait first), then ONE vision call over all candidate thumbnails (labelled `shot/candidate`)
-  → pick or `none`. Download picked originals (video ≤1080p file from the provider's file list)
-  to `story/stock/`. No keys → skip silently.
-- `graphics_code.py` — ONE call writes every `custom` graphic as a self-contained HTML document
-  following the Graphics Contract (§4.2); output `{items:[{id, html}]}`; split into two calls
-  when the estimate passes 40k output tokens.
-- `graphics_qa.py` — ONE vision call over a contact sheet (3 frames per graphic: 10 %, 50 %, 90 %)
-  → `{items:[{id, ok, problems[], fix}]}`; checks overflow, overlap with the safe area, Thai
-  rendering (tone marks, cut words), contrast, invented numbers.
-- `graphics_fix` — one call for failing items only; a graphic that fails twice falls back to
-  the `text_card` template with the same text.
-Style defaults (`style_defaults.py`, measured from Kitti v1, see §11): shots 0.8–3 s (median
-~2.1 s), A-roll full-frame ≤35 % of time, every A-roll jump cut hidden under a cutaway or
-`white_flash`/`settle`, super text 2–5 words rewritten (not verbatim) with one emphasised
-keyword, a super on most shots, an SFX on every cut and super (~25–40 per 90 s), punch-ins on
-climax words only (≤3 per minute), music bed −13 to −15 dB under voice.
+One module per call: system prompt constants + `RESPONSE_SCHEMA` from the catalog +
+`async def run_*` using `upload_gemini_file` / `gemini_video_block` /
+`acompletion_stream_thinking` like `dub_ai.generate_dub_edit_script_video` (Files API, many
+files in one message, `finally: delete_gemini_files`).
+- `understand.py` — A-roll proxy (fps 1), b-roll proxies (fps 1) + photos, word list
+  `[i] word (start)`, Scribe silence gaps, brief → index + keep + concepts. Rules: content-
+  agnostic; best take per line (retake detection, not only silence removal), drop flubs,
+  repeats, fillers and off-topic stretches; never reorder lines; never speed up. Code trims
+  pauses to 100–250 ms with 50–100 ms word-edge padding (measured on Kitti: median gap
+  ~160 ms; ~60–67 % of a scripted raw removed; a live talk keeps far less).
+- `storyboard.py` — concept, kept words, b-roll index (text only), brand, catalog prose,
+  style defaults (§3.5) → storyboard.
+- `revise.py` — storyboard + notes `{shotId: text}` → only the noted shots; code merges and
+  re-validates.
+- `stock.py` — built, disabled (`story_stock_enabled=False`); no route offers it.
+- `graphics_code.py` — ONE call writes every `custom` graphic as a Remotion component file
+  following the Graphics Contract (§5.2) → `{items:[{id, tsx}]}`; two calls if the estimate
+  passes 40k output tokens. Custom graphics are the exception: the storyboard prompt
+  prefers templates + Lottie overlays.
+- `graphics_qa.py` — ONE vision call over a contact sheet (3 stills per graphic) → `{items:[{id, ok, problems[], fix}]}`
+  (overflow, safe area, Thai tone marks/cut words, contrast, invented numbers).
+- `graphics_fix` — one call for failing items; failing twice → `text_card` template.
 
-### 3.5 Worker tasks (`services/worker/tasks.py`, registered in `WorkerSettings.functions`)
-`story_understand_local`, `story_storyboard_local`, `story_revise_local`, `story_produce_local`
-— all `@billed_task()`; produce chains its sub-steps inside one task with
-`_release_connection` before each model call and `_finish_stage` checkpoints per sub-step
-(`stock` → `graphics` → `qa`) so a `paused_quota` resume restarts at the sub-step, not at
-the beginning. Each writes its JSON to `story/`, `_push_project_files`, updates the job, sets
-the project to `waiting_user` (understand, board, revise) or `processing→produced`.
+### 3.5 Style defaults (`style_defaults.py`, measured from Kitti's result clip — §12)
+Shots 0.8–3 s (median ~2.1 s); A-roll full-frame ≤35 % of time; every A-roll jump cut
+hidden under a cutaway, a flash or a zoom reset; super text = rewritten 2–5-word summary with
+one emphasised keyword on most shots; an SFX on every cut and super (~25–40 per 90 s);
+punch-ins on climax words only (≤3 per minute); music bed 13–15 dB under the voice. For a
+live talk with no b-roll: graphics, quote cards, topic titles and camera moves carry the
+cutaways instead.
 
-### 3.6 Routes (`services/api/routers/story.py`, mounted beside `videos_local`)
+### 3.6 Worker tasks (`services/worker/tasks.py`, registered in `WorkerSettings.functions`)
+`story_understand_local`, `story_storyboard_local`, `story_revise_local`,
+`story_produce_local` — all `@billed_task()`; produce checkpoints each sub-step
+(`graphics` → `qa` → `fix`) with `_finish_stage` so a `paused_quota` resume restarts at the
+sub-step; `_release_connection` before each model call. Results go to `story/`,
+`_push_project_files`, then project → `waiting_user` (understand, board, revise) or `produced`.
+
+### 3.7 Routes (`services/api/routers/story.py`)
 Same pattern as `analyze_video` (lock row → idempotency → refuse running → estimate →
 `start_paid_run` → `_queue_job_row` → `_open_stage` → enqueue):
 - `POST /videos/{uid}/story/understand` (multipart: A-roll WAVs, A-roll + b-roll proxies,
-  photos ≤1600 px, brand files, manifest JSON)
+  photos ≤1600 px, brand files, manifest)
 - `POST /videos/{uid}/story/storyboard` `{conceptIds[] (1–2)}`
 - `POST /videos/{uid}/story/revise` `{notes:{shotId:text}}` (≤40 shots, ≤500 chars each)
-- `POST /videos/{uid}/story/approve` → enqueues produce
-- `GET /videos/{uid}/story` → `{stage, concepts?, storyboard?, graphics?, stock?}`
-- `PUT /videos/{uid}/story/storyboard` (user's manual edits from the player: super text, swap
-  b-roll, delete shot — validated, no AI)
-New `/admin` routes: none.
+- `POST /videos/{uid}/story/approve` → produce
+- `GET /videos/{uid}/story` → `{stage, concepts?, storyboard?, graphics?}`
+- `PUT /videos/{uid}/story/storyboard` (manual edits from the player; validated, no AI)
 
 ---
 
-## 4. Noey Graphics service (`graphics/`, new Railway service)
+## 4. Ready-made sources (owner rule: never hand-write effects, transitions, overlays, SFX)
 
-### 4.1 Service
-- Scaffold: `npm init -y` + `npm i playwright fastify` in `graphics/`, Dockerfile `FROM
-  mcr.microsoft.com/playwright:<pinned digest>` (Chromium + Thai fonts: copy
-  `backend/data/fonts/*` + Noto Sans Thai into `/usr/share/fonts`, `fc-cache`).
-- `POST /render` `{html, durationSec, fps, width, height}` (bearer `GRAPHICS_SERVICE_TOKEN`)
-  → `video/mp4` stacked-alpha; `POST /frames` `{html, times[]}` → PNGs (for QA).
-- Per request: fresh browser context, `javaScriptEnabled`, viewport 1080×1920, transparent
-  background, `route('**/*')` aborts everything except `data:` and the injected font/asset
-  URLs, CSP meta `default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src
-  'unsafe-inline'; font-src data:`, 10 s wall limit for load, 200 ms per frame, 1 GB memory
-  (container), max 15 s of graphic. No env secrets other than the token. Private network only
-  (no public domain).
-- Frame loop: for each frame `await page.evaluate(t => window.__noey.seek(t), t)` then
-  `page.screenshot({omitBackground:true})` → ffmpeg (`-f image2pipe`) builds colour + alpha
-  planes → `vstack` → H.264 CRF 18.
-- Concurrency: 2 renders per instance (env), queue in memory, 429 when full (worker retries).
+Every source gets a row in `THIRD_PARTY_ASSETS.md` (name, version/commit, licence, URL,
+what we use, date checked). Accept only licences that allow commercial use inside a SaaS
+that renders videos for customers: MIT, Apache-2.0, BSD, ISC, zlib, CC0, or explicit
+written terms. Anything else (CC-BY-NC, "no redistribution as a library", unclear) is out.
 
-### 4.2 Graphics Contract (given to the model verbatim; tested in `graphics/test/contract.test.ts`)
-- One HTML document, ≤60 KB, inline CSS/JS/SVG only, no external URLs, no `fetch`, no timers
-  driving visuals — all motion is a pure function of time.
-- Must define `window.__noey = { duration: <sec>, seek(t) { … } }`; `seek` must be idempotent
-  and render the exact state at `t` (CSS animations allowed only via
-  `document.getAnimations().forEach(a => { a.pause(); a.currentTime = t*1000 })`).
-- Canvas 1080×1920, transparent background, safe area 90 px sides / 220 px top / 380 px bottom
-  (TikTok UI), fonts via `font-family: var(--noey-font)` (injected), colours via CSS variables
-  `--noey-primary`, `--noey-accent`, `--noey-text` (injected from the brand kit).
-- Numbers and words shown must come from the shot spec (validator re-checks the HTML text).
-
-### 4.3 Templates (`graphics/templates/<id>.html` + `<id>.schema.json`)
-Same contract, parameterised by `window.__params`. Built and tested in this service; the
-storyboard picks a template + params → no model call. 18 templates (§2.1). Each has a
-fixture params file and a golden contact sheet (`graphics/test/golden/<id>.png`, compared
-with pixelmatch, 1 % tolerance).
-
----
-
-## 5. Web client
-
-### 5.1 Wizard + mode plumbing
-- `lib/wizardState.ts`: `UiMode` += `story`; `backendMode('story') = 'story'`; gates: ≥1
-  A-roll, 0–40 b-roll, brand kit optional; hidden unless `features.story`.
-- `components/wizard/WizardStepFiles.tsx`: role per file (A-roll / b-roll, default by
-  `has_audio` + speech detected later; user can flip); photo support (jpg/png/webp/heic→jpg
-  via canvas); "Brand kit" drawer: logo, mascot, primary + accent colour, caption font from
-  `CAPTION_FONTS`.
-- `lib/projectFlow.ts`: `STORY_STEP_ORDER = importing → understanding → concepts → boarding →
-  storyboard → producing → assets → matting → rendering → done`; `stepOrderFor('story')`;
-  progress stages; `lib/modeLabel.ts` label.
-- `lib/useProjectPipeline.ts`: new `runStory*` functions in a NEW file
-  `lib/storyPipeline.ts` (do not grow the 3,347-line file further; call into it from the mode
-  branches at the existing switch points ~52/1655/2065/2201/3034/3193).
-- `lib/storyApi.ts`: typed client for §3.6 (reuses `pollJob`, `estimateUsage`, idempotency key).
-
-### 5.2 Ingest additions (`engine/jobs/`)
-- `ingest.ts`: accept photos (`kind: photo`), normalise to ≤1600 px WebP for AI + keep the
-  original for render.
-- `extractProxy.ts`: reuse for b-roll video (480p 12 fps). A-roll audio: existing
-  `extractAudio.ts`.
-- New `storyAssets.ts`: download `story/graphics/*`, `story/stock/*` to OPFS (resume-safe,
-  checks sizes against the manifests).
-
-### 5.3 Concept picker (`pages/story/ConceptPage.tsx`)
-2–3 cards: title, hook (big), beats list, tone chip, est. length; select 1–2 → shows the
-estimate → `POST /story/storyboard`. "ขอแนวใหม่" = re-run understand (billed, confirm dialog —
-in-app modal, never `window.confirm`).
-
-### 5.4 Storyboard player (`pages/story/StoryboardPage.tsx` + `components/story/*`)
-Kitti parity + better:
-- Horizontal shot strip (equal-width cards: index, tag, time, duration); keyboard ←/→, Space.
-- Preview pane 9:16: still frame from the source proxy (A-roll or b-roll at `in`), layout
-  drawn by the SAME compositor in "still mode" (§5.5) so the preview is the real look;
-  super text rendered by the real caption code; plays the A-roll audio of the shot (decoded
-  from the WAV, so sound works — Kitti's did not).
-- Right panel per shot: VO line, super text (editable inline), layout / camera / transition /
-  SFX chips (editable from the catalog), source file + range, swap b-roll (from index) or
-  stock (from candidates), note box.
-- Footer: "ส่งโน้ตให้ AI แก้" (notes → revise, only noted shots, estimate shown), "อนุมัติ
-  แล้วสร้างคลิป" (approve → produce). Manual edits save via `PUT /story/storyboard`, free.
-
-### 5.5 Compositor (`web/src/engine/story/`)
-- `resolve.ts` — storyboard + transcript + keep → output timeline (pure, unit-tested).
-- `scene.ts` — `sceneAt(t)` → ordered layers `{source, rect, transform, opacity, mask, filter}`
-  for one output frame (pure, unit-tested: every catalog entry has a test at 3 times).
-- `gl.ts` — WebGL2 on `OffscreenCanvas` 1080×1920: textured quads, transform matrix, stacked
-  alpha shader, matte shader (person cut-out with 2 px feather), gaussian blur (2-pass,
-  for `result_card` bg), colour matrix (`freeze_bw`), flash/whip/zoom-blur passes, crack
-  overlay (procedural SVG rasterised once). Fallback when WebGL2 is missing: refuse the mode
-  in `platform/capability.ts` (all supported desktop Chrome/Edge/Safari have it).
-- `captions.ts` (story) — super text: 2-line layout, emphasis colour + 1.15× size, outline 4 px
-  @1080, pop/typewriter/word_pop/keyword_bump, position by layout (A/B full 64 %, large
-  cut-out 33 %, PiP 24 %, card 84 %) and pushed out of the face box. Reuses
-  `ensureCaptionFont` and `Intl.Segmenter`.
-- `render.ts` — `renderStory(projectDir, storyboard, signal)`: opens one `VideoReader` per
-  source, walks output frames at 30 fps, draws via `gl.ts`, encodes through the existing
-  `encodeVideo` → `final.mp4` (staged OPFS write). Registered as engine job `renderStory`
-  in `engine/jobs/index.ts` + `sidecar.renderStory` + `platform/types.ts` (the type must
-  exist on `typeof noey`, desktop stub throws "unsupported").
-- Performance budget: ≥1× real time for a 90 s 1080p job on an M1/mid Windows laptop;
-  decode ahead with one frame of lookahead per source; measure in Phase 9.
-
-### 5.6 Person matte (`web/src/engine/story/matte.ts`)
-- `@mediapipe/tasks-vision` ImageSegmenter (selfie segmenter, GPU delegate), model file
-  self-hosted under `web/public/models/` (CSP: no third-party origins).
-- Pass only over A-roll ranges used by `cutout_over_broll`/`pip_corner`/`shrink_to_pip`
-  shots, at 15 fps, EMA temporal smoothing (α 0.6), stored as `story/matte/<clip>_<in>.mp4`
-  (grayscale H.264 540×960) so re-renders skip it; compositor samples with bilinear
-  upscaling + feather.
-- Also emits a face/head box per frame (largest component bbox) → camera anchor + super text
-  avoidance.
-
-### 5.7 Audio (`web/src/engine/story/audio.ts`)
-`OfflineAudioContext` 48 kHz: A-roll keep ranges (10 ms fades at each join), b-roll audio muted
-unless `mute:false`, SFX (§5.8) at resolved times, music bed at `bedDb` with sidechain-style
-duck (envelope from voice RMS, −`duckDb`, 80 ms attack / 300 ms release), then loudness
-normalise to −14 LUFS integrated, true peak −1 dBTP (`loudness.ts`: BS.1770-4 K-weighting +
-gating, unit-tested against reference tones).
-
-### 5.8 SFX synth (`web/src/engine/story/sfx.ts`)
-Each catalog SFX = deterministic Web Audio recipe (noise bursts + filters + envelopes +
-oscillators): whoosh (band-passed noise sweep), pop (sine blip 600→200 Hz, 40 ms), click,
-tick, typing (randomised click train, seeded), thud/boom (low sine + noise, 120–250 ms),
-impact, ding/bell (additive partials), chime_reveal (rising arpeggio), crack (filtered noise
-crackle), kaching, stamp, rewind (pitch-swept noise), riser. Seeded by shot id → same render
-twice = same audio. Each recipe has a test asserting duration, peak and spectral centroid
-range. A licensed pack can replace recipes later via the same `kind` keys.
-
-### 5.9 Result page
-`pages/story/StoryResultPage.tsx`: player + the same shot strip; per-shot notes → revise
-(only those shots) → produce re-runs only shots whose graphic/stock changed (manifest diff)
-→ re-render. Download MP4. Attribution list for stock in a collapsible "เครดิตภาพ" section.
-
----
-
-## 6. Security & safety checklist (verify each in tests)
-1. AI-written HTML runs ONLY in Noey Graphics, never in the user's browser or our origin;
-   the storyboard player shows rendered PNG frames, not the HTML.
-2. Graphics service: private network, bearer token, no secrets in env, all network routes
-   aborted, size/time/memory caps; a test HTML that tries `fetch`, `<img src=https://…>`,
-   `while(true)` and 1 GB allocation must fail closed.
-3. Stock: only the three APIs; never other web images; store attribution.
-4. No invented numbers: validator on storyboard + rendered HTML text.
-5. Uploads: existing size/type checks; b-roll counts toward storage quota.
-6. Vendor names never appear in UI strings (grep test exists — extend its glob to `story/`).
-
----
-
-## 7. Build order (phases, each ends with its gate green and a commit)
-
-| Phase | Deliverable | Gate (all must pass) |
+### 4.1 Video engine and effects
+| Need | Source | Note |
 |---|---|---|
-| P0 | Branch, settings, flag, catalog + schemas (py + ts), contract test | `pytest tests/test_story_schema.py`, `vitest src/lib/story` |
-| P1 | Noey Graphics service + 18 templates + contract + sandbox tests; deployed to Railway (private) | `graphics: npm test` (golden sheets, sandbox escapes fail), a smoke render from the worker host |
-| P2 | Compositor (`resolve`, `scene`, `gl`, captions, render job) on hand-written storyboard fixtures (no AI) | vitest pure tests; one Playwright run rendering `fixtures/story/demo.json` → contact sheet reviewed; render speed ≥1× |
-| P3 | Audio: SFX synth, ducking, loudness | vitest (LUFS reference tones ±0.5 LU, SFX recipes) |
-| P4 | Person matte + face box + cut-out layouts | Playwright one run on a fixture clip → contact sheet; matte coverage test |
-| P5 | Backend mode registration, billing kinds, routes, tasks with fake LLM fixtures (`packages/llm/fake.py` canned story answers) | pytest: routes (flag off → 404), estimate, billed tasks + resume per sub-step, `test_every_ai_task_is_billed_and_registered_by_name` updated, admin security walk |
-| P6 | Real prompts: understand, storyboard, revise, stock, graphics code, QA, fix | pytest call-site tests (monkeypatched gateway), validator tests incl. invented-number rejection |
-| P7 | Web UI: wizard, concept picker, storyboard player, result page, pipeline | vitest (flow, api, gates), `npm run typecheck && npm run lint && npm run build`; one Playwright happy path with `LOADTEST_FAKE_AI=1` locally |
-| P8 | Hardening: resume after `paused_quota` at every stage, cancel, refresh mid-job, network loss on asset download, re-render idempotency | pytest + vitest for each case |
-| P9 | Live eval on the 3 owner fixtures (§0 ★1), ≥3 runs each (memory: cut-prompt eval method), contact sheets + MP4s in `docs/story-eval/`; tune prompts/estimates; record measured tokens, call count, wall time, render speed | owner reviews the eval doc |
-| P10 | Merge to `main` with flag off, deploy, watch logs; enable for the allow-list only | deploy green, smoke on production with the owner's account |
+| Composition, timing, interpolation, springs | `remotion`, `@remotion/media` | licence §0.1 |
+| Transitions | `@remotion/transitions` (fade, slide, wipe, flip, clockWipe, iris, …) + **gl-transitions** (GLSL collection, run through a `@remotion/three` presentation) | check the licence header of every gl-transition file; keep only permissive ones |
+| Light leaks | `@remotion/light-leaks` | |
+| Motion blur | `@remotion/motion-blur` | |
+| Glitch, grain, chromatic aberration, vignette, bloom, pixelation | `postprocessing` (pmndrs) on `@remotion/three` | |
+| Lottie overlays | `@remotion/lottie` + `lottie-web`; animations curated from LottieFiles free assets (verify the Lottie Simple License per file) | stored in `web/public/story/lottie/` |
+| Captions | `@remotion/captions` + Remotion's open-source TikTok template (page grouping, word highlight) | our fonts (Kanit, Prompt, Sarabun, Anuphan — OFL, already bundled) |
+| Person matte | MediaPipe Tasks Vision image segmenter (Apache-2.0), model self-hosted | |
+| Live preview | `@remotion/player` | |
+| Final render | `@remotion/web-renderer` (fallback `@remotion/renderer`) | §1.2 |
 
-Rules during the run: test as you go (repo rule 6); Playwright only in P2/P4/P7 single runs;
-run the full backend + web suites before every merge; commit per phase with English messages;
-check `origin/main..main` and alembic heads before pushing (other sessions push to main);
-update this file's checklist and `CLAUDE.md`/`AGENTS.md` code map at the end (new
-`packages/video/story/`, `graphics/`, `web/src/engine/story/`).
+### 4.2 Motion-graphic templates
+Built as Remotion compositions out of the parts above (Lottie + transitions + captions +
+`@remotion/shapes`/`@remotion/paths` where needed). Before writing a template, search for an
+existing open-source Remotion template/example that does it (licence-checked) and adapt it.
+
+### 4.3 Camera moves
+Remotion `interpolate`/`spring` with named presets is the documented way to animate in
+Remotion (not a custom effect engine); presets copy the parameters measured on Kitti
+(punch +12–18 % in 0.2–0.3 s, push 1–2 %/s, settle −2.4 % in 0.15 s, shake ≤8 px), anchored on
+the face box (Kitti's zoom anchored top-left — visible bug; avoid).
+
+### 4.4 Sound
+- **SFX**: a curated pack of ~80–120 files from CC0 sources (Kenney audio packs, Freesound
+  filtered to CC0), normalised to −16 LUFS short-term, trimmed, tagged in
+  `web/public/story/sfx/index.json` `{tag, file, durationMs, licence, source}`. The storyboard
+  picks by tag; code picks a file per tag deterministically (seeded by shot id) so repeats
+  vary. No procedural SFX.
+- **Music**: user upload (existing) in v1. A CC0/royalty-free music library is a later item
+  (licence must allow in-app redistribution).
+- Mixing: Remotion `<Audio>` volume curves (voice-driven duck via the voice RMS envelope
+  computed once), final loudness to −14 LUFS / −1 dBTP with an existing library
+  (e.g. an EBU R128 / BS.1770 meter package, licence-checked) applied as gain before encode.
 
 ---
 
-## 8. Test inventory (new files)
-Backend: `tests/test_story_schema.py`, `test_story_validate.py`, `test_story_estimate.py`,
-`test_story_routes.py`, `test_story_tasks.py` (billing, resume, pause per sub-step),
-`test_story_prompts.py` (call shape: files in one message, schema enums from catalog),
-`test_stock_clients.py` (httpx mocked; no key → skip), `test_graphics_client.py`.
-Graphics: `test/contract.test.ts`, `test/sandbox.test.ts`, `test/templates.test.ts` (golden).
-Web: `lib/story/*.test.ts` (types/catalog parity, api), `engine/story/resolve.test.ts`,
-`scene.test.ts`, `captions.test.ts` (Thai grapheme typewriter, line split, emphasis),
-`audio.test.ts`, `loudness.test.ts`, `sfx.test.ts`, `storyPipeline.test.ts`.
-E2E (Playwright, minimal): `e2e/story-happy-path.spec.ts` (fake AI), `e2e/story-render.spec.ts`
-(fixture storyboard → contact sheet).
+## 5. Noey Graphics service (`graphics/`, new Railway service)
 
-## 9. Fake AI for local + tests
-Extend `packages/llm/fake.py:build_answer` with canned, VALID answers for the four story
-schemas (routed by a schema `title` field), built from `tests/fixtures/story/*.json`, so the
-whole flow runs end to end with `LOADTEST_FAKE_AI=1` and no vendor cost.
+### 5.1 Service
+- Scaffold with Remotion's own generator (`npx create-video@latest graphics --blank`) + a
+  small HTTP server; Dockerfile per Remotion's Docker docs (Chrome Headless Shell + Thai
+  fonts from `backend/data/fonts/` + Noto Sans Thai, `fc-cache`), digest-pinned.
+- `POST /render` `{tsx | templateId+params, durationInFrames, fps:30, width:1080, height:1920}`
+  (bearer `GRAPHICS_SERVICE_TOKEN`) → transparent video (§2.6). `POST /stills`
+  `{…, frames[]}` → PNGs for QA.
+- AI-written TSX is bundled per request into an isolated temp project that imports only an
+  allow-list of packages (remotion, @remotion/{shapes,paths,lottie,transitions,layout-utils},
+  our template kit); the bundler rejects any other import, `fetch`, `XMLHttpRequest`,
+  `WebSocket`, `eval`, `import()`; Chrome runs with request interception aborting every
+  non-local URL; per-render limits: 60 s wall, 15 s of graphic, 1 GB memory; no secrets in
+  env except the token; private network only (no public domain).
+- Concurrency 2 per instance, in-memory queue, 429 when full (worker retries with backoff).
 
-## 10. Known risks
-- **Render speed in the browser** with WebGL + several decoders: if <1× real time on a mid
-  laptop, lower matte fps and decode b-roll at 720p; measure in P2.
-- **Model taste**: storyboard quality needs P9 iterations; budget 3 prompt rounds.
-- **Gemini output for graphics code** may be long: the split-into-two-calls rule keeps each
-  answer under the 65,536 cap; templates should cover most shots so custom code stays rare.
-- **Stock relevance for Thai content** is thin; fallback order keeps the clip complete.
-- **MediaPipe matte quality** on busy backgrounds: feather + EMA; accept for v1.
-- **Remotion history** (§0 item 6): read the reason before P1 if the owner allows.
+### 5.2 Graphics Contract (given to the model verbatim; contract-tested)
+A single `.tsx` default-exporting a component `({params, brand}) => JSX`; uses
+`useCurrentFrame`/`useVideoConfig`/`interpolate`/`spring` only for motion; transparent
+background; safe area 90 px sides / 220 px top / 380 px bottom; font via `brand.font`; colours
+via `brand`; every number/word shown comes from the shot spec; ≤40 KB.
 
-## 11. Style reference (measured from Kitti's own result clip, 90.8 s)
-39 visual segments, median 2.1 s; A-roll full 28 %, b-roll 30 %, motion graphics 19 %, result
-card 12 %, cut-out over b-roll 10 %; super text = rewritten 2–5-word summaries, white + lime
-`#EAFF07` keyword, thick black outline, pops in 0–0.3 s before the word; ~40 SFX events (whoosh
-on cuts, pop on supers, impact on reveals, ticks/ka-ching on count-ups, key clicks on typing,
-stamp + 7 px shake on badges); 6 white flashes (3 frames) hiding jump cuts; 2 punch-ins
-(+13–15 % in 0.2 s) on climax words; music bed 13–15 dB under voice with ~3 dB duck; −14.1 LUFS.
+---
+
+## 6. Web client
+
+### 6.1 Wizard + mode plumbing
+- `lib/wizardState.ts`: `UiMode` += `story`; `backendMode('story')='story'`; gates: ≥1 A-roll,
+  0–40 b-roll, brand kit optional; hidden unless `features.story`.
+- `components/wizard/WizardStepFiles.tsx`: role per file (A-roll / b-roll, user can flip);
+  photos (jpg/png/webp; heic → jpg via canvas); brand kit drawer (logo, mascot, primary +
+  accent colour, caption font from `CAPTION_FONTS`).
+- `lib/projectFlow.ts`: `STORY_STEP_ORDER = importing → understanding → concepts → boarding →
+  storyboard → producing → assets → matting → rendering → done`; `lib/modeLabel.ts` label.
+- New `lib/storyPipeline.ts` (do not grow the 3,347-line `useProjectPipeline.ts`; call into
+  it at the existing mode switch points) + `lib/storyApi.ts` (typed client for §3.7, reuses
+  `pollJob`, `estimateUsage`, idempotency key).
+- Remotion packages go into `web/package.json` via `npm i` (pinned exact versions, same
+  version for every `@remotion/*`).
+
+### 6.2 Ingest additions (`engine/jobs/`)
+`ingest.ts` accepts photos; `extractProxy.ts` reused for b-roll; new `storyAssets.ts`
+downloads `story/graphics/*` to OPFS (resume-safe, sizes checked against the manifest).
+The media service worker already serves OPFS files to `<Video>` via `/media/<uid>/<rel>`.
+
+### 6.3 Concept picker (`pages/story/ConceptPage.tsx`)
+2–3 cards (title, big hook, beats, tone, est. length); pick 1–2 → estimate → storyboard.
+"ขอแนวใหม่" re-runs understand (billed; in-app confirm modal, never `window.confirm`).
+
+### 6.4 Storyboard player (`pages/story/StoryboardPage.tsx`)
+- `@remotion/player` plays the real `StoryVideo` on the 480p proxies: real transitions,
+  captions, overlays, SFX and the A-roll sound (Kitti's player showed stills and could not
+  load audio). Custom graphics not produced yet show as a labelled placeholder card.
+- Horizontal shot strip (equal-width cards: index, beat, time, duration), ←/→, Space.
+- Per-shot panel: VO line, super text (inline edit), layout / transition / effect / overlay /
+  SFX chips editable from the catalog, swap b-roll from the index, note box.
+- Footer: "ส่งโน้ตให้ AI แก้" (notes → revise, estimate shown), "อนุมัติแล้วสร้างคลิป"
+  (approve → produce). Manual edits save via `PUT /story/storyboard`, free.
+
+### 6.5 `StoryVideo` composition (`web/src/story/`)
+- `StoryVideo.tsx` — `<TransitionSeries>` of shots; each shot = layout component + layers
+  (A-roll `<Video>` ranges, b-roll `<Video>`/`<Img>`, matte layer, graphic video, Lottie
+  overlays, captions, effects wrappers, camera preset); `<Audio>` for voice ranges, SFX, music.
+- `layouts/*.tsx`, `catalog/*.tsx` (thin wrappers that map catalog ids to the packages in §4),
+  `templates/*.tsx` (§4.2), `captions/StoryCaptions.tsx` (TikTok template logic + super text).
+- `resolve.ts` (pure, tested) — anchors → frames.
+- Render job `engine/jobs/renderStory.ts` registered like the other jobs; calls
+  `renderMediaOnWeb` (or the server fallback), writes `final.mp4` via the staged OPFS write,
+  honours `job.signal`.
+
+### 6.6 Person matte (`web/src/story/matte.ts`)
+MediaPipe segmenter over only the A-roll ranges used by cut-out layouts, 15 fps, temporal
+smoothing (the segmenter's own option where available), stored as `story/matte/<clip>_<in>.webm`
+so re-renders skip it; also emits the face/head box for camera anchors and caption avoidance.
+
+### 6.7 Result page (`pages/story/StoryResultPage.tsx`)
+Player + shot strip; per-shot notes → revise → produce only changed custom graphics
+(manifest diff) → re-render. Download MP4.
+
+---
+
+## 7. Security & safety checklist (each one has a test)
+1. AI-written TSX runs only inside Noey Graphics; the browser receives video files only.
+2. Graphics service: private network, bearer token, import allow-list, network aborted,
+   time/memory caps; test inputs that `fetch`, import `fs`, loop forever or allocate 2 GB must
+   fail closed.
+3. Every third-party package/asset has a licence row (§4); a test fails when a file under
+   `web/public/story/` is missing from `THIRD_PARTY_ASSETS.md`.
+4. No invented numbers: validator on storyboard + custom graphic text.
+5. Uploads: existing size/type checks; b-roll counts toward storage quota.
+6. No AI vendor names in UI strings (extend the existing grep test to `story/`).
+
+---
+
+## 8. Build order (each phase ends with its gate green and a commit)
+
+| Phase | Deliverable | Gate |
+|---|---|---|
+| P0 | Branch, settings, flag; licence checks (§0.1, §4); **render-path spike** (§1.2) with results written to §11; catalog + schemas (py + ts) + contract test | spike numbers recorded; `pytest tests/test_story_schema.py`; `vitest src/lib/story` |
+| P1 | Asset curation: transitions (Remotion + licence-filtered gl-transitions), effects, Lottie pack, CC0 SFX pack, `THIRD_PARTY_ASSETS.md`; catalog filled from them | licence test green; a catalog gallery page (dev only) renders every entry |
+| P2 | `StoryVideo`: layouts, catalog wrappers, captions, camera presets, audio mix + loudness; render job | vitest (resolve, catalog mapping, loudness on reference tones ±0.5 LU); one Playwright run rendering `fixtures/story/demo.json` → contact sheet + MP4 reviewed; speed recorded |
+| P3 | Templates (§4.2) | each template renders from its fixture params; golden stills compared (1 % tolerance) |
+| P4 | Person matte + cut-out layouts | one Playwright run on a fixture clip → contact sheet |
+| P5 | Noey Graphics service + Graphics Contract + sandbox; deployed on Railway (private) | `graphics: npm test` incl. sandbox escapes; smoke render from the worker host |
+| P6 | Backend: mode registration, billing kinds, routes, tasks with fake-AI fixtures | pytest: routes (flag off → 404), estimates, billed tasks, resume per sub-step, `test_every_ai_task_is_billed_and_registered_by_name`, admin security walk |
+| P7 | Prompts: understand, storyboard, revise, graphics code, QA, fix | pytest call-site tests (monkeypatched gateway); validator tests incl. invented numbers |
+| P8 | Web UI: wizard, concept picker, storyboard player, result page, pipeline | vitest; `npm run typecheck && npm run lint && npm run build`; one Playwright happy path with `LOADTEST_FAKE_AI=1` locally |
+| P9 | Hardening: resume after `paused_quota` at every stage, cancel, reload mid-job, lost network during asset download, re-render idempotency | pytest + vitest per case |
+| P10 | Live eval (§9): owner's live-talk clips + self-made b-roll, ≥3 runs each (cut-prompt eval method), contact sheets + MP4s in `docs/story-eval/`; tune prompts and estimate constants; record tokens, calls, wall time, render speed | owner reviews the eval doc |
+| P11 | Merge to `main` with the flag off, deploy, watch logs; enable for the allow-list | deploy green; production smoke with the owner's account |
+
+Run rules: test as you go (repo rule 6); Playwright only for the single runs above; full
+backend + web suites before every merge; English commit messages; check `origin/main..main`
+and alembic heads before pushing (other sessions push to main); at the end update
+`CLAUDE.md`/`AGENTS.md` code map (`packages/video/story/`, `graphics/`, `web/src/story/`)
+and this checklist.
+
+---
+
+## 9. Test material
+- **A-roll**: the owner's raw live-stream talk clips (rambling, unscripted, not sales).
+  Stored outside the repo (`~/noey-story-fixtures/<name>/aroll/`), never committed.
+- **B-roll, made by Claude** per clip topic, after reading the transcript:
+  screen recordings of relevant public web pages (Playwright `recordVideo`, scrolling,
+  9:16 viewport), screenshots as photos, and short clips cut from other parts of the owner's
+  own footage; no downloads from stock sites. Stored beside the A-roll.
+- Three variants per clip: rich b-roll (10–20 files), thin b-roll (2–3), **no b-roll**.
+- Unit/CI fixtures: tiny generated clips (`tests/media_helpers.py`) + `fixtures/story/*.json`.
+
+## 10. Fake AI
+Extend `packages/llm/fake.py:build_answer` with canned VALID answers for the story schemas
+(routed by schema `title`), built from `tests/fixtures/story/*.json`, so the flow runs end to
+end with `LOADTEST_FAKE_AI=1` and no vendor cost.
+
+## 11. Spike results (filled in P0)
+_pending_
+
+## 12. Style reference (measured from Kitti's own result clip, 90.8 s)
+39 visual segments, median 2.1 s; A-roll full 28 %, b-roll 30 %, motion graphics 19 %,
+result card 12 %, cut-out over b-roll 10 %; super text = rewritten 2–5-word summaries, white +
+lime `#EAFF07` keyword, thick black outline, pops in 0–0.3 s before the word; ~40 SFX events;
+6 white flashes (3 frames) hiding jump cuts; 2 punch-ins (+13–15 % in 0.2 s) on climax words;
+music bed 13–15 dB under voice with ~3 dB duck; −14.1 LUFS. Raw→edit on their scripted take:
+whole first take dropped (retakes), pauses trimmed to ~100–250 ms, no speed-up, no reordering.
+
+## 13. Known risks
+- `@remotion/web-renderer` is experimental → the P0 spike decides; server fallback ready.
+- Remotion licence changes with team size (§0.1).
+- Render speed and memory in the browser for long outputs (a live talk can produce several
+  clips) — measured in P0/P2.
+- Model taste: storyboard quality needs P10 iterations (budget 3 prompt rounds).
+- A 2-hour live A-roll may not fit one understand call → `footage_over_limit` in v1.
+- MediaPipe matte quality on busy backgrounds.
 
 ---
 
 ## Checklist (the executing session ticks these)
-- [ ] §0 owner inputs collected (★1, ★2 at minimum)
-- [ ] P0 contracts
-- [ ] P1 graphics service + templates
-- [ ] P2 compositor
-- [ ] P3 audio
+- [ ] P0 spike + licences + contracts
+- [ ] P1 asset curation
+- [ ] P2 StoryVideo
+- [ ] P3 templates
 - [ ] P4 matte + layouts
-- [ ] P5 backend plumbing + billing
-- [ ] P6 prompts
-- [ ] P7 web UI
-- [ ] P8 hardening
-- [ ] P9 live eval
-- [ ] P10 merge + deploy (flag off) + allow-list
+- [ ] P5 graphics service
+- [ ] P6 backend plumbing + billing
+- [ ] P7 prompts
+- [ ] P8 web UI
+- [ ] P9 hardening
+- [ ] P10 live eval (owner clips received: [ ])
+- [ ] P11 merge + deploy (flag off) + allow-list
