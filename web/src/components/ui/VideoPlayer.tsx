@@ -4,6 +4,7 @@ import { cn } from '../../lib/cn'
 import { seekToPosterFrame } from '../../lib/videoPoster'
 import { VideoModal } from './VideoModal'
 import { VideoTransport } from './VideoTransport'
+import { useAutoHideControls } from './useAutoHideControls'
 
 /**
  * The app's one video player chrome: a chrome-free `<video>` with the transport
@@ -93,8 +94,6 @@ export function VideoPlayer({
   const [playing, setPlaying] = useState(false)
   const [current, setCurrent] = useState(0)
   const [duration, setDuration] = useState(0)
-  const [visible, setVisible] = useState(false)
-  const timer = useRef<number | undefined>(undefined)
   // While the head is held, the ELEMENT is not the source of truth: seeking a
   // large file lands late, so its `timeupdate` events still report the old
   // position and, on a controlled input, yank the head back under the pointer
@@ -106,26 +105,20 @@ export function VideoPlayer({
   const [expanded, setExpanded] = useState(false)
   const [handoffSec, setHandoffSec] = useState(0)
 
-  // A touch screen has no hover, and the pointer events it DOES send are the
-  // opposite of what this overlay was built on: `pointerenter`/`pointermove`
-  // only fire while a finger is down, and `pointerleave` fires the instant it
-  // lifts. So on a phone the transport appeared only while pressing and held
-  // and vanished on release — "ต้องจิ้มค้างไว้ถึงจะขึ้น หากปล่อยก็หายเลย"
-  // (live report 2026-09-09). Touch gets tap-to-reveal instead, and a longer
-  // grace period, because there is no pointer resting on the frame to keep it
-  // up.
-  const coarse = useRef(false)
-
-  const show = (): void => {
-    setVisible(true)
-    window.clearTimeout(timer.current)
-    timer.current = window.setTimeout(() => setVisible(false), coarse.current ? 4000 : 2000)
-  }
-  const hide = (): void => {
-    window.clearTimeout(timer.current)
-    setVisible(false)
-  }
-  useEffect(() => () => window.clearTimeout(timer.current), [])
+  // Auto-hide (ui/useAutoHideControls): over the frame or keyboard-focused
+  // inside it — on; pointer gone — off, paused or not. A touch screen has no
+  // hover, and the pointer events it DOES send are the opposite of what a
+  // hover overlay is built on (`pointerleave` fires the instant a finger
+  // lifts), so on a phone the bar appeared only while pressing — "ต้องจิ้มค้าง
+  // ไว้ถึงจะขึ้น หากปล่อยก็หายเลย" (live report 2026-09-09). Touch gets
+  // tap-to-reveal instead, with a longer grace period.
+  const {
+    visible,
+    show,
+    hide,
+    coarseRef: coarse,
+    containerProps: autoHide
+  } = useAutoHideControls(playing)
 
   // Arrow keys seek, from anywhere on the page. Putting the handler on the seek
   // slider alone meant it only worked after clicking the slider — nobody does
@@ -150,8 +143,8 @@ export function VideoPlayer({
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-    // `show` is stable enough for this: it only touches refs and setState.
-  }, [videoRef])
+    // `show` is stable (useAutoHideControls).
+  }, [videoRef, show])
 
   // `timeupdate` fires ~4×/s, which is fine for a clock and visibly steppy for
   // a progress fill. While playing, follow the element per frame instead.
@@ -179,20 +172,10 @@ export function VideoPlayer({
 
   return (
     <div
-      onPointerDown={(e) => {
-        coarse.current = e.pointerType === 'touch'
-      }}
-      onPointerEnter={(e) => {
-        if (e.pointerType !== 'touch') show()
-      }}
+      {...autoHide}
       onPointerMove={(e) => {
-        if (e.pointerType !== 'touch') show()
+        autoHide.onPointerMove(e)
         onPointerMove?.(e)
-      }}
-      onPointerLeave={(e) => {
-        // On touch this fires on lift, which is exactly when the transport
-        // needs to STAY up. Its own timer takes it away.
-        if (e.pointerType !== 'touch') hide()
       }}
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerCancel}

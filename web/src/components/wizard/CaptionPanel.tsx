@@ -13,6 +13,7 @@ import {
 } from '../../lib/captionStyle'
 import { Chip } from '../ui/Chip'
 import { Slider } from '../ui/Slider'
+import { paintCaptionOverlay } from '../ui/captionOverlay'
 
 function Swatch({
   hex,
@@ -48,16 +49,14 @@ function FieldLabel({ children }: { children: React.ReactNode }): React.JSX.Elem
 }
 
 /** Proportions of the 9:16 frame, so the preview reads the same at any size. */
-const CAPTION_BOTTOM_RATIO = 62 / 281
 const TIKTOK_UI_WASH_RATIO = 52 / 281
+const PREVIEW_TEXT = 'สวัสดีค่ะ'
 
 /**
  * The 9:16 frame itself. Sized by the caller (`className`), never by a fixed
- * height here: the caption metrics are derived from the measured height so the
- * small inline copy and the expanded one show the same relative type size.
- *
- * `size` is an ASS Fontsize on the backend's 1080×1920 canvas
- * (`packages/video/caption.py`) — dividing by 1920 is what makes it meaningful.
+ * height here: the caption is drawn for a 1080×1920 output and scaled to the
+ * measured box, so the small inline copy and the expanded one show the same
+ * relative type size, outline and bottom margin as the render.
  */
 function CaptionPreviewFrame({
   style,
@@ -80,6 +79,11 @@ function CaptionPreviewFrame({
     return () => ro.disconnect()
   }, [])
 
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  useEffect(() => {
+    paintCaptionOverlay(canvasRef.current, { text: PREVIEW_TEXT, style })
+  }, [style, heightPx])
+
   return (
     <div
       ref={boxRef}
@@ -95,24 +99,17 @@ function CaptionPreviewFrame({
           className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 text-muted"
         />
       )}
-      {heightPx > 0 ? (
-        <span
-          style={{
-            fontFamily: CAPTION_FONTS.find((f) => f.value === style.font)?.cssFamily,
-            color: style.color,
-            fontSize: `${Math.round((style.size / 1920) * heightPx)}px`,
-            WebkitTextStroke: `${Math.max(1, Math.round((4 / 1920) * heightPx))}px ${style.border_color}`,
-            paintOrder: 'stroke fill',
-            bottom: `${Math.round(CAPTION_BOTTOM_RATIO * heightPx)}px`,
-            paddingInline: `${Math.round(0.043 * heightPx)}px`
-          }}
-          className="absolute inset-x-0 text-center font-bold leading-tight"
-        >
-          สวัสดีค่ะ
-        </span>
-      ) : null}
-      {/* The wash is where TikTok paints its own UI — the caption sits above it
-          so the preview shows what will actually stay visible. */}
+      {/* The render's own drawing at the render's size, line breaks and
+        bottom margin (ui/captionOverlay) — the same canvas the timeline
+        editor lays over its preview. */}
+      <canvas
+        ref={canvasRef}
+        aria-hidden
+        className="pointer-events-none absolute inset-0 z-[1] h-full w-full object-contain"
+      />
+      {/* The wash is where TikTok paints its own UI. The caption is drawn
+          where the render puts it (100/1920 above the bottom edge), so the
+          preview is honest about how much of it that UI will cover. */}
       <span
         style={{ height: `${Math.round(TIKTOK_UI_WASH_RATIO * heightPx)}px` }}
         className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-[rgb(0_0_0_/_0.55)] to-transparent"

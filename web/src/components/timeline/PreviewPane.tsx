@@ -1,6 +1,8 @@
-import { memo, useEffect, useRef, useState } from 'react'
+import { memo, useEffect } from 'react'
 import type { RefObject, VideoHTMLAttributes } from 'react'
 import { VideoTransport } from '../ui/VideoTransport'
+import { useAutoHideControls } from '../ui/useAutoHideControls'
+import { paintCaptionOverlay } from '../ui/captionOverlay'
 import { withShortcut } from './shortcuts'
 
 /** The handlers both preview <video>s carry, as one object spread on each. */
@@ -57,7 +59,7 @@ export const PreviewPane = memo(function PreviewPane({
 }: {
   videoARef: RefObject<HTMLVideoElement | null>
   videoBRef: RefObject<HTMLVideoElement | null>
-  captionOverlayRef: RefObject<HTMLDivElement | null>
+  captionOverlayRef: RefObject<HTMLCanvasElement | null>
   /** The last frame, held over both videos while another file loads — the
    * player draws it and shows/hides it (usePreviewPlayer holdFrame). */
   holdFrameRef: RefObject<HTMLCanvasElement | null>
@@ -93,27 +95,26 @@ export const PreviewPane = memo(function PreviewPane({
   onTimeEditStart?: () => void
   onTimeEditEnd?: () => void
 }): React.JSX.Element {
-  // Transport auto-hide, the way a video player does it: on screen while the
-  // pointer is on the stage, and for a moment after it stops moving; always on
-  // while paused, because then it is the only thing to act on.
-  const [transportOn, setTransportOn] = useState(false)
-  const transportTimer = useRef<number | undefined>(undefined)
-  // See ui/VideoPlayer: on a touch screen `pointermove` only fires while a
-  // finger is down and `pointerleave` fires on lift, so a hover-driven overlay
-  // is visible exactly while it is being pressed. Touch gets a longer grace
-  // period and never gets hidden by `pointerleave`.
-  const coarsePointer = useRef(false)
-  const showTransport = (): void => {
-    setTransportOn(true)
-    window.clearTimeout(transportTimer.current)
-    transportTimer.current = window.setTimeout(
-      () => setTransportOn(false),
-      coarsePointer.current ? 4000 : 2000
-    )
-  }
-  useEffect(() => () => window.clearTimeout(transportTimer.current), [])
+  // Transport auto-hide — the project page player's (ui/useAutoHideControls):
+  // on while the pointer is on the stage or keyboard focus is in the bar, off
+  // the moment the pointer leaves, paused or playing. It used to stay pinned
+  // whenever playback was paused, over the bottom of the frame, which is
+  // where the captions are.
+  const {
+    visible: transportVisible,
+    show: showTransport,
+    containerProps: autoHide
+  } = useAutoHideControls(isPlaying)
 
-  const transportVisible = transportOn || !isPlaying
+  // The caption canvas follows the stage's size; the editor repaints it when
+  // the text or style changes, this when only the box does.
+  useEffect(() => {
+    const el = captionOverlayRef.current
+    if (!el) return
+    const ro = new ResizeObserver(() => paintCaptionOverlay(el, {}))
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [captionOverlayRef])
 
   // Two-up: each element takes one half (still 9:16 each — the stage
   // doubles its aspect). Both are forced visible with an !important opacity
@@ -133,15 +134,11 @@ export const PreviewPane = memo(function PreviewPane({
     <div
       className="group/stage relative flex h-full min-h-0 max-w-full flex-1 items-center justify-center"
       style={twoUp ? TWO_UP_STAGE_STYLE : STAGE_STYLE}
+      {...autoHide}
       onPointerDown={(e) => {
-        coarsePointer.current = e.pointerType === 'touch'
+        autoHide.onPointerDown(e)
+        // A tap on the stage reveals the bar (a finger has no hover).
         if (e.pointerType === 'touch') showTransport()
-      }}
-      onPointerMove={(e) => {
-        if (e.pointerType !== 'touch') showTransport()
-      }}
-      onPointerLeave={(e) => {
-        if (e.pointerType !== 'touch') setTransportOn(false)
       }}
     >
       {/* Two elements so the "next" edited-mode segment can be pre-seeked hidden, then swapped in instantly. */}
@@ -179,11 +176,18 @@ export const PreviewPane = memo(function PreviewPane({
         className="pointer-events-none absolute inset-0 z-[3] h-full w-full rounded-xl object-contain"
         style={{ opacity: 0 }}
       />
-      {/* Caption under the playhead — same lines the inspector edits. */}
-      <div
+      {/* Caption under the playhead — the render's own drawing, at the
+        render's size and line breaks (captionOverlay.ts). Same box and
+        object-contain as the picture, so it letterboxes the way the frame
+        does; in two-up it is over the incoming (right) frame, the one the
+        playhead is on. */}
+      <canvas
         ref={captionOverlayRef}
-        className="pointer-events-none absolute inset-x-0 bottom-[9%] z-10 px-6 text-center text-[15px] leading-snug font-bold whitespace-pre-wrap text-white"
-        style={{ textShadow: '0 0 3px #000, 0 0 3px #000, 0 2px 6px rgba(0,0,0,.95)' }}
+        className={
+          twoUp
+            ? 'pointer-events-none absolute inset-y-0 right-0 z-10 h-full w-1/2 object-contain'
+            : 'pointer-events-none absolute inset-0 z-10 h-full w-full object-contain'
+        }
       />
       {/* Background music preview — muted/paused unless the playhead is
         inside the music block's active window (see syncMusicAudio). */}

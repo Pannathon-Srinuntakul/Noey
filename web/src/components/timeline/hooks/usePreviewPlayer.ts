@@ -27,6 +27,9 @@ import {
 import { editedTimeIn, resolveEditedPosition, sceneIsOver } from '../previewMath'
 import type { WorkingCut } from '../types'
 import type { TimelineViewportApi } from './useTimelineViewport'
+import type { CaptionStyle } from '../../../lib/captionStyle'
+import { CAPTION_REF_HEIGHT, CAPTION_REF_WIDTH } from '../../../lib/captionLayout'
+import { paintCaptionOverlay } from '../../ui/captionOverlay'
 
 /** What the scrub needs to snap the playhead to an edge: the editor builds
  * the targets for the view on screen and draws the guide through `report`. */
@@ -54,7 +57,7 @@ interface ViewModePlaybackState {
 export interface PreviewPlayerApi {
   videoARef: RefObject<HTMLVideoElement | null>
   videoBRef: RefObject<HTMLVideoElement | null>
-  captionOverlayRef: RefObject<HTMLDivElement | null>
+  captionOverlayRef: RefObject<HTMLCanvasElement | null>
   holdFrameRef: RefObject<HTMLCanvasElement | null>
   playRangeRef: RefObject<{ in: number; out: number } | null>
   editedActiveCutIdRef: RefObject<string | null>
@@ -173,6 +176,7 @@ export function usePreviewPlayer({
   setVideoDuration,
   currentTimeRef,
   captionLinesRef,
+  captionStyleRef,
   captionsOnOutputClock,
   isCutBlockEditingRef,
   getSourceDurationSec,
@@ -203,6 +207,8 @@ export function usePreviewPlayer({
   setVideoDuration: Dispatch<SetStateAction<number>>
   currentTimeRef: RefObject<number>
   captionLinesRef: RefObject<CaptionLine[] | null>
+  /** The caption look the render will burn in — the overlay draws with it. */
+  captionStyleRef: RefObject<CaptionStyle | null>
   captionsOnOutputClock: boolean
   /** Set while a scene block is dragged: the playhead then stops moving the selection. */
   isCutBlockEditingRef: RefObject<boolean>
@@ -228,7 +234,7 @@ export function usePreviewPlayer({
 }): PreviewPlayerApi {
   // Caption overlay on the preview. Painted imperatively from the rAF loop like
   // the playhead is — a React re-render per frame would fight the video.
-  const captionOverlayRef = useRef<HTMLDivElement | null>(null)
+  const captionOverlayRef = useRef<HTMLCanvasElement | null>(null)
   // The last frame, held on screen while another source file loads — see
   // holdFrame.
   const holdFrameRef = useRef<HTMLCanvasElement | null>(null)
@@ -983,8 +989,15 @@ export function usePreviewPlayer({
           : activeSourceTime()
         : null
     const line = t === null ? undefined : lines!.find((l) => t >= l.start && t < l.end)
-    const text = line?.text ?? ''
-    if (el.textContent !== text) el.textContent = text
+    // Laid out on the frame the render draws on: the picture on screen (its
+    // intrinsic size), 1080x1920 until one has loaded.
+    const v = activeVideo()
+    paintCaptionOverlay(el, {
+      text: line?.text ?? '',
+      style: captionStyleRef.current,
+      frameWidth: v?.videoWidth || CAPTION_REF_WIDTH,
+      frameHeight: v?.videoHeight || CAPTION_REF_HEIGHT
+    })
   }
 
   function syncTimeFromVideo() {

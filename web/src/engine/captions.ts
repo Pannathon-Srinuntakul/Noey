@@ -8,75 +8,29 @@
  * marks land correctly without shipping a font to a renderer that has to be
  * told where they are.
  *
- * The numbers below are the ASS style resolved by
- * `backend/packages/video/caption.py:resolve_caption_style`, so both builds
- * put the text in the same place at the same size:
- *
- *   canvas          1080 x 1920 (PlayResX/Y)
- *   alignment       2  — bottom centre
- *   margin_v        100
- *   outline         4px
- *   default size    52
- *   words per line  3
- *
- * Sizes are expressed against that 1080x1920 reference and scaled to whatever
- * the real output is, so a caption on a 720x1280 render is the same size
- * relative to the picture.
+ * Size, outline, bottom margin and line breaking come from
+ * lib/captionLayout.ts — the ASS style
+ * `backend/packages/video/caption.py:resolve_caption_style` writes, on its
+ * 1080x1920 canvas, scaled to the real output. The editor's preview overlay
+ * draws with `drawCaptionText` below through the same module, so what the
+ * editor shows is what the render burns in.
  */
 
+import {
+  captionFont,
+  layoutCaption,
+  resolveCaptionStyle,
+  type ResolvedCaptionStyle
+} from '../lib/captionLayout'
 import type { CaptionLine } from '../lib/captionLines'
-import type { CaptionStyle } from '../lib/captionStyle'
 
-/** ASS PlayResX/Y — every measurement below is relative to this. */
-const REF_WIDTH = 1080
-const REF_HEIGHT = 1920
-
-const DEFAULT_SIZE = 52
-const MARGIN_V = 100
-const OUTLINE_PX = 4
-const LINE_GAP = 1.25
-
-/** The four bundled faces, keyed as the UI keys them. */
-const FONT_STACK: Record<string, string> = {
-  kanit: '"Kanit", "Noto Sans Thai", sans-serif',
-  prompt: '"Prompt", "Noto Sans Thai", sans-serif',
-  sarabun: '"Sarabun", "Noto Sans Thai", sans-serif',
-  anuphan: '"Anuphan", "Noto Sans Thai", sans-serif'
-}
+export type { ResolvedCaptionStyle }
+export { resolveCaptionStyle }
 
 export interface CaptionWord {
   word: string
   start: number
   end: number
-}
-
-export interface ResolvedCaptionStyle {
-  font: string
-  sizePx: number
-  color: string
-  borderColor: string
-  outlinePx: number
-  marginV: number
-  mode: 'static' | 'word_pop' | 'typewriter'
-}
-
-/** Scale the reference style onto the real output size. */
-export function resolveCaptionStyle(
-  style: CaptionStyle | undefined,
-  outputWidth: number,
-  outputHeight: number
-): ResolvedCaptionStyle {
-  const scale = Math.min(outputWidth / REF_WIDTH, outputHeight / REF_HEIGHT) || 1
-  const key = String(style?.font ?? 'kanit')
-  return {
-    font: FONT_STACK[key] ?? FONT_STACK.kanit,
-    sizePx: Math.round((Number(style?.size) || DEFAULT_SIZE) * scale),
-    color: String(style?.color ?? '#FFFFFF'),
-    borderColor: String(style?.border_color ?? '#000000'),
-    outlinePx: Math.max(1, Math.round(OUTLINE_PX * scale)),
-    marginV: Math.round(MARGIN_V * scale),
-    mode: (style?.mode as ResolvedCaptionStyle['mode']) ?? 'static'
-  }
 }
 
 /**
@@ -118,28 +72,6 @@ function joinWords(words: string[]): string {
   return out
 }
 
-/** Break a line to fit the frame, at most `maxLines` rows. */
-function wrap(ctx: OffscreenCanvasRenderingContext2D, text: string, maxWidth: number): string[] {
-  if (ctx.measureText(text).width <= maxWidth) return [text]
-  // Thai has no spaces, so fall back to breaking on characters when the
-  // whitespace split does not help.
-  const parts = text.includes(' ') ? text.split(' ') : Array.from(text)
-  const sep = text.includes(' ') ? ' ' : ''
-  const rows: string[] = []
-  let current = ''
-  for (const part of parts) {
-    const candidate = current ? current + sep + part : part
-    if (current && ctx.measureText(candidate).width > maxWidth) {
-      rows.push(current)
-      current = part
-    } else {
-      current = candidate
-    }
-  }
-  if (current) rows.push(current)
-  return rows
-}
-
 /**
  * Draw whichever caption belongs at `timeSec` onto an already-composed frame.
  *
@@ -158,30 +90,50 @@ export function drawCaption(
   const text = textAt(line, timeSec, style.mode, words).trim()
   if (!text) return
 
-  const { width, height } = ctx.canvas
+  drawCaptionText(ctx, text, style)
+}
+
+/** Any 2D context a caption is drawn on: the render's offscreen frame or the
+ * editor's on-screen overlay. */
+export type CaptionContext = OffscreenCanvasRenderingContext2D | CanvasRenderingContext2D
+
+/**
+ * Draw one caption's text, wrapped and placed, on a frame the size of
+ * `frameWidth` x `frameHeight` (default: the context's canvas). `style` must
+ * be resolved for that same frame size. The overlay passes the output's size
+ * and scales the context to its own pixels, so the rows break exactly where
+ * the render's do.
+ */
+export function drawCaptionText(
+  ctx: CaptionContext,
+  text: string,
+  style: ResolvedCaptionStyle,
+  frameWidth: number = ctx.canvas.width,
+  frameHeight: number = ctx.canvas.height
+): void {
+  if (!text.trim()) return
   ctx.save()
-  ctx.font = `700 ${style.sizePx}px ${style.font}`
+  ctx.font = captionFont(style)
   ctx.textAlign = 'center'
   ctx.textBaseline = 'alphabetic'
   ctx.lineJoin = 'round'
   ctx.miterLimit = 2
 
-  const rows = wrap(ctx, text, width * 0.86)
-  const lineHeight = style.sizePx * LINE_GAP
-  // Alignment 2 in ASS: bottom centre, `margin_v` up from the bottom edge.
-  const baseline = height - style.marginV
-  const startY = baseline - (rows.length - 1) * lineHeight
-
-  for (let i = 0; i < rows.length; i++) {
-    const y = startY + i * lineHeight
+  const rows = layoutCaption(text, style, frameWidth, frameHeight, (s) => ctx.measureText(s).width)
+  for (const row of rows) {
     ctx.strokeStyle = style.borderColor
     ctx.lineWidth = style.outlinePx * 2
-    ctx.strokeText(rows[i], width / 2, y)
+    ctx.strokeText(row.text, frameWidth / 2, row.y)
     ctx.fillStyle = style.color
-    ctx.fillText(rows[i], width / 2, y)
+    ctx.fillText(row.text, frameWidth / 2, row.y)
   }
   ctx.restore()
 }
+
+/** Thai and Latin sample: `FontFaceSet.load` fetches only the unicode-range
+ * subsets that cover the text it is given, and its default (" ") covers Latin
+ * alone — the Thai subset of a @fontsource face would never be asked for. */
+export const CAPTION_FONT_PROBE = 'กขคเพรียวมาก Aa0'
 
 /**
  * Make sure the caption faces are loaded before the first frame is drawn.
@@ -192,7 +144,7 @@ export function drawCaption(
 export async function ensureCaptionFont(style: ResolvedCaptionStyle): Promise<void> {
   if (typeof document === 'undefined' || !document.fonts) return
   try {
-    await document.fonts.load(`700 ${style.sizePx}px ${style.font}`)
+    await document.fonts.load(captionFont(style), CAPTION_FONT_PROBE)
     await document.fonts.ready
   } catch {
     // Rendering with the fallback face is better than not rendering.

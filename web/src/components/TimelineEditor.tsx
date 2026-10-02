@@ -923,6 +923,7 @@ export const VideoTimelineEditor = memo(function VideoTimelineEditor({
     setVideoDuration,
     currentTimeRef,
     captionLinesRef,
+    captionStyleRef,
     captionsOnOutputClock,
     isCutBlockEditingRef,
     getSourceDurationSec,
@@ -1095,6 +1096,11 @@ export const VideoTimelineEditor = memo(function VideoTimelineEditor({
     captionLinesRef.current = captionLines
     syncCaptionOverlay()
   }, [captionLines])
+  // And on every style change, so the size slider and colours show live on
+  // the frame (captionStyleRef is written by an earlier effect).
+  useEffect(() => {
+    syncCaptionOverlay()
+  }, [captionStyle])
 
   // Decode the attached music file client-side into a peak array for the
   // waveform canvas (shared with the wizard's MusicRangePicker).
