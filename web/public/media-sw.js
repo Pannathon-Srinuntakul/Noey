@@ -170,6 +170,15 @@ function updateState(mutate) {
 self.addEventListener('message', (event) => {
   const data = event.data
   if (!data) return
+  if (data.type === 'sw:claim') {
+    // A page loaded with a hard reload (Cmd+Shift+R) bypasses the worker and
+    // stays uncontrolled for its whole life — every `/media/...` request then
+    // reaches the app origin and 404s ("ไม่พบไฟล์คลิป" on every card). The
+    // `activate` claim below only runs once per install, so the page asks for
+    // one here (platform/swControl.ts).
+    event.waitUntil(self.clients.claim())
+    return
+  }
   if (data.type === 'sw:origin') {
     event.waitUntil(
       updateState((state) => {

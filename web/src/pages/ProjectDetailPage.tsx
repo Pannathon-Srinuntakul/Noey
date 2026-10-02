@@ -27,6 +27,7 @@ import { STEP_LABELS, isBusy, stepOrderFor, type ProjectStep } from '../lib/proj
 import { fmtClock } from '../lib/wizardState'
 import { MODE_LABEL } from '../lib/modeLabel'
 import { usePreviewFile } from '../lib/usePreviewFile'
+import { deviceId, mayStillArrive } from '../lib/crossDevice'
 import { countShotsWithAlternates } from '../lib/shotSwap'
 import { canOpenFolder, canRecordVoiceover, canUseZoomEffects } from '../lib/platformFeatures'
 import { Button } from '../components/ui/Button'
@@ -228,6 +229,23 @@ export default function ProjectDetailPage({ uid }: { uid: string }): React.JSX.E
     }
   )
 
+  // A clip another browser made a moment ago can still be on its way to the
+  // server (its project.json arrives first). That is a wait — look again in
+  // a while instead of latching "ไม่พบไฟล์คลิป" (lib/crossDevice.ts).
+  const previewArriving =
+    previewBrokenKey === `${uid}-${previewFile}-${job?.mediaKey}` &&
+    !!job &&
+    (job.elsewhere !== null || mayStillArrive(job.project, deviceId()))
+  useEffect(() => {
+    if (!previewArriving) return
+    const id = window.setTimeout(() => {
+      retriedPreviewRef.current = null
+      setPreviewBrokenKey(null)
+      setPreviewNonce((n) => n + 1)
+    }, 15_000)
+    return () => window.clearTimeout(id)
+  }, [previewArriving, previewNonce])
+
   if (!job || !step) {
     return (
       <div className="flex flex-1 items-center justify-center">
@@ -360,8 +378,10 @@ export default function ProjectDetailPage({ uid }: { uid: string }): React.JSX.E
             // read as "the clip is black" instead of "the clip is gone".
             <div className="flex aspect-[9/16] w-full max-w-[270px] flex-col items-center justify-center gap-2 rounded-md bg-media px-6 text-center lg:h-[480px]">
               <Film size={30} className="text-[rgb(243_242_242_/_0.25)]" />
-              <p className="text-[13px] text-muted">ไม่พบไฟล์คลิป</p>
-              {canOpenFolder ? (
+              <p className="text-[13px] text-muted">
+                {previewArriving ? 'รอไฟล์จากอีกเครื่อง…' : 'ไม่พบไฟล์คลิป'}
+              </p>
+              {canOpenFolder && !previewArriving ? (
                 <button
                   type="button"
                   onClick={() => void window.noey.projects.openFolder(uid)}

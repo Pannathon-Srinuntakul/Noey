@@ -112,9 +112,13 @@ export function RunningJobBar({ job }: { job: ProjectPipeline }): React.JSX.Elem
         >
           ดูรายละเอียด
         </Button>
-        <Button variant="ghost" loading={job.stopping} onClick={() => void job.stop()}>
-          {job.stopping ? 'กำลังหยุด…' : 'หยุดงาน'}
-        </Button>
+        {/* Another browser's run cannot be stopped from here — the stop would
+            cancel ITS server job (lib/crossDevice.ts). */}
+        {job.elsewhere === 'running' ? null : (
+          <Button variant="ghost" loading={job.stopping} onClick={() => void job.stop()}>
+            {job.stopping ? 'กำลังหยุด…' : 'หยุดงาน'}
+          </Button>
+        )}
       </div>
     </div>
   )

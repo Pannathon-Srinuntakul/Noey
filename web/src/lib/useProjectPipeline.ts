@@ -44,6 +44,45 @@ import {
 import type { TimedWord } from './timelineMath'
 import { isEditorOpen, keptMusicPaths, whenEditorClosed } from './editorHistory'
 import { stageStep, stepAfterResume, type ResumeOutcome, type ResumeState } from './resume'
+import { exists, projectFilePath } from '@renderer/platform/fs'
+import { getPicked } from '@renderer/platform/picked'
+import {
+  deviceId,
+  ELSEWHERE_MESSAGE,
+  failureVerdict,
+  runIsElsewhere,
+  WAITING_FILES_MESSAGE
+} from './crossDevice'
+
+/** How often a project worked on in another browser is re-read from the
+ * server while this one shows it as "working elsewhere". */
+const ELSEWHERE_POLL_MS = 20_000
+
+/**
+ * Does this browser hold the project's source footage itself?
+ *
+ * A project made here always does — the import writes the normalized clips
+ * into this browser's store before anything else runs. One restored from the
+ * server holds only its project.json until a job pulls a clip down, so "no"
+ * here is the signal that a run on this project is not this browser's to do
+ * (lib/crossDevice.ts).
+ */
+async function hasLocalFootage(p: LocalProject): Promise<boolean> {
+  const clips = p.clips ?? []
+  if (clips.length > 0) {
+    for (const clip of clips) {
+      if (!(await exists(projectFilePath(p.uid, clip.file)).catch(() => false))) return false
+    }
+    return true
+  }
+  const sources = p.pendingSources ?? []
+  if (sources.length === 0) return true
+  for (const src of sources) {
+    if (getPicked(src)) continue
+    if (!(await exists(src).catch(() => false))) return false
+  }
+  return true
+}
 
 /** talking_head + the R17 speech modes all run the audio chain
  * (extract → transcribe → render locally); everything else runs the
@@ -295,6 +334,14 @@ export interface ProjectPipeline {
   /** The last attempt to claim this project found another tab holding it
    * (lib/projectLock.ts). Cleared by the next successful claim. */
   lockedByOtherTab: boolean
+  /** Not this browser's to run right now (lib/crossDevice.ts): `running` —
+   * another browser is working on it; `files` — its footage has not finished
+   * reaching the server. Null when this browser can run it. */
+  elsewhere: 'running' | 'files' | null
+  /** Run the project HERE anyway — for a run whose other browser was closed
+   * for good. The caller confirms first: if that browser is still working,
+   * this starts a second run. */
+  runHere: () => Promise<void>
 }
 
 /**
@@ -375,6 +422,17 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
    */
   const [resumeState, setResumeState] = useState<ResumeState | null>(null)
   const [resumeBusy, setResumeBusy] = useState(false)
+  /**
+   * This browser is not where the project's work happens right now:
+   * `running` — its busy step belongs to another browser (or, on a record
+   * from before `runDevice`, this browser does not hold its footage);
+   * `files` — a run here stopped on footage the other browser has not
+   * finished uploading. Either way nothing runs, nothing is written as an
+   * error, and the server's copy is re-read until it moves on.
+   */
+  const [elsewhere, setElsewhere] = useState<'running' | 'files' | null>(
+    initial.waitingFiles ? 'files' : null
+  )
   const abortRef = useRef<AbortController | null>(null)
   const stoppedRef = useRef(false)
   /**
@@ -513,13 +571,25 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     uid: initial.uid,
     updatedAt: initial.updatedAt
   })
+  //
+  // A newer disk record REPLACES the in-memory one rather than being spread
+  // over it: it is a complete record, and a key it no longer has was removed
+  // on purpose. Spread, a server copy adopted over a stale local `error`
+  // (lib/crossDevice.ts) kept the old `error` text in memory.
   if (initial.uid !== seenInitial.uid || initial.updatedAt !== seenInitial.updatedAt) {
     setSeenInitial({ uid: initial.uid, updatedAt: initial.updatedAt })
+    const adopt = initial.uid !== project.uid || initial.updatedAt >= project.updatedAt
     setProject((prev) => {
       if (initial.uid !== prev.uid) return initial
-      if (initial.updatedAt >= prev.updatedAt) return { ...prev, ...initial }
+      if (initial.updatedAt >= prev.updatedAt) return initial
       return prev
     })
+    if (adopt && initial.step !== 'error') setError(null)
+    if (adopt && elsewhere === 'running' && !isBusy(initial.step as ProjectStep)) {
+      setElsewhere(null)
+      setProgressMsg('')
+    }
+    if (adopt && elsewhere === 'files' && !initial.waitingFiles) setElsewhere(null)
   }
 
   useEffect(() => {
@@ -644,15 +714,20 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     // no edit is left waiting for a render — and what it rendered becomes the
     // state a later draft is compared against. One place, not every call site.
     const finished = patch.step === 'done' || patch.step === 'waiting_vo'
+    // A busy step names the browser that wrote it, so another browser that
+    // restores this record knows the run is not its to continue
+    // (lib/crossDevice.ts).
+    const owned =
+      patch.step && isBusy(patch.step as ProjectStep) ? { ...patch, runDevice: deviceId() } : patch
     const updated = await window.noey.projects.update(
       project.uid,
       finished && patch.needsRender === undefined
         ? {
-            ...patch,
+            ...owned,
             needsRender: false,
             renderedSig: renderSig({ ...projectRef.current, ...patch })
           }
-        : patch
+        : owned
     )
     if (!disposedRef.current) setProject(updated)
     // The mirror ref is synced by an effect too, but effects only run after
@@ -779,6 +854,9 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     // still describe the previous frame — a press then did nothing and the
     // user had to click again (live report 2026-08-13: "ต้องกด 2 รอบ").
     if (stoppingRef.current) return
+    // Another browser's run is not this browser's to stop: the cancel below
+    // would kill ITS server job.
+    if (elsewhere === 'running') return
     const liveStep = projectRef.current.step as ProjectStep
     if (!isBusy(liveStep) && !isBusy(step)) return
     void window.noey.log.write('useProjectPipeline', `stop: start uid=${project.uid} step=${step}`)
@@ -870,7 +948,52 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     return true
   }
 
+  /**
+   * Stand down: this browser is not where the project's work can happen
+   * (yet). Writes NOTHING to the server — no `local-status`, no project.json
+   * — because the browser that is doing the work owns both, and an `error`
+   * from here used to land on top of its run (production 2026-10-02).
+   *
+   * `files` also parks the local step at the checkpoint a stop would use, so
+   * the card offers the run again instead of spinning on a run that is not
+   * happening anywhere.
+   */
+  const standDown = async (kind: 'running' | 'files', why: string): Promise<void> => {
+    void window.noey.log.write(
+      'useProjectPipeline',
+      `stand down (${kind}) uid=${project.uid} step=${projectRef.current.step}: ${why}`
+    )
+    if (kind === 'files') {
+      const parked = resumeStep(projectRef.current.step as ProjectStep)
+      await patchProject({
+        step: isBusy(parked) ? 'imported' : parked,
+        error: undefined,
+        waitingFiles: true
+      })
+    }
+    if (disposedRef.current) return
+    setElsewhere(kind)
+    setError(null)
+    setThinking('')
+    setProgressMsg(kind === 'running' ? ELSEWHERE_MESSAGE : WAITING_FILES_MESSAGE)
+  }
+
   const fail = async (exc: unknown): Promise<void> => {
+    // A file another browser is still uploading is not a failed run, and
+    // neither is anything that goes wrong on a run another browser owns.
+    const current = projectRef.current
+    const verdict = failureVerdict({
+      exc,
+      footageLocal: await hasLocalFootage(current).catch(() => true),
+      elsewhere: runIsElsewhere(current, deviceId(), null)
+    })
+    if (verdict === 'wait') {
+      await standDown(
+        runIsElsewhere(current, deviceId(), null) ? 'running' : 'files',
+        String((exc as Error)?.message ?? exc)
+      )
+      return
+    }
     // OPFS refusing a write because another tab holds the file is the
     // cross-tab conflict surfacing one level down; it gets the same words as
     // the lock's own refusal rather than the DOMException's English name.
@@ -2099,6 +2222,22 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
 
     if (isTerminal(currentStep)) return
 
+    // A busy step written by ANOTHER BROWSER (a project restored from the
+    // server mid-run): that browser is doing the work. Restarting it here ran
+    // the import/analysis a second time against footage still uploading, and
+    // the failure was written to the server over the real run (production
+    // 2026-10-02). Nothing runs; the server's copy is re-read until it moves.
+    if (
+      runIsElsewhere(
+        current,
+        deviceId(),
+        isBusy(currentStep) ? await hasLocalFootage(current) : null
+      )
+    ) {
+      await standDown('running', 'busy step owned by another browser')
+      return
+    }
+
     // A busy step whose run lives in ANOTHER tab: that tab holds the lock,
     // polls the job and writes the outcome. Booting a second pipeline here
     // would poll the same job and finish it twice. The step on disk is what
@@ -2272,6 +2411,60 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step, project.remote?.uid])
 
+  /**
+   * While the work is elsewhere, re-read the server's copy until it moves on.
+   *
+   * This is what turns "กำลังทำบนอีกเครื่อง" into the finished project without
+   * a reload: the other browser uploads its project.json after each step,
+   * and the newer one is adopted here (lib/crossDevice.ts decides). Also on
+   * the tab coming back into view, the likeliest moment for news.
+   */
+  useEffect(() => {
+    if (!elsewhere || !project.remote?.uid) return
+    let cancelled = false
+    let inFlight = false
+    const tick = async (): Promise<void> => {
+      if (inFlight || cancelled) return
+      inFlight = true
+      try {
+        const { refreshProjectFromServer } = await import('./projectSync')
+        const adopted = await refreshProjectFromServer(session, projectRef.current)
+        if (cancelled || !adopted || disposedRef.current) return
+        void window.noey.log.write(
+          'useProjectPipeline',
+          `elsewhere: adopted server copy uid=${adopted.uid} step=${adopted.step}`
+        )
+        projectRef.current = adopted
+        setProject(adopted)
+        setSeenInitial({ uid: adopted.uid, updatedAt: adopted.updatedAt })
+        setError(null)
+        setThinking('')
+        setMediaKey((k) => k + 1)
+        if (runIsElsewhere(adopted, deviceId(), null)) {
+          setElsewhere('running')
+          setProgressMsg(ELSEWHERE_MESSAGE)
+        } else {
+          setElsewhere(null)
+          setProgressMsg('')
+        }
+      } finally {
+        inFlight = false
+      }
+    }
+    const id = window.setInterval(() => void tick(), ELSEWHERE_POLL_MS)
+    const onVisible = (): void => {
+      if (document.visibilityState === 'visible') void tick()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    void tick()
+    return () => {
+      cancelled = true
+      window.clearInterval(id)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- session is mutated in place
+  }, [elsewhere, project.remote?.uid])
+
   // Kick pipeline on mount and whenever a busy step has no in-flight work
   // (covers Vite HMR preserving step=analyzing but dropping the async chain).
   useEffect(() => {
@@ -2335,6 +2528,8 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
   const retry = async (): Promise<void> => {
     if (pipelineRef.current) return
     if (!(await holdProjectLock())) return
+    if (!disposedRef.current && elsewhere === 'files') setElsewhere(null)
+    if (projectRef.current.waitingFiles) await patchProject({ waitingFiles: undefined })
     void window.noey.log.write('useProjectPipeline', `retry uid=${project.uid} step=${step}`)
     setError(null)
     const run = (async () => {
@@ -3342,6 +3537,14 @@ export function useProjectPipeline(initial: LocalProject, session: ApiSession): 
     stop,
     stopping,
     openEditor,
-    lockedByOtherTab
+    lockedByOtherTab,
+    elsewhere,
+    runHere: async () => {
+      if (!disposedRef.current) {
+        setElsewhere(null)
+        setProgressMsg('')
+      }
+      await retry()
+    }
   }
 }

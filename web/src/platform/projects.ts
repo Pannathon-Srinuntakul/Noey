@@ -157,6 +157,23 @@ export async function update(uid: string, patch: Partial<LocalProject>): Promise
   })
 }
 
+/**
+ * Replace a project's record with one adopted from the server, verbatim —
+ * `updatedAt` included. Restamping it would make this browser's copy look
+ * newer than the server's, and the next comparison would keep a record that
+ * is really the server's own. Same write lock as `update`, so a patch cannot
+ * interleave with it.
+ */
+export async function replace(project: LocalProject): Promise<LocalProject> {
+  return withWriteLock(project.uid, async () => {
+    await writeFileAtomic(
+      projectFilePath(project.uid, PROJECT_FILE),
+      new TextEncoder().encode(JSON.stringify(project, null, 2))
+    )
+    return project
+  })
+}
+
 export async function remove(uid: string): Promise<void> {
   if (!(await exists(projectFilePath(uid, PROJECT_FILE)))) return
   await deleteDir(projectDirPath(uid))

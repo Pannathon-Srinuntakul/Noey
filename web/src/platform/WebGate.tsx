@@ -13,6 +13,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { BrandMark } from '../components/ui/BrandMark'
 import { detectCapabilities, type Capabilities } from './capability'
 import { ensureProjectsRoot, requestPersistentStorage, sweepStaleFiles } from './fs'
+import { browserControlDeps, ensureControlled } from './swControl'
 
 type State =
   | { phase: 'checking' }
@@ -42,26 +43,20 @@ function isMobileDevice(): boolean {
   )
 }
 
-async function registerMediaWorker(): Promise<void> {
+/** Resolves true once the page may render, false when it is reloading (the
+ * gate then keeps its "preparing" screen up until the new page replaces it). */
+async function registerMediaWorker(): Promise<boolean> {
   if (!('serviceWorker' in navigator)) throw new Error('เบราว์เซอร์นี้เล่นไฟล์ในเครื่องไม่ได้')
   // Served from public/ at the site root — a worker under /src/ cannot claim
   // '/', which is the scope every /media/... request needs.
   await navigator.serviceWorker.register('/media-sw.js', { scope: '/' })
-  await navigator.serviceWorker.ready
-  // `ready` resolves once there is an active worker, but a first visit can
-  // still be uncontrolled for a tick — the clip that loads in that window 404s.
-  if (!navigator.serviceWorker.controller) {
-    await new Promise<void>((resolve) => {
-      const done = (): void => {
-        navigator.serviceWorker.removeEventListener('controllerchange', done)
-        resolve()
-      }
-      navigator.serviceWorker.addEventListener('controllerchange', done)
-      // The worker calls clients.claim() on activate, so this lands quickly;
-      // the timeout only stops a pathological case from hanging the app.
-      setTimeout(done, 3000)
-    })
-  }
+  const registration = await navigator.serviceWorker.ready
+  // `ready` resolves once there is an active worker, but the page can still be
+  // uncontrolled: for a tick on a first visit, and for good after a hard
+  // reload (Cmd+Shift+R), which bypasses the worker. Rendering then 404s
+  // every clip — see platform/swControl.ts for how this gets control back.
+  const outcome = await ensureControlled(browserControlDeps(registration))
+  return outcome !== 'reloading'
 }
 
 export function WebGate({ children }: { children: ReactNode }): React.JSX.Element {
@@ -81,7 +76,7 @@ export function WebGate({ children }: { children: ReactNode }): React.JSX.Elemen
           setState({ phase: 'unsupported', caps })
           return
         }
-        await registerMediaWorker()
+        if (!(await registerMediaWorker())) return
         await ensureProjectsRoot()
         // Leftovers of a tab that died mid-write (.part, .clips_next, orphaned
         // staging) — swept before any job can start writing new ones.

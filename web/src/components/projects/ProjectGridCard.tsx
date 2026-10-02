@@ -17,6 +17,7 @@ import { StatusLine, type Status } from '../ui/StatusLine'
 import { MODE_LABEL } from '../../lib/modeLabel'
 import { canOpenFolder } from '../../lib/platformFeatures'
 import { RecutDialog } from './RecutDialog'
+import { deviceId, mayStillArrive } from '../../lib/crossDevice'
 
 /** One status per card — no progress bar, no AI thinking log (those moved to
  * the running-job bar and the progress page respectively, HANDOFF §6 item 7). */
@@ -28,8 +29,15 @@ function statusFor(
   recutRound?: number,
   /** speech_highlights: how many clips the render produced — the card's "done"
    * has to say the COUNT, because many-clips is this mode's whole difference. */
-  highlightCount?: number
+  highlightCount?: number,
+  /** The work is in another browser (lib/crossDevice.ts) — say so instead of
+   * a progress claim this browser cannot back. */
+  elsewhere?: 'running' | 'files' | null
 ): { status: Status; label: string } {
+  if (elsewhere === 'running' && isBusy(step)) {
+    return { status: 'working', label: 'กำลังทำบนอีกเครื่อง' }
+  }
+  if (elsewhere === 'files') return { status: 'idle', label: 'รอไฟล์จากอีกเครื่อง' }
   // A failed card says WHY on the card (R1 screen 2) — "ทำงานไม่สำเร็จ" alone
   // makes the user open the project just to read the reason.
   if (step === 'error') return { status: 'error', label: error?.trim() || 'ทำงานไม่สำเร็จ' }
@@ -104,7 +112,8 @@ export function ProjectGridCard({
     step,
     job.error,
     busy ? recutRound : undefined,
-    highlightCount
+    highlightCount,
+    job.elsewhere
   )
 
   const onRevert = async (): Promise<void> => {
@@ -163,6 +172,18 @@ export function ProjectGridCard({
   const modalFile = playlist.length > 1 && playing ? `highlights/${playing.id}.mp4` : previewFile
   const previewKey = `${job.project.uid}-${previewFile}-${job.mediaKey}-${previewNonce}`
   const broken = brokenKey === previewKey
+  // A clip another browser made a moment ago can still be on its way up: its
+  // project.json reached this browser, the video has not reached the server.
+  // That is a wait, not a loss — say so, and look again in a while.
+  const arriving = broken && (job.elsewhere !== null || mayStillArrive(job.project, deviceId()))
+  useEffect(() => {
+    if (!arriving) return
+    const id = window.setTimeout(() => {
+      retriedRef.current = null
+      setPreviewNonce((n) => n + 1)
+    }, 15_000)
+    return () => window.clearTimeout(id)
+  }, [arriving, previewKey])
 
   /** Menu width + row heights are fixed, so its box can be measured from the
    * trigger without waiting for a layout pass. Flips above the button when the
@@ -256,8 +277,10 @@ export function ProjectGridCard({
           // nothing was made; this says the file that WAS made is gone.
           <div className="flex h-full w-full flex-col items-center justify-center gap-2 px-4 text-center">
             <Film size={28} className="text-[rgb(243_242_242_/_0.25)]" />
-            <p className="text-[13px] text-muted">ไม่พบไฟล์คลิป</p>
-            {canOpenFolder ? (
+            <p className="text-[13px] text-muted">
+              {arriving ? 'รอไฟล์จากอีกเครื่อง…' : 'ไม่พบไฟล์คลิป'}
+            </p>
+            {canOpenFolder && !arriving ? (
               <button
                 type="button"
                 onClick={() => void window.noey.projects.openFolder(job.project.uid)}

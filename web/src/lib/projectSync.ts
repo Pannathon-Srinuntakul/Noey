@@ -27,8 +27,12 @@ import {
   writeFileAtomic,
   SERVER_MANIFEST
 } from '../platform/fs'
+import { get as getProject, replace as replaceProject } from '../platform/projects'
+import type { LocalProject } from '../platform/types'
 import { ApiError } from './api'
 import { authedFetch, serverMessage } from './authedFetch'
+import { deviceId, reconcileWithServer, shouldCheckServer, type ServerRow } from './crossDevice'
+import { isBusy, type ProjectStep } from './projectFlow'
 import { uploadDirect } from './directUpload'
 import type { ApiSession } from './videosLocalApi'
 
@@ -165,8 +169,8 @@ export async function pushProjectFiles(
     serverManifest(session, remoteUid, uid)
   ])
   const have = new Map(remote.map((f) => [f.path, f.bytes]))
-  const missing = local.filter(
-    (f) => REWRITTEN_IN_PLACE.has(f.path) || have.get(f.path) !== f.bytes
+  const missing = projectJsonLast(
+    local.filter((f) => REWRITTEN_IN_PLACE.has(f.path) || have.get(f.path) !== f.bytes)
   )
 
   let uploaded = 0
@@ -213,6 +217,24 @@ export async function pushProjectFiles(
 
   const removed = await dropStaleFiles(session, remoteUid, local, remote, signal)
   return { uploaded, bytes, removed }
+}
+
+/**
+ * `project.json` goes up LAST in a round.
+ *
+ * It is what another browser restores from, and it names the files the
+ * project has. Sent first, it reached the server minutes before the 111 MB
+ * clip it pointed at, and a second browser that read it in that window found
+ * a project whose footage 404'd (production 2026-10-02). Last, the server's
+ * copy never describes files that are not there yet — and it doubles as the
+ * restore's "this project has been synced" marker, which is only true once
+ * the rest has landed.
+ */
+export function projectJsonLast<T extends { path: string }>(files: T[]): T[] {
+  return [
+    ...files.filter((f) => f.path !== 'project.json'),
+    ...files.filter((f) => f.path === 'project.json')
+  ]
 }
 
 /** Bytes copied into memory before a PUT — see pushProjectFiles. */
@@ -361,6 +383,146 @@ export { projectDirPath }
 interface RemoteProject {
   uid: string
   origin?: string | null
+  status?: string
+  updated_at?: string | null
+}
+
+/**
+ * Re-read one project this browser already holds, and adopt the server's
+ * record when it is the truer one (`reconcileWithServer`). Returns the
+ * adopted record, or null when the local one stands.
+ *
+ * Pass `row` when the caller already has the server row (the list restore);
+ * otherwise it is fetched. Throws only on a programming error — every network
+ * failure is "keep what is here".
+ */
+export async function refreshProjectFromServer(
+  session: ApiSession,
+  local: LocalProject,
+  row?: ServerRow | null
+): Promise<LocalProject | null> {
+  const remoteUid = local.remote?.uid
+  if (!remoteUid) return null
+  try {
+    const serverRow =
+      row ??
+      (await (async () => {
+        const res = await authedFetch(session, `/videos/${remoteUid}`)
+        return res.ok ? ((await res.json()) as ServerRow) : null
+      })())
+    const blob = await pullProjectFile(session, remoteUid, 'project.json')
+    if (!blob) return null
+    const server = JSON.parse(await blob.text()) as LocalProject
+    // Re-read right before deciding: the pipeline may have written since the
+    // caller looked, and a decision on a stale local record could undo it.
+    const fresh = (await getProject(local.uid)) ?? local
+    const adopted = reconcileWithServer({
+      local: fresh,
+      server,
+      row: serverRow,
+      me: deviceId(),
+      footageLocal: await holdsFootage(fresh)
+    })
+    if (!adopted) return null
+    // The listing first, as in the restore: the engine reads it to know what
+    // a project restored from elsewhere contains.
+    await serverManifest(session, remoteUid, local.uid).catch(() => [])
+    await replaceProject(adopted)
+    return adopted
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Does this browser's store hold the project's footage? Asked only where it
+ * decides something: a busy record with no `runDevice` (written before
+ * 2026-10-03), which is this browser's own run when the footage is here and
+ * another browser's upload when it is not. Null = not needed.
+ */
+async function holdsFootage(p: LocalProject): Promise<boolean | null> {
+  if (p.runDevice || !isBusy(p.step as ProjectStep)) return null
+  const first = p.clips?.[0]?.file
+  if (!first) return null
+  return (await readFile(projectFilePath(p.uid, first)).catch(() => null)) !== null
+}
+
+/**
+ * Rows already looked at, by the server's `updated_at`: a project whose row
+ * has not changed since the last look is not fetched again.
+ */
+const CHECKED_KEY = 'noey:server-checked'
+
+function readChecked(): Record<string, string> {
+  try {
+    return JSON.parse(window.localStorage.getItem(CHECKED_KEY) ?? '{}') as Record<string, string>
+  } catch {
+    return {}
+  }
+}
+
+function writeChecked(checked: Record<string, string>): void {
+  try {
+    window.localStorage.setItem(CHECKED_KEY, JSON.stringify(checked))
+  } catch {
+    // Storage blocked: the cost is a few extra small fetches.
+  }
+}
+
+/**
+ * Bring projects this browser ALREADY holds up to date with the server.
+ *
+ * `restoreMissingProjects` used to skip every project it found locally, so a
+ * record never changed here after it first arrived: a stale `error` written
+ * while another browser was still working outlived the finished result
+ * forever — through reloads, hard reloads and logging out and in (production
+ * 2026-10-02). Only rows `shouldCheckServer` picks are fetched.
+ */
+async function refreshKnownProjects(
+  session: ApiSession,
+  remote: RemoteProject[],
+  locals: LocalProject[],
+  onChanged?: () => void
+): Promise<number> {
+  const me = deviceId()
+  const byRemote = new Map(locals.filter((p) => p.remote?.uid).map((p) => [p.remote!.uid, p]))
+  const checked = readChecked()
+  const todo: { local: LocalProject; row: RemoteProject }[] = []
+  for (const row of remote) {
+    const local = byRemote.get(row.uid)
+    if (!local || typeof row.status !== 'string') continue
+    const stamp = `${row.updated_at ?? ''}|${local.updatedAt}`
+    if (checked[row.uid] === stamp) continue
+    const footage = await holdsFootage(local)
+    if (!shouldCheckServer(local, { status: row.status, updated_at: row.updated_at }, me, footage))
+      continue
+    todo.push({ local, row })
+  }
+  let adopted = 0
+  let next = 0
+  await Promise.all(
+    Array.from({ length: Math.min(4, todo.length) }, async () => {
+      while (next < todo.length) {
+        const { local, row } = todo[next++]
+        const status = row.status as string
+        const result = await refreshProjectFromServer(session, local, {
+          status,
+          updated_at: row.updated_at
+        })
+        checked[row.uid] = `${row.updated_at ?? ''}|${result?.updatedAt ?? local.updatedAt}`
+        if (result) {
+          adopted += 1
+          void window.noey.log.write(
+            'projectSync',
+            `adopted server copy uid=${local.uid} ${local.step} → ${result.step} (row ${status})`
+          )
+          onChanged?.()
+        }
+      }
+    })
+  )
+  writeChecked(checked)
+  return adopted
 }
 
 /**
@@ -463,11 +625,11 @@ async function runRestore(session: ApiSession, onRestored?: () => void): Promise
   // Projects this browser already has, by their SERVER uid: no need to fetch
   // their project.json again just to learn they are here (every focus of the
   // tab used to re-download all of them).
-  const knownRemote = new Set(
-    (await window.noey.projects.list().catch(() => []))
-      .map((p) => p.remote?.uid)
-      .filter((u): u is string => !!u)
-  )
+  const locals = await window.noey.projects.list().catch(() => [] as LocalProject[])
+  const knownRemote = new Set(locals.map((p) => p.remote?.uid).filter((u): u is string => !!u))
+  // Known projects can be out of date too — see refreshKnownProjects. Done
+  // before the missing ones so a stale card is corrected first.
+  await refreshKnownProjects(session, remote, locals, onRestored).catch(() => 0)
   const missing = readMissing()
   const todo = remote.filter(
     (row) => row.origin === 'local' && !knownRemote.has(row.uid) && !missing.has(row.uid)

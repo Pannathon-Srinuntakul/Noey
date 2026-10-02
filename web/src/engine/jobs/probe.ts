@@ -17,6 +17,7 @@ import { isPickedPath } from '../../platform/fs'
 import type { SidecarEvent } from '../../platform/types'
 import { canDecodeSource, probeSource } from '../media'
 import { registerJob } from '../index'
+import { MissingFileError } from '../../lib/crossDevice'
 
 export async function blobForPath(path: string): Promise<Blob> {
   if (isPickedPath(path)) {
@@ -42,7 +43,7 @@ export async function blobForPath(path: string): Promise<Blob> {
   if (res.status === 401 || res.status === 403) {
     throw new Error('เซสชันหมดอายุ กรุณารีเฟรชหน้าเว็บแล้วลองใหม่')
   }
-  if (!res.ok) throw new Error(`ไม่พบไฟล์ ${path}`)
+  if (!res.ok) throw new MissingFileError(path)
   // The body is piped into the store as it arrives and the handle-backed File
   // comes back: `res.blob()` materialised the whole download first, which for
   // a source clip is the whole clip. The write is the cache; a failure there
@@ -61,7 +62,7 @@ export async function blobForPath(path: string): Promise<Blob> {
     return blob
   }
   const again = await fetch(url)
-  if (!again.ok) throw new Error(`ไม่พบไฟล์ ${path}`)
+  if (!again.ok) throw new MissingFileError(path)
   return again.blob()
 }
 

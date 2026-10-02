@@ -12,6 +12,7 @@ import {
   type ProjectStep
 } from '../lib/projectFlow'
 import { useRouter } from '../lib/router'
+import { useConfirm } from '../lib/confirm'
 import { Button } from '../components/ui/Button'
 import { Progress } from '../components/ui/Progress'
 import { PageHeader } from '../components/shell/PageHeader'
@@ -86,6 +87,17 @@ export default function JobProgressPage({ uid }: { uid: string }): React.JSX.Ele
    * busy), so pressing "เรนเดอร์วิดีโอ" flashed this screen and dumped the user
    * back on the projects list while the render was starting (2026-08-14).
    */
+  const confirm = useConfirm()
+  const onRunHere = async (): Promise<void> => {
+    if (!job) return
+    const ok = await confirm({
+      title: 'ทำต่อบนเครื่องนี้?',
+      body: 'ใช้เมื่อปิดเครื่องหรือเบราว์เซอร์ที่ทำงานนี้ไปแล้วเท่านั้น ถ้าอีกเครื่องยังทำอยู่ งานจะถูกทำซ้ำสองที่และใช้โควตาเพิ่ม',
+      confirmLabel: 'ทำต่อบนเครื่องนี้'
+    })
+    if (ok) await job.runHere()
+  }
+
   const wasBusy = useRef(false)
   useEffect(() => {
     if (busy) {
@@ -124,18 +136,30 @@ export default function JobProgressPage({ uid }: { uid: string }): React.JSX.Ele
         subtitle={
           <span className="inline-flex items-center gap-1.5">
             <Loader2 size={13} className="animate-spin text-accent" />
-            {`${MODE_LABEL[mode]} · กำลังทำงาน — แก้ไขได้เมื่อเรนเดอร์เสร็จ`}
+            {job.elsewhere === 'running'
+              ? `${MODE_LABEL[mode]} · กำลังทำบนอีกเครื่อง — แก้ไขได้เมื่องานเสร็จ`
+              : `${MODE_LABEL[mode]} · กำลังทำงาน — แก้ไขได้เมื่อเรนเดอร์เสร็จ`}
           </span>
         }
         actions={
-          <Button
-            variant="danger"
-            icon={<Square size={15} fill="currentColor" />}
-            loading={job.stopping}
-            onClick={() => void job.stop()}
-          >
-            {job.stopping ? 'กำลังหยุด…' : 'หยุดงาน'}
-          </Button>
+          job.elsewhere === 'running' ? (
+            // The run is in another browser: stopping it from here would cancel
+            // ITS server job. The one thing offered is taking it over, for a
+            // run whose browser was closed for good — confirmed first, because
+            // a browser that is still working would then race a second run.
+            <Button variant="secondary" onClick={() => void onRunHere()}>
+              ทำต่อบนเครื่องนี้
+            </Button>
+          ) : (
+            <Button
+              variant="danger"
+              icon={<Square size={15} fill="currentColor" />}
+              loading={job.stopping}
+              onClick={() => void job.stop()}
+            >
+              {job.stopping ? 'กำลังหยุด…' : 'หยุดงาน'}
+            </Button>
+          )
         }
       />
 
