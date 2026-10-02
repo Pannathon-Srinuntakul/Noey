@@ -164,9 +164,12 @@ function CaptionPreviewLightbox({
       <CaptionPreviewFrame
         style={style}
         previewThumb={previewThumb}
-        // Constrained on BOTH axes: sized from height alone, the 9:16 frame
-        // came out wider than a phone and spilled past the backdrop padding.
-        className="aspect-[9/16] max-h-[84dvh] max-w-full"
+        // An explicit height (the frame's children are all absolute, so it has
+        // no size of its own: with only max-* limits it collapsed to 0×0 and
+        // the lightbox showed nothing but the caption line). The height is the
+        // smaller of 84% of the viewport and what a 9:16 frame may be tall
+        // within the viewport's width less the backdrop padding.
+        className="aspect-[9/16] h-[min(84dvh,calc((100vw-3rem)*16/9))]"
       />
       <p className="text-sm text-muted">แถบจางล่างคือที่ที่ TikTok วาง UI ทับ — กด Esc เพื่อปิด</p>
     </div>,
