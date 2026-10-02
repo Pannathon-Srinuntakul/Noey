@@ -102,4 +102,8 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
 # Default 1 so a plain `docker run` and local development behave as before.
 # Migrations + seed run in the app's lifespan under a database advisory lock
 # (services/api/main.py), so N workers — or N replicas — start safely at once.
-CMD ["sh", "-c", "uvicorn services.api.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers ${API_WORKERS:-1}"]
+# "::" listens on IPv6 and IPv4 (dual stack). Railway's private network
+# (noey-api.railway.internal) is IPv6: on 0.0.0.0 the site and admin could only
+# reach the API through its public domain, and from inside Railway that hop
+# timed out intermittently (2026-10-02 — /account showed "ระบบบัญชีขัดข้อง").
+CMD ["sh", "-c", "uvicorn services.api.main:app --host :: --port ${PORT:-8000} --workers ${API_WORKERS:-1}"]
