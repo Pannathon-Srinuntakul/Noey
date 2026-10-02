@@ -34,7 +34,11 @@ ARG NEXT_PUBLIC_TURNSTILE_SITE_KEY=
 # the one next/image remote pattern at BUILD time. The default is the
 # backend's own default, so production needs nothing here.
 ARG BLOG_MEDIA_PUBLIC_URL=https://api.noeystudio.com/blog/media
+# The API as seen from the BUILD (src/lib/server/config.ts): the build cannot
+# reach Railway's private network that API_URL points at in production.
+ARG API_URL_BUILD=https://api.noeystudio.com
 ENV NEXT_PUBLIC_SITE_URL=$NEXT_PUBLIC_SITE_URL \
+    API_URL_BUILD=$API_URL_BUILD \
     NEXT_PUBLIC_APP_URL=$NEXT_PUBLIC_APP_URL \
     NEXT_PUBLIC_TURNSTILE_SITE_KEY=$NEXT_PUBLIC_TURNSTILE_SITE_KEY \
     BLOG_MEDIA_PUBLIC_URL=$BLOG_MEDIA_PUBLIC_URL \
